@@ -3322,6 +3322,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** What the chat is about. Asking again for the same subject returns the chat that exists. */
+	subject?: { type: 'object' | 'loop'; id: string }
 	/** Open the pair's one direct message instead of a new topical chat. */
 	direct?: boolean
 	initial_message?: string

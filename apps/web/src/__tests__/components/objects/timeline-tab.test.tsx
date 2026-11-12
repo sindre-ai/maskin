@@ -30,6 +30,10 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+vi.mock('@/components/chat/message-bubble', () => ({
+	MessageBubble: ({ message }: { message: { content: string } }) => <p>{message.content}</p>,
+}))
+
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: vi.fn(),
 	useObject: () => ({ data: undefined, isLoading: false }),
@@ -1104,5 +1108,133 @@ describe('TimelineTab', () => {
 
 			expect(screen.queryByTestId('loops-v4-earlier-divider')).toBeNull()
 		})
+	})
+})
+
+describe('TimelineTab as a room', () => {
+	const roomOptions = (messages: Array<{ id: number; content: string; createdAt: string }>) => ({
+		messages: messages.map(
+			(m) =>
+				({
+					...m,
+					conversationId: 'chat-1',
+					actorId: 'actor-1',
+					actorName: 'Ada',
+					actorType: 'human',
+					kind: 'message',
+					metadata: null,
+					sessionId: null,
+					editedAt: null,
+				}) as never,
+		),
+		isLoading: false,
+		isError: false,
+		onRetry: vi.fn(),
+		hasEarlier: false,
+		loadingEarlier: false,
+		onLoadEarlier: vi.fn(),
+	})
+
+	it('merges chat messages, old comments and events by time, newest first', () => {
+		const object = buildObjectResponse({ id: 'loop-1', type: 'loop' as never })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 1,
+					action: 'commented',
+					entityType: 'object',
+					entityId: 'loop-1',
+					actorId: 'actor-1',
+					createdAt: '2026-01-01T00:00:00Z',
+					data: { content: 'An old comment' },
+				}),
+				buildEventResponse({
+					id: 2,
+					action: 'trigger_fired',
+					entityType: 'object',
+					entityId: 'loop-1',
+					actorId: 'actor-2',
+					createdAt: '2026-01-02T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(
+			<TimelineTab
+				object={object}
+				room={roomOptions([
+					{ id: 7, content: 'First room message', createdAt: '2026-01-03T00:00:00Z' },
+					{ id: 8, content: 'Second room message', createdAt: '2026-01-04T00:00:00Z' },
+				])}
+			/>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+
+		const text = screen
+			.getAllByRole('listitem')
+			.map((li) => li.textContent ?? '')
+			.join('|')
+		expect(text.indexOf('Second room message')).toBeLessThan(text.indexOf('First room message'))
+		expect(text.indexOf('First room message')).toBeLessThan(text.indexOf('An old comment'))
+		// Room names for the filters: comments are messages, changes are events.
+		expect(screen.getByRole('button', { name: 'Messages (3)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Events (1)' })).toBeInTheDocument()
+	})
+
+	it('keeps events out of the Messages filter', async () => {
+		const user = userEvent.setup()
+		const object = buildObjectResponse({ id: 'loop-1', type: 'loop' as never })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 2,
+					action: 'trigger_fired',
+					entityType: 'object',
+					entityId: 'loop-1',
+					actorId: 'actor-2',
+					createdAt: '2026-01-02T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+		render(
+			<TimelineTab
+				object={object}
+				room={roomOptions([{ id: 7, content: 'Only message', createdAt: '2026-01-03T00:00:00Z' }])}
+			/>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+
+		await user.click(screen.getByRole('button', { name: 'Messages (1)' }))
+		expect(screen.getByText('Only message')).toBeInTheDocument()
+		expect(screen.getAllByRole('listitem')).toHaveLength(1)
+	})
+
+	it('says so when the room is empty', () => {
+		const object = buildObjectResponse({ id: 'loop-1', type: 'loop' as never })
+		mockGraph([], [], [], object)
+		render(<TimelineTab object={object} room={roomOptions([])} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.getByText('No messages yet')).toBeInTheDocument()
+		expect(screen.getByText('Messages and events from this flow show up here.')).toBeInTheDocument()
+	})
+
+	it('shows a retry when the room did not load', async () => {
+		const user = userEvent.setup()
+		const object = buildObjectResponse({ id: 'loop-1', type: 'loop' as never })
+		mockGraph([], [], [], object)
+		const room = { ...roomOptions([]), isError: true }
+		render(<TimelineTab object={object} room={room} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.getByText('The room did not load')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Try again' }))
+		expect(room.onRetry).toHaveBeenCalledTimes(1)
 	})
 })

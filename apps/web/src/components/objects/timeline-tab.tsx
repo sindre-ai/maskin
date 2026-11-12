@@ -1,5 +1,6 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
+import { MessageBubble } from '@/components/chat/message-bubble'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ObjectReference } from '@/components/shared/object-reference'
@@ -22,7 +23,13 @@ import { useSession } from '@/hooks/use-sessions'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import { trackMarkReadClicked } from '@/lib/analytics'
 import { ApiError } from '@/lib/api'
-import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
+import type {
+	ActorListItem,
+	EventResponse,
+	GraphFileSummary,
+	MessageResponse,
+	ObjectResponse,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -37,6 +44,8 @@ import { toast } from 'sonner'
  *  Kept just below the graph endpoint's 100-event page limit so a full page
  *  reads as an overflow indicator rather than an exact tally. */
 const TAB_COUNT_CUTOFF = 99
+
+const NO_MESSAGES: MessageResponse[] = []
 
 /** Three placeholder rows (avatar + two lines) on the 1.4s activity pulse; no spinner. */
 function ActivitySkeleton() {
@@ -71,6 +80,13 @@ type TimelineEntry =
 			key: string
 			time: string | null
 			event: EventResponse
+	  }
+	| {
+			/** A chat message in a flow's room. */
+			kind: 'message'
+			key: string
+			time: string | null
+			message: MessageResponse
 	  }
 	| {
 			kind: 'event'
@@ -196,6 +212,14 @@ const FILTERS: Array<{ id: StreamFilter; label: string }> = [
 	{ id: 'changes', label: 'Changes' },
 ]
 
+/** The same filters under the names a room uses: its comments are messages, its changes events. */
+const ROOM_FILTERS: Array<{ id: StreamFilter; label: string }> = [
+	{ id: 'all', label: 'All' },
+	{ id: 'comments', label: 'Messages' },
+	{ id: 'decisions', label: 'Decisions' },
+	{ id: 'changes', label: 'Events' },
+]
+
 /**
  * The mockup's `cnt.decisions` — a comment that asked the reader to choose.
  * Carrying a decision block is what makes a comment a decision; a plain
@@ -309,11 +333,27 @@ export interface LoopUnreadOptions {
  *  boundary for both the divider and its tests. */
 const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
+/**
+ * A flow's room: the chat's messages read together with the flow's old comments and its
+ * events, newest first like the Activity tab it replaces. Nothing is copied between them; the
+ * page that owns the room posts new words to the chat.
+ */
+export interface RoomOptions {
+	messages: MessageResponse[]
+	isLoading: boolean
+	isError: boolean
+	onRetry: () => void
+	hasEarlier: boolean
+	loadingEarlier: boolean
+	onLoadEarlier: () => void
+}
+
 export function TimelineTab({
 	object,
 	loopUnread,
 	additionalEvents,
 	focusCommentId,
+	room,
 }: {
 	object: ObjectResponse
 	loopUnread?: LoopUnreadOptions
@@ -324,6 +364,8 @@ export function TimelineTab({
 	 * carry `entityId = object.id` and so aren't returned by the object graph.
 	 * Deduped against the graph events by event id. */
 	additionalEvents?: EventResponse[]
+	/** Reads the stream as a room: messages join the comments and events. */
+	room?: RoomOptions
 }) {
 	const { workspaceId } = useWorkspace()
 	const {
@@ -392,6 +434,9 @@ export function TimelineTab({
 		}
 		return replies
 	}, [events])
+
+	const isRoom = room !== undefined
+	const roomMessages = room?.messages ?? NO_MESSAGES
 
 	const entries = useMemo(() => {
 		const rows: TimelineEntry[] = []
@@ -475,16 +520,30 @@ export function TimelineTab({
 			})
 		}
 
+		for (const message of roomMessages) {
+			rows.push({ kind: 'message', key: `message-${message.id}`, time: message.createdAt, message })
+		}
+
 		// Newest first — mirrors both /api/objects/:id/graph's event order and
-		// the prototype's descending spine.
+		// the prototype's descending spine. A room keeps that order, as it does on iOS.
 		rows.sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''))
 		return rows
-	}, [events, relationships, actorsById, objectsById, filesById, object.id, workspaceId])
+	}, [
+		events,
+		relationships,
+		actorsById,
+		objectsById,
+		filesById,
+		object.id,
+		workspaceId,
+		roomMessages,
+	])
 
 	const counts = useMemo(() => {
 		let comments = 0
 		let decisions = 0
 		for (const entry of entries) {
+			if (entry.kind === 'message') comments++
 			if (entry.kind !== 'comment') continue
 			comments++
 			if (isDecisionComment(entry.event)) decisions++
@@ -496,9 +555,9 @@ export function TimelineTab({
 	const visible = useMemo(() => {
 		if (filter === 'all') return entries
 		return entries.filter((entry) => {
-			if (filter === 'comments') return entry.kind === 'comment'
+			if (filter === 'comments') return entry.kind === 'comment' || entry.kind === 'message'
 			if (filter === 'decisions') return entry.kind === 'comment' && isDecisionComment(entry.event)
-			return entry.kind !== 'comment'
+			return entry.kind !== 'comment' && entry.kind !== 'message'
 		})
 	}, [filter, entries])
 
@@ -688,6 +747,8 @@ export function TimelineTab({
 								/>
 							)
 						})()
+					) : entry.kind === 'message' ? (
+						<MessageBubble workspaceId={workspaceId} message={entry.message} />
 					) : (
 						<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
 					)}
@@ -734,7 +795,7 @@ export function TimelineTab({
 	// Loading → error → empty. "No activity yet." is a claim about the object,
 	// so it may only be made once the graph has resolved — a pending or failed
 	// fetch has the same empty `events` array and must not read as one.
-	if (isGraphLoading) {
+	if (isGraphLoading || room?.isLoading) {
 		return (
 			<div className="w-full min-w-0 pt-2.5">
 				<ActivitySkeleton />
@@ -763,7 +824,7 @@ export function TimelineTab({
 				</output>
 			)}
 			<div className="flex flex-wrap items-center gap-1.5 pb-2 pt-2.5">
-				{FILTERS.map((f) => {
+				{(isRoom ? ROOM_FILTERS : FILTERS).map((f) => {
 					const active = filter === f.id
 					const rawCount = counts[f.id]
 					const display = formatTabCount(rawCount)
@@ -815,12 +876,12 @@ export function TimelineTab({
 				)}
 			</div>
 
-			{isGraphError && !graph ? (
+			{(isGraphError && !graph) || room?.isError ? (
 				// Failed with nothing cached: the filter row above stays, and the
 				// composer lives outside this tab (object-detail-shell), so only the
 				// list area carries the error.
 				<EmptyState
-					title="Activity did not load"
+					title={isRoom ? 'The room did not load' : 'Activity did not load'}
 					description={
 						graphNetworkError
 							? 'Your connection dropped. Nothing was lost.'
@@ -828,7 +889,14 @@ export function TimelineTab({
 					}
 					className="py-8"
 					action={
-						<Button variant="outline" size="sm" onClick={() => refetchGraph()}>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => {
+								if (isGraphError) refetchGraph()
+								room?.onRetry()
+							}}
+						>
 							Try again
 						</Button>
 					}
@@ -836,8 +904,17 @@ export function TimelineTab({
 			) : visible.length === 0 ? (
 				<div className="flex flex-col items-center gap-2.5 px-3 py-8 text-center">
 					<p className="text-[12.5px] text-muted-foreground">
-						{filter === 'all' ? 'No activity yet.' : 'Nothing in this view yet.'}
+						{filter !== 'all'
+							? 'Nothing in this view yet.'
+							: isRoom
+								? 'No messages yet'
+								: 'No activity yet.'}
 					</p>
+					{filter === 'all' && isRoom && (
+						<p className="text-[12px] text-muted-foreground">
+							Messages and events from this flow show up here.
+						</p>
+					)}
 					{filter !== 'all' && (
 						<Button variant="outline" size="sm" onClick={() => setFilter('all')}>
 							Show all activity
@@ -856,6 +933,18 @@ export function TimelineTab({
 						))
 					) : (
 						<ol className="m-0 list-none p-0">{foldRuns(visible).map(renderRow)}</ol>
+					)}
+					{room?.hasEarlier && (
+						<div className="pt-2">
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={room.loadingEarlier}
+								onClick={room.onLoadEarlier}
+							>
+								Load earlier messages
+							</Button>
+						</div>
 					)}
 				</div>
 			)}

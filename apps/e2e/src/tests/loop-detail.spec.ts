@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { sendFromComposer } from '../helpers/composer.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Loop detail page', () => {
@@ -87,8 +88,8 @@ test.describe('Loop detail page', () => {
 			await expect(triggerSwitch).toBeChecked()
 			// The shared object timeline replaces the old loop-specific activity
 			// and changes sections — same Activity rule the object page carries.
-			// It lives on the Activity tab; Overview carries the story and stats.
-			await page.getByRole('tab', { name: 'Activity' }).click()
+			// It lives on the Room tab, which also holds the flow's chat; Overview carries the story and stats.
+			await page.getByRole('tab', { name: 'Room' }).click()
 			// The filter chips carry their count in the label — `All (3)`.
 			await expect(page.getByRole('button', { name: /^All \(\d+\)$/ })).toBeVisible()
 			await page.getByRole('tab', { name: 'Overview' }).click()
@@ -109,9 +110,9 @@ test.describe('Loop detail page', () => {
 			)
 			const composerFollowsActivity = await composer.evaluate((node) => {
 				const activity = [...document.querySelectorAll('[role="tab"]')].find(
-					(el) => el.textContent?.trim() === 'Activity',
+					(el) => el.textContent?.trim() === 'Room',
 				)
-				if (!activity) throw new Error('missing Activity tab')
+				if (!activity) throw new Error('missing Room tab')
 				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
 				return Boolean(activity.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
 			})
@@ -317,6 +318,45 @@ test.describe('Loop detail page', () => {
 				timeout: 15_000,
 			})
 			await expect(page.getByRole('link', { name: /Retire this loop/ })).toHaveCount(0)
+		})
+	}
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`the Room tab holds old comments and new messages at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Room loop',
+				status: 'learning',
+			})
+			await account.api.createComment(account.workspaceId, {
+				entity_id: loop.id,
+				content: 'A comment from before the room',
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await expect(page.getByRole('heading', { name: 'Room loop' })).toBeVisible({
+				timeout: 15_000,
+			})
+			await page.getByRole('tab', { name: 'Room' }).click()
+			await expect(page.getByText('A comment from before the room')).toBeVisible()
+
+			// The page's own composer posts to the flow's chat, below the old comment.
+			const composer = page.getByPlaceholder('Message the room')
+			await composer.fill('First word in the room')
+			await sendFromComposer(page, composer, viewport.width)
+			await expect(page.getByText('First word in the room')).toBeVisible({ timeout: 15_000 })
+			await expect(page.getByText('A comment from before the room')).toBeVisible()
+
+			// It is still there after a reload: the chat holds it, no comment was written.
+			await page.reload()
+			await page.getByRole('tab', { name: 'Room' }).click()
+			await expect(page.getByText('First word in the room')).toBeVisible({ timeout: 15_000 })
+			await expect(page.getByText('A comment from before the room')).toBeVisible()
 		})
 	}
 })
