@@ -16,7 +16,8 @@ export interface LoadedList {
 }
 
 export function activityTime(c: Pick<ConversationListItemResponse, 'lastMessageAt' | 'createdAt'>) {
-	return new Date(c.lastMessageAt ?? c.createdAt).getTime()
+	const at = c.lastMessageAt ?? c.createdAt
+	return at ? new Date(at).getTime() : 0
 }
 
 /**
