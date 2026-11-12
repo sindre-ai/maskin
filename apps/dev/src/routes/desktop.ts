@@ -908,9 +908,9 @@ async function saveFile(c: Ctx, input: { path: string; name?: string }) {
 		return failed('bad_answer', null, 502, 'Desktop gave an unexpected answer')
 	}
 	if (!exec.data.timed_out && exec.data.exit_code !== 0) {
-		await discard()
 		const code = exec.data.exit_code
 		if (code === TOO_BIG_EXIT_CODE) {
+			await discard()
 			const size = Number(exec.data.stdout.trim().split(' ')[1])
 			reportFileMoved(gated, 'to_maskin', 'over_cap', Number.isFinite(size) ? size : null)
 			return c.json(
@@ -922,6 +922,7 @@ async function saveFile(c: Ctx, input: { path: string; name?: string }) {
 			)
 		}
 		if (code === NOT_FOUND_EXIT_CODE) {
+			await discard()
 			reportFileMoved(gated, 'to_maskin', 'not_found', null)
 			return c.json(
 				createApiError('NOT_FOUND', 'There is no file at that path on the computer'),
@@ -929,6 +930,7 @@ async function saveFile(c: Ctx, input: { path: string; name?: string }) {
 			)
 		}
 		if (code === NOT_ALLOWED_EXIT_CODE) {
+			await discard()
 			reportFileMoved(gated, 'to_maskin', 'not_allowed', null)
 			return c.json(
 				createApiError(
@@ -939,6 +941,7 @@ async function saveFile(c: Ctx, input: { path: string; name?: string }) {
 			)
 		}
 		if (code === EMPTY_EXIT_CODE) {
+			await discard()
 			reportFileMoved(gated, 'to_maskin', 'empty', 0)
 			return c.json(
 				createApiError('VALIDATION_ERROR', 'That file is empty, so nothing was saved'),
