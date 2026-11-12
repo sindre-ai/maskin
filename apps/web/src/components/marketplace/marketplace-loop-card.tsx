@@ -1,4 +1,4 @@
-import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
+import { getActorInitials, getActorPlateStyle } from '@/components/shared/actor-avatar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
 	InstalledLoopRow,
@@ -198,7 +198,7 @@ function CompositionGlyph({ chip }: { chip: CompositionChip }) {
 		'inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-semibold leading-none shrink-0'
 	if (chip.kind === 'actor') {
 		return (
-			<span className={cn(base, getActorAvatarPaletteClass(chip.name))} aria-hidden="true">
+			<span className={base} style={getActorPlateStyle(chip.name)} aria-hidden="true">
 				{chip.initial}
 			</span>
 		)

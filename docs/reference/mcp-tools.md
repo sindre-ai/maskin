@@ -93,18 +93,13 @@ Unchanged: **type**, **driver**, **updated_after**, **limit** (default 25, max 1
 
 A tool that was removed from the surface can stay callable as a listed alias: a real entry in the tool list whose one line description says "Deprecated, use X", and whose handler maps its arguments onto the tool it points to. Listed, not hidden, because a model can only call tools it sees. Each one costs roughly 60 to 100 tokens in every tool list, so at most 10 are kept (see **packages/mcp/src/tool-aliases.ts**).
 
-Today there are two:
+Today there is one:
 
-- **run_agent**, an alias of **create_session** with **wait** on (details below).
 - **search_objects**, an alias of **list_objects**. It maps **query** to **q**, **driver_id** to **driver** and **offset** to the ranked walk's offset, and passes everything else through, **cursor** included, so a caller can follow **next_cursor** or **page.offset**. Its output is the **list_objects** output, with **page.offset** kept for older callers. Reason: one query tool with one paging style, so agents stop retrying across two tools. Earliest removal: 2027-02-01, and only after a clean stored-prompt sweep (see the ledger entry in **packages/mcp/src/removal-ledger.ts**).
 
-For **run_agent**:
+Removal is a decision with a sweep date, never a zero count alone.
 
-- **actor_id**, **action_prompt** and **spawned_by_message_id** carry over unchanged. **workspace_id** is filled from the connection default when it is missing.
-- **notify_on_complete** is accepted and ignored: **create_session** no longer takes it and registers the same fallback itself when the wait times out.
-- **config**, **poll_interval_seconds**, **timeout_seconds** and **depends_on_session_ids** have no equivalent and are dropped. Their names are recorded in the **alias_use** event.
-
-Removal is a decision with a sweep date, never a zero count alone. Earliest for **run_agent**: late January 2027.
+**run_agent** and **create_session** were deleted outright on 2026-11-11, with no alias. Use **create_sub_chat**, which returns at once and always sends the result back as a new turn when the agent finishes: it has no **wait** or **notify_on_complete** parameter. A call that names a deleted tool fails with an unknown-tool error (see the ledger in **packages/mcp/src/removal-ledger.ts**).
 
 ### Rollback for the list contract
 

@@ -125,3 +125,50 @@ export function buildTelnyxDelivery(opts: {
 		},
 	}
 }
+
+/**
+ * Standard Webhooks (Svix, Resend, Clerk): headers webhook-id, webhook-timestamp and
+ * webhook-signature "v1,<base64>"; signed text "<id>.<timestamp>.<body>", HMAC-SHA256
+ * under the base64-decoded secret. `secret` is the "whsec_..." string the vendor shows.
+ * https://www.standardwebhooks.com
+ */
+export function buildStandardWebhooksDelivery(opts: {
+	secret: string
+	id?: string
+	timestamp?: number
+	/** Extra "v1,<base64>" entries put ahead of the real one, as during a secret rotation. */
+	extraSignatures?: string[]
+}): SignedDelivery {
+	const body = JSON.stringify({ type: 'email.delivered', data: { email_id: 'em-1a2b3c' } })
+	const id = opts.id ?? 'msg_2Lh9KRb0pzN3LMtP'
+	const timestamp = String(opts.timestamp ?? Math.floor(Date.now() / 1000))
+	const key = Buffer.from(opts.secret.replace(/^whsec_/, ''), 'base64')
+	const signature = createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest('base64')
+	return {
+		body,
+		headers: {
+			'content-type': 'application/json',
+			'webhook-id': id,
+			'webhook-timestamp': timestamp,
+			'webhook-signature': [...(opts.extraSignatures ?? []), `v1,${signature}`].join(' '),
+		},
+	}
+}
+
+/**
+ * Stripe style: one Stripe-Signature header "t=<unix seconds>,v1=<hex>"; signed text
+ * "<t>.<body>", HMAC-SHA256 under the secret as given.
+ * https://docs.stripe.com/webhooks#verify-manually
+ */
+export function buildStripeDelivery(opts: { secret: string; timestamp?: number }): SignedDelivery {
+	const body = JSON.stringify({ id: 'evt_1Nq', type: 'invoice.paid', data: { object: {} } })
+	const timestamp = String(opts.timestamp ?? Math.floor(Date.now() / 1000))
+	const signature = createHmac('sha256', opts.secret).update(`${timestamp}.${body}`).digest('hex')
+	return {
+		body,
+		headers: {
+			'content-type': 'application/json',
+			'stripe-signature': `t=${timestamp},v1=${signature},v0=ignored`,
+		},
+	}
+}

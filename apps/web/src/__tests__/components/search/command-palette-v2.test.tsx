@@ -479,7 +479,7 @@ describe('launcher with words and pills', () => {
 		await screen.findByRole('option', { name: /Hans on pricing/ })
 		expect(api.search.query).toHaveBeenCalledWith(
 			'ws-1',
-			expect.objectContaining({ q: 'hans', limit: '6' }),
+			expect.objectContaining({ q: 'hans', limit: '6', per_group: '3' }),
 			expect.anything(),
 		)
 		expect(groupLabels()).toEqual(['Jump to', 'Search'])

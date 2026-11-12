@@ -195,7 +195,7 @@ const TEXT_TOOLS: Record<
 		body: 'content',
 		target: ['Card', 'entity_id'],
 	},
-	create_session: { summary: 'Start an agent session', body: 'action_prompt' },
+	create_sub_chat: { summary: 'Start an agent session', body: 'action_prompt' },
 }
 
 function fromArguments(tool: string, args: Record<string, unknown>): HoldPreview {

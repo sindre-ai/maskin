@@ -109,10 +109,15 @@ export function initPosthog(): void {
 			api_host: import.meta.env.VITE_POSTHOG_HOST ?? DEFAULT_HOST,
 			person_profiles: 'identified_only',
 			capture_pageview: true,
-			// Leave and web-vitals events were a share of the browser volume with
-			// no question behind them.
+			// Page-leave events were a share of the browser volume with no question
+			// behind them. Web vitals (LCP and INP only) are back on purpose for the
+			// app redesign speed check; network timing stays off.
 			capture_pageleave: false,
-			capture_performance: false,
+			capture_performance: {
+				network_timing: false,
+				web_vitals: true,
+				web_vitals_allowed_metrics: ['LCP', 'INP'],
+			},
 			autocapture: false,
 			before_send: beforeSend,
 		})

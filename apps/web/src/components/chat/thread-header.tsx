@@ -211,7 +211,7 @@ export function ThreadHeader({
 						type="agent"
 						id={singleAgent.actorId}
 						size="md"
-						className="size-[34px] rounded-[10px] text-xs font-bold"
+						className="size-[34px]"
 					/>
 				) : (
 					<span
