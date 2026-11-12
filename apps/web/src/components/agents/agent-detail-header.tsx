@@ -4,7 +4,7 @@ import {
 	type PortraitStatus,
 	agentAvatarStatus,
 } from '@/components/agents/agent-portrait-card'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ActorAvatar, getActorInitials } from '@/components/shared/actor-avatar'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
@@ -15,7 +15,7 @@ import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { ACTOR_DESCRIPTION_MAX_LENGTH } from '@maskin/shared'
+import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_INITIALS_MAX_LENGTH } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Camera } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
@@ -54,7 +54,7 @@ export function AgentDetailHeader({
 		[loops, agent.id],
 	)
 
-	const save = (data: { name?: string; description?: string }, label: string) =>
+	const save = (data: { name?: string; description?: string; initials?: string }, label: string) =>
 		updateActor.mutate(
 			{ id: agent.id, data },
 			{ onError: () => toast.error(`Couldn't save ${label} for ${agent.name}`) },
@@ -71,6 +71,7 @@ export function AgentDetailHeader({
 					className="size-17"
 					id={agent.id}
 					imageUrl={agent.avatar_url ?? undefined}
+					initials={agent.initials}
 				/>
 				{canChangeAvatar && (
 					<>
@@ -150,6 +151,21 @@ export function AgentDetailHeader({
 						inputClassName="text-[15px]"
 					/>
 				</p>
+				{canChangeAvatar && !isManaged && (
+					<p className="flex items-baseline gap-1.5 text-[13px] text-muted-foreground">
+						<span className="shrink-0">Initials</span>
+						<EditableField
+							value={agent.initials ?? ''}
+							displayValue={agent.initials ?? `Automatic (${getActorInitials(agent.name)})`}
+							label="Initials"
+							maxLength={ACTOR_INITIALS_MAX_LENGTH}
+							placeholder="Up to 3 letters"
+							onSave={(next) => save({ initials: next }, 'the initials')}
+							className={agent.initials ? 'text-foreground' : 'text-muted-foreground'}
+							inputClassName="w-24 text-[13px]"
+						/>
+					</p>
+				)}
 				{flows.length > 0 && (
 					<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
 						<span>Works in</span>

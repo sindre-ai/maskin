@@ -865,6 +865,14 @@ export const tools = {
 					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. REPLACES the whole map — read the actor first and merge, or you will silently drop its existing servers. To add the tools of a connected integration, copy the `mcp.server` of that provider from list_integration_providers in under the provider name. `type` is required on each entry ("stdio" or "http").',
 				),
 			llm_config: actorLlmConfigSchema,
+			initials: z
+				.string()
+				.max(3)
+				.nullable()
+				.optional()
+				.describe(
+					'The 1 to 3 letters or digits shown on the agent avatar, for example "DEV". Saved upper case. An agent may set its own; changing another agent\'s needs owner or admin. Pass "" or null to clear it and go back to letters worked out from the name. Agents only.',
+				),
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()

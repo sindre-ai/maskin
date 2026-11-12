@@ -422,6 +422,7 @@
 			"detach_skill_ids",
 			"email",
 			"id",
+			"initials",
 			"llm_config",
 			"llm_config.model",
 			"llm_config.provider",
