@@ -158,13 +158,12 @@
 			"workspace_id"
 		],
 		"create_relationship": ["source_id", "target_id", "type", "workspace_id"],
-		"create_session": [
+		"create_sub_chat": [
 			"action_prompt",
 			"actor_id",
 			"initiated_from_object_id",
 			"source_session_id",
 			"spawned_by_message_id",
-			"wait",
 			"workspace_id"
 		],
 		"create_trigger": [
@@ -408,6 +407,7 @@
 		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
+		"transcribe_file": ["id", "language", "workspace_id"],
 		"traverse_graph": [
 			"direction",
 			"edge_type_allow_list",

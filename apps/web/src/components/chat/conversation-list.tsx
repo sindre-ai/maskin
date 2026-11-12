@@ -10,7 +10,7 @@ import { groupConversations } from '@/lib/conversation-groups'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
@@ -46,6 +46,12 @@ export function ConversationListHeader({
 	const searchRef = useRef<HTMLInputElement>(null)
 	const [focused, setFocused] = useState(false)
 	usePageSearchShortcut(() => focusField(searchRef.current))
+	// Esc clears the text and leaves the field (type=search never blurs on its own).
+	const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+		if (e.key !== 'Escape') return
+		onQueryChange('')
+		searchRef.current?.blur()
+	}
 	const expanded = focused || query !== ''
 	if (!titled) {
 		return (
@@ -58,6 +64,7 @@ export function ConversationListHeader({
 							type="search"
 							value={query}
 							onChange={(e) => onQueryChange(e.target.value)}
+							onKeyDown={onSearchKeyDown}
 							placeholder="Search chats"
 							aria-label="Search chats"
 							className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
@@ -90,6 +97,7 @@ export function ConversationListHeader({
 					type="search"
 					value={query}
 					onChange={(e) => onQueryChange(e.target.value)}
+					onKeyDown={onSearchKeyDown}
 					onFocus={() => setFocused(true)}
 					onBlur={() => setFocused(false)}
 					placeholder="Search chats"

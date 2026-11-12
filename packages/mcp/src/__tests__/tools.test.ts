@@ -56,6 +56,7 @@ const ALL_TOOL_NAMES = [
 	'rename_file_tag',
 	'merge_file_tags',
 	'get_file',
+	'transcribe_file',
 	'update_file',
 	'propose_file_changes',
 	'delete_file',
@@ -78,14 +79,12 @@ const ALL_TOOL_NAMES = [
 	'set_loop_view',
 	'query_data',
 	'delete_loop',
-	'create_session',
 	'create_sub_chat',
 	'create_chat',
 	'add_chat_participant',
 	'remove_chat_participant',
 	'get_chat_activity',
 	'stop_chat_agent',
-	'run_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',
@@ -682,8 +681,8 @@ describe('update_actor schema', () => {
 	})
 })
 
-describe('create_session schema', () => {
-	const schema = tools.create_session.inputSchema
+describe('create_sub_chat schema', () => {
+	const schema = tools.create_sub_chat.inputSchema
 	const base = { workspace_id: uuid, actor_id: uuid, action_prompt: 'Test' }
 
 	it('requires workspace_id, actor_id and action_prompt', () => {
@@ -715,9 +714,9 @@ describe('create_session schema', () => {
 		expect(schema.shape).not.toHaveProperty('notify_on_complete')
 	})
 
-	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {
-		expect(schema.parse({ ...base, wait: true }).wait).toBe(true)
-		expect(schema.parse(base).wait).toBeUndefined()
+	it('has no wait parameter: the call always returns at once', () => {
+		expect(schema.shape).not.toHaveProperty('wait')
+		expect(schema.parse({ ...base, wait: true })).not.toHaveProperty('wait')
 	})
 
 	it('accepts spawned_by_message_id', () => {

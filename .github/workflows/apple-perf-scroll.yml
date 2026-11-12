@@ -63,7 +63,7 @@ jobs:
           xcodebuild -version
 
       # The demo server uses only Node built-ins, so no pnpm install.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 

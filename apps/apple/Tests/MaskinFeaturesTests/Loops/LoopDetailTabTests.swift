@@ -15,18 +15,18 @@ struct LoopDetailTabTests {
 				== ["Overview", "Performance", "Items", "Activity", "Setup"])
 	}
 
-	@Test("each view is a tab right after Overview, in order")
+	@Test("each view is a tab after the fixed tabs, in order")
 	func order() {
 		#expect(
 			LoopDetailTab.tabs(views: [results, health], hasBriefings: false).map(\.title)
-				== ["Overview", "Results", "Pipeline health", "Performance", "Items", "Activity", "Setup"])
+				== ["Overview", "Performance", "Items", "Activity", "Setup", "Results", "Pipeline health"])
 	}
 
 	@Test("Briefings joins after Performance once the flow has one")
 	func briefings() {
 		#expect(
 			LoopDetailTab.tabs(views: [results], hasBriefings: true).map(\.title)
-				== ["Overview", "Results", "Performance", "Briefings", "Items", "Activity", "Setup"])
+				== ["Overview", "Performance", "Briefings", "Items", "Activity", "Setup", "Results"])
 	}
 
 	@Test("two views with one name are two tabs")
@@ -34,12 +34,12 @@ struct LoopDetailTabTests {
 		let twin = LoopView(name: "Results", fileID: "f3")
 		let tabs = LoopDetailTab.tabs(views: [results, twin], hasBriefings: false)
 		#expect(Set(tabs.map(\.id)).count == tabs.count)
-		#expect(tabs[1] != tabs[2])
+		#expect(tabs[5] != tabs[6])
 	}
 
 	@Test("the view tab carries the file it opens")
 	func carriesFile() {
-		let tab = LoopDetailTab.tabs(views: [results], hasBriefings: false)[1]
+		let tab = LoopDetailTab.tabs(views: [results], hasBriefings: false)[5]
 		guard case .view(let index, let view) = tab else {
 			Issue.record("expected a view tab")
 			return

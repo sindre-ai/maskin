@@ -3,7 +3,6 @@ import {
 	AgentStatusPill,
 	type PortraitStatus,
 	agentAvatarStatus,
-	agentTileClass,
 	describeFocus,
 	getPortraitStatus,
 	portraitStatusToFilter,
@@ -677,10 +676,7 @@ function AgentRowItem({
 					size="md"
 					id={agent.id}
 					status={agentAvatarStatus(portrait)}
-					className={cn(
-						'size-8 shrink-0 rounded-lg text-[11px] font-bold',
-						agentTileClass(portrait),
-					)}
+					className="size-8 shrink-0"
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
 					<span className="truncate text-[15px] font-semibold text-foreground">{agent.name}</span>

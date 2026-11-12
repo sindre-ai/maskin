@@ -177,7 +177,7 @@ describe('group_chat_message_routed', () => {
 		it('emits on the cap path with dropped_agent_cap for every candidate', async () => {
 			const [a, b] = [await actor('agent'), await actor('agent')]
 			const { sessionManager, conversationId } = await chatWith([a, b])
-			for (let i = 0; i < 5; i++) await post(conversationId, a.id, `agent turn ${i}`)
+			for (let i = 0; i < 20; i++) await post(conversationId, a.id, `agent turn ${i}`)
 			const messageId = await post(conversationId, b.id, 'still there?', [a.id])
 
 			expect(await respond(sessionManager, conversationId, messageId)).toBe('agent_cap')
