@@ -67,6 +67,10 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	/// Set on the direct message (DM) of a pair, nil on every topical chat (list responses only).
 	/// The list tells the two apart by this alone, never by title or participant count.
 	public var directPairKey: String?
+	/// A room a person made (`.free`), or the chat about a flow (`.flow`); nil on every other chat.
+	public var roomKind: RoomKind?
+	/// The flow this chat is about, when `roomKind` is `.flow` (list responses only).
+	public var flowID: String?
 	public var participants: [ChatParticipant]
 	/// The caller's read cursor (detail responses only).
 	public var lastReadMessageID: Int?
@@ -75,7 +79,8 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 		id: String, title: String, lastMessageAt: Date? = nil, createdAt: Date? = nil,
 		pinned: Bool = false, archived: Bool = false, unreadCount: Int = 0, snippet: String? = nil,
 		snippetActorName: String? = nil, snippetActorID: String? = nil, directPairKey: String? = nil,
-		participants: [ChatParticipant] = [], lastReadMessageID: Int? = nil
+		participants: [ChatParticipant] = [], lastReadMessageID: Int? = nil,
+		roomKind: RoomKind? = nil, flowID: String? = nil
 	) {
 		self.id = id
 		self.title = title
@@ -90,6 +95,8 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 		self.directPairKey = directPairKey
 		self.participants = participants
 		self.lastReadMessageID = lastReadMessageID
+		self.roomKind = roomKind
+		self.flowID = flowID
 	}
 
 	/// The date the list sorts and groups by.
@@ -97,6 +104,15 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public var isUnread: Bool { unreadCount > 0 }
 	/// The pair's direct message, as opposed to a topical chat with the same two people.
 	public var isDirect: Bool { directPairKey != nil }
+	public var isRoom: Bool { roomKind != nil }
+}
+
+/// What kind of room a chat is. The Rooms group of the list is every chat that has one.
+public enum RoomKind: String, Sendable, Hashable, Codable {
+	/// A named, long-lived chat a person made a room on purpose.
+	case free
+	/// The chat about a flow.
+	case flow
 }
 
 public struct ConversationPage: Sendable, Equatable {

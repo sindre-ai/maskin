@@ -407,6 +407,51 @@ public final class ConversationsStore {
 		return created
 	}
 
+	/// A new room: a named chat that stays in the list's Rooms group. Throws like `create`.
+	@discardableResult
+	public func createRoom(
+		title: String, participantIDs: [String], firstMessage: String?,
+		firstMessageMetadata: ChatSendMetadata? = nil
+	) async throws -> ConversationSummary {
+		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+		let hasMessage = !(message?.isEmpty ?? true)
+		let created = try await api.createRoom(
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
+		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
+			conversations.insert(created, at: 0)
+		}
+		return created
+	}
+
+	/// "Make this a room" and "Turn back into a chat". The row changes at once and goes back if
+	/// the server refuses.
+	@discardableResult
+	public func setRoom(_ id: String, _ isRoom: Bool) async -> Bool {
+		await mutate(id, apply: { $0.roomKind = isRoom ? .free : nil }) {
+			try await self.api.setRoom(conversationID: id, isRoom: isRoom)
+		}
+	}
+
+	/// "Make this a flow" on a room: a new paused flow takes the room's chat as its own.
+	@discardableResult
+	public func makeFlow(_ id: String) async -> Bool {
+		guard let row = conversation(id: id) else { return false }
+		do {
+			let flowID = try await api.makeFlow(
+				conversationID: id, title: row.title, idempotencyKey: IdempotencyKey.make())
+			update(id) {
+				$0.roomKind = .flow
+				$0.flowID = flowID
+			}
+			return true
+		} catch {
+			notice = Self.message(error)
+			return false
+		}
+	}
+
 	/// The person's one direct message with `participantID`, created the first time. Throws like
 	/// `create`. An archived direct message comes back as it is and is opened by id, so it is only
 	/// added to the list when it is already part of it.

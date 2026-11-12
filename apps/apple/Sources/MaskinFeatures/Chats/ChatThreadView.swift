@@ -363,6 +363,26 @@ struct ChatThreadView: View {
 				} label: {
 					Label("Rename", systemImage: "pencil")
 				}
+				if let conversations, let row = conversations.conversation(id: store.conversationID), !row.isDirect {
+					if row.roomKind == nil {
+						Button {
+							Task { await conversations.setRoom(row.id, true) }
+						} label: {
+							Label("Make this a room", systemImage: "number")
+						}
+					} else if row.roomKind == .free {
+						Button {
+							Task { await conversations.makeFlow(row.id) }
+						} label: {
+							Label("Make this a flow", systemImage: "arrow.triangle.2.circlepath")
+						}
+						Button {
+							Task { await conversations.setRoom(row.id, false) }
+						} label: {
+							Label("Turn back into a chat", systemImage: "number")
+						}
+					}
+				}
 				if !store.idleSessions().isEmpty {
 					Button(role: .destructive) {
 						let ids = store.idleSessions().map(\.id)
