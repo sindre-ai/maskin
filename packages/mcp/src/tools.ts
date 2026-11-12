@@ -16,6 +16,7 @@ import {
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
+	scheduleNextStepSchema,
 	setNextStepSchema,
 	skillNameSchema,
 	updateNextStepSchema,
@@ -535,6 +536,15 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			object_id: z.string().uuid().describe('The object the step belongs to.'),
 			...updateNextStepSchema.shape,
+		}),
+	},
+	schedule_next_step: {
+		description:
+			'End a turn with a next step that is backed by something. Use this instead of saying you will check back later with nothing behind it. Pass object_id, action (one short sentence) and due_at (an ISO time with a timezone, at least 5 minutes away). By default you are the owner: the step is stored and you are woken at due_at on that object, with the object and the step in the prompt. Pass owner_id for another agent and a task is created with that agent as driver; the step then waits on that task and no timer is set. A person as owner is stored and nobody is woken. Closing or replacing the step (update_next_step, or replace: true here) cancels the wake-up. Refused (409) while the object has an open or blocked step unless replace is true. Refused (429) when a run that started on its own already has its limit of wake-ups waiting; a run a person started is not limited. A wake-up that starts more than 1 hour late does nothing and leaves the step open. Use set_next_step instead when nobody should be woken.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...scheduleNextStepSchema.shape,
 		}),
 	},
 	delete_object: {

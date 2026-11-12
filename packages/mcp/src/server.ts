@@ -4474,6 +4474,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'schedule_next_step',
+		{
+			description: tools.schedule_next_step.description,
+			inputSchema: tools.schedule_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/objects/${object_id}/schedule-next-step`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('schedule_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_next_step',
 		{
 			description: tools.update_next_step.description,
