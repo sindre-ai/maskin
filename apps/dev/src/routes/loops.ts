@@ -10,10 +10,11 @@ import {
 	triggers,
 	workspaceMembers,
 } from '@maskin/db/schema'
+import { TARGET_OF_RELATIONSHIP_TYPE, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
 	type LoopTarget,
 	SAFE_METADATA_FIELD_NAME_RE,
-	TERMINAL_BET_STATUSES,
+	TERMINAL_STATUSES_BY_TYPE,
 	findChange,
 	getChangesFromEventData,
 	listLoopBriefingsResponseSchema,
@@ -24,7 +25,7 @@ import {
 	normalizeTags,
 	readChanges,
 } from '@maskin/shared'
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -113,35 +114,13 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  */
 
 /**
- * Terminal statuses per object type — a child object in one of these values
- * counts toward the loop's `closedCount` and drops out of `inProgressCount`.
- * `bet` is `TERMINAL_BET_STATUSES` (`packages/shared/src/schemas/objects.ts`)
- * *plus* `archived` — a deliberate, loop-scoped superset, not a mirror.
- * `TERMINAL_BET_STATUSES` excludes `archived` on purpose (archiving a bet is
- * a silent move that must not fan out a retro or unread-feed row), but that's
- * a "does this warrant a notification" definition, not a "is this bet still
- * active work" one. For loop progress tracking, an archived bet has stopped
- * moving either way, so it belongs in `closedCount` here even though it never
- * triggers the bet-terminal watcher signal.
- * `task` mirrors the done-set the CTO/validation flow treats as complete.
- * `insight`'s only closed state today is `discarded` (see workspace-briefing's
- * `ne(objects.status, 'discarded')` filter for open insights).
- *
- * Kept as a per-type table here rather than shared because the read API is
- * the only consumer today; if a second consumer appears, promote to
- * `packages/shared/src/schemas/objects.ts` alongside `TERMINAL_BET_STATUSES`.
- *
- * This table is the FALLBACK only. A loop can carry its own
- * `metadata.closed_statuses` map (`{ <type>: [statuses...] }`, written by the
- * MCP create_loop/update_loop tools) that overrides the entry for a type —
- * that's what makes closed counts work for workspace-defined custom object
- * types, which by definition can never appear in a hardcoded table.
+ * `TERMINAL_STATUSES_BY_TYPE` (shared) is the FALLBACK for what counts as
+ * closed per object type. A loop can carry its own `metadata.closed_statuses`
+ * map (`{ <type>: [statuses...] }`, written by the MCP create_loop/update_loop
+ * tools) that overrides the entry for a type — that's what makes closed counts
+ * work for workspace-defined custom object types, which by definition can never
+ * appear in a hardcoded table.
  */
-const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
-	bet: [...TERMINAL_BET_STATUSES, 'archived'],
-	task: ['done', 'validated', 'discarded'],
-	insight: ['discarded'],
-}
 
 /**
  * Extract a loop's `metadata.closed_statuses` override map, shape-validated:
@@ -213,6 +192,44 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 	const cleaned: LoopTarget[] = []
 	for (const entry of raw) {
 		const parsed = loopTargetSchema.safeParse(entry)
+		if (parsed.success) cleaned.push(parsed.data)
+	}
+	return cleaned.length > 0 ? cleaned : null
+}
+
+/** Target objects in these statuses are not shown on a flow. */
+const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
+
+type TargetObjectRow = {
+	title: string
+	driver: string | null
+	metadata: unknown
+}
+
+/**
+ * A flow's targets list from its target objects (linked with `target_of`).
+ * Same row shape as `readLoopTargets`: title is the label, driver the owner.
+ * Where the object has no `actual` number, the actual (and `pace_policy`) of
+ * the old row with the same label is kept, so a hand-set actual still shows.
+ * Rows that fail the shape check are dropped, like the old rows. `null` when
+ * nothing usable is left, so the caller can fall back to the old rows.
+ */
+function targetsFromObjects(
+	rows: TargetObjectRow[],
+	legacy: LoopTarget[] | null,
+): LoopTarget[] | null {
+	const cleaned: LoopTarget[] = []
+	for (const row of rows) {
+		const meta = (row.metadata as Record<string, unknown> | null) ?? {}
+		const old = legacy?.find((l) => l.label === row.title)
+		const parsed = loopTargetSchema.safeParse({
+			label: row.title,
+			source: meta.source,
+			actual: typeof meta.actual === 'number' ? meta.actual : old?.actual,
+			target: meta.target,
+			ownerActorId: row.driver ?? undefined,
+			pace_policy: old?.pace_policy,
+		})
 		if (parsed.success) cleaned.push(parsed.data)
 	}
 	return cleaned.length > 0 ? cleaned : null
@@ -333,6 +350,34 @@ app.openapi(listLoopsRoute, (async (c) => {
 	}
 
 	const loopIds = loopRows.map((l) => l.id)
+
+	// Target objects linked to these loops (source = target object, target =
+	// loop). Oldest link first, so the list keeps a steady order.
+	const targetObjectRows = await db
+		.select({
+			loopId: relationships.targetId,
+			title: objects.title,
+			driver: objects.driver,
+			metadata: objects.metadata,
+		})
+		.from(relationships)
+		.innerJoin(objects, eq(objects.id, relationships.sourceId))
+		.where(
+			and(
+				eq(relationships.type, TARGET_OF_RELATIONSHIP_TYPE),
+				inArray(relationships.targetId, loopIds),
+				eq(objects.workspaceId, workspaceId),
+				eq(objects.type, TARGET_TYPE),
+				notInArray(objects.status, HIDDEN_TARGET_STATUSES),
+			),
+		)
+		.orderBy(asc(relationships.createdAt), asc(objects.createdAt))
+	const targetObjectsByLoop = new Map<string, TargetObjectRow[]>()
+	for (const row of targetObjectRows) {
+		const list = targetObjectsByLoop.get(row.loopId) ?? []
+		list.push(row)
+		targetObjectsByLoop.set(row.loopId, list)
+	}
 
 	// Trigger ids referenced in metadata.trigger_ids. Membership lives on the
 	// loop row (per T1(b)) since triggers can outlive their loop. Collect
@@ -595,7 +640,11 @@ app.openapi(listLoopsRoute, (async (c) => {
 				typeof meta.close_condition === 'string' && meta.close_condition.length > 0
 					? meta.close_condition
 					: null
-			const targets = readLoopTargets(meta)
+			// Target objects first; the rows in metadata.targets stay as the
+			// fallback for a flow with no target objects yet.
+			const legacyTargets = readLoopTargets(meta)
+			const targets =
+				targetsFromObjects(targetObjectsByLoop.get(row.id) ?? [], legacyTargets) ?? legacyTargets
 			const tags = normalizeTags(meta.tags)
 
 			const stats = childStatsByLoop.get(row.id) ?? {

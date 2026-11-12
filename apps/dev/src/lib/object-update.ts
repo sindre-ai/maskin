@@ -1,5 +1,7 @@
-import type { Transaction } from '@maskin/db'
+import { isDeepStrictEqual } from 'node:util'
+import type { Database, Transaction } from '@maskin/db'
 import { objects, subscriptions, triggers } from '@maskin/db/schema'
+import { TARGET_FIELDS, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
 	OBJECT_DIFF_FIELDS,
 	TERMINAL_BET_STATUSES,
@@ -19,6 +21,12 @@ export interface ApplyObjectUpdateInput {
 	actorId: string
 	body: ObjectUpdate
 	sessionId?: string
+	/**
+	 * The caller's actor type. An agent is refused a change to what defines done: a target's
+	 * fields and status, and a flow's targets, entry condition, close condition and closed
+	 * statuses. Left unset by callers that act for a person (a card tap).
+	 */
+	actorType?: string
 	/** Apply only if the object is still in this status, checked under the row lock. */
 	onlyIfStatus?: string
 }
@@ -28,6 +36,99 @@ export interface ApplyObjectUpdateResult {
 	row?: typeof objects.$inferSelect
 	/** Set when `onlyIfStatus` did not hold: the status the object is in now. */
 	staleStatus?: string | null
+}
+
+/** Thrown when an agent tries to change a field only a person may change. Maps to a 403. */
+export class AgentFieldWriteError extends Error {
+	constructor(
+		readonly fields: string[],
+		readonly objectType: string,
+	) {
+		super(
+			`Agents cannot change ${fields.join(', ')} on a ${objectType}. Ask a person with a decision card (create_comment with a decision and the person in mentions), and let them make the change.`,
+		)
+		this.name = 'AgentFieldWriteError'
+	}
+}
+
+const TARGET_GUARDED_METADATA_KEYS: string[] = TARGET_FIELDS.map((f) => f.name)
+const LOOP_GUARDED_METADATA_KEYS = [
+	'targets',
+	'entry_condition',
+	'close_condition',
+	'closed_statuses',
+	'closed_when',
+]
+
+/**
+ * The fields of this update that an agent may not change: a target object's label, numbers and
+ * status, and a flow's targets, entry condition, close condition and closed statuses
+ * (closed_when is the other way to say what counts as closed). A value written back unchanged is
+ * not a change. A target's owner is not guarded. Scope written in prose cannot be told from a
+ * normal edit, so it is not guarded.
+ */
+export function guardedFieldsChanged(
+	current: typeof objects.$inferSelect,
+	body: Pick<ObjectUpdate, 'title' | 'status' | 'metadata'>,
+): string[] {
+	const keys =
+		current.type === TARGET_TYPE
+			? TARGET_GUARDED_METADATA_KEYS
+			: current.type === 'loop'
+				? LOOP_GUARDED_METADATA_KEYS
+				: []
+	if (keys.length === 0) return []
+
+	const changed: string[] = []
+	if (current.type === TARGET_TYPE && body.title !== undefined && body.title !== current.title) {
+		changed.push('title')
+	}
+	if (current.type === TARGET_TYPE && body.status !== undefined && body.status !== current.status) {
+		changed.push('status')
+	}
+	const before = (current.metadata ?? {}) as Record<string, unknown>
+	const after = (body.metadata ?? {}) as Record<string, unknown>
+	for (const key of keys) {
+		if (key in after && !isDeepStrictEqual(after[key], before[key])) changed.push(key)
+	}
+	return changed
+}
+
+/**
+ * Log a refused agent write. Counts and ids only: no field names, no values, no content.
+ * Recorded outside the refused transaction, which has rolled back. A failure to log never
+ * changes the refusal.
+ */
+export async function recordAgentWriteRefused(
+	db: Database,
+	params: {
+		workspaceId: string
+		actorId: string
+		objectId: string
+		objectType: string
+		fieldCount: number
+		sessionId?: string
+	},
+): Promise<void> {
+	try {
+		await recordEvent(db, {
+			workspaceId: params.workspaceId,
+			actorId: params.actorId,
+			action: 'agent_write_refused',
+			entityType: 'object',
+			entityId: params.objectId,
+			data: {
+				object_type: params.objectType,
+				field_count: params.fieldCount,
+				session_id: params.sessionId ?? null,
+			},
+		})
+	} catch (err) {
+		logger.warn('agent_write_refused event failed', {
+			objectId: params.objectId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }
 
 /**
@@ -56,6 +157,11 @@ export async function applyObjectUpdate(
 	// the fan-out.
 	const [current] = await tx.select().from(objects).where(eq(objects.id, id)).for('update').limit(1)
 	if (!current) return {}
+
+	if (input.actorType === 'agent') {
+		const refused = guardedFieldsChanged(current, body)
+		if (refused.length > 0) throw new AgentFieldWriteError(refused, current.type)
+	}
 
 	// A status change made from an answer to a card: the card was written about one status, so
 	// if the object has moved on since, leave it where it is.
