@@ -271,6 +271,16 @@ export function agentBudgetLimit(settings: unknown, actorId: string): number | n
 	return parsed.data.per_agent?.[actorId] ?? parsed.data.default_tokens ?? null
 }
 
+/** True while a person has set this agent to warnings only, so the limit does not refuse its runs. */
+export function agentBudgetWarnOnly(settings: unknown, actorId: string, now: Date): boolean {
+	const parsed = agentDailyBudgetSchema.safeParse(
+		(settings as { agent_daily_budget?: unknown } | null)?.agent_daily_budget,
+	)
+	if (!parsed.success) return false
+	const until = parsed.data.warn_only_until?.[actorId]
+	return until !== undefined && now.getTime() < new Date(until).getTime()
+}
+
 const REASON_WORDS: Record<SessionStartReason, string> = {
 	person: 'person-started',
 	agent_request: 'agent-requested',
@@ -763,6 +773,21 @@ async function checkAgentBudget(
 			dedupeKey: `budget_warn:${input.actorId}:${day}`,
 			headline: `${name} is near its daily limit for self-started runs`,
 			rationale: `${spent.toLocaleString('en-US')} of ${limit.toLocaleString('en-US')} tokens used today by runs it started on its own. At the limit those runs stop and I will ask you. Runs you start still go through.`,
+		}).catch((err) => logger.warn('Failed to send the budget warning', { error: String(err) }))
+		return
+	}
+	if (agentBudgetWarnOnly(ws?.settings, input.actorId, now)) {
+		logger.warn('Agent is over its daily token budget, warn-only so the run is admitted', {
+			workspaceId: input.workspaceId,
+			actorId: input.actorId,
+			spentTokens: spent,
+			limitTokens: limit,
+		})
+		await sendOwnerCard(db, {
+			workspaceId: input.workspaceId,
+			dedupeKey: `budget_over_warn:${input.actorId}:${day}`,
+			headline: `${name} is over its daily limit for self-started runs`,
+			rationale: `${spent.toLocaleString('en-US')} of ${limit.toLocaleString('en-US')} tokens used today by runs it started on its own. It is set to warnings only for now, so its runs still start. The stop switches on by itself after the warn-only period ends.`,
 		}).catch((err) => logger.warn('Failed to send the budget warning', { error: String(err) }))
 		return
 	}
