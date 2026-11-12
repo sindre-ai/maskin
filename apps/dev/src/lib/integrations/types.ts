@@ -214,10 +214,12 @@ export interface DeliverableField {
 	/**
 	 * Which part of the preview a `text` field fills: the `subject`, or the `context` (what
 	 * the draft answers, shown above the text and never sent). `hidden` keeps a field the
-	 * send tool needs (a conversation id) off the card. A `text` field with no slot is a
+	 * send tool needs (a conversation id) off the card. `media` is a list of workspace file ids
+	 * (comma separated) that go out with the text: the card draws the files instead of a detail
+	 * line, and they stay part of what an approval is bound to. A `text` field with no slot is a
 	 * detail line.
 	 */
-	slot?: 'subject' | 'context' | 'hidden'
+	slot?: 'subject' | 'context' | 'hidden' | 'media'
 	/** Not required to send, but worth a warning on the card when empty. */
 	recommended?: boolean
 }

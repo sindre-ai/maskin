@@ -141,6 +141,17 @@ private let onRuntimeReady: (AppRuntime) -> Void
 				load: { [chatImages] id in await chatImages.image(for: id) })
 		)
 		.environment(\.openAttachment, { @MainActor [runtime] id in runtime.openFile(id) })
+		.environment(
+			\.previewMedia,
+			PreviewMediaLoader(
+				items: { @MainActor [environment] ids in
+					await LinkedItemStores.store(for: environment)?.previewMedia(ids: ids) ?? []
+				},
+				file: { @MainActor [environment] id in
+					guard let store = LinkedItemStores.store(for: environment) else { throw FileError("No file store.") }
+					return try await store.loadFile(id: id)
+				})
+		)
 		.task { onRuntimeReady(runtime) }
 		.task { ThreadWarmup.run() }
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }

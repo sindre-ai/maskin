@@ -462,6 +462,12 @@
 														"null"
 													]
 												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
 												"body": {
 													"type": "string"
 												},
@@ -894,6 +900,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -1427,6 +1439,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -2195,6 +2213,12 @@
 															"string",
 															"null"
 														]
+													},
+													"media_file_ids": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
 													},
 													"body": {
 														"type": "string"
@@ -3542,6 +3566,12 @@
 															"null"
 														]
 													},
+													"media_file_ids": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"body": {
 														"type": "string"
 													},
@@ -3940,6 +3970,12 @@
 																"null"
 															]
 														},
+														"media_file_ids": {
+															"type": "array",
+															"items": {
+																"type": "string"
+															}
+														},
 														"body": {
 															"type": "string"
 														},
@@ -4310,6 +4346,12 @@
 																	"string",
 																	"null"
 																]
+															},
+															"media_file_ids": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
 															},
 															"body": {
 																"type": "string"
@@ -5059,6 +5101,12 @@
 														"null"
 													]
 												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
 												"body": {
 													"type": "string"
 												},
@@ -5490,6 +5538,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -6045,6 +6099,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -6620,6 +6680,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -25225,6 +25291,12 @@
 												"string",
 												"null"
 											]
+										},
+										"lastRunAt": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -25461,6 +25533,18 @@
 					{
 						"schema": {
 							"type": "string",
+							"enum": [
+								"true",
+								"false"
+							]
+						},
+						"required": false,
+						"name": "include_last_run",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
@@ -25537,6 +25621,12 @@
 												]
 											},
 											"updatedAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"lastRunAt": {
 												"type": [
 													"string",
 													"null"
@@ -25622,6 +25712,176 @@
 			}
 		},
 		"/api/triggers/{id}": {
+			"get": {
+				"tags": [
+					"triggers"
+				],
+				"summary": "Get a trigger",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The trigger, with when it last fired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"type": {
+											"type": "string"
+										},
+										"config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"actionPrompt": {
+											"type": "string"
+										},
+										"targetActorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"enabled": {
+											"type": "boolean"
+										},
+										"metadata": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"lastRunAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"type",
+										"config",
+										"actionPrompt",
+										"targetActorId",
+										"enabled",
+										"createdBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Trigger not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
 			"patch": {
 				"x-viewer-policy": "writer",
 				"tags": [
@@ -25866,6 +26126,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"lastRunAt": {
 											"type": [
 												"string",
 												"null"
@@ -40454,6 +40720,12 @@
 														"string",
 														"null"
 													]
+												},
+												"lastRunAt": {
+													"type": [
+														"string",
+														"null"
+													]
 												}
 											},
 											"required": [
@@ -46413,6 +46685,18 @@
 						},
 						"required": false,
 						"name": "sort",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"priority",
+								"recent"
+							]
+						},
+						"required": false,
+						"name": "scope",
 						"in": "query"
 					},
 					{
@@ -60591,6 +60875,12 @@
 																			"null"
 																		]
 																	},
+																	"media_file_ids": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -60887,6 +61177,12 @@
 																								"null"
 																							]
 																						},
+																						"media_file_ids": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -61114,6 +61410,12 @@
 																							"string",
 																							"null"
 																						]
+																					},
+																					"media_file_ids": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
 																					},
 																					"body": {
 																						"type": "string"
@@ -64963,6 +65265,12 @@
 																			"null"
 																		]
 																	},
+																	"media_file_ids": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -65259,6 +65567,12 @@
 																								"null"
 																							]
 																						},
+																						"media_file_ids": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -65486,6 +65800,12 @@
 																							"string",
 																							"null"
 																						]
+																					},
+																					"media_file_ids": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
 																					},
 																					"body": {
 																						"type": "string"
@@ -65948,6 +66268,12 @@
 																	"string",
 																	"null"
 																]
+															},
+															"media_file_ids": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
 															},
 															"body": {
 																"type": "string"

@@ -346,7 +346,7 @@ describe('resend_send_email: an approved email with a file', () => {
 })
 
 describe('the approval card', () => {
-	it('shows file names while the hash stays bound to the ids', async () => {
+	it('lists the files as media, not as an id line, and the hash stays bound to the ids', async () => {
 		const s = await setup('gmail')
 		const file = await fileFor(s, { name: 'kvittering.pdf' })
 		const email = await emailWith(s, [file.id], { approve: false })
@@ -356,7 +356,25 @@ describe('the approval card', () => {
 
 		const shown = await withDeliveryState(db, s.workspace.id, email.id, base)
 
-		expect(shown.details).toContainEqual({ label: 'Attachments', value: 'kvittering.pdf' })
+		expect(shown.media_file_ids).toEqual([file.id])
+		expect(shown.details.map((d) => d.label)).not.toContain('Attachments')
+		expect(shown.warnings).toEqual([])
+		expect(shown.content_hash).toBe(base.content_hash)
+	})
+
+	it('warns, without an id, when a listed file is not in the workspace', async () => {
+		const s = await setup('gmail')
+		const other = await setup('gmail')
+		const email = await emailWith(s, [(await fileFor(other)).id], { approve: false })
+		const [object] = await db.select().from(objects).where(eq(objects.id, email.id))
+		const base = buildObjectPreview(object as never)
+		if (!base) throw new Error('no preview')
+
+		const shown = await withDeliveryState(db, s.workspace.id, email.id, base)
+
+		expect(shown.warnings).toEqual([
+			'A file this draft lists is missing from the workspace, so it cannot be sent.',
+		])
 		expect(shown.content_hash).toBe(base.content_hash)
 	})
 })

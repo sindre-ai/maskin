@@ -187,6 +187,7 @@ struct FeedDraftDTO: Decodable {
 		var recipients: [Recipient]?
 		var subject: String?
 		var details: [Detail]?
+		var media_file_ids: [String]?
 		var body: String
 		var missing: [String]?
 		var warnings: [String]?
@@ -223,8 +224,8 @@ struct FeedDraftDTO: Decodable {
 				},
 				subject: p.subject,
 				details: (p.details ?? []).map { .init(label: $0.label, value: $0.value) },
-				body: p.body, missing: p.missing ?? [], warnings: p.warnings ?? [],
-				contentHash: p.content_hash,
+				mediaFileIDs: p.media_file_ids ?? [], body: p.body, missing: p.missing ?? [],
+				warnings: p.warnings ?? [], contentHash: p.content_hash,
 				delivery: p.delivery.flatMap { ObjectPreview.Delivery(rawValue: $0.state) })
 		}
 		return DecisionDraft(

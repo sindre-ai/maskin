@@ -2,7 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { events, actors } from '@maskin/db/schema'
 import type { ObjectPreview } from '@maskin/shared'
 import { and, desc, eq } from 'drizzle-orm'
-import { withAttachmentNames } from './email-attachments'
+import { withMediaWarnings } from './email-attachments'
 import { recordEventReturning } from './events/record-event'
 
 /**
@@ -92,8 +92,8 @@ export async function withDeliveryState(
 	objectId: string,
 	basePreview: ObjectPreview,
 ): Promise<ObjectPreview> {
-	// File names for display; the hash was computed from the ids and stays as it is.
-	const preview = await withAttachmentNames(db, workspaceId, basePreview)
+	// A listed file that is gone is a warning; the hash was computed from the ids and stays as it is.
+	const preview = await withMediaWarnings(db, workspaceId, basePreview)
 	const delivered = await latestEvent(db, workspaceId, objectId, DELIVERED_ACTION, false)
 	if (delivered?.contentHash === preview.content_hash) {
 		return {

@@ -120,6 +120,7 @@ struct LinkedDraftCard: View {
 					.frame(maxWidth: .infinity, alignment: .leading)
 					.fixedSize(horizontal: false, vertical: true)
 			}
+			PreviewMediaStrip(ids: preview.mediaFileIDs)
 			footer
 		}
 		.padding(.horizontal, MaskinSpace.s6)

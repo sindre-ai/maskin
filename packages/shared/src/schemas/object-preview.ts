@@ -42,6 +42,13 @@ export const objectPreviewSchema = z.object({
 	 * it is not sent, so it is not in `content_hash`.
 	 */
 	context: z.string().nullable().optional(),
+	/**
+	 * The workspace files that go out with the text, in order: the images of a post or a carousel,
+	 * a video, a document. Ids only; a client loads each file to draw it. They come from the files
+	 * the kind lists to be sent (`attachment_file_ids`), never from whatever else is attached to the
+	 * object, so the card shows what will be sent. Changing the list changes `content_hash`.
+	 */
+	media_file_ids: z.array(z.string()).optional(),
 	/** The exact text that would go out. */
 	body: z.string(),
 	/** Longest body the channel accepts, when it has a limit worth showing. */
