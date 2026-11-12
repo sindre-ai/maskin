@@ -68,6 +68,11 @@ export const ALIASES: readonly AliasRow[] = [
 	// entity_id, the object the comment goes on.
 	{ tool: 'create_comment', oldPath: 'object_id', newPath: 'entity_id', kind: 'rename' },
 
+	// create_objects and update_objects take their list as nodes / updates. Agents send it as
+	// `objects`, the name of the thing it holds (about 180 failed calls in three days, Nov 2026).
+	{ tool: 'create_objects', oldPath: 'objects', newPath: 'nodes', kind: 'rename' },
+	{ tool: 'update_objects', oldPath: 'objects', newPath: 'updates', kind: 'rename' },
+
 	// id sent to a tool that wants a list of ids.
 	{ tool: 'get_objects', oldPath: 'id', newPath: 'ids', kind: 'wrap' },
 
@@ -78,6 +83,14 @@ export const ALIASES: readonly AliasRow[] = [
 	{ tool: 'update_workspace_skill', oldPath: 'id', newPath: 'name', kind: 'rename' },
 	{ tool: 'delete_workspace_skill', oldPath: 'id', newPath: 'name', kind: 'rename' },
 ]
+
+// Top-level keys that hold a list. A client that serialises the list into a string (a JSON array
+// as text) is rescued by parsing it once, before validation. Only a string that parses to an
+// array is replaced; anything else is left for the schema to reject with its normal message.
+export const JSON_ARRAY_KEYS: Readonly<Record<string, readonly string[]>> = {
+	create_objects: ['nodes', 'edges'],
+	update_objects: ['updates', 'edges'],
+}
 
 const ROWS_BY_TOOL = new Map<string, AliasRow[]>()
 for (const row of ALIASES) {
