@@ -4,6 +4,11 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite, useUpdateConversationMe } from '@/hooks/use-conversations'
+import {
+	type ChatListSection,
+	trackChatListSearchUsed,
+	trackChatOpenedFromList,
+} from '@/lib/analytics'
 import { type ConversationListItemResponse, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
@@ -158,6 +163,17 @@ const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = 
 	threads: { title: 'No threads yet', description: 'Reply to a message to start one.' },
 }
 
+/** How long the search box holds still before the search counts as used. */
+const SEARCH_SETTLE_MS = 1000
+
+/** The list section a group reads as in the tracking events. Direct messages and the dated groups
+ *  are `recent` until the agent rows exist. */
+function sectionOfGroup(groupKey: string): ChatListSection {
+	if (groupKey === 'pinned') return 'pinned'
+	if (groupKey === 'unread') return 'unread'
+	return 'recent'
+}
+
 export function ConversationList(props: ConversationListProps) {
 	// Threads are not conversations: they list from another endpoint, so they get their own list.
 	// Split here, above the hooks, so the hook order never changes within one mounted list.
@@ -307,6 +323,38 @@ function ChatConversationList({
 		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	// Where each row on screen sits, for the "opened from the list" event. Rows in a folded group
+	// are not on screen, so they take no place.
+	const placeById = new Map<string, { section: ChatListSection; position: number }>()
+	for (const group of groups) {
+		if (collapsed.has(group.key)) continue
+		const section = sectionOfGroup(group.key)
+		for (const c of group.items) placeById.set(c.id, { section, position: placeById.size + 1 })
+	}
+	const searching = needle !== ''
+	const trackOpened = (id: string) => {
+		const place = placeById.get(id)
+		if (!place) return
+		trackChatOpenedFromList(
+			searching
+				? { source: 'search', section: 'search', position: place.position }
+				: { source: 'list', ...place },
+		)
+	}
+	// One event per search that has settled, with how many chats it found. The count is read when the
+	// timer fires, so pages that arrive meanwhile are in it.
+	const shownCountRef = useRef(0)
+	shownCountRef.current = shown.length
+	// The query once the list is ready to answer it; empty before that and when nothing is typed.
+	const settledQuery = searching && !isLoading && !isError ? needle : ''
+	useEffect(() => {
+		if (!settledQuery) return
+		const timer = setTimeout(
+			() => trackChatListSearchUsed({ result_count: shownCountRef.current }),
+			SEARCH_SETTLE_MS,
+		)
+		return () => clearTimeout(timer)
+	}, [settledQuery])
 	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
@@ -455,6 +503,7 @@ function ChatConversationList({
 											workspaceId={workspaceId}
 											conversation={c}
 											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+											onOpen={() => trackOpened(c.id)}
 										/>
 									))}
 								</div>
