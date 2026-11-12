@@ -675,7 +675,7 @@ export const tools = {
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. Send at least one of `object_id`, `source_id`, `target_id` or `type`; with none the call is refused. Any parameter not listed here is rejected with an error.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z

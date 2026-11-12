@@ -3522,17 +3522,51 @@ async function listObjectsPage(
 }
 
 // Tools whose schema rejects a top-level argument name it does not know instead
-// of stripping it, each with the closing sentence of the refusal. Only tools where a
-// dropped key reads as a finished call: a dropped list on a write, or a dropped filter
-// on query_data that returns a plausible but wrong total. Other tools keep stripping,
-// since agents often send harmless extra keys.
+// of stripping it, each with the closing sentence of the refusal (empty for reads, which
+// write nothing). Tools where a dropped list reads as a finished write, and the
+// relationship, graph and file reads, where a dropped filter returns unrelated
+// rows or a plausible but wrong total that look like an answer. Rolled out one tool at
+// a time, each after its extra-key counts in PostHog (mcp_tool_call arg_keys) were read.
+// Other tools keep stripping, since agents often send harmless extra keys.
 const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
 	['update_objects', 'Nothing was written.'],
 	[
 		'query_data',
 		'It takes no SQL. Example: query_data({ type: "task", filters: { status: "done" }, group_by: "created_at.day" }).',
 	],
+	['list_relationships', ''],
+	['traverse_graph', ''],
+	['get_objects', ''],
+	['list_files', ''],
+	['get_file', ''],
 ])
+
+// Misspellings agents really send (PostHog, 14 days to 12 Nov 2026), shown in the
+// error beside the unknown name.
+const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
+	list_relationships: { entity_id: 'object_id', offset: 'cursor' },
+	traverse_graph: {
+		start_id: 'object_id',
+		id: 'object_id',
+		depth: 'max_depth',
+		relationship_types: 'edge_type_allow_list',
+		types: 'edge_type_allow_list',
+	},
+	get_objects: {
+		include_content: 'include: ["content"]',
+		include_body: 'include: ["content"]',
+		include_metadata: 'include: ["metadata"]',
+		include_relationships: 'include: ["relationships"]',
+	},
+	list_files: { query: 'q', search: 'q' },
+	get_file: { file_id: 'id' },
+}
+
+// A list_relationships call with none of these would list every relationship in
+// the workspace, newest first, and look like an answer.
+const REQUIRE_ONE_OF: Record<string, readonly string[]> = {
+	list_relationships: ['object_id', 'source_id', 'target_id', 'type'],
+}
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
@@ -3582,7 +3616,8 @@ export function createMcpServer(config: McpConfig) {
 		// SDK validates arguments before our handler runs. A tool with no alias
 		// rows passes through untouched, so its tools/list entry is unchanged.
 		const definition =
-			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
+			baseDefinition?.inputSchema &&
+			(needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name) || name in REQUIRE_ONE_OF)
 				? {
 						...baseDefinition,
 						inputSchema: wrapInputSchema(
@@ -3625,6 +3660,8 @@ export function createMcpServer(config: McpConfig) {
 								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
 								unknownKeysSuffix: REJECT_UNKNOWN_KEYS_TOOLS.get(name),
 								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
+								hints: UNKNOWN_KEY_HINTS[name],
+								requireOneOf: REQUIRE_ONE_OF[name],
 							},
 						),
 					}
