@@ -7,13 +7,16 @@ import { useFile, useFiles } from '@/hooks/use-files'
 import type { FileListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { ChevronLeft, ChevronRight, ImageOff } from 'lucide-react'
-import { type KeyboardEvent, useRef, useState } from 'react'
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
 
 // A picture past this size is not worth shipping into a card; it shows as a file header instead.
 const MAX_IMAGE_BYTES = 8_000_000
 
 /** How far from the slide in view a slide still loads its bytes: the next and the one before. */
 const LOAD_AHEAD = 1
+
+/** The longest a button-driven scroll is trusted to run before the scroll position is read again. */
+const SCROLL_SETTLE_MS = 1000
 
 /**
  * The media of a draft's preview, drawn after its text and before Approve, the way the post
@@ -53,6 +56,12 @@ export function PreviewMedia({ workspaceId, fileIds }: PreviewMediaProps) {
 	const [viewerAt, setViewerAt] = useState<number | null>(null)
 	const scroller = useRef<HTMLDivElement>(null)
 	const opener = useRef<HTMLElement | null>(null)
+	// Where a button or arrow key is scrolling to. Until it gets there, scroll events are the
+	// animation passing through slides, not a swipe, so they must not set the index back.
+	const scrollTarget = useRef<number | null>(null)
+	const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+	useEffect(() => () => clearTimeout(settleTimer.current), [])
 
 	if (fileIds.length === 0) return null
 	if (isLoading) return <Skeleton className="h-64 w-full rounded-lg" aria-label="Loading media" />
@@ -73,8 +82,18 @@ export function PreviewMedia({ workspaceId, fileIds }: PreviewMediaProps) {
 		setIndex(next)
 		const el = scroller.current
 		if (el && typeof el.scrollTo === 'function') {
-			el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+			scrollTarget.current = next * el.clientWidth
+			clearTimeout(settleTimer.current)
+			settleTimer.current = setTimeout(() => readIndex(el), SCROLL_SETTLE_MS)
+			el.scrollTo({ left: scrollTarget.current, behavior: 'smooth' })
 		}
+	}
+
+	// The slide in view, read back from the scroll position. Ends any button-driven scroll.
+	const readIndex = (el: HTMLElement) => {
+		scrollTarget.current = null
+		clearTimeout(settleTimer.current)
+		if (el.clientWidth > 0) setIndex(Math.round(el.scrollLeft / el.clientWidth))
 	}
 
 	const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
@@ -100,7 +119,9 @@ export function PreviewMedia({ workspaceId, fileIds }: PreviewMediaProps) {
 				// Swiping settles on a slide; the slide in view is read back from the scroll position.
 				onScroll={(e) => {
 					const el = e.currentTarget
-					if (el.clientWidth > 0) setIndex(Math.round(el.scrollLeft / el.clientWidth))
+					const target = scrollTarget.current
+					if (target !== null && Math.abs(el.scrollLeft - target) >= 1) return
+					readIndex(el)
 				}}
 				className="flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain rounded-lg border border-border bg-muted [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			>
