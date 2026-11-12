@@ -3,7 +3,6 @@ import {
 	AgentStatusPill,
 	type PortraitStatus,
 	agentAvatarStatus,
-	agentTileClass,
 } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
@@ -68,12 +67,8 @@ export function AgentDetailHeader({
 					name={agent.name}
 					type={agent.type}
 					size="xl"
-					tone="strong"
 					status={agentAvatarStatus(portrait)}
-					className={cn(
-						'size-17 rounded-2xl text-2xl font-bold [&>img]:rounded-2xl',
-						agentTileClass(portrait),
-					)}
+					className="size-17"
 					id={agent.id}
 					imageUrl={agent.avatar_url ?? undefined}
 				/>

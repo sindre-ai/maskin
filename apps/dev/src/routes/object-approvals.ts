@@ -172,9 +172,9 @@ const chatApproveRoute = createRoute({
 	path: '/{id}/chat-approval',
 	'x-viewer-policy': 'writer',
 	tags: ['Objects'],
-	summary: "Count a person's chat message as the approval of a drafted email",
+	summary: "Count a person's chat message as the approval of a draft",
 	description:
-		"Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Email drafts only.",
+		"Agents only. Names the chat message where a person said yes. The server records the approval only if a person wrote that message in a chat the agent is in, after the draft's last edit and after the draft was shown in that chat. Works for any draft kind that has a send tool (email, LinkedIn kinds, Slack message).",
 	request: {
 		params: z.object({ id: z.string().uuid() }),
 		body: {

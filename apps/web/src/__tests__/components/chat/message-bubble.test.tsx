@@ -807,6 +807,35 @@ describe('MessageBubble — Reply in thread', () => {
 	})
 })
 
+describe('MessageBubble — edit request', () => {
+	const own = () => buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' })
+	const renderWithRequest = (message: MessageResponse, nonce?: number) =>
+		render(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={nonce} />, {
+			wrapper: TestWrapper,
+		})
+
+	it('opens the edit card when a new request arrives', () => {
+		const message = own()
+		const { rerender } = renderWithRequest(message)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+	})
+
+	it('ignores a request that was already there when the bubble mounted', () => {
+		renderWithRequest(own(), 1)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+	})
+
+	it('does not edit a message that is not yours', () => {
+		const message = buildMessage()
+		const { rerender } = renderWithRequest(message)
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+	})
+})
+
 describe('MessageBubble — own bubble fits its text', () => {
 	const NATURAL_WIDTH = 560
 	const WIDEST_LINE = 200

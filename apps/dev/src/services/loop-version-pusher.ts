@@ -826,6 +826,21 @@ export class LoopVersionPusher {
 			createWorkspaceDesktopService(this.db),
 		)
 
+		// The tx has committed, so a failure here cannot undo the delete: log it and
+		// carry on with the other agents. The actor ids are only known inside the tx,
+		// which is why this is not done up front the way DELETE /actors/:id does it.
+		for (const deletedActorId of deletedActorIds) {
+			try {
+				await this.agentStorage.deleteAllAgentFiles(deletedActorId, install.workspaceId)
+			} catch (err) {
+				logger.error('Failed to delete agent files from storage (orphan objects left)', {
+					workspaceId: install.workspaceId,
+					actorId: deletedActorId,
+					error: String(err),
+				})
+			}
+		}
+
 		for (const skillId of removedSkillIds) {
 			try {
 				await this.agentStorage.deleteWorkspaceSkill(install.workspaceId, skillId)

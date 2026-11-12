@@ -64,6 +64,7 @@ import {
 	trackKnowledgeObjectRead,
 } from '../lib/analytics/knowledge-events'
 import { trackObjectCreated } from '../lib/analytics/object-events'
+import { trackSupportItemOpened, trackSupportItemResolved } from '../lib/analytics/support-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
@@ -797,6 +798,13 @@ app.openapi(createObjectRoute, async (c) => {
 		objectId: created.id,
 		objectType: created.type,
 		createdVia: resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), actorType),
+	})
+	void trackSupportItemOpened({
+		workspaceId,
+		actorId,
+		objectId: created.id,
+		objectType: created.type,
+		metadata: created.metadata,
 	})
 
 	if (created.type === 'knowledge') {
@@ -2814,6 +2822,16 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					data: { changes },
 					provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 				})
+				if (plan.action === 'status_changed' && plan.previous.type === 'task') {
+					await trackSupportItemResolved(tx, {
+						workspaceId: plan.previous.workspaceId,
+						actorId,
+						taskId: plan.id,
+						fromStatus: plan.previous.status,
+						toStatus: updated.status,
+						resolvedAt: updated.updatedAt ?? now,
+					})
+				}
 			}
 		})
 	}
