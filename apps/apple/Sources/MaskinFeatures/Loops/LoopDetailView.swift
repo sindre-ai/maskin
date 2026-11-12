@@ -489,8 +489,7 @@ struct LoopDriverPill: View {
 		Button(action: open) {
 			HStack(spacing: MaskinSpace.s5) {
 				ActorAvatar(name: name, kind: .agent, size: MaskinSpace.s13, seed: id)
-				(Text(name).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-					+ Text(" drives").foregroundStyle(MaskinColor.ink4))
+				Text(name).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 					.maskinText(.subhead)
 			}
 			.padding(.leading, MaskinSpace.s4)

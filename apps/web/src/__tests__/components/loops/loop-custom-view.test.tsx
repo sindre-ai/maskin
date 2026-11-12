@@ -17,6 +17,7 @@ const { useFileMock, sseListeners } = vi.hoisted(() => ({
 	sseListeners: [] as Array<(event: { entity_type: string } | null) => void>,
 }))
 vi.mock('@/hooks/use-files', () => ({ useFile: useFileMock }))
+vi.mock('@/lib/theme', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
 vi.mock('@/lib/sse-invalidation', () => ({
 	subscribeToSSE: (listener: (event: { entity_type: string } | null) => void) => {
 		sseListeners.push(listener)

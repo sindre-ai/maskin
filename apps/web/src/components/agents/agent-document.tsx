@@ -51,7 +51,7 @@ import {
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
@@ -149,13 +149,30 @@ export function AgentDocumentView({
 
 	const isActive = (activeSessions?.length ?? 0) > 0
 
+	// Set by Esc so the blur it triggers puts the saved value back instead of saving the draft.
+	const skipBlurSaveRef = useRef(false)
+	const handleEscape = (e: React.KeyboardEvent<HTMLElement>, revert: () => void) => {
+		if (isManaged || e.key !== 'Escape') return
+		skipBlurSaveRef.current = true
+		revert()
+		e.currentTarget.blur()
+	}
+
 	const handleNameBlur = useCallback(() => {
+		if (skipBlurSaveRef.current) {
+			skipBlurSaveRef.current = false
+			return
+		}
 		if (nameDraft.trim() && nameDraft !== agent.name) {
 			onUpdateName(nameDraft.trim())
 		}
 	}, [nameDraft, agent.name, onUpdateName])
 
 	const handleDescriptionBlur = useCallback(() => {
+		if (skipBlurSaveRef.current) {
+			skipBlurSaveRef.current = false
+			return
+		}
 		const next = descriptionDraft.trim()
 		if (next !== (agent.description ?? '')) {
 			onUpdateDescription(next)
@@ -222,7 +239,10 @@ export function AgentDocumentView({
 						e.target.style.height = `${e.target.scrollHeight}px`
 					}}
 					onBlur={isManaged ? undefined : handleNameBlur}
-					onKeyDown={(e) => !isManaged && e.key === 'Enter' && e.currentTarget.blur()}
+					onKeyDown={(e) => {
+						if (!isManaged && e.key === 'Enter') e.currentTarget.blur()
+						handleEscape(e, () => setNameDraft(agent.name))
+					}}
 					placeholder="Agent name"
 					aria-label="Agent name"
 					rows={1}
@@ -248,7 +268,10 @@ export function AgentDocumentView({
 				value={descriptionDraft}
 				onChange={(e) => !isManaged && setDescriptionDraft(e.target.value)}
 				onBlur={isManaged ? undefined : handleDescriptionBlur}
-				onKeyDown={(e) => !isManaged && e.key === 'Enter' && e.currentTarget.blur()}
+				onKeyDown={(e) => {
+					if (!isManaged && e.key === 'Enter') e.currentTarget.blur()
+					handleEscape(e, () => setDescriptionDraft(agent.description ?? ''))
+				}}
 				placeholder="Short description shown on the Agents page"
 				aria-label="Short description"
 				maxLength={80}
