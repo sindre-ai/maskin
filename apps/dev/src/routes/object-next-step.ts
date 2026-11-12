@@ -132,6 +132,10 @@ const updateRoute = createRoute({
 			description: 'Object not found, or it has no open or blocked step to change',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		409: {
+			description: 'The step has a wake-up for its current owner, so the owner cannot be changed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -152,8 +156,9 @@ app.openapi(updateRoute, async (c) => {
 	} catch (err) {
 		if (err instanceof NextStepError) {
 			const error = createApiError(err.code, err.message)
-			// Updating never raises a conflict: the one-live-step rule is only checked on set.
 			if (err.code === 'NOT_FOUND') return c.json(error, 404)
+			// Conflict on update: a step with a wake-up cannot be handed to a new owner by an edit.
+			if (err.code === 'CONFLICT') return c.json(error, 409)
 			return c.json(error, 400)
 		}
 		throw err
