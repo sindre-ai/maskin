@@ -203,6 +203,8 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
 
 type TargetObjectRow = {
+	id: string
+	createdAt: Date | null
 	title: string | null
 	driver: string | null
 	metadata: unknown
@@ -279,7 +281,7 @@ function targetsWithReadings(
 				readAt: found.readAt.toISOString(),
 				source: found.source,
 				expected:
-					object && deadline && !Number.isNaN(deadline.getTime())
+					object?.createdAt && deadline && !Number.isNaN(deadline.getTime())
 						? expectedByNow({ start: object.createdAt, deadline, goal: target.target, now })
 						: null,
 			},
