@@ -25,8 +25,8 @@ private func flow(_ id: String, name: String? = nil, hoursAgo: Double = 1, unrea
 
 private func build(
 	_ conversations: [ConversationSummary], flows: [TeamFlowRoom] = [], archived: [ConversationSummary] = [],
-	options: TeamDisplayOptions = .default, chip: TeamFilterChip = .all, query: String = "",
-	pinOrder: [String] = [], pinnedFlows: Set<String> = [], expanded: Set<String> = []
+	options: TeamDisplayOptions = TeamDisplayOptions(grouping: .byTime), chip: TeamFilterChip = .all,
+	query: String = "", pinOrder: [String] = [], pinnedFlows: Set<String> = [], expanded: Set<String> = []
 ) -> TeamLayout {
 	TeamLayout.build(
 		TeamLayout.Input(
@@ -128,6 +128,61 @@ struct TeamLayoutTests {
 			options: TeamDisplayOptions(grouping: .newestFirst))
 		#expect(layout.sections.map(\.id) == ["unread", "people"])
 		#expect(layout.rowIDs("people") == ["b", "a"])
+	}
+
+	@Test("agents: one row per agent with several chats, plain rows for the rest, newest activity first")
+	func byAgent() {
+		var dm = chatConvo("dm", last: ago(hours: 6), participants: [chatMe, chatRelay])
+		dm.directPairKey = "me:relay"
+		let rows = [
+			chatConvo("r1", last: ago(hours: 5), participants: [chatMe, chatRelay]),
+			chatConvo("r2", last: ago(hours: 1), unread: 2, participants: [chatMe, chatRelay]),
+			dm,
+			chatConvo("f1", last: ago(hours: 3), participants: [chatMe, forge]),
+			chatConvo("i1", last: ago(hours: 2), participants: [chatMe, ida]),
+			chatConvo("g1", title: "Launch", last: ago(hours: 4), participants: [chatMe, ida, forge]),
+		]
+		let layout = build(rows, options: TeamDisplayOptions(grouping: .byAgent))
+		let agents = layout.section("agents")
+		#expect(agents?.label == "Agents")
+		#expect(agents?.rows.map(\.id) == ["person:relay", "i1", "f1", "g1"])
+		#expect(agents?.count == 4)
+		guard case .person(let relay)? = agents?.rows.first?.kind else {
+			Issue.record("no relay row")
+			return
+		}
+		#expect(relay.conversations.map(\.id) == ["r2", "r1", "dm"])
+		#expect(relay.latest.id == "r2")
+		#expect(relay.unreadCount == 2)
+		#expect(layout.sections.map(\.id) == ["agents"], "no WORKING, UNREAD or time sections")
+	}
+
+	@Test("agents: pinned chats leave the agent's fold and sit in the Pinned group")
+	func byAgentPinned() {
+		let rows = [
+			chatConvo("a", last: ago(hours: 3), pinned: true, participants: [chatMe, chatRelay]),
+			chatConvo("b", last: ago(hours: 2), participants: [chatMe, chatRelay]),
+		]
+		let layout = build(rows, options: TeamDisplayOptions(grouping: .byAgent))
+		#expect(layout.tiles.map(\.id) == ["a"])
+		#expect(layout.rowIDs("agents") == ["b"], "one chat left, so a plain row")
+	}
+
+	@Test("agents: flows stay above the agent rows and an unread flow is not pulled into its own section")
+	func byAgentFlows() {
+		let layout = build(
+			[chatConvo("a", last: ago(hours: 2))], flows: [flow("hot", unread: 3)],
+			options: TeamDisplayOptions(grouping: .byAgent))
+		#expect(layout.sections.map(\.id) == ["flows", "agents"])
+		#expect(layout.rowIDs("flows") == ["flow:hot"])
+	}
+
+	@Test("a direct message is named for what it is under its agent")
+	func chatLabel() {
+		var dm = chatConvo("dm", title: "Relay")
+		dm.directPairKey = "me:relay"
+		#expect(TeamLayout.chatLabel(dm) == "Direct message")
+		#expect(TeamLayout.chatLabel(chatConvo("t", title: "Q3 planning")) == "Q3 planning")
 	}
 
 	@Test("one list: tiles, then one ALL card mixing flows and conversations newest first")
