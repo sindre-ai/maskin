@@ -77,18 +77,13 @@ export function ConversationListRow({
 					// Several actors: the cluster the iPhone list draws, so nobody is hidden behind one icon.
 					<ConversationAvatarStack participants={others} className="mt-1 w-[46px]" />
 				) : lead ? (
-					// The row's title and snippet already name who is talking; agents get their pictogram.
+					// The row's title and snippet already name who is talking; agents show their initials too.
 					<ActorAvatar
 						name={lead.actorName}
 						type={lead.actorType}
 						id={lead.actorId}
 						size="md"
-						className={cn(
-							'mt-px size-8 shrink-0 rounded-[9px] text-[11px] font-bold',
-							isUnread
-								? 'bg-brand-subtle text-brand-subtle-foreground'
-								: 'bg-secondary text-foreground',
-						)}
+						className="mt-px size-8 shrink-0"
 					/>
 				) : null}
 				<div className="min-w-0 flex-1">
