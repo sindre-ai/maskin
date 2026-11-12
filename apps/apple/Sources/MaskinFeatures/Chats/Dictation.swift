@@ -25,12 +25,13 @@ final class Dictation {
 
 	private(set) var state: State = .idle
 	var isListening: Bool { state == .listening }
-	/// Which engine the composer's dictation is using, in plain words: the server, or the phone with the
-	/// reason it isn't the server. Kept after the session ends (Done, Discard) so the person can still
-	/// read it; cleared when the next one starts.
+	/// A plain-words note for when dictation is not going as it should: the phone took over from the
+	/// server and why, the server heard no words, or nothing was sent. Nil while all is well. Kept after
+	/// the session ends (Done, Discard) so the person can still read it; cleared when the next one starts.
 	private(set) var engineNote: String?
-	/// While the server transcribes: the phone's live guess at the words it hasn't returned yet. Shown in
-	/// grey beside the text, never part of it. Empty when there is nothing waiting.
+	/// While the server transcribes: the phone's live guess at the words it hasn't returned yet. Not shown
+	/// (the composer waits for the server's text); the phone's words only land if the server fails.
+	/// Empty when there is nothing waiting.
 	private(set) var previewText = ""
 
 	/// Built per session: an engine kept across sessions holds a stale input format once the audio
@@ -118,7 +119,11 @@ final class Dictation {
 			onInterrupted: { [weak self] in
 				self?.fail("Dictation was interrupted. Tap the microphone to continue.")
 			},
-			onLimit: { [weak self] in self?.backendLimitReached() })
+			onLimit: { [weak self] in self?.backendLimitReached() },
+			onAnswer: { [weak self] empty in
+				guard let self, backendRun != nil else { return }
+				engineNote = empty ? DictationFallback.emptyAnswerNote : nil
+			})
 		SpeechReader.shared.inputDidBegin()
 		do {
 			try run.start()
@@ -130,7 +135,6 @@ final class Dictation {
 		}
 		backendRun = run
 		state = .listening
-		engineNote = DictationFallback.serverNote
 		DictationFallback.log.info("dictation engine: server")
 		return true
 	}
@@ -420,6 +424,7 @@ final class Dictation {
 		}
 		let task = Task { [self] in
 			await run.finish()
+			if run.phrasesSent == 0 { engineNote = DictationFallback.nothingSentNote }
 			stop()
 		}
 		finishing = task
