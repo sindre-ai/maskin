@@ -63,12 +63,17 @@ export const MAX_AUTOMATIC_CONTINUATIONS = 2
  * `settings.agent_daily_budget`; absent means no per-agent limit is enforced (the amount is set
  * by a person, not by the platform). `per_agent` wins over `default_tokens`. The day is the
  * workspace's budget day (`settings.daily_budget.timezone`, UTC when there is none).
+ *
+ * `warn_only_until` maps an agent id to a time. Until then that agent's runs are never refused at
+ * the limit: the 80% warning and an over-the-limit warning still go out. From that time on the
+ * stop applies by itself, with no change needed.
  */
 export const agentDailyBudgetSchema = z.object({
 	default_tokens: z.number().int().positive().max(1_000_000_000_000).optional(),
 	per_agent: z
 		.record(z.string().uuid(), z.number().int().positive().max(1_000_000_000_000))
 		.optional(),
+	warn_only_until: z.record(z.string().uuid(), z.string().datetime({ offset: true })).optional(),
 })
 
 export type AgentDailyBudget = z.infer<typeof agentDailyBudgetSchema>

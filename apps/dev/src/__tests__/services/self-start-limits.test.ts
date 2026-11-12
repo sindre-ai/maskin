@@ -4,6 +4,7 @@ import {
 	BACKOFF_CEILING_MS,
 	type StreakSession,
 	agentBudgetLimit,
+	agentBudgetWarnOnly,
 	backoffDecision,
 	backoffWaitMs,
 	budgetState,
@@ -291,6 +292,33 @@ describe('daily budget per agent', () => {
 		expect(agentBudgetLimit({}, agent)).toBeNull()
 		expect(agentBudgetLimit(null, agent)).toBeNull()
 		expect(agentBudgetLimit({ agent_daily_budget: { default_tokens: -5 } }, agent)).toBeNull()
+	})
+})
+
+describe('warn-only period for an agent budget', () => {
+	const agent = '11111111-1111-4111-8111-111111111111'
+	const other = '22222222-2222-4222-8222-222222222222'
+	const until = '2026-11-20T00:00:00.000Z'
+	const settings = { agent_daily_budget: { warn_only_until: { [agent]: until } } }
+
+	it('is on for that agent until the time, then off by itself', () => {
+		expect(agentBudgetWarnOnly(settings, agent, new Date('2026-11-19T23:59:59Z'))).toBe(true)
+		expect(agentBudgetWarnOnly(settings, agent, new Date(until))).toBe(false)
+		expect(agentBudgetWarnOnly(settings, agent, new Date('2026-11-21T00:00:00Z'))).toBe(false)
+	})
+
+	it('is off for other agents, with no setting and for a bad value', () => {
+		const now = new Date('2026-11-19T00:00:00Z')
+		expect(agentBudgetWarnOnly(settings, other, now)).toBe(false)
+		expect(agentBudgetWarnOnly({}, agent, now)).toBe(false)
+		expect(agentBudgetWarnOnly(null, agent, now)).toBe(false)
+		expect(
+			agentBudgetWarnOnly(
+				{ agent_daily_budget: { warn_only_until: { [agent]: 'soon' } } },
+				agent,
+				now,
+			),
+		).toBe(false)
 	})
 })
 

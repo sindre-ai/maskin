@@ -399,6 +399,39 @@ describe('self-start limits', () => {
 			)
 		})
 
+		it('warns and still admits an over-limit agent during its warn-only period, then stops it', async () => {
+			const day = 24 * 60 * 60_000
+			await setSettings({
+				agent_daily_budget: {
+					per_agent: { [agentId]: 1000 },
+					warn_only_until: { [agentId]: new Date(Date.now() + day).toISOString() },
+				},
+			})
+			await spend(1200)
+
+			expect((await admit({ triggerType: 'cron', initiatedFromObjectId: null })).reason).toBe(
+				'trigger_cron',
+			)
+			await admit({ triggerType: 'cron', initiatedFromObjectId: null })
+			const cards = await ownerCards()
+			expect(cards).toHaveLength(1)
+			expect(cards[0]?.title).toContain('over its daily limit')
+			expect(
+				(await admissionEvents()).filter(
+					(e) => (e.data as { refusal?: string }).refusal === 'agent_daily_budget',
+				),
+			).toHaveLength(0)
+
+			await setSettings({
+				agent_daily_budget: {
+					per_agent: { [agentId]: 1000 },
+					warn_only_until: { [agentId]: new Date(Date.now() - 1000).toISOString() },
+				},
+			})
+			const err = await refusalOf(admit({ triggerType: 'cron', initiatedFromObjectId: null }))
+			expect(err.refusal).toBe('agent_daily_budget')
+		})
+
 		it('warns once at 80% and still admits', async () => {
 			await setSettings({ agent_daily_budget: { default_tokens: 1000 } })
 			await spend(850)
