@@ -944,7 +944,8 @@ struct ChatStoreTests {
 		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
 		await h.store.start()
 		await h.api.setAddDecodeFails(true)
-		await h.store.addParticipants(["sam"])
+		let added = await h.store.addParticipants(["sam"])
+		#expect(added)
 		#expect(h.store.participants.map(\.id) == ["me", "relay", "sam"])
 		#expect(h.store.notice == nil)
 	}

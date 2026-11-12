@@ -790,10 +790,10 @@ export const tools = {
 					'Add the new actor to this existing workspace. Required when type is "agent" unless auto_create_workspace is explicitly true — the call fails otherwise rather than creating an agent with no workspace.',
 				),
 			role: z
-				.enum(['owner', 'admin', 'member'])
+				.enum(['admin', 'member'])
 				.default('member')
 				.describe(
-					'Role of the invitation sent to a human when workspace_id is given: only member (read/write) is offered here; admin and owner are refused (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
+					'Role of the invitation sent to a human when workspace_id is given: member (read/write) or admin; owner is never offered (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
 				),
 			description: z
 				.string()
@@ -889,10 +889,10 @@ export const tools = {
 					'Add this actor to the given workspace as part of the update. This is the tool for adding an existing actor to a workspace. Omit to leave workspace membership unchanged.',
 				),
 			role: z
-				.enum(['owner', 'admin', 'member'])
+				.enum(['admin', 'member'])
 				.default('member')
 				.describe(
-					'Role to assign when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Only applied when workspace_id is set.',
+					'Role to assign when adding to a workspace via workspace_id: admin (manage members) or member (read/write). Owner is never offered. Only applied when workspace_id is set.',
 				),
 		}),
 	},
@@ -3012,7 +3012,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, then in the chooser select the file and click Open (double click and Enter do not submit it). If Open is off the bottom of the screen, run `xdotool getactivewindow windowmove 0 0 windowsize 1000 600` with desktop_run, then click Open. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

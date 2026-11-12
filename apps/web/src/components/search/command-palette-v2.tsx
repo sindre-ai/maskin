@@ -85,6 +85,8 @@ import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 // results come. Enter on the Search row, or ⌘↵, hands the words and the pills to /search.
 
 const MAX_JUMP_ROWS = 6
+// Most rows one group (chats, agents, people) takes of those six, so a name finds all three.
+const MAX_JUMP_ROWS_PER_GROUP = 3
 
 const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
 	objects: 'ITEM',
@@ -436,6 +438,7 @@ function LauncherPanel({
 		updated: '',
 		sort: 'rel',
 		limit: MAX_JUMP_ROWS,
+		perGroup: MAX_JUMP_ROWS_PER_GROUP,
 	}
 	const search = useSearchQuery(workspaceId, input)
 	const { data, isError, isFetching, isPlaceholderData, refetch } = search

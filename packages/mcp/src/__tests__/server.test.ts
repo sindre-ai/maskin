@@ -7020,7 +7020,7 @@ describe('tool handlers', () => {
 					return {
 						ok: true,
 						headers: new Headers(),
-						json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
+						json: () => Promise.resolve({ actorId, workspaceId, role: 'admin' }),
 					} as Response
 				}
 				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
@@ -7033,7 +7033,7 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				id: actorId,
 				workspace_id: workspaceId,
-				role: 'owner',
+				role: 'admin',
 			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledWith(
@@ -7042,7 +7042,7 @@ describe('tool handlers', () => {
 			)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.workspace_id).toBe(workspaceId)
-			expect(parsed.role).toBe('owner')
+			expect(parsed.role).toBe('admin')
 			expect(parsed.workspace_membership_error).toBeUndefined()
 		})
 

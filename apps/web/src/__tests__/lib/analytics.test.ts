@@ -2,6 +2,7 @@ import {
 	commentShape,
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
+	secondsSince,
 	trackAgentCreated,
 	trackAgentOpened,
 	trackAgentSessionStarted,
@@ -14,7 +15,9 @@ import {
 	trackChatFirstReplyReceived,
 	trackChatImageUpload,
 	trackChatLeft,
+	trackChatMessageResent,
 	trackChatSessionStarted,
+	trackChatStopClicked,
 	trackCommentPosted,
 	trackCreditLowShown,
 	trackEmailReturn,
@@ -46,7 +49,6 @@ import {
 	trackSindreMessageReceived,
 	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
-	trackTriggerCreated,
 	trackTriggerUpdated,
 	trackUpgradeClicked,
 } from '@/lib/analytics'
@@ -490,21 +492,14 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('agent_created and trigger_created fire under their fixed entity types', () => {
+	it('agent_created fires under its fixed entity type', () => {
 		const capture = captureSpy()
 
 		trackAgentCreated({ entity_id: 'agent-5', entity_type: 'agent' })
-		trackTriggerCreated({ entity_id: 'trg-2', entity_type: 'trigger' })
 
-		expect(capture).toHaveBeenNthCalledWith(
-			1,
+		expect(capture).toHaveBeenCalledWith(
 			'agent_created',
 			expect.objectContaining({ entity_id: 'agent-5', entity_type: 'agent' }),
-		)
-		expect(capture).toHaveBeenNthCalledWith(
-			2,
-			'trigger_created',
-			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
 	})
 
@@ -626,6 +621,7 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			latency_ms: 1200,
+			session_id: null,
 			feature_area: 'chats',
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_left', {
@@ -634,6 +630,37 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			outcome: 'abandoned',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_stop_clicked names the run that was stopped and how long it had been going', () => {
+		const capture = captureSpy()
+
+		trackChatStopClicked({ session_id: 's-1', seconds_running: 42 })
+
+		expect(capture).toHaveBeenCalledWith('chat_stop_clicked', {
+			entity_id: 's-1',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			session_id: 's-1',
+			seconds_running: 42,
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_message_resent carries the conversation id and the gap in seconds', () => {
+		const capture = captureSpy()
+
+		trackChatMessageResent({ entity_id: 'c-1', seconds_since_previous: 20 })
+
+		expect(capture).toHaveBeenCalledWith('chat_message_resent', {
+			entity_id: 'c-1',
+			entity_type: 'conversation',
+			source: 'web',
+			flow_id: null,
+			seconds_since_previous: 20,
 			feature_area: 'chats',
 		})
 	})
@@ -874,7 +901,38 @@ describe('v1 taxonomy helpers', () => {
 				card_kind: 'decision',
 				card_id: 'bet-1',
 				action_id: 'quick_reply:approved',
+				seconds_to_action: null,
+				session_id: null,
 			})
+		})
+
+		it('foryou_card_action adds the seconds since the card was raised and the run that raised it', () => {
+			const capture = captureSpy()
+
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
+				seconds_to_action: 95,
+				session_id: 'run-1',
+			})
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_action', {
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
+				seconds_to_action: 95,
+				session_id: 'run-1',
+			})
+		})
+
+		it('secondsSince rounds to whole seconds, never goes negative and is null without a time', () => {
+			const now = Date.parse('2026-11-11T10:02:00Z')
+
+			expect(secondsSince('2026-11-11T10:00:30.400Z', now)).toBe(90)
+			expect(secondsSince('2026-11-11T10:05:00Z', now)).toBe(0)
+			expect(secondsSince(null, now)).toBeNull()
+			expect(secondsSince('not a date', now)).toBeNull()
 		})
 	})
 })
