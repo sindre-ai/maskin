@@ -313,12 +313,12 @@ describe('MCP surface pin', () => {
 			expect([...READ_ONLY_TOOLS].sort()).toEqual(expected)
 		})
 
-		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_session, mark_read or get_started', () => {
+		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or get_started', () => {
 			const readOnly = (name: string) => TOOL_ANNOTATIONS[name]?.readOnlyHint
 			for (const name of Object.keys(MUTATION_TOOL_KINDS)) {
 				expect(readOnly(name), `${name} is a mutation but readOnlyHint is true`).toBe(false)
 			}
-			for (const name of ['create_session', 'mark_read', 'get_started']) {
+			for (const name of ['create_sub_chat', 'mark_read', 'get_started']) {
 				expect(readOnly(name), `${name} must not be read-only`).toBe(false)
 			}
 		})
@@ -356,12 +356,10 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send or read mail only', () => {
+		it('openWorldHint is true for create_sub_chat and create_chat, the integration tools and the tools that send or read mail only', () => {
 			const expected = [
-				'create_session',
 				'create_sub_chat',
 				'create_chat',
-				'run_agent',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',

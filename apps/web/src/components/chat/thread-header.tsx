@@ -211,7 +211,7 @@ export function ThreadHeader({
 						type="agent"
 						id={singleAgent.actorId}
 						size="md"
-						className="size-[34px] rounded-[10px] text-xs font-bold"
+						className="size-[34px]"
 					/>
 				) : (
 					<span
@@ -244,19 +244,16 @@ export function ThreadHeader({
 					/>
 				) : (
 					<h2 className="truncate text-base font-semibold leading-tight">
-						{singleAgent ? (
-							// A chat with one agent is that agent's chat: the title opens its page.
-							<Link
-								to="/$workspaceId/agents/$agentId"
-								params={{ workspaceId, agentId: singleAgent.actorId }}
-								aria-label={`Open ${singleAgent.actorName} — ${conversation.title}`}
-								className="hover:underline"
-							>
-								{conversation.title}
-							</Link>
-						) : (
-							conversation.title
-						)}
+						{/* Click the title to rename it in place; the agent's page opens from its avatar. */}
+						<button
+							type="button"
+							onClick={startEditingTitle}
+							title="Click to rename"
+							aria-label={`Rename conversation: ${conversation.title}`}
+							className="max-w-full cursor-text truncate rounded-md px-1 py-0.5 -mx-1 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							{conversation.title}
+						</button>
 					</h2>
 				)}
 				<div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">

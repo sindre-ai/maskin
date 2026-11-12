@@ -59,10 +59,11 @@ function appFor(actorId: string, actorType: 'human' | 'agent') {
 type Msg = { id: number; threadRootId: number | null }
 
 /**
- * An agent's mid-turn post_conversation_message lands where the human is talking: in the thread
- * of the message that started the turn, the same lookup the end-of-turn reply uses.
+ * An agent's mid-turn post_conversation_message continues a thread a person started (the thread
+ * of the message that started the turn, the same lookup the end-of-turn reply uses) and never
+ * starts one: a turn started by a top-level message posts to the main timeline.
  */
-describe('Agent post defaults to the turn thread', () => {
+describe('Agent post continues the turn thread', () => {
 	let humanId: string
 	let agentId: string
 	let workspaceId: string
@@ -148,7 +149,7 @@ describe('Agent post defaults to the turn thread', () => {
 		expect(posted.threadRootId).toBe(rootId)
 	})
 
-	it('posts into a thread under the message when the turn was started by a top-level message', async () => {
+	it('posts to the main timeline when the turn was started by a top-level message', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, rootId)
 
@@ -156,18 +157,18 @@ describe('Agent post defaults to the turn thread', () => {
 			{ id: agentId, type: 'agent' },
 			{ content: 'looking into it', session_id: session.id },
 		)
-		expect(posted.threadRootId).toBe(rootId)
+		expect(posted.threadRootId).toBeNull()
 	})
 
-	it('posts top-level from a top-level turn with top_level: true', async () => {
+	it('still lets an agent start a thread explicitly with thread_root_id', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, rootId)
 
 		const posted = await post(
 			{ id: agentId, type: 'agent' },
-			{ content: 'for everyone', session_id: session.id, top_level: true },
+			{ content: 'details', session_id: session.id, thread_root_id: rootId },
 		)
-		expect(posted.threadRootId).toBeNull()
+		expect(posted.threadRootId).toBe(rootId)
 	})
 
 	it('posts top-level when the session has no tagged turn yet', async () => {

@@ -279,9 +279,6 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'post_conversation_message',
 	'create_notification',
 	// Starts work
-	'create_session',
-	// Deprecated alias of create_session (packages/mcp/src/tool-aliases.ts): same effect, same hold.
-	'run_agent',
 	'resume_session',
 	'send_session_message',
 	'create_trigger',

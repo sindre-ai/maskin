@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
@@ -246,6 +247,7 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 	return {
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('')),
+		getStream: vi.fn().mockImplementation(async () => Readable.from(Buffer.from(''))),
 		list: vi.fn().mockResolvedValue([]),
 		listWithMetadata: vi.fn().mockResolvedValue([]),
 		delete: vi.fn().mockResolvedValue(undefined),

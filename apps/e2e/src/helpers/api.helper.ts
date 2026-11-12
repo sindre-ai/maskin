@@ -382,6 +382,7 @@ export class TestAPI {
 			tools?: Record<string, unknown> | null
 			llm_provider?: string | null
 			llm_config?: Record<string, unknown> | null
+			tags?: string[]
 			/** Agents only; needs `workspaceId`. */
 			starter_prompts?: string[]
 		},

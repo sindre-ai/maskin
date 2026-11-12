@@ -3,7 +3,6 @@ import {
 	AgentStatusPill,
 	type PortraitStatus,
 	agentAvatarStatus,
-	agentTileClass,
 	describeFocus,
 	getPortraitStatus,
 	portraitStatusToFilter,
@@ -38,8 +37,13 @@ import {
 	statsToCounts,
 	summarizeAgentSessions,
 } from '@/lib/agent-status'
-import { NO_TEAM, buildAgentFilterPills, buildTeamChips } from '@/lib/agents-index-filters'
-import type { ActorListItem, DisplaySettingsBody, LoopSummary, SessionResponse } from '@/lib/api'
+import {
+	NO_TEAM,
+	buildAgentFilterPills,
+	buildTeamByAgentId,
+	buildTeamChips,
+} from '@/lib/agents-index-filters'
+import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { SessionStatsRow } from '@maskin/shared'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -88,24 +92,8 @@ interface AgentRow {
 	activeCount: number
 	totalCostUsd: number
 	last30dCostUsd: number
-	/** The first flow (A to Z) this agent works in, or the no-team label. */
+	/** The agent's first tag (A to Z), or the no-team label. */
 	team: string
-}
-
-/** The slice of a flow the Team column needs. */
-export type AgentsLoop = Pick<LoopSummary, 'name' | 'agentIds'>
-
-/** An agent's team is the first flow it appears in, alphabetically. */
-function buildTeamByAgent(loops: AgentsLoop[] | undefined): Map<string, string> {
-	const named = (loops ?? [])
-		.filter((l) => l.name?.trim())
-		.map((l) => ({ name: (l.name as string).trim(), agentIds: l.agentIds }))
-		.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }))
-	const teams = new Map<string, string>()
-	for (const loop of named) {
-		for (const id of loop.agentIds) if (!teams.has(id)) teams.set(id, loop.name)
-	}
-	return teams
 }
 
 export function AgentsIndexView({
@@ -113,7 +101,6 @@ export function AgentsIndexView({
 	agents,
 	sessions,
 	stats,
-	loops,
 	query,
 	onQueryChange,
 }: {
@@ -123,8 +110,6 @@ export function AgentsIndexView({
 	sessions: SessionResponse[]
 	/** Per-agent counts and cost over the whole history; the recent list stands in until it loads. */
 	stats?: SessionStatsRow[]
-	/** Flows, for the Team column and group-by Team. */
-	loops?: AgentsLoop[]
 	/** Search text; the input itself sits beside the page title (see PageSearchInput). */
 	query: string
 	onQueryChange: (value: string) => void
@@ -186,7 +171,7 @@ export function AgentsIndexView({
 
 	const statsByAgent = useMemo(() => new Map((stats ?? []).map((s) => [s.actor_id, s])), [stats])
 
-	const teamByAgent = useMemo(() => buildTeamByAgent(loops), [loops])
+	const teamByAgent = useMemo(() => buildTeamByAgentId(agents), [agents])
 
 	const rows = useMemo<AgentRow[]>(
 		() =>
@@ -365,7 +350,11 @@ export function AgentsIndexView({
 
 	// One chip per team that has agents, counted before any filter so a chip's
 	// number stays put while it is the active one.
-	const teamChips = useMemo(() => buildTeamChips(rows.map((r) => r.team)), [rows])
+	const teamChips = useMemo(() => {
+		const chips = buildTeamChips(rows.map((r) => r.team))
+		// Nobody is tagged: one "No team" chip would only repeat "All".
+		return chips.every((c) => c.team === NO_TEAM) ? [] : chips
+	}, [rows])
 
 	// The Display menu's Status and Team rows (mockup 2304). Same buckets and the
 	// same pre-filter counts the chip strips draw, built once so they can't
@@ -687,10 +676,7 @@ function AgentRowItem({
 					size="md"
 					id={agent.id}
 					status={agentAvatarStatus(portrait)}
-					className={cn(
-						'size-8 shrink-0 rounded-lg text-[11px] font-bold',
-						agentTileClass(portrait),
-					)}
+					className="size-8 shrink-0"
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
 					<span className="truncate text-[15px] font-semibold text-foreground">{agent.name}</span>

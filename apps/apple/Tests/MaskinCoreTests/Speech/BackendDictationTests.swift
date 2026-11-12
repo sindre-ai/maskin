@@ -39,6 +39,77 @@ struct PhraseSegmenterTests {
 		#expect(now == 6_000)
 	}
 
+	@Test func quietSpeechInAQuietRoomStillCountsAsSpeech() {
+		// An iPad in measurement mode: room noise near 0.001, speech around 0.008 (under the old fixed 0.02).
+		var segmenter = PhraseSegmenter()
+		var now = 0.0
+		for _ in 0..<20 {
+			now += 21
+			_ = segmenter.push(rms: 0.001, atMs: now)
+		}
+		#expect(!segmenter.hasVoice)
+		now += 21
+		#expect(segmenter.push(rms: 0.008, atMs: now) == nil)
+		#expect(segmenter.hasVoice)
+		now += 21
+		_ = segmenter.push(rms: 0.001, atMs: now)
+		now += 400
+		#expect(segmenter.push(rms: 0.001, atMs: now) == .cut)
+	}
+
+	@Test func roomNoiseBelowTheSpeechLevelIsNotSpeech() {
+		var segmenter = PhraseSegmenter()
+		var now = 0.0
+		for _ in 0..<100 {
+			now += 21
+			_ = segmenter.push(rms: 0.003, atMs: now)
+		}
+		#expect(!segmenter.hasVoice)
+		#expect(segmenter.threshold >= 0.004)
+	}
+
+	@Test func aNoisyRoomKeepsTheOldFixedLevel() {
+		var segmenter = PhraseSegmenter()
+		var now = 0.0
+		for _ in 0..<50 {
+			now += 21
+			_ = segmenter.push(rms: 0.015, atMs: now)
+		}
+		#expect(segmenter.threshold == 0.02)
+	}
+
+	@Test func wordsTheLevelMissedStillSendTheSegment() {
+		// The phone's recogniser hears words on a microphone so quiet no reading ever counts as speech.
+		var segmenter = PhraseSegmenter()
+		segmenter.heardWords = true
+		var now = 0.0
+		var action: PhraseSegmenter.Action?
+		while action == nil, now < 7_000 {
+			now += 21
+			action = segmenter.push(rms: 0.001, atMs: now)
+		}
+		#expect(!segmenter.hasVoice)
+		#expect(action == .cut)
+	}
+
+	@Test func aQuietSegmentNobodyHeardIsStillDropped() {
+		var segmenter = PhraseSegmenter()
+		var now = 0.0
+		var action: PhraseSegmenter.Action?
+		while action == nil, now < 7_000 {
+			now += 21
+			action = segmenter.push(rms: 0.001, atMs: now)
+		}
+		#expect(action == .discard)
+	}
+
+	@Test func resetForgetsWhatWasHeard() {
+		var segmenter = PhraseSegmenter()
+		segmenter.heardWords = true
+		segmenter.reset(atMs: 100)
+		#expect(!segmenter.heardWords)
+	}
+
 	@Test func resetStartsAFreshSegment() {
 		var segmenter = PhraseSegmenter()
 		_ = segmenter.push(rms: 0.1, atMs: 100)
@@ -179,6 +250,17 @@ struct PhraseTranscriptionQueueTests {
 		#expect(answered == 2)
 	}
 
+	@Test func tellsWhetherTheLatestAnswerHadWords() async {
+		let (queue, _, _) = makeQueue([.init(text: "hello"), .init(text: "  ")])
+		var emptyWhenAnswered: [Bool] = []
+		queue.onPhraseDelivered = { emptyWhenAnswered.append(queue.lastAnswerWasEmpty) }
+		queue.submit(wav: Data([1]))
+		queue.submit(wav: Data([2]))
+		await queue.drain(timeout: .seconds(300))
+		#expect(emptyWhenAnswered == [false, true])
+		#expect(queue.submitted == 2)
+	}
+
 	@Test func aFailureStopsDeliveryAndReportsOnce() async {
 		let (queue, sink, _) = makeQueue([
 			.init(text: "ok"), .init(text: "", fails: true), .init(text: "never seen"),
@@ -250,7 +332,7 @@ struct DictationFallbackTests {
 		#expect(timedOut.note == "Dictating on the phone (the server took too long)")
 		#expect(timedOut.detail == "request timed out")
 		#expect(DictationFallback.timeLimit.note.hasPrefix("Dictating on the phone ("))
-		#expect(DictationFallback.serverNote == "Dictating with the Maskin server")
+		#expect(DictationFallback.emptyAnswerNote == "The server heard no words in the last phrase.")
 	}
 
 	@Test func aMissingServiceIsNamedNotSilent() {

@@ -710,6 +710,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'set_loop_view',
 		'show_computer',
 		'stop_chat_agent',
+		'transcribe_file',
 		'update_file',
 		'update_notification',
 		'update_workspace_field',
@@ -752,9 +753,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		}
 	})
 
-	it('holds an alias exactly as it holds the tool it points to', () => {
-		expect(isRiskyTool('run_agent')).toBe(isRiskyTool('create_session'))
-		expect(isRiskyTool('run_agent')).toBe(true)
+	it('holds the tools that send a message out', () => {
 		expect(isRiskyTool('resend_send_email')).toBe(true)
 	})
 

@@ -2128,7 +2128,12 @@ export interface UnreadItem {
 	// shows when there is no source comment to lead with.
 	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
 	// by its comment instead.
-	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
+	curated?: {
+		headline: string
+		rationale: string | null
+		notification_id?: string | null
+		session_id?: string | null
+	}
 }
 
 export interface LatestMentionDecisionOption {
@@ -2176,6 +2181,8 @@ export interface LatestMention {
 	created_at: string
 	// The whole comment body, not a preview.
 	content: string
+	// The run that wrote the comment; null when a person wrote it. Analytics only.
+	session_id?: string | null
 	attention: number | null
 	// Present only when the agent asked for a structured decision. The card
 	// renders its options as the buttons the reader taps.
@@ -2380,6 +2387,10 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	isDefault: boolean
 	/** Whether the caller is on our own team. Only used to mark analytics events. */
 	isTeam: boolean
+	/** Whether this workspace is one of ours. Only used to mark analytics events. */
+	internal: boolean
+	/** Whether this workspace has an active paid plan. Only used to mark analytics events. */
+	paying: boolean
 }
 
 export interface UpdateWorkspaceInput {

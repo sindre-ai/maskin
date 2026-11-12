@@ -321,6 +321,11 @@ export const objects = pgTable(
 		// built CONCURRENTLY.
 		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
 		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
+		// Plain trigram indexes (migrations 0146 and 0147, CONCURRENTLY) for the object list/search
+		// `q` filter in routes/objects.ts. The workspace-keyed pair above is not picked by the planner
+		// for that query; these are. See 0146 for the EXPLAIN evidence.
+		index('objects_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
+		index('objects_content_trgm_idx').using('gin', t.content.op('gin_trgm_ops')),
 	],
 )
 
@@ -819,7 +824,7 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
-		// The session whose create_session / @mention call started this
+		// The session whose create_sub_chat / @mention call started this
 		// one: the sender a finished helper reports back to. Only ever set after the
 		// claimed session was checked to belong to the authenticated caller. NULL =
 		// no known sender. NOT source_session_id, which means "restore that session's
@@ -832,7 +837,7 @@ export const sessions = pgTable(
 		// Handed-off strip anchors: the assistant message that triggered this
 		// sub-agent spawn, and the sessions this one is blocked behind. Both
 		// nullable — pre-migration rows read NULL ("no strip"). Written from the
-		// create_session path when the caller supplies a message id / blockers.
+		// create_sub_chat path when the caller supplies a message id / blockers.
 		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
 		// message must not delete the session, it just stops rendering a strip.
 		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
@@ -2087,6 +2092,37 @@ export const workspaceCreditLedger = pgTable(
 			.where(sql`${t.type} = 'debit' AND ${t.sessionId} IS NOT NULL`),
 		index('workspace_credit_ledger_workspace_created_idx').on(t.workspaceId, t.createdAt),
 	],
+)
+
+// ── Workspace AI Usage ──────────────────────────────────────────────────────
+// Plan spend on the Maskin-funded OpenRouter account that does not belong to a
+// session, such as `transcribe_file`. Plan usage is otherwise summed from
+// `sessions` rows (`getWorkspacePlanUsdCentsUsage`); that function adds this
+// table's `cost_usd` on top, so the cap check, the usage page and the prepaid
+// credit overage all count these calls without a fake session row.
+//
+// `cost_usd` is what OpenRouter reported for the request (`usage.cost`), never
+// an estimate. `actor_id` and `file_id` are `set null` so deleting an agent or a
+// file never deletes the spend it caused.
+export const workspaceAiUsage = pgTable(
+	'workspace_ai_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		// 'transcription'
+		kind: text('kind').notNull(),
+		// The provider model that served the call, for the usage breakdown.
+		model: text('model').notNull(),
+		costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull(),
+		// Seconds of audio sent for transcription.
+		audioSeconds: numeric('audio_seconds', { precision: 10, scale: 2 }),
+		fileId: uuid('file_id').references(() => files.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_ai_usage_workspace_created_idx').on(t.workspaceId, t.createdAt)],
 )
 
 // ── Idempotency Records ─────────────────────────────────────────────────────

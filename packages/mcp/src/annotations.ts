@@ -92,7 +92,7 @@ function row(
 
 // destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
-// openWorld: create_session, its alias run_agent, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
+// openWorld: create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, resend_send_email, approve_object_draft, approve_draft_from_chat).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
@@ -133,6 +133,9 @@ const ROWS: Record<string, Row> = {
 	rename_file_tag: row('Rename file tag'),
 	merge_file_tags: row('Merge file tags'),
 	get_file: row('Get file'),
+	// Not openWorld: that set is pinned (surface-pin.test.ts) to tools that start an agent, reach an
+	// integration or send mail. This one spends plan usage on Maskin's own speech provider.
+	transcribe_file: row('Transcribe file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),
 	delete_file: row('Delete file', { destructive: true, idempotent: true }),
@@ -167,9 +170,7 @@ const ROWS: Record<string, Row> = {
 	mark_read: row('Mark read', { idempotent: true }),
 	list_unread: row('List unread'),
 	// Sessions
-	create_session: row('Create session', { openWorld: true }),
 	create_sub_chat: row('Create sub-chat', { openWorld: true }),
-	run_agent: row('Run agent (deprecated alias of create_session)', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),

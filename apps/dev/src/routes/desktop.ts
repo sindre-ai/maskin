@@ -10,6 +10,12 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { resolveDesktopAgent } from '../lib/desktop-access'
 import {
+	FETCH_FREE_HEADROOM_BYTES,
+	NO_ROOM_EXIT_CODE,
+	buildPutFileCommand,
+	formatBytes,
+} from '../lib/desktop-put-file-command'
+import {
 	DESKTOP_SETTINGS_VERSION,
 	KEYFILE_NEEDS_CHROMIUM_RESTART,
 	buildApplySettingsCommand,
@@ -505,6 +511,9 @@ const putFileResultSchema = z.object({
 		description:
 			'True when the file has a stored hash and it matches. Large files have none, so only their size is checked.',
 	}),
+	free_space_bytes: z.number().int().openapi({
+		description: 'Free space left on the computer after the file landed.',
+	}),
 })
 
 const putFileRoute = createRoute({
@@ -514,7 +523,7 @@ const putFileRoute = createRoute({
 	tags: ['Desktop'],
 	summary: "Put a workspace file on an agent's computer",
 	description:
-		'The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out.',
+		'The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out. Before downloading, files an earlier put-file placed there are removed: those over 24 hours old, and if the disk still lacks room for the file plus 1 GB, those over 1 hour old, oldest first. If there is still no room the call is refused (409) and nothing is downloaded.',
 	request: {
 		headers: workspaceIdHeader,
 		query: agentQuery,
@@ -526,15 +535,12 @@ const putFileRoute = createRoute({
 			content: { 'application/json': { schema: putFileResultSchema } },
 		},
 		...controlResponses,
+		409: {
+			description: 'Not enough free space on the computer, even after removing old fetched files',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
-
-const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
-
-/** A path for `sh`, with a leading ~/ turned into $HOME so quoting cannot stop it expanding. */
-function shellPath(path: string): string {
-	return path.startsWith('~/') ? `"$HOME"/${shellQuote(path.slice(2))}` : shellQuote(path)
-}
 
 /** The file's name as a plain, safe file name: no folders, no shell or dot-file surprises. */
 function safeFileName(name: string): string {
@@ -578,20 +584,14 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create download URL'), 500)
 	}
 
-	// Downloads to a temp name and renames, so a half-finished download never looks like the file.
-	// Prints the final path, the sha256 and the size, one per line.
-	const command = [
-		'set -e',
-		`d=${shellPath(input.folder)}`,
-		'mkdir -p "$d"',
-		`f="$d"/${shellQuote(safeFileName(file.name))}`,
-		`trap 'rm -f "$f.part"' EXIT`,
-		`wget -nv --tries=2 --timeout=30 -O "$f.part" ${shellQuote(url)}`,
-		'mv -f "$f.part" "$f"',
-		'realpath "$f"',
-		`sha256sum "$f" | cut -d' ' -f1`,
-		'stat -c %s "$f"',
-	].join('\n')
+	// Clears old fetched files, checks there is room, downloads, and prints the final path,
+	// the sha256, the size and the free space left, one per line.
+	const command = buildPutFileCommand({
+		folder: input.folder,
+		fileName: safeFileName(file.name),
+		url,
+		sizeBytes: file.sizeBytes,
+	})
 
 	let result: Awaited<ReturnType<WorkspaceDesktopService['control']>>
 	try {
@@ -610,9 +610,21 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 	if (!exec.success) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Desktop gave an unexpected answer'), 502)
 	}
+	if (!exec.data.timed_out && exec.data.exit_code === NO_ROOM_EXIT_CODE) {
+		const free = Number(exec.data.stdout.trim().split(' ')[1])
+		logger.warn('desktop put-file refused: no room', { workspaceId, agentId, fileId: file.id })
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				`Not enough room on the computer. This file needs ${formatBytes(file.sizeBytes + FETCH_FREE_HEADROOM_BYTES)} free (its ${formatBytes(file.sizeBytes)} plus 1 GB to spare) and ${Number.isFinite(free) ? formatBytes(free) : 'too little'} is free, even after removing old fetched files. Nothing was downloaded. Delete files you no longer need on the computer, then try again.`,
+			),
+			409,
+		)
+	}
 	if (exec.data.timed_out || exec.data.exit_code !== 0) {
 		// The download tool may quote the signed URL back; it must never reach the caller.
 		const detail = exec.data.stderr.split(url).join('<url>').trim().slice(0, 500)
+		const diskFull = /no space left on device/i.test(exec.data.stderr)
 		logger.warn('desktop put-file download failed', {
 			workspaceId,
 			agentId,
@@ -625,18 +637,22 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 				'INTERNAL_ERROR',
 				exec.data.timed_out
 					? 'The download took longer than two minutes and was stopped'
-					: `The computer could not download the file: ${detail || 'no error text'}`,
+					: diskFull
+						? `The computer ran out of disk space while saving the file (it needs ${formatBytes(file.sizeBytes)}). Delete files you no longer need on the computer, then try again.`
+						: `The computer could not download the file: ${detail || 'no error text'}`,
 			),
 			502,
 		)
 	}
 
-	const [path, sha256, size] = exec.data.stdout.trim().split('\n')
+	const [path, sha256, size, free] = exec.data.stdout.trim().split('\n')
 	const sizeBytes = Number(size)
+	const freeSpaceBytes = Number(free)
 	const hashVerified = file.contentHash != null && sha256 === file.contentHash
 	if (
 		!path ||
 		!sha256 ||
+		!Number.isInteger(freeSpaceBytes) ||
 		sizeBytes !== file.sizeBytes ||
 		(file.contentHash != null && !hashVerified)
 	) {
@@ -666,7 +682,16 @@ async function putFile(c: Ctx, input: { fileId: string; folder: string }) {
 		data: { agent_id: agentId, control: 'put_file', file_id: file.id, path },
 	}).catch((err) => logger.warn('desktop put-file event failed', { error: String(err) }))
 	c.header('Cache-Control', 'no-store')
-	return c.json({ path, size_bytes: sizeBytes, sha256, hash_verified: hashVerified }, 200)
+	return c.json(
+		{
+			path,
+			size_bytes: sizeBytes,
+			sha256,
+			hash_verified: hashVerified,
+			free_space_bytes: freeSpaceBytes,
+		},
+		200,
+	)
 }
 
 app.openapi(

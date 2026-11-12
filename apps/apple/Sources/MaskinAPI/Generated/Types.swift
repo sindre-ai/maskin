@@ -28,6 +28,8 @@ public protocol APIProtocol: Sendable {
     func get_sol_api_sol_objects_sol_board(_ input: Operations.get_sol_api_sol_objects_sol_board.Input) async throws -> Operations.get_sol_api_sol_objects_sol_board.Output
     /// Search objects by text
     ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
+    ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
     func get_sol_api_sol_objects_sol_search(_ input: Operations.get_sol_api_sol_objects_sol_search.Input) async throws -> Operations.get_sol_api_sol_objects_sol_search.Output
@@ -778,6 +780,8 @@ extension APIProtocol {
         ))
     }
     /// Search objects by text
+    ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
     ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.

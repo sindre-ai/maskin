@@ -1,6 +1,7 @@
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import {
+	MAX_SEARCH_TOKENS,
 	buildObjectListConditions,
 	tokenRankOrderBy,
 	tokenizeSearchQuery,
@@ -52,6 +53,27 @@ describe('tokenizeSearchQuery', () => {
 
 	it('dedupes preserving first-seen order', () => {
 		expect(tokenizeSearchQuery('bug bug fix bug crash')).toEqual(['bug', 'fix', 'crash'])
+	})
+
+	it('keeps only the first 6 distinct words and ignores the rest without failing', () => {
+		expect(MAX_SEARCH_TOKENS).toBe(6)
+		expect(tokenizeSearchQuery('alpha beta gamma delta epsilon zeta eta theta iota kappa')).toEqual(
+			['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'],
+		)
+	})
+
+	it('counts the cap over kept words, not over dropped or repeated ones', () => {
+		expect(
+			tokenizeSearchQuery('go alpha alpha the beta gamma ai delta epsilon zeta eta theta'),
+		).toEqual(['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'])
+	})
+
+	it('builds one ILIKE pair per kept word only', () => {
+		const { conditions } = buildObjectListConditions({
+			q: 'alpha beta gamma delta epsilon zeta eta theta',
+		})
+		const text = dialect.sqlToQuery(conditions[0] as never).params
+		expect(text).toHaveLength(12)
 	})
 
 	it('keeps underscores and hyphens intact inside tokens', () => {

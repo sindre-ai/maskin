@@ -45,6 +45,16 @@ final class ScreenTourTests: XCTestCase {
 		app.launch()
 		XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
 		sleep(3)
+		dismissNotificationPrompt(wait: 3)
+	}
+
+	/// The "Get told when an agent needs a decision" sheet covers the screen once the feed shows a
+	/// decision. "Not now" is the explanation sheet's own button, so it never opens the system prompt.
+	private func dismissNotificationPrompt(wait: TimeInterval) {
+		let notNow = app.buttons["Not now"].firstMatch
+		guard notNow.waitForExistence(timeout: wait) else { return }
+		notNow.tap()
+		sleep(1)
 	}
 
 	/// A section: starts from a fresh launch (so an earlier one cannot leave a sheet or a pushed
@@ -85,6 +95,7 @@ final class ScreenTourTests: XCTestCase {
 			skipped.append("\(shot) (no \(expect.joined(separator: " / ")))")
 			return false
 		}
+		dismissNotificationPrompt(wait: 1)
 		sleep(1)
 		let png = XCUIScreen.main.screenshot().pngRepresentation
 		try? png.write(to: URL(fileURLWithPath: "\(dir)/\(shot).png"))
@@ -173,10 +184,13 @@ final class ScreenTourTests: XCTestCase {
 
 	func testTour() throws {
 		section("foryou") {
-			capture("01-foryou", expect: ["Needs you", "Good", "decision"])
+			// Wait for the decision cards themselves: the greeting is up before the feed loads, and
+			// the first run saved the empty "You're caught up" state.
+			let cards = ["Send 7 follow-ups to Northwind?", "Approve the Q4 webinar spend?"]
+			capture("01-foryou", expect: cards, wait: 40)
 			app.swipeUp()
 			sleep(1)
-			capture("01b-foryou-scrolled", expect: ["Needs you", "Good", "decision", "waiting"])
+			capture("01b-foryou-scrolled", expect: cards + ["Accept the 12-month term?"])
 		}
 
 		section("chats") {
