@@ -90,6 +90,8 @@ function createMockDb(
 		transaction: vi
 			.fn()
 			.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(db)),
+		// The advisory lock taken by withRefreshLock.
+		execute: vi.fn().mockResolvedValue(undefined),
 	} as unknown as Parameters<TokenManager['getValidToken']>[0]
 
 	return { db, mockUpdateWhere, updateSets, insertValues, selectCalls }
@@ -179,6 +181,34 @@ describe('TokenManager', () => {
 				integrationId: 'integration-1',
 				persistCredentials: expect.any(Function),
 			}),
+		)
+	})
+
+	it('hands a custom auth handler the credentials as stored under the refresh lock', async () => {
+		// The row changes between the first read and the lock: another server renewed.
+		const stale = makeCredentials({ accessToken: 'stale', refreshToken: 'burned' })
+		const current = makeCredentials({ accessToken: 'current', refreshToken: 'live' })
+		const { db } = createMockDb([makeIntegration(stale), makeIntegration(current)])
+		let seen: StoredCredentials | undefined
+		const customProvider: ResolvedProvider = {
+			config: { name: 'deepdots', displayName: 'Deepdots', auth: { type: 'oauth2_custom' } },
+			customAuth: {
+				getInstallUrl: vi.fn(),
+				handleCallback: vi.fn(),
+				getAccessToken: vi.fn(async (_creds, ctx) =>
+					ctx.withRefreshLock(async (fresh) => {
+						seen = fresh
+						return 'ok'
+					}),
+				),
+			},
+		}
+
+		await manager.getValidToken(db, 'integration-1', customProvider)
+
+		expect(seen?.refreshToken).toBe('live')
+		expect((db as unknown as { execute: ReturnType<typeof vi.fn> }).execute).toHaveBeenCalledTimes(
+			1,
 		)
 	})
 

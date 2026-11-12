@@ -201,6 +201,7 @@ import {
 	hasMaskinMcpEntry,
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
+import { resolveAgentSendModes } from '../lib/send-permissions'
 import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
@@ -2713,7 +2714,8 @@ export class SessionManager extends EventEmitter {
 			(sessionConfig.stop_on_result === true &&
 				(typeof sessionConfig.ask_conversation_id === 'string' ||
 					typeof sessionConfig.origin_conversation_id === 'string'))
-		const accessPreamble = buildAccessPreamble(accessRows, { personReachable })
+		const sendModes = await this.loadAgentSendModes(session)
+		const accessPreamble = buildAccessPreamble(accessRows, { personReachable, sendModes })
 		const missingToolBlock = personReachable ? MISSING_TOOL_BLOCK : ''
 		const handoffBlock = sessionConfig.conversation ? HANDOFF_PROOF_BLOCK : ''
 		// Last in the prompt on purpose: an agent's own persona often says to ask "one follow-up"
@@ -3822,6 +3824,22 @@ ${cont.continues_prompt}
 	 * already took (oldest wins), each with a warning that carries no value.
 	 */
 	/** The agent's access per integration. Best effort: a failed lookup falls back to each integration's default. */
+	/** The agent's send setting per kind, for the prompt. Best effort: a failed lookup leaves it out. */
+	private async loadAgentSendModes(session: typeof sessions.$inferSelect) {
+		try {
+			return await resolveAgentSendModes(this.db, {
+				workspaceId: session.workspaceId,
+				agentId: session.actorId,
+			})
+		} catch (err) {
+			logger.warn('Could not load the agent send settings', {
+				sessionId: session.id,
+				error: err instanceof Error ? err.name : 'unknown',
+			})
+			return undefined
+		}
+	}
+
 	private async loadAgentAccess(
 		session: typeof sessions.$inferSelect,
 	): Promise<ActorIntegrationAccess[]> {

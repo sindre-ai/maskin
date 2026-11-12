@@ -9,6 +9,7 @@ import {
 	notifications,
 	objects,
 	relationships,
+	sendPermissions,
 	sessionLogs,
 	sessions,
 	triggers,
@@ -706,6 +707,43 @@ export async function insertAgentGrant(
 		})
 		.returning()
 	return rows[0]
+}
+
+/**
+ * Sets one agent's send setting for one draft kind (always_allow, ask_first or deny). Without a
+ * row a workspace starts with every kind sending directly, so a test that needs the approval
+ * path sets ask_first first.
+ */
+export async function insertSendMode(
+	db: Database,
+	setting: {
+		workspaceId: string
+		agentId: string
+		kind: string
+		mode: 'always_allow' | 'ask_first' | 'deny'
+	},
+) {
+	const rows = await db.insert(sendPermissions).values(setting).returning()
+	return rows[0]
+}
+
+/** The LinkedIn draft kinds that have a send tool. */
+export const LINKEDIN_SEND_KINDS = [
+	'linkedin_message',
+	'linkedin_connection_request',
+	'linkedin_inmail',
+	'linkedin_post',
+	'linkedin_comment',
+	'linkedin_comment_reply',
+	'linkedin_post_edit',
+] as const
+
+/** Sets one send mode for an agent on every LinkedIn send kind, in one insert. */
+export async function insertLinkedinSendModes(
+	db: Database,
+	setting: { workspaceId: string; agentId: string; mode: 'always_allow' | 'ask_first' | 'deny' },
+) {
+	await db.insert(sendPermissions).values(LINKEDIN_SEND_KINDS.map((kind) => ({ ...setting, kind })))
 }
 
 /** The actor ids holding a grant on an integration, sorted. */

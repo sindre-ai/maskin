@@ -24,7 +24,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS, requiresApprovalToAct } from '@maskin/shared'
+import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
@@ -183,12 +183,6 @@ export function AgentAccess({
 				</span>
 			</button>
 
-			{!isKey && integration.provider === 'slack' && (
-				<p className="pb-1 pl-5 text-xs text-muted-foreground">
-					Agent posts to channels not on the Direct posting list wait for a person to approve.
-				</p>
-			)}
-
 			{open && (
 				<div className="mt-2 space-y-2">
 					<div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-card">
@@ -279,13 +273,6 @@ export function AgentAccess({
 								</SelectContent>
 							</Select>
 						</ViewerTooltip>
-					)}
-
-					{requiresApprovalToAct(integration.provider) && (
-						<p className="text-xs text-muted-foreground">
-							Read & write lets an agent write drafts. Each email still waits for your approval in
-							the chat before it is sent.
-						</p>
 					)}
 
 					<p className="text-xs text-muted-foreground">

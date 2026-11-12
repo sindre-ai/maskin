@@ -58,4 +58,16 @@ describe('flow activity email text', () => {
 		const line = flowRunLine({ agentName: 'A', objectTitle: 'x'.repeat(200) })
 		expect(line.length).toBeLessThan(100)
 	})
+
+	it('shows each run with a tick and previews the first run, not the subject', () => {
+		const mail = buildFlowActivityEmail({
+			...base,
+			runs: [{ agentName: 'Researcher', objectTitle: 'Competitor update' }],
+			runCount: 1,
+		})
+		expect(mail.html).toContain('&#10003;')
+		const preview = mail.html.match(/display: none[^>]*>([^<]*)</)?.[1] as string
+		expect(preview).toContain('Researcher finished &#39;Competitor update&#39;')
+		expect(preview).not.toContain(mail.subject)
+	})
 })

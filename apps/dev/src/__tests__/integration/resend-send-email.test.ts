@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { recordObjectApproval } from '../../lib/object-delivery'
 import { buildObjectPreview } from '../../lib/object-preview'
-import { insertActor, insertAgentGrant, insertObject, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertAgentGrant,
+	insertObject,
+	insertSendMode,
+	insertWorkspace,
+} from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 const { default: resendRoutes } = await import('../../routes/integrations-resend')
@@ -72,7 +78,12 @@ const MAILBOX = 'developer-test@example.com'
 
 /** A workspace with Resend connected, a person, and an agent with (or without) a mailbox and write access. */
 async function setup(
-	opts: { access?: 'read' | 'read_write' | null; mailbox?: string | null } = {},
+	opts: {
+		access?: 'read' | 'read_write' | null
+		mailbox?: string | null
+		/** The agent's send setting for emails. Ask first unless a test says otherwise. */
+		sendMode?: 'always_allow' | 'ask_first' | 'deny'
+	} = {},
 ) {
 	const human = getTestActorId()
 	const workspace = await insertWorkspace(db, human)
@@ -85,6 +96,12 @@ async function setup(
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+	await insertSendMode(db, {
+		workspaceId: workspace.id,
+		agentId: agent.id,
+		kind: 'email',
+		mode: opts.sendMode ?? 'ask_first',
+	})
 	const [resend] = await db
 		.insert(integrations)
 		.values({
@@ -244,6 +261,58 @@ describe('resend_send_email: an approved email', () => {
 	})
 })
 
+describe('resend_send_email: the send setting', () => {
+	it('sends a draft nobody approved when the agent is set to always allow, once', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const email = await insertEmail(s, { approve: false })
+		fetchMock.mockResolvedValueOnce(resendOk('em_direct'))
+
+		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			email_id: 'em_direct',
+			from: s.mailbox?.toLowerCase(),
+			mode: 'direct',
+		})
+		expect(lastCall().headers['Idempotency-Key']).toContain(`maskin-email-${email.id}-direct-`)
+		expect(await eventsOn(s.workspace.id, email.id, 'delivered')).toHaveLength(1)
+
+		const again = await post(s.agent.id, s.workspace.id, { object_id: email.id })
+		expect(again.status).toBe(409)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('still sends from the agent mailbox and refuses an agent with no mailbox', async () => {
+		const s = await setup({ sendMode: 'always_allow', mailbox: null })
+		const email = await insertEmail(s, { approve: false })
+
+		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
+
+		expect(res.status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses everything when the agent is set to deny, even an approved email', async () => {
+		const s = await setup({ sendMode: 'deny' })
+		const email = await insertEmail(s)
+
+		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
+
+		expect(res.status).toBe(403)
+		expect(JSON.stringify(await res.json())).toContain('turned off')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('still cannot send for an agent with only Read access, whatever the setting', async () => {
+		const s = await setup({ access: 'read', sendMode: 'always_allow' })
+		const email = await insertEmail(s, { approve: false })
+
+		expect((await post(s.agent.id, s.workspace.id, { object_id: email.id })).status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
 describe('resend_send_email: what stops a send', () => {
 	it('refuses an email no person approved', async () => {
 		const s = await setup()
@@ -252,7 +321,7 @@ describe('resend_send_email: what stops a send', () => {
 		const res = await post(s.agent.id, s.workspace.id, { object_id: email.id })
 
 		expect(res.status).toBe(403)
-		expect(JSON.stringify(await res.json())).toContain('A person has to approve')
+		expect(JSON.stringify(await res.json())).toContain('set to ask first')
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 

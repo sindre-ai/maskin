@@ -22,6 +22,7 @@ import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
+import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
@@ -415,6 +416,26 @@ logger.info('File upload reaper started')
 const keychainUndoSweeperJob = new KeychainUndoSweeperJob(db)
 keychainUndoSweeperJob.start()
 logger.info('Keychain undo sweeper started')
+
+// Telnyx call recordings: downloads every recording Telnyx holds and saves it as a Maskin
+// file linked to the person and the outbound loop. No model in the path. Off unless
+// TELNYX_RECORDING_SYNC_WORKSPACE_ID, _ACTOR_ID (the agent granted the Telnyx key) and
+// _LOOP_ID are set. Optional: _KEY_NAME (Keychain name, default Telnyx), _FROM (earliest
+// recording to save, default 2026-11-09).
+const telnyxSyncWorkspaceId = process.env.TELNYX_RECORDING_SYNC_WORKSPACE_ID
+const telnyxSyncActorId = process.env.TELNYX_RECORDING_SYNC_ACTOR_ID
+const telnyxSyncLoopId = process.env.TELNYX_RECORDING_SYNC_LOOP_ID
+if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
+	const telnyxRecordingSyncJob = new TelnyxRecordingSyncJob(db, storageProvider, {
+		workspaceId: telnyxSyncWorkspaceId,
+		actorId: telnyxSyncActorId,
+		loopId: telnyxSyncLoopId,
+		keyName: process.env.TELNYX_RECORDING_SYNC_KEY_NAME || 'Telnyx',
+		backfillFrom: new Date(process.env.TELNYX_RECORDING_SYNC_FROM || '2026-11-09T00:00:00Z'),
+	})
+	telnyxRecordingSyncJob.start()
+	logger.info('Telnyx recording sync started')
+}
 
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
 // unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.

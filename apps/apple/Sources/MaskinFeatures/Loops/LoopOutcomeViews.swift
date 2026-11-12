@@ -23,6 +23,7 @@ enum OutcomeLabels {
 		case .image: "Image"
 		case .text: "Text"
 		case .audio: "Audio"
+		case .video: "Video"
 		case .source, .other: "File"
 		}
 	}

@@ -30,7 +30,8 @@ struct WorkingAgentTests {
 	}
 
 	@Test func initialsMatchTheAvatarRule() {
-		#expect(WorkingAgent.initials(for: "Chief of Staff") == "CO")
+		#expect(WorkingAgent.initials(for: "Chief of Staff") == "COS")
+		#expect(WorkingAgent.initials(for: "Head of Customer Success") == "HOC")
 		#expect(WorkingAgent.initials(for: "Forge") == "FO")
 		#expect(WorkingAgent.initials(for: "") == "?")
 		#expect(WorkingAgent.initials(for: "(Writer)") == "WR")

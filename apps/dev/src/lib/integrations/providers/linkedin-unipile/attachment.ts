@@ -59,6 +59,23 @@ export async function loadApprovedAttachment(
 }
 
 /**
+ * A message attachment for an agent that sends without a person's approval: the file is read
+ * as it is now, with the same workspace, type, size and first-bytes checks as above.
+ */
+export async function loadAttachment(
+	deps: { db: Database; storage: StorageProvider | undefined },
+	input: { workspaceId: string; fileId: string },
+): Promise<LinkedInFileAttachment> {
+	return loadWorkspaceFile(deps, {
+		workspaceId: input.workspaceId,
+		fileId: input.fileId,
+		allowed: ['application/pdf', 'image/png', 'image/jpeg'],
+		notAllowed:
+			'The attachment is not a PDF, PNG or JPEG. Those are the only files LinkedIn messages can carry here.',
+	})
+}
+
+/**
  * An image a caller asked for on a public post. A post has no approval step, so the file is
  * read as it is now: same workspace, size and first-bytes checks as above, PNG and JPEG only.
  */

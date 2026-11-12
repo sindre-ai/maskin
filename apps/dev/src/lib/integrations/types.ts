@@ -50,6 +50,8 @@ export interface WebhookConfig {
 	signatureScheme: 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
 	/** Prefix before the hex digest (e.g. 'sha256=' for GitHub) */
 	signaturePrefix?: string
+	/** How the HMAC digest is written: 'hex' (default) or 'base64'. Applies to all three schemes. */
+	digestEncoding?: 'hex' | 'base64'
 	/** Env var name for the webhook signing secret */
 	secretEnv: string
 	/** Header containing the event type (e.g. 'x-github-event') */
@@ -307,6 +309,15 @@ export interface CustomAuthContext {
 	integrationId: string
 	/** Encrypt + store the updated credentials and write the audit event. */
 	persistCredentials(credentials: StoredCredentials): Promise<void>
+	/**
+	 * Run `fn` while holding a database lock for this integration, handing it the
+	 * credentials as stored right now. For providers whose refresh token is burned
+	 * when used: the in-process dedupe in {@link TokenManager} only covers one
+	 * server, and two servers renewing at once would spend the same token. Read
+	 * what `fn` is given, not the credentials passed to `getAccessToken`, which
+	 * may be stale by the time the lock is won.
+	 */
+	withRefreshLock<T>(fn: (current: StoredCredentials) => Promise<T>): Promise<T>
 }
 
 export interface CustomAuthHandler {

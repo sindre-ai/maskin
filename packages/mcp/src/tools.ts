@@ -780,7 +780,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
+					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. Agent callers cannot send true (400); only people create workspaces. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
 				),
 			workspace_id: z
 				.string()
@@ -790,10 +790,10 @@ export const tools = {
 					'Add the new actor to this existing workspace. Required when type is "agent" unless auto_create_workspace is explicitly true — the call fails otherwise rather than creating an agent with no workspace.',
 				),
 			role: z
-				.enum(['owner', 'admin', 'member'])
+				.enum(['admin', 'member'])
 				.default('member')
 				.describe(
-					'Role of the invitation sent to a human when workspace_id is given: only member (read/write) is offered here; admin and owner are refused (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
+					'Role of the invitation sent to a human when workspace_id is given: member (read/write) or admin; owner is never offered (the invitation route itself takes member or viewer). Ignored for agents, which are always added as member.',
 				),
 			description: z
 				.string()
@@ -889,10 +889,10 @@ export const tools = {
 					'Add this actor to the given workspace as part of the update. This is the tool for adding an existing actor to a workspace. Omit to leave workspace membership unchanged.',
 				),
 			role: z
-				.enum(['owner', 'admin', 'member'])
+				.enum(['admin', 'member'])
 				.default('member')
 				.describe(
-					'Role to assign when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Only applied when workspace_id is set.',
+					'Role to assign when adding to a workspace via workspace_id: admin (manage members) or member (read/write). Owner is never offered. Only applied when workspace_id is set.',
 				),
 		}),
 	},
@@ -978,7 +978,8 @@ export const tools = {
 		}),
 	},
 	create_workspace: {
-		description: 'Create a new workspace. The authenticated actor becomes the owner.',
+		description:
+			'Create a new workspace. The authenticated actor becomes the owner. Only people can create workspaces: an agent key gets a 403 and nothing is created.',
 		inputSchema: z.object({
 			name: z.string().min(1),
 			settings: z.record(z.unknown()).optional(),
@@ -1532,7 +1533,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need it for your actual reply: whatever you write at the end of your turn is posted automatically. Use it for an interim note, mainly a short heads-up before something slow. Skip bare acknowledgements ("okay", "got it"). Read recent messages with list_conversation_messages if you need context. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); use a thread for side conversations or long-running work and keep \`also_in_channel\` off unless the whole chat should see it. When answering a human who is writing in a thread your post lands there by itself; pass \`top_level: true\` only for the main timeline. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and you must never write card text yourself; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need it for your actual reply: whatever you write at the end of your turn is posted automatically. Use it for an interim note, mainly a short heads-up before something slow. Skip bare acknowledgements ("okay", "got it"). Read recent messages with list_conversation_messages if you need context. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); use a thread for side conversations or long-running work and keep \`also_in_channel\` off unless the whole chat should see it. An interim post lands in a thread under the message that started your turn (the thread is created if the message was top-level), so a long run does not fill the main timeline; your final reply is posted to the main timeline automatically. Pass \`top_level: true\` only when the whole chat must see the post. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and you must never write card text yourself; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1676,15 +1677,26 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
+			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The target_actor_id must be an agent actor. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
-			type: z.enum(['cron', 'event']),
+			type: z
+				.enum(['cron', 'event'])
+				.optional()
+				.describe('cron or event. Leave out when you pass run_at.'),
 			config: z
 				.record(z.unknown())
+				.optional()
 				.describe(
-					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }',
+					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }. Leave out when you pass run_at.',
+				),
+			run_at: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					'Run once at this time (ISO 8601, for example 2026-11-12T09:00:00Z), then disable the trigger. Must be in the future. Use it instead of type and config.',
 				),
 			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z.string().uuid(),
@@ -1693,7 +1705,7 @@ export const tools = {
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
+			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -1713,7 +1725,7 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List triggers in the workspace, newest first. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q` (words in the trigger name); filters combine with AND and carry through the cursor. Set `compact` for short rows without the action prompt. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page. Any parameter not listed here is rejected with an error.',
+			'List triggers in the workspace, newest first. Call this before creating a trigger, to see what already runs. Each row is short: id, name, status, kind (recurring, one-time or event), schedule, next_run, last_run, agent (id and name), purpose (first line of the prompt) and url. The full prompt and config are left out; read one trigger in full with get_trigger, or set `compact` to false. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q`; `q` matches the trigger name, agent name or id, kind, status, schedule and the name of a loop it belongs to (never the prompt), each word of `q` has to match, and filters combine with AND and carry through the cursor. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page. If a page is too long for one response it is cut, `truncated` is true and `hint` says how to get the rest. Any parameter not listed here is rejected with an error.',
 		// Strict: an unknown parameter is an error, never a silently ignored filter.
 		inputSchema: z
 			.object({
@@ -1748,15 +1760,25 @@ export const tools = {
 					.min(1)
 					.max(200)
 					.optional()
-					.describe('Only triggers whose name contains this text (case-insensitive).'),
+					.describe(
+						'Words to find triggers by (case-insensitive, each word must match): name, agent name or id, kind (recurring, one-time, event), status, schedule, or loop name. Not the prompt.',
+					),
 				compact: z
 					.boolean()
 					.optional()
 					.describe(
-						'Return short rows without the action prompt. Use it to scan or audit many triggers; read one trigger in full by leaving it off and filtering with `q`.',
+						'Defaults to true: short rows without the action prompt or config. Set false to get the full rows. To read one trigger in full, use get_trigger instead.',
 					),
 			})
 			.strict(),
+	},
+	get_trigger: {
+		description:
+			'Read one trigger in full by id: name, status, kind (recurring, one-time or event), schedule, next_run, last_run, the agent it runs, the full action prompt and config. Find ids with list_triggers.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('The trigger id, from list_triggers.'),
+		}),
 	},
 	// ─── Loops ───────────────────────────────────────────────
 	// A Loop is a persistent multi-agent process: a goal wrapped around
@@ -2480,7 +2502,7 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail AND a person\'s approval of that exact email; with "Read" or no access you cannot send. PREFERRED: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview; any edit withdraws the approval. To attach files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (max 5 files, 20 MB total); changing the list withdraws the approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If it is refused because no one approved it, end your turn; you will be woken after approval. Older route: a comment with `decision` whose `draft` holds the email (real address in `to`, first line "Subject: ...", then the body) and exactly one destructive send option; once the person chose it, call this tool with only `approval_comment_id` (plus `draft_id` when the card holds several drafts in `decision.drafts`). Never pass `to`, `subject` or `body`: a new email cannot be sent directly. If the answer says the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail; with "Read" or no access you cannot send. What happens next depends on the email send setting a person set for you. Always allow: pass `to`, `subject` and `body` (and optional `cc`) and it sends at once, or pass `object_id` to send a kept email object. Ask first: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview (editing it first if they want), or say yes in the chat (then call approve_draft_from_chat); any edit withdraws the approval. Attach files with create_file and list the ids in `metadata.attachment_file_ids` (max 5, 20 MB total); changing the list withdraws an approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If refused because no one approved it, end your turn; you will be woken after approval. Older route: a decision comment whose `draft` holds the email; after the person chose its send option, call this tool with only `approval_comment_id` (plus `draft_id` for several drafts). Deny: sending is refused. If the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
@@ -2542,23 +2564,26 @@ export const tools = {
 	},
 	resend_send_email: {
 		description:
-			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Resend\'s own send tools are not available to you: this is the only way an email goes out, and nothing is sent until a person has approved that exact email. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns), then mention the person with create_comment (no `decision` needed). The object shows as a preview with an Approve button in For You and in chat. A person approves exactly the text they see, and any edit withdraws the approval. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total); changing the list withdraws the approval. Call this tool with only `object_id`: it sends the object as it reads now, once, if a person approved it. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same approval.',
+			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns). Call this tool with only `object_id`: it sends the object as it reads now, once. If a person set your send setting for emails to ask first, it is sent only after a person approved that exact text: mention them with create_comment (no `decision` needed); the object shows as a preview with an Approve button in For You and in chat, they can edit the text before approving, or say yes in the chat (then call approve_draft_from_chat). Any edit withdraws the approval. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. If your setting is always allow it sends at once, and if it is deny it is refused. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total). The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same send.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
 				.string()
 				.uuid()
 				.describe(
-					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now, if a person approved it.',
+					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now (for an agent set to ask first, only if a person approved it).',
 				),
 		}),
 	},
 	approve_draft_from_chat: {
 		description:
-			"Count a person's \"send it\" in a chat as the Approve on an email draft. Use it only when a person has just said yes to sending, in a chat you are in, and you have shown them the draft in that chat. Show it by posting a message there that links the draft object (the chat draws its card with the recipients, text and files), then wait for their reply. Pass the draft's object_id and the id of the person's reply (a message id in the chat, from the chat messages you can read). The server checks the message itself and refuses unless a person wrote it (never an agent), in a chat you are in, as their latest message there, after the draft's last edit and after a message in that chat linked the draft. You cannot approve on a person's behalf from your own reading of the chat: if it refuses, post the link again and ask, or ask them to press Approve on the card. Email drafts only for now. When it succeeds, call resend_send_email with the same object_id. Any edit to the recipients, subject, text or files withdraws the approval.",
+			"Count a person's \"send it\" in a chat as the Approve on a draft (an email, a LinkedIn message, post, comment, reply, edit or invitation, or a Slack message). It is for agents whose send setting is ask first; an agent that sends directly does not need it. Use it only when a person has just said yes to sending, in a chat you are in, and you have shown them the draft in that chat. Show it by posting a message there that links the draft object (the chat draws its card with the recipients, text and files), then wait for their reply. Pass the draft's object_id and the id of the person's reply (a message id in the chat, from the chat messages you can read). The server checks the message itself and refuses unless a person wrote it (never an agent), in a chat you are in, as their latest message there, after the draft's last edit and after a message in that chat linked the draft. You cannot approve on a person's behalf from your own reading of the chat: if it refuses, post the link again and ask, or ask them to press Approve on the card. When it succeeds, call the send tool for that kind (resend_send_email or gmail_send_email for an email, the LinkedIn tool, slack_send_message) with the same object_id. Any edit to the recipients, subject, text or files withdraws the approval.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			object_id: z.string().uuid().describe('The email draft object (metadata.kind "email").'),
+			object_id: z
+				.string()
+				.uuid()
+				.describe('The draft object (its metadata.kind, for example "email").'),
 			message_id: z
 				.number()
 				.int()
@@ -3000,7 +3025,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, then in the chooser select the file and click Open (double click and Enter do not submit it). If Open is off the bottom of the screen, run `xdotool getactivewindow windowmove 0 0 windowsize 1000 600` with desktop_run, then click Open. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error). Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

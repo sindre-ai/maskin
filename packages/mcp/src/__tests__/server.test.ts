@@ -6627,7 +6627,7 @@ describe('tool handlers', () => {
 			for (const key of ['target_actor_id', 'enabled', 'q']) expect(params.has(key)).toBe(false)
 		})
 
-		it('list_triggers compact leaves the action prompt out of the rows and the card', async () => {
+		it('list_triggers leaves the action prompt out of the rows and the card unless compact is false', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				if ((url as string).includes('/api/triggers')) {
 					return {
@@ -6641,7 +6641,7 @@ describe('tool handlers', () => {
 									name: `Trigger ${id}`,
 									enabled: true,
 									targetActorId: null,
-									actionPrompt: 'A very long prompt',
+									actionPrompt: 'Sweep the board\nA very long prompt',
 								})),
 							),
 					} as Response
@@ -6653,11 +6653,14 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 				structuredContent: { heroCard: { objects: Array<Record<string, unknown>> } }
 			}
-			const full = (await handler({ workspace_id: 'ws-1' })) as Result
+			const full = (await handler({ workspace_id: 'ws-1', compact: false })) as Result
 			expect(full.content[0].text).toContain('A very long prompt')
-			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe('A very long prompt')
+			expect(full.structuredContent.heroCard.objects[0].actionPrompt).toBe(
+				'Sweep the board\nA very long prompt',
+			)
 
-			const compact = (await handler({ workspace_id: 'ws-1', compact: true })) as Result
+			// Compact is the default: no argument, no prompt.
+			const compact = (await handler({ workspace_id: 'ws-1' })) as Result
 			expect(compact.content[0].text).not.toContain('A very long prompt')
 			expect(compact.content[0].text).toContain('t-1')
 			for (const object of compact.structuredContent.heroCard.objects) {
@@ -7017,7 +7020,7 @@ describe('tool handlers', () => {
 					return {
 						ok: true,
 						headers: new Headers(),
-						json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
+						json: () => Promise.resolve({ actorId, workspaceId, role: 'admin' }),
 					} as Response
 				}
 				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
@@ -7030,7 +7033,7 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				id: actorId,
 				workspace_id: workspaceId,
-				role: 'owner',
+				role: 'admin',
 			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledWith(
@@ -7039,7 +7042,7 @@ describe('tool handlers', () => {
 			)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.workspace_id).toBe(workspaceId)
-			expect(parsed.role).toBe('owner')
+			expect(parsed.role).toBe('admin')
 			expect(parsed.workspace_membership_error).toBeUndefined()
 		})
 
@@ -8346,8 +8349,12 @@ describe('url field injection', () => {
 				target_actor_id: testUuid,
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as { id: string; url: string }
-			expect(parsed.url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-1')
+			const parsed = JSON.parse(result.content[0].text) as {
+				trigger: { id: string; url: string }
+				warnings: unknown[]
+			}
+			expect(parsed.trigger.url).toBe('https://maskin.example.com/ws-default-123/triggers/trig-1')
+			expect(Array.isArray(parsed.warnings)).toBe(true)
 		})
 
 		it('list_triggers — url added to each trigger in content', async () => {

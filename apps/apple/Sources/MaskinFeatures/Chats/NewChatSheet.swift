@@ -67,6 +67,7 @@ struct NewChatSheet: View {
 			.overlay { if isCreating { ProgressView() } }
 			.task {
 				if let initialRecipient, !draft.recipientIDs.contains(initialRecipient.id) { draft.toggle(initialRecipient.id) }
+				composer.splitsLongMessages = true
 				await store.loadActors()
 				draft.applyDefault(actors: store.actors, excluding: currentActorID)
 				// The composer keeps the draft itself; text passed in wins over a saved draft.
@@ -130,13 +131,14 @@ struct NewChatSheet: View {
 		}
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
 		guard !people.isEmpty else { return }
+		isCreating = true
+		defer { isCreating = false }
 		// Live starts the call with no first message; the typed text stays in the composer.
-		let taken = live ? nil : composer.take()
+		// A long message uploads its file first, which is why the spinner is already up.
+		let taken = live ? nil : await composer.takeForSend()
 		let message = taken?.text
 		guard live || message != nil else { return }
-		isCreating = true
 		error = nil
-		defer { isCreating = false }
 		do {
 			let created = try await store.create(
 				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),

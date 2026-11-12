@@ -27,6 +27,14 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
+	 * Gates connecting Deepdots in Integrations (bet [Connect Deepdots so agents can read the
+	 * latest customer feedback](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f24572b9-f500-496c-ba7d-4eee3af6ed7a)).
+	 * The connect route answers 404 when it is off for the caller, and the web app hides the
+	 * Deepdots row. Actor-scoped (FF_TESTER_ACTOR_IDS), because the web app only reads actor
+	 * flags. Retire once Deepdots is on for everyone.
+	 */
+	DEEPDOTS_CONNECT: 'deepdots-connect',
+	/**
 	 * Gates the weekly capability note that Chief of Staff sends in a person's
 	 * 1-1 (bet
 	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
@@ -90,6 +98,20 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	LIVING_VIEW_REFRESH: 'living-view-refresh',
+	/**
+	 * Gates formatting in chat messages you write: bold, lists, quotes, code and tables in your
+	 * own sent messages draw formatted, as other people's already do. Frontend only: read once,
+	 * in `MessageBubble`. Off means your own message is drawn exactly as before. The chat typing
+	 * box formatting reads the same id. Retire once it is on for everyone.
+	 */
+	CHAT_FORMATTING: 'chat-formatting',
+	/**
+	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
+	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
+	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for
+	 * everyone.
+	 */
+	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

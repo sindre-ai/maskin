@@ -44,3 +44,15 @@ export function snippetAuthorLabel(
 		conversation.participants.some((p) => p.actorId === selfId)
 	return isDirect && sameName(who, displayedTitle) ? null : who
 }
+
+/**
+ * A long name cut down to its initials for the chat list, which has no room for it: "Chief of
+ * Staff" reads "CoS". Small words ("of", "the") keep their lower case, so the short form still
+ * reads as the name. Names of one or two words ("Billing Agent") stay whole.
+ */
+export function shortActorName(name: string): string {
+	const trimmed = name.trim()
+	const words = trimmed.split(/\s+/).map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
+	if (words.length < 3 || words.some((word) => !word)) return trimmed
+	return words.map((word) => word.charAt(0)).join('')
+}

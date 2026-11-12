@@ -68,6 +68,18 @@ export function useConnectIntegration(workspaceId: string) {
 	})
 }
 
+/** Connect Deepdots: the backend signs in once and stores the login only if Deepdots accepts it. */
+export function useConnectDeepdots(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { email: string; password: string }) =>
+			api.integrations.connect(workspaceId, 'deepdots', input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 /** Server-side DNS pre-check the Resend connect flow fires on leaving Step 2.
  *  The backend runs `node:dns.resolveMx()` on the entered domain and returns
  *  the existing MX list plus a `warn` flag — set when the user typed a bare
@@ -198,19 +210,6 @@ export function useSlackUsers(integrationId: string | undefined, workspaceId: st
 		queryFn: () => api.integrations.slackUsers(integrationId as string, workspaceId),
 		enabled: Boolean(integrationId),
 		staleTime: FIVE_MINUTES,
-	})
-}
-
-/** Save the Slack channels agents may post to without a person approving a draft. */
-export function useSetSlackDirectPostChannels(workspaceId: string) {
-	const queryClient = useQueryClient()
-	return useMutation({
-		mutationFn: (channels: string[]) =>
-			api.integrations.setSlackDirectPostChannels(workspaceId, channels),
-		onSuccess: () => {
-			toast.success('Direct-post channels updated')
-			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
-		},
 	})
 }
 

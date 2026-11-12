@@ -43,4 +43,16 @@ describe('notification email text', () => {
 		const mail = buildNotificationEmail({ ...base, body: null })
 		expect(mail.text.split('\n').filter((l) => l.trim() !== '')).toHaveLength(3)
 	})
+
+	it('uses the text as the hidden preview, or the button label when there is none', () => {
+		const preview = (html: string) => html.match(/display: none[^>]*>([^<]*)</)?.[1]
+		expect(preview(buildNotificationEmail(base).html)).toContain(base.body)
+		expect(preview(buildNotificationEmail({ ...base, body: null }).html)).toContain('Open it')
+	})
+
+	it('shows a rollup count as the big number', () => {
+		const mail = buildNotificationEmail({ ...base, rollupCount: 3 })
+		expect(mail.html).toContain('>3</td>')
+		expect(mail.html).toContain('>things need you</td>')
+	})
 })
