@@ -130,7 +130,7 @@ export function needsNormalise(tool: string): boolean {
 export function wrapInputSchema(
 	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
-	opts: { rejectUnknownKeys?: boolean } = {},
+	opts: { rejectUnknownKeys?: boolean; explain?: (args: unknown) => string | null } = {},
 ): z.ZodTypeAny {
 	const schema = input instanceof z.ZodType ? input : z.object(input)
 	const shape = input instanceof z.ZodType ? input.shape : input
@@ -146,6 +146,8 @@ export function wrapInputSchema(
 				})
 			}
 		}
+		const explained = opts.explain?.(args)
+		if (explained) ctx.addIssue({ code: z.ZodIssueCode.custom, message: explained })
 		return args
 	}, schema)
 	return Object.assign(wrapped, { shape })
