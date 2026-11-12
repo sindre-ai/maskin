@@ -266,6 +266,18 @@ export function CreatePicker({
 
 	const activeCommand = commandRows[Math.min(commandIndex, commandRows.length - 1)] ?? null
 
+	// The list scrolls (max 300px), so keep the highlighted row in view as the arrow keys move it.
+	const activeCommandKey = commandOpen ? (activeCommand?.key ?? null) : null
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the highlighted row changes
+	useEffect(() => {
+		if (!activeCommandKey) return
+		document
+			.getElementById(
+				`${commandListId}-${commandRows.findIndex((r) => r.key === activeCommandKey)}`,
+			)
+			?.scrollIntoView?.({ block: 'nearest' })
+	}, [activeCommandKey])
+
 	function selectObjectType(type: string) {
 		setEntityKind(null)
 		setObjectType(type)
