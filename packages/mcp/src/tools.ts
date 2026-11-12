@@ -304,6 +304,13 @@ const startAgentInputSchema = z.object({
 		.describe(
 			'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
 		),
+	file_ids: z
+		.array(z.string().uuid())
+		.max(20)
+		.optional()
+		.describe(
+			'Ids of workspace files the agent needs (an upload, a render, a working package). They are listed by name and id in its starting prompt, so it does not have to hunt for them or ask for them again.',
+		),
 })
 
 /** The `sort` values of list_objects. `relevance` needs `q`. */
@@ -1189,7 +1196,7 @@ export const tools = {
 	// ─── Files ───────────────────────────────────────────────
 	create_file: {
 		description:
-			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else. The file is linked to the chat you are running in, so it stays reachable from that chat; pass `conversation_id` to link it to another chat, and `object_id` to attach it to a work item.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -1231,6 +1238,18 @@ export const tools = {
 				.describe(
 					'Encoding of `content`. Defaults to "utf8" — pass markdown/HTML/JSON as a normal string. Use "base64" for binary files (images, PDFs, archives).',
 				),
+			conversation_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Chat to link the file to. Leave out to link it to the chat you are running in (none when you are not in a chat).',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Work item (bet, task, insight, ...) to attach the file to.'),
 		}),
 	},
 	list_files: {

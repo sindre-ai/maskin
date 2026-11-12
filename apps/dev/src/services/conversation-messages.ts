@@ -3,6 +3,7 @@ import { conversations, messages } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
+import { fileIdsInText, linkFilesToConversation } from '../lib/conversation-file-links'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { resolveCardFromAnswerMessage } from './card-resolution'
@@ -85,6 +86,24 @@ export async function insertConversationMessage(
 			...(args.threadRootId ? { thread_root_id: args.threadRootId } : {}),
 		},
 	})
+
+	// An agent that shares a file in the chat, as an attachment or by its link in the text
+	// (a render, a preview), has put that file in this chat. Only a message from a session
+	// counts, so a person pasting a link does not link anything. Best effort: the link
+	// write never fails the message.
+	if (args.sessionId) {
+		const sharedFileIds = [
+			...(args.metadata?.attachments ?? []).map((a) => a.file_id),
+			...fileIdsInText(args.content),
+		]
+		await linkFilesToConversation(db, {
+			workspaceId: args.workspaceId,
+			conversationId: args.conversationId,
+			fileIds: sharedFileIds,
+			createdBy: args.actorId,
+			metadata: { messageId: created.id, sessionId: args.sessionId },
+		})
+	}
 
 	if ((args.kind ?? 'message') === 'message' && !args.skipObjectMirror) {
 		await mirrorAsObjectComment(db, {
