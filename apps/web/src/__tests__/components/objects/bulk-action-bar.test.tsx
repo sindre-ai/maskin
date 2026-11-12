@@ -209,6 +209,56 @@ describe('BulkActionBar', () => {
 		expect(props.onClear).not.toHaveBeenCalled()
 	})
 
+	it('does not call onClear when ESC is pressed in a text field', () => {
+		const { props } = renderBar()
+		const input = document.createElement('input')
+		document.body.appendChild(input)
+		act(() => {
+			fireEvent.keyDown(input, { key: 'Escape' })
+		})
+		document.body.removeChild(input)
+		expect(props.onClear).not.toHaveBeenCalled()
+	})
+
+	it('does not call onClear when ESC closes an open popper', () => {
+		const { props } = renderBar()
+		const popper = document.createElement('div')
+		popper.setAttribute('data-radix-popper-content-wrapper', '')
+		document.body.appendChild(popper)
+		act(() => {
+			fireEvent.keyDown(window, { key: 'Escape' })
+		})
+		document.body.removeChild(popper)
+		expect(props.onClear).not.toHaveBeenCalled()
+	})
+
+	it('does not call onClear when ESC was already handled and the popper has since unmounted', () => {
+		const { props } = renderBar()
+		const popper = document.createElement('div')
+		popper.setAttribute('data-radix-popper-content-wrapper', '')
+		document.body.appendChild(popper)
+		// Radix dismisses from a document capture listener and the content can be
+		// gone by the time the bubble listener on window runs.
+		const dismiss = () => document.body.removeChild(popper)
+		document.addEventListener('keydown', dismiss, true)
+		act(() => {
+			fireEvent.keyDown(window, { key: 'Escape' })
+		})
+		document.removeEventListener('keydown', dismiss, true)
+		expect(props.onClear).not.toHaveBeenCalled()
+	})
+
+	it('does not call onClear when ESC was already handled (defaultPrevented)', () => {
+		const { props } = renderBar()
+		const claim = (e: Event) => e.preventDefault()
+		document.addEventListener('keydown', claim)
+		act(() => {
+			fireEvent.keyDown(document.body, { key: 'Escape' })
+		})
+		document.removeEventListener('keydown', claim)
+		expect(props.onClear).not.toHaveBeenCalled()
+	})
+
 	// Reduced-motion is now enforced by a global @media (prefers-reduced-motion:
 	// reduce) rule in app.css that zeroes transition-duration on every element,
 	// so the component keeps its transition class in both preference states.
