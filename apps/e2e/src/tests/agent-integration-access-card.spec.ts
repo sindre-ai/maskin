@@ -46,9 +46,14 @@ function cardMessage(conversationId: string) {
 	}
 }
 
-async function stubThread(page: Page, conversationId: string) {
+async function stubThread(
+	page: Page,
+	conversationId: string,
+	followUps: Array<Record<string, unknown> | null>,
+) {
 	await page.route('**/api/conversations/*/messages*', async (route) => {
 		if (route.request().method() === 'POST') {
+			followUps.push(route.request().postDataJSON())
 			await route.fulfill({
 				status: 201,
 				contentType: 'application/json',
@@ -105,13 +110,17 @@ interface Account {
 	}
 }
 
-async function openCard(page: Page, account: Account) {
+async function openCard(
+	page: Page,
+	account: Account,
+	followUps: Array<Record<string, unknown> | null> = [],
+) {
 	const conversation = await account.api.createConversation(account.workspaceId, {
 		title: `Calendar access ${Date.now()}`,
 		participant_actor_ids: [],
 		initial_message: 'Add a Meet link to my 3pm',
 	})
-	await stubThread(page, conversation.id)
+	await stubThread(page, conversation.id, followUps)
 	await stubIntegrations(page, account.workspaceId, account.actorId)
 	await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 	const card = page.getByRole('group', { name: 'Allow Google Calendar' })
@@ -137,12 +146,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			})
 		})
 		const followUps: Array<Record<string, unknown> | null> = []
-		await page.route('**/api/conversations/*/messages', (route) => {
-			if (route.request().method() === 'POST') followUps.push(route.request().postDataJSON())
-			return route.fallback()
-		})
 
-		const card = await openCard(page, account)
+		const card = await openCard(page, account, followUps)
 		// Fixed text, the tool of the refused call, and the agent's own words, each labelled.
 		await expect(card).toContainText(LIFT_TEXT)
 		await expect(card).toContainText('create_event')
@@ -184,12 +189,8 @@ test('Not now tells the agent and never grants', async ({ page, account }) => {
 		return route.fulfill({ json: {} })
 	})
 	const followUps: Array<Record<string, unknown> | null> = []
-	await page.route('**/api/conversations/*/messages', (route) => {
-		if (route.request().method() === 'POST') followUps.push(route.request().postDataJSON())
-		return route.fallback()
-	})
 
-	const card = await openCard(page, account)
+	const card = await openCard(page, account, followUps)
 	await card.getByRole('button', { name: 'Not now' }).click()
 
 	await expect(page.getByText(/Declined/)).toBeVisible()
