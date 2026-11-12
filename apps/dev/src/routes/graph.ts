@@ -10,6 +10,7 @@ import {
 	resolveCreatedVia,
 } from '../lib/analytics/knowledge-events'
 import { trackObjectCreated } from '../lib/analytics/object-events'
+import { trackSupportItemOpened } from '../lib/analytics/support-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { capturePosthogRelationshipCreated, recordEvent } from '../lib/events/record-event'
 import {
@@ -496,6 +497,13 @@ app.openapi(createGraphRoute, async (c) => {
 			objectId: node.id,
 			objectType: node.type,
 			createdVia,
+		})
+		void trackSupportItemOpened({
+			workspaceId,
+			actorId,
+			objectId: node.id,
+			objectType: node.type,
+			metadata: node.metadata,
 		})
 	}
 

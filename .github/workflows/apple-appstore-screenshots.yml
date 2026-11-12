@@ -13,8 +13,9 @@ name: Apple App Store screenshots (manual)
 #   - Not a pipeline. It writes raw PNGs, nothing is framed and nothing goes near App Store Connect.
 #
 # Jobs:
-#   ios    One Debug build for iPhone and iPad (two destinations), then the screen tour
-#          (Apps/MaskinUITests/ScreenTourTests) on each, and the settings tour on the iPhone.
+#   ios    One Debug build for iPhone and iPad (two destinations), then the settings tour on the
+#          iPhone, the screen tour on the iPad and last the screen tour on the iPhone
+#          (Apps/MaskinUITests/ScreenTourTests), each test capped at 10 minutes.
 #   watch  One Debug build of the watch app, then one launch per shot.
 #   publish  Linux, no build. Checks every PNG against its exact App Store size, pushes the ones that
 #          pass to the scratch branch screenshots/ios-1.1-raw (force-pushed, one commit) and uploads
@@ -63,6 +64,8 @@ jobs:
       OUT: ${{ github.workspace }}/shots-ios
       LOGS: ${{ github.workspace }}/logs-ios
       DERIVED: ${{ github.workspace }}/maskin-shots-dd
+      # One test may run 10 minutes at most (xcodebuild stops it and goes on to the next step).
+      TEST_CAP: -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600
     steps:
       - uses: actions/checkout@v6
 
@@ -174,22 +177,22 @@ jobs:
 
       # Each tour writes PNGs into its own folder (the test runner only sees TEST_RUNNER_ variables).
       # A tour that ends red is not fatal: the tour is best effort and the file check below decides.
-      - name: Tour on the iPhone
+      # Order matters: the iPhone settings tour and the iPad tour run first, because the first run
+      # lost both when the iPhone tour hung on the Display sheet until the job limit. Every test is
+      # capped at 10 minutes (TEST_CAP), so one stuck screen costs 10 minutes, not the whole job.
+      - name: Tour on the iPhone (settings)
         working-directory: apps/apple
         run: |
           set -uo pipefail
-          mkdir -p /tmp/tour-iphone /tmp/tour-iphone-settings
-          for part in "testTour:/tmp/tour-iphone" "testSettings:/tmp/tour-iphone-settings"; do
-            test=${part%%:*}; dir=${part#*:}
-            TEST_RUNNER_SCREEN_TOUR_DIR="$dir" xcodebuild -project Maskin.xcodeproj -scheme Maskin \
-              -destination "id=${{ steps.sim.outputs.phone }}" -configuration Debug \
-              -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
-              "MASKIN_API_BASE_URL=http://localhost:$PORT" \
-              -only-testing:MaskinUITests/ScreenTourTests/$test \
-              test-without-building >"$LOGS/test-iphone-$test.log" 2>&1
-            echo "iPhone $test exit code: $?"
-          done
-          ls -l /tmp/tour-iphone /tmp/tour-iphone-settings
+          mkdir -p /tmp/tour-iphone-settings
+          TEST_RUNNER_SCREEN_TOUR_DIR=/tmp/tour-iphone-settings xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.phone }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            $TEST_CAP -only-testing:MaskinUITests/ScreenTourTests/testSettings \
+            test-without-building >"$LOGS/test-iphone-testSettings.log" 2>&1
+          echo "iPhone testSettings exit code: $?"
+          ls -l /tmp/tour-iphone-settings
 
       - name: Tour on the iPad
         working-directory: apps/apple
@@ -200,10 +203,24 @@ jobs:
             -destination "id=${{ steps.sim.outputs.pad }}" -configuration Debug \
             -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
             "MASKIN_API_BASE_URL=http://localhost:$PORT" \
-            -only-testing:MaskinUITests/ScreenTourTests/testTour \
+            $TEST_CAP -only-testing:MaskinUITests/ScreenTourTests/testTour \
             test-without-building >"$LOGS/test-ipad-testTour.log" 2>&1
           echo "iPad testTour exit code: $?"
           ls -l /tmp/tour-ipad
+
+      - name: Tour on the iPhone
+        working-directory: apps/apple
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/tour-iphone
+          TEST_RUNNER_SCREEN_TOUR_DIR=/tmp/tour-iphone xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.phone }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            $TEST_CAP -only-testing:MaskinUITests/ScreenTourTests/testTour \
+            test-without-building >"$LOGS/test-iphone-testTour.log" 2>&1
+          echo "iPhone testTour exit code: $?"
+          ls -l /tmp/tour-iphone
 
       # Collects the PNGs under their final names and fails the job on a wrong pixel size. A shot of
       # the wrong size moves to rejected/ in the logs artifact and never reaches the artifact or the
@@ -378,6 +395,11 @@ jobs:
           # The one-time welcome ("Maskin on your wrist") is not part of the listing: mark it done.
           # Also passed as a launch argument below, in case defaults is not available on the watch.
           xcrun simctl spawn "$udid" defaults write "$BUNDLE" maskin.watch.firstRunDone.v1 -bool true || echo "defaults write failed, relying on the launch argument"
+          # The first run showed the runner clock (1:42) in every watch shot. Ask for 9:41 like the
+          # iPhone; if the watch simulator does not take the override, say so in the log and go on.
+          xcrun simctl status_bar "$udid" override --time "9:41" >"$LOGS/status-bar.log" 2>&1 \
+            && echo "watch clock set to 9:41" \
+            || { echo "::warning::Could not set the watch clock, the shots show the runner clock."; cat "$LOGS/status-bar.log"; }
 
       # One cold launch per shot, signed in to the demo workspace through the launch environment.
       # MASKIN_DEMO_PAGE=flows opens the Flows page and MASKIN_DEMO_CARD picks its card (card 0 is the
@@ -392,10 +414,12 @@ jobs:
             xcrun simctl terminate "$udid" "$BUNDLE" 2>/dev/null || true
             env SIMCTL_CHILD_MASKIN_DEMO_SESSION="$DEMO_SESSION" "$@" xcrun simctl launch "$udid" "$BUNDLE" \
               -maskin.watch.firstRunDone.v1 YES >/dev/null || { echo "launch failed for $name"; return; }
-            sleep 20
+            sleep "${SHOT_WAIT:-20}"
             xcrun simctl io "$udid" screenshot "$OUT/watch-series11-$name.png" 2>&1 | tail -1
           }
-          shot 01-home
+          # Home shows "All clear" until the For you feed has loaded, so give it longer than the
+          # flows pages. Needs you is what the shot is for: check the picture before using it.
+          SHOT_WAIT=60 shot 01-home
           shot 02-flows-card0-briefing SIMCTL_CHILD_MASKIN_DEMO_PAGE=flows
           shot 03-flows-card1 SIMCTL_CHILD_MASKIN_DEMO_PAGE=flows SIMCTL_CHILD_MASKIN_DEMO_CARD=1
           shot 04-flows-card2 SIMCTL_CHILD_MASKIN_DEMO_PAGE=flows SIMCTL_CHILD_MASKIN_DEMO_CARD=2

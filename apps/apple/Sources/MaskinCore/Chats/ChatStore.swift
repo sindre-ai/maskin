@@ -1010,8 +1010,11 @@ public final class ChatStore {
 
 	// MARK: - Participants, title, sessions
 
-	public func addParticipants(_ ids: [String]) async {
-		guard !ids.isEmpty else { return }
+	/// True when the people are in the chat. A caller that shows the failure itself passes
+	/// `reportsFailure: false`, so the thread behind it does not raise a second alert.
+	@discardableResult
+	public func addParticipants(_ ids: [String], reportsFailure: Bool = true) async -> Bool {
+		guard !ids.isEmpty else { return false }
 		var failure: Error?
 		do {
 			try await api.addParticipants(conversationID: conversationID, actorIDs: ids)
@@ -1022,9 +1025,11 @@ public final class ChatStore {
 		// chat itself and only report a failure if they are really not in it.
 		let refreshed = try? await api.detail(conversationID: conversationID)
 		if let refreshed { detail = refreshed }
-		guard let failure else { return }
+		guard let failure else { return true }
 		let present = Set(refreshed?.participants.map(\.id) ?? [])
-		if !ids.allSatisfy(present.contains) { notice = Self.message(failure) }
+		if ids.allSatisfy(present.contains) { return true }
+		if reportsFailure { notice = Self.message(failure) }
+		return false
 	}
 
 	@discardableResult

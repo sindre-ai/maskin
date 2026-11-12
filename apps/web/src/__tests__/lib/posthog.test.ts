@@ -277,7 +277,11 @@ describe('posthog helper', () => {
 				person_profiles: 'identified_only',
 				capture_pageview: true,
 				capture_pageleave: false,
-				capture_performance: false,
+				capture_performance: {
+					network_timing: false,
+					web_vitals: true,
+					web_vitals_allowed_metrics: ['LCP', 'INP'],
+				},
 				autocapture: false,
 				before_send: beforeSend,
 			})

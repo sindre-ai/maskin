@@ -105,6 +105,13 @@ export const FLAGS = {
 	 * box formatting reads the same id. Retire once it is on for everyone.
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
+	/**
+	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
+	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
+	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for
+	 * everyone.
+	 */
+	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
