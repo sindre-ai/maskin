@@ -766,8 +766,9 @@ function SkillDialog({
 	const canSave =
 		canWrite && !pending && !loadingExisting && name.trim().length > 0 && content.trim().length > 0
 
-	const handleSave = () => {
-		if (!canWrite) return
+	const handleSave = (e?: React.FormEvent) => {
+		e?.preventDefault()
+		if (!canSave) return
 		setError(null)
 		const trimmedName = name.trim()
 
@@ -805,57 +806,59 @@ function SkillDialog({
 	return (
 		<ResponsiveDialog open onOpenChange={(v) => !v && onClose()}>
 			<ResponsiveDialogContent className="sm:max-w-2xl">
-				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</ResponsiveDialogTitle>
-					<ResponsiveDialogDescription>
-						Skills are shared across this workspace. Agents only receive the skills attached to
-						them.
-					</ResponsiveDialogDescription>
-				</ResponsiveDialogHeader>
+				<form onSubmit={handleSave} className="contents">
+					<ResponsiveDialogHeader>
+						<ResponsiveDialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</ResponsiveDialogTitle>
+						<ResponsiveDialogDescription>
+							Skills are shared across this workspace. Agents only receive the skills attached to
+							them.
+						</ResponsiveDialogDescription>
+					</ResponsiveDialogHeader>
 
-				<div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
-					<div>
-						<Label htmlFor="skill-name">Name</Label>
-						<Input
-							id="skill-name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							placeholder="e.g. deploy, review-pr"
-							autoFocus={!isEdit}
-							readOnly={!canWrite}
-						/>
+					<div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
+						<div>
+							<Label htmlFor="skill-name">Name</Label>
+							<Input
+								id="skill-name"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								placeholder="e.g. deploy, review-pr"
+								autoFocus={!isEdit}
+								readOnly={!canWrite}
+							/>
+						</div>
+						<div>
+							<Label htmlFor="skill-content">SKILL.md</Label>
+							<Textarea
+								id="skill-content"
+								value={content}
+								onChange={(e) => setContent(e.target.value)}
+								placeholder={SKILL_TEMPLATE}
+								className="min-h-[280px] font-mono text-sm"
+								disabled={loadingExisting}
+								readOnly={!canWrite}
+							/>
+							{isEdit && (
+								<p className="mt-1 text-xs text-muted-foreground">
+									Only recognised frontmatter keys (name, description, and SKILL.md options) are
+									preserved on save — custom keys are dropped.
+								</p>
+							)}
+						</div>
+						<FormError error={error ?? undefined} />
 					</div>
-					<div>
-						<Label htmlFor="skill-content">SKILL.md</Label>
-						<Textarea
-							id="skill-content"
-							value={content}
-							onChange={(e) => setContent(e.target.value)}
-							placeholder={SKILL_TEMPLATE}
-							className="min-h-[280px] font-mono text-sm"
-							disabled={loadingExisting}
-							readOnly={!canWrite}
-						/>
-						{isEdit && (
-							<p className="mt-1 text-xs text-muted-foreground">
-								Only recognised frontmatter keys (name, description, and SKILL.md options) are
-								preserved on save — custom keys are dropped.
-							</p>
-						)}
-					</div>
-					<FormError error={error ?? undefined} />
-				</div>
 
-				<ResponsiveDialogFooter>
-					<Button variant="ghost" onClick={onClose} disabled={pending}>
-						Cancel
-					</Button>
-					<ViewerTooltip>
-						<Button onClick={handleSave} disabled={!canSave}>
-							{pending ? 'Saving...' : 'Save'}
+					<ResponsiveDialogFooter>
+						<Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
+							Cancel
 						</Button>
-					</ViewerTooltip>
-				</ResponsiveDialogFooter>
+						<ViewerTooltip>
+							<Button type="submit" disabled={!canSave}>
+								{pending ? 'Saving...' : 'Save'}
+							</Button>
+						</ViewerTooltip>
+					</ResponsiveDialogFooter>
+				</form>
 			</ResponsiveDialogContent>
 		</ResponsiveDialog>
 	)

@@ -261,6 +261,27 @@ describe('Settings > Skills', () => {
 		expect(payload).toEqual({ name: 'new-skill', content: 'body' })
 	})
 
+	it('saves when Enter is pressed in the Name field', async () => {
+		const user = userEvent.setup()
+		renderPage()
+
+		await user.click(screen.getAllByRole('button', { name: /Create skill/ })[0])
+		await user.type(screen.getByLabelText('Name'), 'new-skill{Enter}')
+
+		expect(mockCreateMutate).toHaveBeenCalledTimes(1)
+		expect(mockCreateMutate.mock.calls[0][0]).toMatchObject({ name: 'new-skill' })
+	})
+
+	it('does not save on Enter in the Name field while the name is empty', async () => {
+		const user = userEvent.setup()
+		renderPage()
+
+		await user.click(screen.getAllByRole('button', { name: /Create skill/ })[0])
+		await user.type(screen.getByLabelText('Name'), '{Enter}')
+
+		expect(mockCreateMutate).not.toHaveBeenCalled()
+	})
+
 	it('opens the edit dialog when the skill row is clicked', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
