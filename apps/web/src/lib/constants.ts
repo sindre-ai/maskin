@@ -136,8 +136,8 @@ export type StatusStage =
 	| 'unknown'
 
 const STAGE_STATUSES: Record<Exclude<StatusStage, 'unknown'>, readonly string[]> = {
-	done: ['done', 'completed', 'complete', 'validated', 'closed', 'shipped', 'merged'],
-	review: ['in_review', 'review', 'reviewing', 'ready_for_review'],
+	done: ['done', 'completed', 'complete', 'validated', 'succeeded', 'closed', 'shipped', 'merged'],
+	review: ['in_review', 'review', 'reviewing', 'ready_for_review', 'live'],
 	progress: ['in_progress', 'active', 'processing', 'running', 'working', 'testing'],
 	cancelled: ['cancelled', 'canceled', 'discarded', 'failed', 'rejected', 'abandoned'],
 	blocked: ['blocked', 'paused', 'parked', 'on_hold', 'at_risk', 'stalled'],
