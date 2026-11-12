@@ -516,7 +516,8 @@ struct TeamLayoutPriorityTests {
 	) -> TeamLayout {
 		TeamLayout.build(
 			TeamLayout.Input(
-				conversations: conversations, currentActorID: "me", workingAgentIDs: working,
+				conversations: conversations, options: TeamDisplayOptions(grouping: .byTime), currentActorID: "me",
+				workingAgentIDs: working,
 				mentionedConversationIDs: mentioned, now: now, calendar: cal))
 	}
 
