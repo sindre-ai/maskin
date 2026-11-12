@@ -1,7 +1,12 @@
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import type { FileDetail } from '@/lib/api'
 import { api } from '@/lib/api'
-import { BRIDGE_QUERY_MESSAGE, ISOLATION_LOAD_MESSAGE, MINI_APP_CSP } from '@/lib/mini-app'
+import {
+	BRIDGE_QUERY_MESSAGE,
+	ISOLATION_LOAD_MESSAGE,
+	MINI_APP_CSP,
+	VIEWER_DOC_SIZE_MESSAGE,
+} from '@/lib/mini-app'
 import { dataQuerySpecSchema } from '@maskin/shared'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +17,7 @@ const { useFileMock, sseListeners } = vi.hoisted(() => ({
 	sseListeners: [] as Array<(event: { entity_type: string } | null) => void>,
 }))
 vi.mock('@/hooks/use-files', () => ({ useFile: useFileMock }))
+vi.mock('@/lib/theme', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
 vi.mock('@/lib/sse-invalidation', () => ({
 	subscribeToSSE: (listener: (event: { entity_type: string } | null) => void) => {
 		sseListeners.push(listener)
@@ -33,6 +39,7 @@ function file(overrides: Partial<FileDetail> = {}): FileDetail {
 		workspaceId: 'ws-1',
 		name: 'view.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 10,
 		storageKey: 'k',
@@ -47,9 +54,18 @@ function file(overrides: Partial<FileDetail> = {}): FileDetail {
 	}
 }
 
+/**
+ * The newest frame. A replacement loads hidden after the one on screen, so it is the last one
+ * in the box; most of the time there is only one.
+ */
+function latestFrame(container: HTMLElement) {
+	const frames = container.querySelectorAll<HTMLIFrameElement>('iframe')
+	return frames.length > 0 ? frames[frames.length - 1] : null
+}
+
 /** The view's own document: the srcdoc of the frame inside the isolation frame the host renders. */
 function viewDoc(container: HTMLElement) {
-	const outer = container.querySelector('iframe')?.getAttribute('srcdoc') ?? ''
+	const outer = latestFrame(container)?.getAttribute('srcdoc') ?? ''
 	return (
 		new DOMParser()
 			.parseFromString(outer, 'text/html')
@@ -63,7 +79,7 @@ function viewDoc(container: HTMLElement) {
  * renders. jsdom does not run nested srcdoc frames, so the window is supplied here.
  */
 function viewWindowOf(container: HTMLElement) {
-	const frame = container.querySelector('iframe') as HTMLIFrameElement
+	const frame = latestFrame(container) as HTMLIFrameElement
 	const view = { postMessage: vi.fn() }
 	Object.defineProperty(frame.contentWindow, 'frames', { value: [view], configurable: true })
 	return { frame, view }
@@ -93,7 +109,7 @@ describe('LoopCustomView', () => {
 	it('renders the view in a script-only sandbox under the unchanged platform CSP', () => {
 		const { container, onFailure } = renderView()
 
-		const iframe = container.querySelector('iframe')
+		const iframe = latestFrame(container)
 		expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
 		expect(iframe?.getAttribute('srcdoc')).toContain('frame-src')
 		const srcdoc = viewDoc(container)
@@ -106,14 +122,14 @@ describe('LoopCustomView', () => {
 	it('shows a skeleton while the file loads', () => {
 		useFileMock.mockReturnValue({ data: undefined, isLoading: true, isError: false })
 		const { container, onFailure } = renderView()
-		expect(container.querySelector('iframe')).toBeNull()
+		expect(latestFrame(container)).toBeNull()
 		expect(onFailure).not.toHaveBeenCalled()
 	})
 
 	it('falls back when the file cannot be loaded', () => {
 		useFileMock.mockReturnValue({ data: undefined, isLoading: false, isError: true })
 		const { container, onFailure } = renderView()
-		expect(container.querySelector('iframe')).toBeNull()
+		expect(latestFrame(container)).toBeNull()
 		expect(onFailure).toHaveBeenCalledWith('The view file could not be loaded.')
 	})
 
@@ -124,7 +140,7 @@ describe('LoopCustomView', () => {
 			isError: false,
 		})
 		const { container, onFailure } = renderView()
-		expect(container.querySelector('iframe')).toBeNull()
+		expect(latestFrame(container)).toBeNull()
 		expect(onFailure).toHaveBeenCalledWith('The view file is not an HTML file.')
 	})
 
@@ -138,7 +154,7 @@ describe('LoopCustomView', () => {
 			isError: false,
 		})
 		const { container, onFailure } = renderView()
-		expect(container.querySelector('iframe')).toBeNull()
+		expect(latestFrame(container)).toBeNull()
 		expect(onFailure).toHaveBeenCalledWith(expect.stringContaining('not valid JSON'))
 	})
 
@@ -165,11 +181,11 @@ describe('LoopCustomView', () => {
 
 		it('replaces the frame with a fresh one after a second load', async () => {
 			const { container } = await mounted()
-			const first = container.querySelector('iframe') as HTMLIFrameElement
+			const first = latestFrame(container) as HTMLIFrameElement
 			await viewLoaded(first)
 			await viewLoaded(first)
 
-			const replaced = container.querySelector('iframe')
+			const replaced = latestFrame(container)
 			expect(replaced).not.toBeNull()
 			expect(replaced).not.toBe(first)
 		})
@@ -177,7 +193,7 @@ describe('LoopCustomView', () => {
 		it('gives up and falls back when the view keeps navigating', async () => {
 			const { container, onFailure } = await mounted()
 			for (let i = 0; i < 6 && !onFailure.mock.calls.length; i++) {
-				const frame = container.querySelector('iframe') as HTMLIFrameElement
+				const frame = latestFrame(container) as HTMLIFrameElement
 				await viewLoaded(frame)
 				await viewLoaded(frame)
 			}
@@ -186,7 +202,7 @@ describe('LoopCustomView', () => {
 
 		it('ignores a load report that does not come from the isolation frame', async () => {
 			const { container } = await mounted()
-			const first = container.querySelector('iframe') as HTMLIFrameElement
+			const first = latestFrame(container) as HTMLIFrameElement
 			const { view } = viewWindowOf(container)
 			for (let i = 0; i < 3; i++) {
 				await act(async () => {
@@ -198,7 +214,7 @@ describe('LoopCustomView', () => {
 					)
 				})
 			}
-			expect(container.querySelector('iframe')).toBe(first)
+			expect(latestFrame(container)).toBe(first)
 		})
 	})
 
@@ -206,6 +222,7 @@ describe('LoopCustomView', () => {
 		const answer = (overrides = {}) => ({
 			groups: [],
 			total: { count: 3, value: 3 },
+			next_cursor: null,
 			rows_truncated: false,
 			groups_truncated: false,
 			...overrides,
@@ -229,7 +246,8 @@ describe('LoopCustomView', () => {
 			vi.restoreAllMocks()
 		})
 
-		it('says so, outside the frame, when an answer hit the server cap', async () => {
+		// The server no longer caps anything, so this is only an older server still mid-deploy.
+		it('says so, outside the frame, when an answer comes back flagged partial', async () => {
 			vi.mocked(api.data.query).mockResolvedValue(answer({ rows_truncated: true }))
 			const { container } = renderView()
 			await act(async () => {})
@@ -297,9 +315,9 @@ describe('LoopCustomView', () => {
 				vi.mocked(api.data.query).mockResolvedValue(answer())
 				const { container } = renderView()
 				await act(async () => {})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				await ask(container)
-				expect(container.querySelector('iframe')).toBe(first)
+				expect(latestFrame(container)).toBe(first)
 			})
 
 			it('replaces the frame, and hands it the server answer, when the server disagrees', async () => {
@@ -308,10 +326,10 @@ describe('LoopCustomView', () => {
 				vi.mocked(api.data.query).mockResolvedValue(latest)
 				const { container } = renderView()
 				await act(async () => {})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				expect(await askAndRead(container)).toEqual([answer()])
 
-				expect(container.querySelector('iframe')).not.toBe(first)
+				expect(latestFrame(container)).not.toBe(first)
 				expect(await askAndRead(container)).toEqual([latest])
 				expect(vi.mocked(api.data.query)).toHaveBeenCalledTimes(1)
 			})
@@ -322,10 +340,10 @@ describe('LoopCustomView', () => {
 				vi.mocked(api.data.query).mockRejectedValue(new Error('boom'))
 				const { container } = renderView()
 				await act(async () => {})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				await ask(container)
 
-				expect(container.querySelector('iframe')).toBe(first)
+				expect(latestFrame(container)).toBe(first)
 				expect(screen.getByText('Refresh failed')).toBeTruthy()
 				expect(screen.getByRole('button', { name: /Refresh/ })).toBeTruthy()
 				expect(screen.getByText('Updated 4th Nov 09:05')).toBeTruthy()
@@ -337,7 +355,7 @@ describe('LoopCustomView', () => {
 				vi.mocked(api.data.query).mockRejectedValueOnce(new Error('boom'))
 				const { container } = renderView()
 				await act(async () => {})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				await ask(container)
 
 				vi.mocked(api.data.query).mockResolvedValue(answer())
@@ -348,7 +366,7 @@ describe('LoopCustomView', () => {
 				expect(screen.queryByText('Refresh failed')).toBeNull()
 				expect(screen.queryByRole('button', { name: /Refresh/ })).toBeNull()
 				expect(screen.queryByText('Updated 4th Nov 09:05')).toBeNull()
-				expect(container.querySelector('iframe')).toBe(first)
+				expect(latestFrame(container)).toBe(first)
 			})
 
 			it('redraws with the new numbers when Refresh finds a different answer', async () => {
@@ -358,7 +376,7 @@ describe('LoopCustomView', () => {
 				vi.mocked(api.data.query).mockRejectedValueOnce(new Error('boom'))
 				const { container } = renderView()
 				await act(async () => {})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				await ask(container)
 
 				vi.mocked(api.data.query).mockResolvedValue(latest)
@@ -366,7 +384,7 @@ describe('LoopCustomView', () => {
 					fireEvent.click(screen.getByRole('button', { name: /Refresh/ }))
 				})
 
-				expect(container.querySelector('iframe')).not.toBe(first)
+				expect(latestFrame(container)).not.toBe(first)
 				expect(await askAndRead(container)).toEqual([latest])
 			})
 
@@ -465,12 +483,12 @@ describe('LoopCustomView', () => {
 			vi.mocked(api.data.query).mockRejectedValue(new Error('boom'))
 			const { container, onFailure } = renderView()
 			await act(async () => {})
-			const first = container.querySelector('iframe')
+			const first = latestFrame(container)
 
 			await ask(container)
 
 			expect(onFailure).not.toHaveBeenCalled()
-			expect(container.querySelector('iframe')).toBe(first)
+			expect(latestFrame(container)).toBe(first)
 			expect(screen.getByText(/could not be loaded/)).toBeTruthy()
 		})
 
@@ -508,25 +526,54 @@ describe('LoopCustomView', () => {
 
 			it('replaces the frame when an event changed the answer', async () => {
 				const { container } = await withAnswer({})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				vi.mocked(api.data.query).mockResolvedValue(answer({ total: { count: 4, value: 4 } }))
 
 				event()
 				await settle()
 
-				expect(container.querySelector('iframe')).not.toBe(first)
+				expect(latestFrame(container)).not.toBe(first)
+			})
+
+			it('keeps the old frame on screen until the replacement has drawn', async () => {
+				const { container } = await withAnswer({})
+				const first = latestFrame(container) as HTMLIFrameElement
+				vi.mocked(api.data.query).mockResolvedValue(answer({ total: { count: 4, value: 4 } }))
+
+				event()
+				await settle()
+
+				const frames = container.querySelectorAll('iframe')
+				expect(frames).toHaveLength(2)
+				expect(frames[0]).toBe(first)
+				expect(first.className).not.toContain('invisible')
+				expect(frames[1].className).toContain('invisible')
+
+				const { view } = viewWindowOf(container)
+				await act(async () => {
+					window.dispatchEvent(
+						new MessageEvent('message', {
+							data: { type: VIEWER_DOC_SIZE_MESSAGE, h: 300 },
+							source: view as unknown as Window,
+						}),
+					)
+				})
+
+				const after = container.querySelectorAll('iframe')
+				expect(after).toHaveLength(1)
+				expect(after[0].className).not.toContain('invisible')
 			})
 
 			it('leaves the frame alone when an event did not change the answer', async () => {
 				const { container } = await withAnswer({})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 				vi.mocked(api.data.query).mockResolvedValue(answer())
 
 				event()
 				await settle()
 
 				expect(vi.mocked(api.data.query)).toHaveBeenCalledTimes(2)
-				expect(container.querySelector('iframe')).toBe(first)
+				expect(latestFrame(container)).toBe(first)
 			})
 
 			it('turns a burst of events into one check', async () => {
@@ -546,17 +593,17 @@ describe('LoopCustomView', () => {
 				vi.useFakeTimers()
 				const { container } = renderView()
 				await act(async () => {})
-				const first = container.querySelector('iframe')
+				const first = latestFrame(container)
 
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(10_999)
 				})
-				expect(container.querySelector('iframe')).toBe(first)
+				expect(latestFrame(container)).toBe(first)
 
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(2)
 				})
-				expect(container.querySelector('iframe')).not.toBe(first)
+				expect(latestFrame(container)).not.toBe(first)
 			})
 		})
 
@@ -576,6 +623,43 @@ describe('LoopCustomView', () => {
 				await vi.advanceTimersByTimeAsync(5_000)
 			})
 			expect(vi.mocked(api.data.nextChange)).toHaveBeenCalledTimes(2)
+		})
+	})
+
+	describe('list sources', () => {
+		const LIST_VIEW = `<html><head></head><body>
+<script id="maskin-sources" type="application/json">{"opps":{"list":"opportunities"},"by_status":{"type":"task","group_by":"status"}}</script>
+<h1>Pipeline</h1></body></html>`
+
+		it('refuses a list on the loop page: no rows, no query, and the rest of the view still works', async () => {
+			useFileMock.mockReturnValue({
+				data: file({ content: LIST_VIEW }),
+				isLoading: false,
+				isError: false,
+			})
+			vi.mocked(api.data.query).mockResolvedValue({ total: { count: 1, value: 1 } } as never)
+			const { container, onFailure } = renderView()
+			const { view } = viewWindowOf(container)
+
+			await act(async () => {
+				window.dispatchEvent(
+					new MessageEvent('message', {
+						data: { type: BRIDGE_QUERY_MESSAGE, id: 1, name: 'opps' },
+						source: view as unknown as Window,
+					}),
+				)
+			})
+
+			expect(onFailure).not.toHaveBeenCalled()
+			expect(api.data.query).not.toHaveBeenCalled()
+			expect(view.postMessage).toHaveBeenCalledWith(
+				{
+					type: 'maskin:bridge:result',
+					id: 1,
+					error: "This view asks for data the app doesn't offer",
+				},
+				'*',
+			)
 		})
 	})
 })

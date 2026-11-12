@@ -19,7 +19,7 @@ struct LinkedFileCard: View {
 
 	private var kind: FileContentKind { .classify(mimeType: file.mimeType, name: file.name) }
 	private var target: LinkedTarget { LinkedTarget(kind: .file, uuid: file.id) }
-	private var foldsOpen: Bool { kind == .markdown || kind == .text || kind == .audio }
+	private var foldsOpen: Bool { kind == .markdown || kind == .text || kind == .audio || kind == .video }
 
 	var body: some View {
 		LinkedCardChrome {
@@ -36,7 +36,7 @@ struct LinkedFileCard: View {
 					.padding(.bottom, MaskinSpace.s6)
 				}
 				if foldsOpen, expanded {
-					if kind == .audio { audioPreview } else { preview }
+					if kind == .audio || kind == .video { mediaPreview } else { preview }
 				}
 			}
 		}
@@ -80,11 +80,11 @@ struct LinkedFileCard: View {
 		.padding(.trailing, MaskinSpace.s3)
 	}
 
-	/// A sound plays in place; the bytes are read once the card opens.
-	private var audioPreview: some View {
+	/// A sound or video plays in place; the bytes are read once the card opens.
+	private var mediaPreview: some View {
 		VStack(spacing: 0) {
 			Rectangle().fill(MaskinSurface.separator).frame(height: 1)
-			LinkedAudioBody(file: file, store: store)
+			LinkedMediaBody(file: file, store: store)
 				.padding(.horizontal, MaskinSpace.s6)
 				.padding(.vertical, MaskinSpace.s5)
 		}
@@ -134,8 +134,8 @@ struct LinkedFileCard: View {
 	}
 }
 
-/// Reads an audio file's bytes and hands them to the player.
-private struct LinkedAudioBody: View {
+/// Reads an audio or video file's bytes and hands them to the player.
+private struct LinkedMediaBody: View {
 	let file: FileReference
 	let store: LinkedItemStore?
 	@State private var phase: Phase = .loading
@@ -150,7 +150,11 @@ private struct LinkedAudioBody: View {
 		Group {
 			switch phase {
 			case .ready(let detail):
-				FileAudioView(data: detail.data, name: detail.name, mimeType: detail.mimeType)
+				if detail.kind == .video {
+					FileVideoView(data: detail.data, name: detail.name, mimeType: detail.mimeType)
+				} else {
+					FileAudioView(data: detail.data, name: detail.name, mimeType: detail.mimeType)
+				}
 			case .error:
 				HStack(spacing: MaskinSpace.s4) {
 					Text("Couldn't load this file.").maskinText(.caption).foregroundStyle(MaskinColor.ink4)

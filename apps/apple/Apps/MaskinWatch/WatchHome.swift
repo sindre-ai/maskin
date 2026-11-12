@@ -30,7 +30,12 @@ struct WatchHome: View {
 			initialValue: WatchListeningStore(
 				transcriber: environment.auth.session == nil ? nil : APIBackendDictation(client: client),
 				language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
-				makeMicrophone: { EnginePhraseMicrophone() }))
+				makeMicrophone: {
+					// A wrist microphone is quiet: count a lower level as speech than on the iPhone.
+					var options = PhraseSegmenter.Options()
+					options.voiceRMS = 0.006
+					return EnginePhraseMicrophone(options: options)
+				}))
 	}
 
 	/// Design review only: `MASKIN_DEMO_PAGE=flows` opens that page, because a simulator has no

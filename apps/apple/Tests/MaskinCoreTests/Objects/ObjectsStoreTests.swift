@@ -29,6 +29,15 @@ private func ask(_ objectId: String, by name: String? = "Forge", text: String = 
 		])
 }
 
+@Suite("ObjectsScope.files")
+struct ObjectsScopeFilesTests {
+	@Test("the Files scope is titled Files and implies no object type filter")
+	func filesScope() {
+		#expect(ObjectsScope.files.title(schema: .fallback) == "Files")
+		#expect(ObjectsScope.files.typeFilter == nil)
+	}
+}
+
 @MainActor
 @Suite("ObjectsStore")
 struct ObjectsStoreTests {

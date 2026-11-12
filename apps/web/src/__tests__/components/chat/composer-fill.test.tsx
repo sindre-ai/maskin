@@ -12,7 +12,7 @@ vi.mock('@/lib/analytics', () => ({
 	trackSpecialistSummonedManually: () => {},
 }))
 
-type FillRequest = { text?: string; nonce: number } | null
+type FillRequest = { text?: string; append?: boolean; nonce: number } | null
 
 function composer(fillRequest: FillRequest, draftKey = 'conv-1') {
 	return (
@@ -63,6 +63,37 @@ describe('Composer fillRequest', () => {
 		expect(box).toHaveFocus()
 		expect((box as HTMLTextAreaElement).selectionStart).toBe(text.length)
 		expect((box as HTMLTextAreaElement).selectionEnd).toBe(text.length)
+	})
+
+	it('with append, keeps what the person typed and puts the starter after it', async () => {
+		const wrapper = createWorkspaceWrapper()
+		const { rerender } = render(composer(null), { wrapper })
+		const box = screen.getByRole('textbox')
+		await userEvent.type(box, 'Quick one:')
+
+		rerender(composer({ text: 'What needs me today?', append: true, nonce: 1 }))
+
+		const text = 'Quick one: What needs me today?'
+		expect(box).toHaveValue(text)
+		expect(sessionStorage.getItem('composer-draft:conv-1')).toBe(text)
+		expect(box).toHaveFocus()
+		expect((box as HTMLTextAreaElement).selectionStart).toBe(text.length)
+	})
+
+	it('with append, an empty box simply takes the starter', () => {
+		const wrapper = createWorkspaceWrapper()
+		const { rerender } = render(composer(null), { wrapper })
+		rerender(composer({ text: 'What needs me today?', append: true, nonce: 1 }))
+		expect(screen.getByRole('textbox')).toHaveValue('What needs me today?')
+	})
+
+	it('without append a fill step still replaces the draft', async () => {
+		const wrapper = createWorkspaceWrapper()
+		const { rerender } = render(composer(null), { wrapper })
+		const box = screen.getByRole('textbox')
+		await userEvent.type(box, 'typed')
+		rerender(composer({ text: 'Replacement', nonce: 1 }))
+		expect(box).toHaveValue('Replacement')
 	})
 
 	it('fills again for a new nonce, replacing the earlier fill', () => {

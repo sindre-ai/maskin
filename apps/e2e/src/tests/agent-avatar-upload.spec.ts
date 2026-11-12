@@ -21,8 +21,8 @@ test.describe('Agent profile picture', () => {
 			const change = page.getByRole('button', { name: 'Change profile picture for Pic Tester' })
 			await expect(change).toBeVisible({ timeout: 10_000 })
 
-			// Without a picture an agent is drawn as a pictogram tile, not initials.
-			await expect(change.locator('xpath=..').locator('svg[data-pictogram]')).toBeVisible()
+			// Without a picture an agent shows its initials.
+			await expect(change.locator('xpath=..').getByText('PT')).toBeVisible()
 
 			const chooser = page.waitForEvent('filechooser')
 			await change.click()

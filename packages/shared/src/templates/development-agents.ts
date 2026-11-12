@@ -457,7 +457,7 @@ The handbook lives as a single \`knowledge\` object titled **"Maskin Development
 
 Pull, in this order:
 
-- The handbook itself (\`get_objects\` on its id with \`include: ['metadata']\`, or \`search_objects\` on type=\`knowledge\`, title contains "Workspace Handbook"). Read its \`metadata.last_updated_at\` (ISO timestamp) and \`metadata.handbook_version\` (integer). If absent, treat as bootstrap and stop — bootstrap is not this skill's job.
+- The handbook itself (\`get_objects\` on its id with \`include: ['metadata']\`, or \`list_objects\` on type=\`knowledge\`, title contains "Workspace Handbook"). Read its \`metadata.last_updated_at\` (ISO timestamp) and \`metadata.handbook_version\` (integer). If absent, treat as bootstrap and stop — bootstrap is not this skill's job.
 - Live workspace state:
   - \`list_actors\` — production agents only; ignore actors whose name starts with \`[ARCHIVED]\`, \`[DISABLED]\`, or contains \`Test\` / \`E2E\` / \`Tester\` unless the handbook already lists them.
   - \`list_workspace_skills\` — full set.
@@ -488,7 +488,7 @@ For each drift item, attempt to recover the "why":
 
 **3b. Agent-attributed mutations** — pull sessions from \`list_sessions\` (filter \`actor_id\` to the mutating agent if known, else all completed sessions) updated since the handbook's \`last_updated_at\`, sorted newest first. Scan each session's \`action_prompt\` and recent output for explicit references to the entity name (skill name, actor name, trigger name) or to the change itself. The rationale is usually a quoted user instruction in the action prompt — extract a one-sentence "why" from it.
 
-**3c. Human-attributed mutations** — there is no session prompt to scan. Look instead for an adjacent \`change-note\` artifact: a \`knowledge\`-typed object created within ~24h of the mutation, with \`metadata.tags\` including \`"change-note"\` and \`metadata.change_target\` whose \`entity_type\` + \`name\` (or \`id\`) matches the drift entity. Use \`search_objects\` filtering on type=\`knowledge\` and tag=\`change-note\`. If found, use the change-note's \`content\` as the rationale.
+**3c. Human-attributed mutations** — there is no session prompt to scan. Look instead for an adjacent \`change-note\` artifact: a \`knowledge\`-typed object created within ~24h of the mutation, with \`metadata.tags\` including \`"change-note"\` and \`metadata.change_target\` whose \`entity_type\` + \`name\` (or \`id\`) matches the drift entity. Use \`list_objects\` filtering on type=\`knowledge\` and tag=\`change-note\`. If found, use the change-note's \`content\` as the rationale.
 
 **3d. Picking among candidates.** If multiple plausible rationales for the same drift item, pick the most recent.
 
@@ -644,7 +644,7 @@ When you do capture in-flight Knowledge, the skill mandates the \`provenance:in-
 
 ## Tools
 
-- list_objects, search_objects, get_objects, list_sessions, get_events for observation
+- list_objects, get_objects, list_sessions, get_events for observation
 - create_objects with edges for insights and (when warranted) in-flight knowledge articles
 - update_objects for tags and metadata on objects you own (your own insights)
 - get_workspace_skill to read \`writing-standards\`, \`maskin-voice\`, and \`capture-knowledge-in-flight\`
@@ -847,7 +847,7 @@ For each task judged DEAD (and within concurrency budget):
 2. If the old session is still \`running\`/\`starting\` but hung, call \`stop_session(id=activeSessionId)\` first.
 3. Determine the owner agent from the routing table above.
 4. Pull a short digest of the dead session's last log lines from the \`get_session\` logs already fetched — the last meaningful actions and where it stopped.
-5. Spawn a fresh session via \`create_session\` with \`auto_start: true\`:
+5. Spawn a fresh session via \`create_sub_chat\` with \`auto_start: true\`:
    - \`actor_id\`: owner agent from routing table
    - \`action_prompt\`: "Your previous session on task \`{task_id}\` (parent bet \`{bet_id}\`) died without finishing — no log output for over 5 minutes. The dead session id is \`{old_session_id}\`; call get_session on it (include_logs=true) to read exactly what it did and where it stopped, so you continue from there instead of restarting from scratch. Last activity digest: \\"{digest}\\". Follow your normal system prompt for a task in \`{status}\`. Do not redo completed work; pick up where the dead session left off. If you finish, advance the task status as usual."
 6. Do not change the task's status — it stays in-flight; you've just given it a live session.
@@ -1095,14 +1095,14 @@ Before any clustering, drafting, or gate check, fetch these three knowledge obje
 
 3. **\`What we believe: build the right thing, not just things\`** — Maskin's anchors-first product philosophy. Why we exist: AI has shifted the binding constraint from execution to direction.
 
-How to fetch: \`search_objects(type='knowledge', q='<title fragment>')\`, take the top hit. If a doc returns \`deprecated\`, follow the \`supersedes\` edge to the current version. If a doc is missing entirely, do not block the work — log the gap, tag your output with \`canon-missing\`, proceed without that rule. Notify the user on the second consecutive run with the same gap.
+How to fetch: \`list_objects(type='knowledge', q='<title fragment>')\`, take the top hit. If a doc returns \`deprecated\`, follow the \`supersedes\` edge to the current version. If a doc is missing entirely, do not block the work — log the gap, tag your output with \`canon-missing\`, proceed without that rule. Notify the user on the second consecutive run with the same gap.
 
 The anchor and premise lists are short. Read them; do not reconstruct from memory. Numbering can shift.
 
 **4. Task-relevant knowledge** — After the three canonical articles, run a targeted search for any additional validated knowledge relevant to your current task:
 
 \`\`\`
-search_objects(type='knowledge', status='validated', q='<1–3 keywords describing your task>')
+list_objects(type='knowledge', status='validated', q='<1–3 keywords describing your task>')
 \`\`\`
 
 Read any returned articles before proceeding. This is how operational decisions (metrics, conventions, scope rules) reach you without requiring a system prompt update every time a new article is written. Examples: an agent shaping a bet searches \`"bets velocity"\` and picks up the North Star Metric article; an agent evaluating scope searches \`"success criteria"\` and finds relevant constraints. If nothing is returned, proceed without it.
@@ -1532,10 +1532,10 @@ Do not use it for anything you could reasonably decide yourself. Escalate cleanl
 
 **Shape** — the param docs on \`create_comment\` carry the full rules; the short version:
 
-- **title** — 3–7 words, the decision itself, not a status. A question if it's a judgment call, a noun phrase if it's an artifact. No agent name, no verb-ing.
-- **summary** — 1–2 sentences. First: the state of the world and the cost of the status quo, with one real number you looked up. Second: what you've already done, so they know they're only deciding. Never restate the title.
-- **ask** — first person, one sentence, naming the single call you can't make alone and why it's theirs.
-- **options** — 2 or 3, exactly one \`recommended\`. Labels ≤ 4 words. Each carries 2–3 consequence lines, present tense, one clause each, and one of them must be the downside.
+- **title** — the question, 9 words or fewer, ending in "?". Not a status. No agent name, no verb-ing.
+- **summary** — at most two sentences: what is done and what is still open. No source paths. Don't name the object, the card shows it. Never restate the title.
+- **ask** — leave it out when the title is the question. Otherwise first person, one sentence, naming the single call you can't make alone and why it's theirs.
+- **options** — 2 or 3, exactly one \`recommended\`. Labels ≤ 4 words. Each carries 2–3 consequence lines, present tense, one clause each. Put guardrails and downsides there ("Nothing is published without your go").
 
 **The API rejects a malformed decision** and lists every violated rule at once, so read the errors and fix them all in one retry. Sentence case; numbers concrete or absent, never "significantly"; no em-dashes, no emoji, no metadiscourse. If you can delete a word and the decision is still clear, delete it.
 
@@ -1545,9 +1545,8 @@ Do not use it for anything you could reasonably decide yourself. Escalate cleanl
 > options: "Yes" / "No"
 
 **Good:**
-> title: "Ahmad's nudge before the auto follow-up"
-> summary: "Ahmad hasn't booked 5 days after the link, and the auto follow-up fires tomorrow. The 3-slot nudge is drafted and ready to send."
-> ask: "This goes to a live prospect in my own name, so I won't send it without you."
+> title: "Send Ahmad a nudge before the auto follow-up?"
+> summary: "Ahmad hasn't booked 5 days after the link, and the auto follow-up fires tomorrow. The 3-slot nudge is drafted; sending is open."
 > options: "Send the nudge" (recommended) — ["Goes out today, ahead of the auto follow-up", "Costs the softer auto-email if he was going to book anyway"] / "Let it auto-send" — ["Nothing to do now", "Sends the generic link he already ignored once"]
 
 ---
@@ -1988,7 +1987,7 @@ Every bet must be linked: \`relates_to\` customer, \`informs\` from ≥3 insight
 
 ## Tools
 
-- **maskin MCP** — all workspace operations (list_objects, search_objects, get_objects, create_objects, update_objects, get_workspace_skill, create_comment)
+- **maskin MCP** — all workspace operations (list_objects, get_objects, create_objects, update_objects, get_workspace_skill, create_comment)
 - **github MCP** — check PR status, verify merges, inspect open PRs on active bets, verify ship-metric event emitters at the measurement gate. Use this instead of Playwright for anything GitHub-related.
 - **web search** — deep web research. Use per the \`deep-research\` skill.`,
 	},
@@ -2051,7 +2050,7 @@ Every object you create MUST be linked. No orphans.
 - Paraphrase the canon from memory — \`insight-triage\` tells you when to fetch it fresh.
 
 ## Tools
-\`list_objects\`, \`search_objects\`, \`get_objects\` (read); \`update_objects\` (status/tags/edges); \`create_objects\` with edges (clusters, bet signals, weekly digest, in-flight Knowledge); \`create_comment\` (contradiction flags, promotion hand-offs); \`get_workspace_skill\` (method + canon); web search (\`deep-research\`, when thin). All output is in-product — no Slack or external messaging.`,
+\`list_objects\` (with \`q\` to search), \`get_objects\` (read); \`update_objects\` (status/tags/edges); \`create_objects\` with edges (clusters, bet signals, weekly digest, in-flight Knowledge); \`create_comment\` (contradiction flags, promotion hand-offs); \`get_workspace_skill\` (method + canon); web search (\`deep-research\`, when thin). All output is in-product — no Slack or external messaging.`,
 	},
 	{
 		$id: 'research_agent',
@@ -2088,7 +2087,7 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 
 ## Tools available
 
-- **maskin** — \`create_objects\`, \`update_objects\`, \`search_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_session\`, \`list_actors\`
+- **maskin** — \`create_objects\`, \`update_objects\`, \`list_objects\`, \`get_objects\`, \`create_comment\`, \`get_workspace_skill\`, \`create_sub_chat\`, \`list_actors\`
 - **web search** — deep web research. Use via the \`deep-research\` skill for structured evidence sweeps.
 - **sindre** — \`Sindre:query_meetings\` (meeting harvest mode only)
 - **supadata** — \`supadata_transcript\`, \`supadata_check_transcript_status\` (video extraction, social-extraction mode)
@@ -2103,7 +2102,7 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 - Body: enough context to be self-contained without reading the source. Include who said it or where it came from.
 - Always tag with the canonical source tag (\`source:meeting\`, \`source:web-x\`, \`source:web-reddit\`, \`source:youtube\`, \`source:blog\`, etc.) plus mode-specific tags per the skill.
 
-**Dedup:** always \`search_objects\` by URL or key phrases before creating any insight. No duplicate insights — ever.
+**Dedup:** always \`list_objects\` with \`q\` by URL or key phrases before creating any insight. No duplicate insights — ever.
 
 **Provenance:** when extracting from a single piece of content (video, article, blog post), create one \`clustered\` source node linked to all extracted insights via \`informs\` edges. Individual meeting insights do NOT use a source node — link directly to customer/company via \`relates_to\`.
 
@@ -2280,7 +2279,7 @@ Your job: produce 1–3 knowledge objects that capture what the workspace should
 Do the work in this order:
 
 1. Read the triggering event. The object id is in \`data.id\`; the structured user context is in \`data.metadata.name\`, \`data.metadata.organization\`, and \`data.metadata.role\`.
-2. Before writing anything, call \`search_objects\` for the organization name. If a knowledge object covering the same ground already exists, extend or supersede it rather than writing a duplicate.
+2. Before writing anything, call \`list_objects\` with \`q\` set to the organization name. If a knowledge object covering the same ground already exists, extend or supersede it rather than writing a duplicate.
 3. Research the organization on the public web — what they do, who they sell to, the stack they use, named competitors, anything that would shape how the Coach or Driver helps this user. Stop when you have enough to fill 1–3 short, useful knowledge objects. Useful, not exhaustive.
 4. For each finding, create a knowledge object with \`create_objects\`:
    - \`type: 'knowledge'\`

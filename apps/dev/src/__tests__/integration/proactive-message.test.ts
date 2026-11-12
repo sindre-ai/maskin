@@ -216,49 +216,27 @@ describe('sendProactiveMessage (integration)', () => {
 		expect(await messagesIn(chatId)).toHaveLength(1)
 	})
 
-	it('a second send within 24 hours is cap_agent_day', async () => {
+	it('has no daily limit: once the last note is read, the same agent can send again at once', async () => {
 		const first = await sendProactiveMessage(db, args({ reason: 'one' }))
 		expect(first.sent).toBe(true)
-		const second = await sendProactiveMessage(db, args({ reason: 'two' }))
-		expect(second).toEqual({ sent: false, reason: 'cap_agent_day' })
-		expect(await messagesIn(chatId)).toHaveLength(1)
+		if (first.sent) await markRead(chatId, first.messageId)
+		const second = await sendProactiveMessage(db, args({ reason: 'one' }))
+		expect(second.sent).toBe(true)
+		expect(await messagesIn(chatId)).toHaveLength(2)
 	})
 
-	it('two proactive messages from other agents in 24 hours is cap_person_day', async () => {
+	it('notes from other agents, however many, never use up what Chief of Staff can send', async () => {
 		const second = await insertActor(db, { type: 'agent', name: 'Researcher' })
 		await join(second.id)
 		const chatA = await makeChat([humanId, otherAgentId])
 		const chatB = await makeChat([humanId, second.id])
 		await seedProactive({ conversationId: chatA, agentId: otherAgentId, reason: 'a', hoursAgo: 2 })
 		await seedProactive({ conversationId: chatB, agentId: second.id, reason: 'b', hoursAgo: 3 })
-		expect(await sendProactiveMessage(db, args())).toEqual({
-			sent: false,
-			reason: 'cap_person_day',
-		})
-		expect(await messagesIn(chatId)).toHaveLength(0)
-	})
-
-	it('one proactive message from another agent still leaves room for Chief of Staff', async () => {
-		const chatA = await makeChat([humanId, otherAgentId])
-		await seedProactive({ conversationId: chatA, agentId: otherAgentId, reason: 'a', hoursAgo: 2 })
 		expect((await sendProactiveMessage(db, args())).sent).toBe(true)
 	})
 
-	it('a second capability note inside 7 days is cap_reason_week', async () => {
-		const earlier = await seedProactive({ conversationId: chatId, agentId: cosId, hoursAgo: 48 })
-		await markRead(chatId, earlier.id)
-		expect(await sendProactiveMessage(db, args())).toEqual({
-			sent: false,
-			reason: 'cap_reason_week',
-		})
-	})
-
-	it('a note older than 7 days does not count', async () => {
-		const earlier = await seedProactive({
-			conversationId: chatId,
-			agentId: cosId,
-			hoursAgo: 24 * 8,
-		})
+	it('a recent note on the same reason does not block a send once it is read', async () => {
+		const earlier = await seedProactive({ conversationId: chatId, agentId: cosId, hoursAgo: 1 })
 		await markRead(chatId, earlier.id)
 		expect((await sendProactiveMessage(db, args())).sent).toBe(true)
 	})
@@ -298,7 +276,7 @@ describe('sendProactiveMessage (integration)', () => {
 		)
 		expect(results.filter((r) => r.sent)).toHaveLength(1)
 		expect(
-			results.filter((r) => !r.sent).every((r) => !r.sent && r.reason === 'cap_agent_day'),
+			results.filter((r) => !r.sent).every((r) => !r.sent && r.reason === 'unread_backlog'),
 		).toBe(true)
 		expect(await messagesIn(chatId)).toHaveLength(1)
 	})

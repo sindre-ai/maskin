@@ -2,11 +2,15 @@
 import AVFoundation
 import Foundation
 import MaskinCore
+import Speech
 
 /// One dictation session through the Maskin server: the microphone is cut into phrases at pauses
 /// (the same rules as the web app), each phrase goes to `POST /api/transcriptions` while the person
 /// keeps talking, and the text comes back in speaking order. `Dictation` owns it and takes over
 /// with the phone's recogniser when it reports a failure or reaches the time limit.
+///
+/// While the person talks, the same microphone buffers also go to an on-device recogniser, one task per
+/// phrase, only to show grey live words (`PhrasePreviews`). The server's text replaces them phrase by phrase.
 @MainActor
 final class BackendDictationRun {
 	/// The route takes about three minutes of audio per session (the web app stops at the same point).
@@ -21,26 +25,48 @@ final class BackendDictationRun {
 	private let onFailure: @MainActor (DictationFallback) -> Void
 	private let onInterrupted: @MainActor () -> Void
 	private let onLimit: @MainActor () -> Void
+	private let onAnswer: @MainActor (_ empty: Bool) -> Void
 	private var capture: PhraseCapture?
 	private var consumer: Task<Void, Never>?
 	private var timer: Task<Void, Never>?
 	private var watchers: [Task<Void, Never>] = []
+	private let previewRecognizer: SFSpeechRecognizer?
+	private let onPreview: @MainActor (String) -> Void
+	private var previews = PhrasePreviews()
+	private var preview: PreviewFeed?
+	private var cancelled = false
 
 	/// What the server has transcribed so far.
 	var text: String { queue.text }
+	/// How many phrases have gone to the server.
+	var phrasesSent: Int { queue.submitted }
+	/// The grey words still waiting for the server's text.
+	var previewText: String { previews.text }
 
 	init(
 		service: any SpeechTranscribing, language: String?,
+		previewRecognizer: SFSpeechRecognizer?,
 		onText: @escaping @MainActor (String) -> Void,
+		onPreview: @escaping @MainActor (String) -> Void,
 		onFailure: @escaping @MainActor (DictationFallback) -> Void,
 		onInterrupted: @escaping @MainActor () -> Void,
-		onLimit: @escaping @MainActor () -> Void
+		onLimit: @escaping @MainActor () -> Void,
+		onAnswer: @escaping @MainActor (_ empty: Bool) -> Void
 	) {
 		queue = PhraseTranscriptionQueue(
 			transcriber: service, language: language, onText: onText, onFailure: { onFailure(.failed($0)) })
 		self.onFailure = onFailure
 		self.onInterrupted = onInterrupted
 		self.onLimit = onLimit
+		self.onAnswer = onAnswer
+		self.previewRecognizer = previewRecognizer
+		self.onPreview = onPreview
+		queue.onPhraseDelivered = { [weak self] in
+			guard let self else { return }
+			previews.serverDelivered()
+			reportPreview()
+			onAnswer(queue.lastAnswerWasEmpty)
+		}
 	}
 
 	/// Opens the microphone. Throws when there is no input or the engine won't start.
@@ -54,7 +80,9 @@ final class BackendDictationRun {
 		let format = input.outputFormat(forBus: 0)
 		guard format.sampleRate > 0, format.channelCount > 0 else { throw CaptureError.noInput }
 		let (phrases, continuation) = AsyncStream.makeStream(of: Data.self)
-		let capture = try PhraseCapture(inputFormat: format, phrases: continuation)
+		let preview = previewRecognizer.map { PreviewFeed(recognizer: $0, report: Self.makeReporter(self)) }
+		self.preview = preview
+		let capture = try PhraseCapture(inputFormat: format, phrases: continuation, preview: preview)
 		self.capture = capture
 		input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.makeTap(capture))
 		engine.prepare()
@@ -96,9 +124,18 @@ final class BackendDictationRun {
 
 	/// Discard, or a failure: closes the microphone and drops everything still in flight.
 	func cancel() {
+		cancelled = true
 		closeMicrophone()
+		preview?.cancel()
 		consumer?.cancel()
 		queue.cancel()
+	}
+
+	/// The session is over but the run is kept to read its text (the time-limit handover): no more grey
+	/// words, however late the recogniser answers.
+	func dropPreview() {
+		cancelled = true
+		preview?.cancel()
 	}
 
 	private func closeMicrophone() {
@@ -114,6 +151,24 @@ final class BackendDictationRun {
 	}
 
 	private enum CaptureError: Error { case noInput }
+
+	private func apply(_ event: PreviewFeed.Event) {
+		switch event {
+		case .words(let phrase, let text): previews.update(phrase: phrase, text: text)
+		case .closed(let phrase, let sent): previews.close(phrase: phrase, sent: sent)
+		}
+		reportPreview()
+	}
+
+	private func reportPreview() {
+		guard !cancelled else { return }
+		onPreview(previews.text)
+	}
+
+	// Recogniser callbacks come on background queues; built here, where nothing is main-actor-isolated.
+	nonisolated private static func makeReporter(_ run: BackendDictationRun) -> @Sendable (PreviewFeed.Event) -> Void {
+		{ [weak run] event in Task { @MainActor in run?.apply(event) } }
+	}
 
 	// The tap fires on an audio thread; built here, where nothing is main-actor-isolated (Swift 6
 	// traps on a main-actor closure that runs elsewhere). Same as `Dictation.makeTap`.
@@ -133,8 +188,9 @@ final class BackendDictationRun {
 		/// Milliseconds of audio seen, so pauses are measured in recorded time, not wall time.
 		private var clockMs = 0.0
 		private var finished = false
+		private let preview: PreviewFeed?
 
-		init(inputFormat: AVAudioFormat, phrases: AsyncStream<Data>.Continuation) throws {
+		init(inputFormat: AVAudioFormat, phrases: AsyncStream<Data>.Continuation, preview: PreviewFeed?) throws {
 			guard
 				let output = AVAudioFormat(
 					commonFormat: .pcmFormatFloat32, sampleRate: Double(WAVEncoding.sampleRate), channels: 1,
@@ -144,22 +200,31 @@ final class BackendDictationRun {
 			self.outputFormat = output
 			self.converter = converter
 			self.phrases = phrases
+			self.preview = preview
 		}
 
 		func append(_ buffer: AVAudioPCMBuffer) {
+			preview?.append(buffer)
 			let converted = convert(buffer)
 			guard !converted.isEmpty else { return }
 			var phrase: [Float]?
+			var closedPhrase = false
+			let heard = preview?.heardWords ?? false
 			lock.lock()
 			if !finished {
 				samples.append(contentsOf: converted)
 				clockMs += Double(converted.count) * 1000 / Double(WAVEncoding.sampleRate)
+				segmenter.heardWords = heard
 				switch segmenter.push(rms: Self.rms(converted), atMs: clockMs) {
 				case .cut:
 					phrase = samples
+					closedPhrase = true
+					Self.log("closed and sent", segmenter, samples.count)
 					samples = []
 					segmenter.reset(atMs: clockMs)
 				case .discard:
+					closedPhrase = true
+					Self.log("dropped as silence", segmenter, samples.count)
 					samples = []
 					segmenter.reset(atMs: clockMs)
 				case nil:
@@ -168,17 +233,29 @@ final class BackendDictationRun {
 			}
 			lock.unlock()
 			if let phrase { phrases.yield(Self.wav(phrase)) }
+			if closedPhrase { preview?.closePhrase(sent: phrase != nil) }
 		}
 
 		/// The microphone is closed: sends what was said since the last pause, then ends the stream.
 		func finish() {
+			let heard = preview?.heardWords ?? false
 			lock.lock()
-			let tail = !finished && segmenter.hasVoice ? samples : []
+			let tail = !finished && (segmenter.hasVoice || heard) ? samples : []
 			finished = true
 			samples = []
 			lock.unlock()
 			if !tail.isEmpty { phrases.yield(Self.wav(tail)) }
+			preview?.finish(sent: !tail.isEmpty)
 			phrases.finish()
+		}
+
+		/// One line per phrase the microphone closes: why the server did or did not get it, with the levels
+		/// that decided it (numbers only, never audio or text).
+		private static func log(_ what: String, _ segmenter: PhraseSegmenter, _ sampleCount: Int) {
+			let seconds = Double(sampleCount) / Double(WAVEncoding.sampleRate)
+			DictationFallback.log.info(
+				"dictation phrase \(what, privacy: .public): \(seconds) s, loudest \(segmenter.peakRMS), speech level \(segmenter.threshold), phone heard words \(segmenter.heardWords)"
+			)
 		}
 
 		private static func wav(_ samples: [Float]) -> Data {
@@ -217,6 +294,116 @@ final class BackendDictationRun {
 				status.pointee = .haveData
 				return buffer
 			}
+		}
+	}
+
+	/// Feeds the microphone to the phone's recogniser for the grey live words. One recognition task per
+	/// phrase, started and ended where `PhraseCapture` cuts the phrase for the server, so a task's words
+	/// belong to exactly one phrase. On-device only: the audio goes nowhere new. Lives on the audio thread.
+	private final class PreviewFeed: @unchecked Sendable {
+		enum Event: Sendable {
+			case words(phrase: Int, text: String)
+			case closed(phrase: Int, sent: Bool)
+		}
+
+		private let lock = NSLock()
+		private let recognizer: SFSpeechRecognizer
+		private let report: @Sendable (Event) -> Void
+		private var request: SFSpeechAudioBufferRecognitionRequest?
+		private var tasks: [SFSpeechRecognitionTask] = []
+		private var phrase = 0
+		private var finished = false
+		/// Whether the recogniser has heard any words in the phrase being spoken.
+		private var wordsInPhrase = false
+
+		init(recognizer: SFSpeechRecognizer, report: @escaping @Sendable (Event) -> Void) {
+			self.recognizer = recognizer
+			self.report = report
+			request = startTask()
+		}
+
+		func append(_ buffer: AVAudioPCMBuffer) {
+			lock.lock()
+			let current = request
+			lock.unlock()
+			current?.append(buffer)
+		}
+
+		/// True once the recogniser has heard words in the phrase being spoken. The level rule can miss a
+		/// quiet microphone; this does not depend on level, so `PhraseCapture` sends the phrase on it.
+		var heardWords: Bool {
+			lock.lock()
+			defer { lock.unlock() }
+			return wordsInPhrase
+		}
+
+		/// The phrase was cut: ends its task and starts the next one.
+		func closePhrase(sent: Bool) {
+			lock.lock()
+			guard !finished else {
+				lock.unlock()
+				return
+			}
+			let closed = phrase
+			request?.endAudio()
+			phrase += 1
+			wordsInPhrase = false
+			request = startTask()
+			lock.unlock()
+			report(.closed(phrase: closed, sent: sent))
+		}
+
+		/// The microphone is closed: ends the current task; no new one starts.
+		func finish(sent: Bool) {
+			lock.lock()
+			guard !finished else {
+				lock.unlock()
+				return
+			}
+			finished = true
+			let closed = phrase
+			request?.endAudio()
+			request = nil
+			lock.unlock()
+			report(.closed(phrase: closed, sent: sent))
+		}
+
+		/// Discard or a failure: nothing more is reported.
+		func cancel() {
+			lock.lock()
+			finished = true
+			request?.endAudio()
+			request = nil
+			let running = tasks
+			tasks = []
+			lock.unlock()
+			running.forEach { $0.cancel() }
+		}
+
+		private func heard(phrase id: Int) {
+			lock.lock()
+			if id == phrase { wordsInPhrase = true }
+			lock.unlock()
+		}
+
+		/// Called with the lock held.
+		private func startTask() -> SFSpeechAudioBufferRecognitionRequest {
+			// One task per phrase adds up over a long session: let go of the ones that are done.
+			tasks.removeAll { $0.state == .completed || $0.state == .canceling }
+			let request = SFSpeechAudioBufferRecognitionRequest()
+			request.shouldReportPartialResults = true
+			request.taskHint = .dictation
+			request.addsPunctuation = true
+			request.requiresOnDeviceRecognition = true
+			let id = phrase
+			let report = report
+			let task = recognizer.recognitionTask(with: request) { [weak self] result, _ in
+				guard let text = result?.bestTranscription.formattedString else { return }
+				if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self?.heard(phrase: id) }
+				report(.words(phrase: id, text: text))
+			}
+			tasks.append(task)
+			return request
 		}
 	}
 }

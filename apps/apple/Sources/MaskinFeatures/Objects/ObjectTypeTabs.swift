@@ -30,6 +30,8 @@ struct ObjectTypeTab: Identifiable, Equatable {
 		tabs += store.typeSummaries.filter { $0.count > 0 || store.typeFilter == $0.id }.map {
 			ObjectTypeTab(scope: .type($0.id), label: $0.label, count: $0.count > 0 ? $0.countLabel : nil)
 		}
+		// Files are not objects, so the tab carries no count.
+		tabs.append(ObjectTypeTab(scope: .files, label: "Files", count: nil))
 		return tabs
 	}
 }

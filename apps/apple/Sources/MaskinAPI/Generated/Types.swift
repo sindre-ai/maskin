@@ -28,6 +28,8 @@ public protocol APIProtocol: Sendable {
     func get_sol_api_sol_objects_sol_board(_ input: Operations.get_sol_api_sol_objects_sol_board.Input) async throws -> Operations.get_sol_api_sol_objects_sol_board.Output
     /// Search objects by text
     ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
+    ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
     func get_sol_api_sol_objects_sol_search(_ input: Operations.get_sol_api_sol_objects_sol_search.Input) async throws -> Operations.get_sol_api_sol_objects_sol_search.Output
@@ -410,6 +412,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/billing/usage`.
     /// - Remark: Generated from `#/paths//api/billing/usage/get`.
     func get_sol_api_sol_billing_sol_usage(_ input: Operations.get_sol_api_sol_billing_sol_usage.Input) async throws -> Operations.get_sol_api_sol_billing_sol_usage.Output
+    /// The auto top-up rule and whether the last automatic charge failed
+    ///
+    /// - Remark: HTTP `GET /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get`.
+    func get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(_ input: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input) async throws -> Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output
+    /// Save the auto top-up rule (also clears a failed state and retries on the next debit)
+    ///
+    /// - Remark: HTTP `PUT /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put`.
+    func put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(_ input: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input) async throws -> Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output
     /// Paginated event history
     ///
     /// - Remark: HTTP `GET /api/events/history`.
@@ -768,6 +780,8 @@ extension APIProtocol {
         ))
     }
     /// Search objects by text
+    ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
     ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
@@ -1734,6 +1748,26 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/billing/usage/get`.
     public func get_sol_api_sol_billing_sol_usage(headers: Operations.get_sol_api_sol_billing_sol_usage.Input.Headers) async throws -> Operations.get_sol_api_sol_billing_sol_usage.Output {
         try await get_sol_api_sol_billing_sol_usage(Operations.get_sol_api_sol_billing_sol_usage.Input(headers: headers))
+    }
+    /// The auto top-up rule and whether the last automatic charge failed
+    ///
+    /// - Remark: HTTP `GET /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get`.
+    public func get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(headers: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers) async throws -> Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output {
+        try await get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input(headers: headers))
+    }
+    /// Save the auto top-up rule (also clears a failed state and retries on the next debit)
+    ///
+    /// - Remark: HTTP `PUT /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put`.
+    public func put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(
+        headers: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers,
+        body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body
+    ) async throws -> Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output {
+        try await put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input(
+            headers: headers,
+            body: body
+        ))
     }
     /// Paginated event history
     ///

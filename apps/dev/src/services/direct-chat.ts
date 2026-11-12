@@ -1,8 +1,14 @@
 import type { Database, Transaction } from '@maskin/db'
-import { conversationParticipants, conversations } from '@maskin/db/schema'
+import {
+	actors,
+	conversationParticipants,
+	conversations,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { MessageDelivery, MessageMetadata } from '@maskin/shared'
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
+import { logger } from '../lib/logger'
 import {
 	type InsertedConversationMessage,
 	insertConversationMessage,
@@ -92,6 +98,84 @@ export async function postToDirectChat(
 	})
 	if (!created) throw new Error('postToDirectChat: insert was suppressed')
 	return created
+}
+
+/**
+ * What a direct message is called for the person looking at it. A DM between two
+ * people has no single name (A sees B, B sees A), so it is never stored: the title
+ * is the other person's name. Any other chat keeps its stored title, and so does a
+ * DM with an agent, which is titled with the agent's name.
+ */
+export function directChatTitleForViewer(
+	conversation: { title: string; directPairKey: string | null },
+	participants: ReadonlyArray<{ actorId: string; actorName: string; actorType: string }>,
+	viewerId: string,
+): string {
+	if (!conversation.directPairKey || participants.length !== 2) return conversation.title
+	if (!participants.every((p) => p.actorType === 'human')) return conversation.title
+	const other = participants.find((p) => p.actorId !== viewerId)
+	return other?.actorName ?? conversation.title
+}
+
+/**
+ * Makes sure a person has a DM with every other person in the workspace, so the
+ * pairs A+B, A+C and B+C all exist, the same way an agent has one with each person.
+ * Only the missing ones are created (one read to tell, then one find-or-create per
+ * gap), so for a person who is up to date this costs two queries. A DM someone left
+ * or archived is left alone. Never throws: the chat list must load without it.
+ */
+export async function ensureHumanDirectChats(
+	db: Database,
+	args: { workspaceId: string; actorId: string },
+): Promise<void> {
+	try {
+		const people = await db
+			.select({ id: actors.id, name: actors.name })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, args.workspaceId),
+					eq(actors.type, 'human'),
+					// A viewer cannot write, so they get no DMs and nobody gets one with them.
+					ne(workspaceMembers.role, 'system'),
+					ne(workspaceMembers.role, 'viewer'),
+				),
+			)
+		if (!people.some((p) => p.id === args.actorId)) return
+		const others = people.filter((p) => p.id !== args.actorId)
+		if (others.length === 0) return
+
+		const keyed = others.map((p) => ({ ...p, key: directPairKey(args.actorId, p.id) }))
+		const existing = await db
+			.select({ key: conversations.directPairKey })
+			.from(conversations)
+			.where(
+				and(
+					eq(conversations.workspaceId, args.workspaceId),
+					inArray(
+						conversations.directPairKey,
+						keyed.map((k) => k.key),
+					),
+				),
+			)
+		const have = new Set(existing.map((e) => e.key))
+		for (const other of keyed.filter((k) => !have.has(k.key))) {
+			await findOrCreateDirectChat(db, {
+				workspaceId: args.workspaceId,
+				humanId: args.actorId,
+				agentId: other.id,
+				title: other.name,
+				createdBy: args.actorId,
+			})
+		}
+	} catch (err) {
+		logger.warn('Could not create the direct messages between people', {
+			workspaceId: args.workspaceId,
+			actorId: args.actorId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }
 
 export interface FindOrCreateDirectChatArgs extends FindDirectChatArgs {

@@ -15,7 +15,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * GET /api/data/query against the real database. The aggregation SQL itself is covered
  * against real Postgres in apps/dev's data-query integration test.
  */
-const FRAME = 'iframe[title="Custom loop view"]'
+const FRAME = 'iframe[title="Custom flow view"]'
 
 // The view runs in a frame inside the frame the page renders (the isolation frame).
 const viewFrame = (page: Page) => page.frameLocator(FRAME).frameLocator('iframe')
@@ -34,7 +34,8 @@ async function openTab(page: Page, name: string) {
 		await tab.click()
 		return
 	}
-	await page.getByRole('button', { name: /^More/ }).click()
+	// The strip's own button reads "More (n)"; the page has other buttons that start with More.
+	await page.getByRole('button', { name: /^More \(\d+\)$/ }).click()
 	await page.getByRole('menuitemradio', { name, exact: true }).click()
 }
 
@@ -108,7 +109,7 @@ test.describe('Loop page — custom view tabs', () => {
 
 			// Overview is the default page and carries no view or switch.
 			const frame = page.locator(FRAME)
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible({
+			await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expect(frame).toHaveCount(0)
@@ -171,7 +172,7 @@ test.describe('Loop page — custom view tabs', () => {
 		const tabNames = (await page.getByRole('tab').allTextContents()).map((t) =>
 			t.replace(/\d+$/, ''),
 		)
-		expect(tabNames).toEqual(['Overview', 'Results', 'Pipeline view', 'Items', 'Activity', 'Setup'])
+		expect(tabNames).toEqual(['Overview', 'Items', 'Activity', 'Setup', 'Results', 'Pipeline view'])
 
 		await openTab(page, 'Pipeline view')
 		await expect(viewFrame(page).getByText('Second view heading')).toBeVisible({
@@ -215,8 +216,9 @@ test.describe('Loop page — custom view tabs', () => {
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 
-			// Overview keeps the triggers; the view sits in its own tab, inside its own box.
+			// Setup keeps the triggers; the view sits in its own tab, inside its own box.
 			const frame = page.locator(FRAME)
+			await openTab(page, 'Setup')
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible({
 				timeout: 15_000,
 			})
@@ -243,10 +245,10 @@ test.describe('Loop page — custom view tabs', () => {
 				)
 			expect(await overflow()).toBeLessThanOrEqual(0)
 
-			// Overview brings back the triggers section.
-			await openTab(page, 'Overview')
+			// Setup brings back how the flow runs.
+			await openTab(page, 'Setup')
 			await expect(frame).toHaveCount(0)
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
 			expect(await overflow()).toBeLessThanOrEqual(0)
 		})
@@ -341,8 +343,8 @@ test.describe('Loop page — custom view tabs', () => {
 		await openTab(page, 'Custom view')
 		await expect(page.getByText(/This view can't be shown/)).toBeVisible({ timeout: 15_000 })
 		await expect(page.locator(FRAME)).toHaveCount(0)
-		await openTab(page, 'Overview')
-		await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+		await openTab(page, 'Setup')
+		await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 	})
 })
 

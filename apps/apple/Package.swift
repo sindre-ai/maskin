@@ -62,7 +62,8 @@ let package = Package(
 				.product(name: "PostHog", package: "posthog-ios", condition: .when(platforms: [.iOS])),
 			],
 			// The Computer screen's page: noVNC bundled with a small bridge (scripts/computer-bridge).
-			resources: [.copy("Computer/Resources")]),
+			// The Edit screen's page: the shared markdown editor (scripts/editor-bridge).
+			resources: [.copy("Computer/Resources"), .copy("Objects/EditorPage")]),
 		.testTarget(name: "MaskinFeaturesTests", dependencies: ["MaskinFeatures"]),
 	]
 )

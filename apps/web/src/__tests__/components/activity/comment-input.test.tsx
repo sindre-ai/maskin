@@ -388,16 +388,23 @@ describe('CommentInput', () => {
 		}
 	})
 
-	it('hides system actors from the @mention picker', async () => {
+	// Built-in agents (Workspace Coach, Chief of Staff) carry isSystem but people do talk to them,
+	// so they are offered. Integration actors (type "system": GitHub, Gmail and the like) are not.
+	it('offers built-in agents but hides integration actors in the @mention picker', async () => {
 		mockUseActors.mockReturnValue({
-			data: [BOB, { ...CAROL, name: 'Workspace Coach', isSystem: true }],
+			data: [
+				BOB,
+				{ ...CAROL, name: 'Workspace Coach', isSystem: true },
+				{ id: 'actor-9', name: 'GitHub', type: 'system', email: null, isSystem: true },
+			],
 		})
 		renderInput()
 
 		typeText('@')
 
 		expect(await screen.findByRole('option', { name: /Bob/ })).toBeInTheDocument()
-		expect(screen.queryByRole('option', { name: /Workspace Coach/ })).not.toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Workspace Coach/ })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: /GitHub/ })).not.toBeInTheDocument()
 	})
 
 	describe('tags', () => {

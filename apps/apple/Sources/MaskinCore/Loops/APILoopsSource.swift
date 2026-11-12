@@ -123,6 +123,14 @@ public struct APILoopsSource: LoopsAPI {
 		}
 	}
 
+	/// Read from the loop object itself: the app's object model keeps scalar metadata only, and the
+	/// views are a list.
+	public func views(loopID: String) async throws -> [LoopView] {
+		let output = try await client.get_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: loopID)))
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this flow's views.") }
+		return LoopViews.read(metadata: try Self.decode(ObjectMetadataWire.self, from: ok.body.json).metadata)
+	}
+
 	public func actors() async throws -> [AutomationActor] {
 		try await AutomationActorsSource.load(client: client, workspaceID: workspaceID)
 	}
@@ -197,6 +205,7 @@ public struct APILoopsSource: LoopsAPI {
 	// MARK: Wire
 
 	private struct LoopsWire: Decodable { var loops: [LoopWire] }
+	private struct ObjectMetadataWire: Decodable { var metadata: JSONValue? }
 	private struct StepsWire: Decodable { var steps: [StepWire] }
 	private struct ActivityWire: Decodable { var events: [EventWire] }
 	private struct InstallsWire: Decodable {

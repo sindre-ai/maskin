@@ -92,6 +92,8 @@ test.describe('Settings — Integrations — install the GitHub App on another o
 		await mockLinkable(page)
 		await goto(page, `/${account.workspaceId}/settings/integrations`)
 
+		// GitHub is not connected on a fresh account, so its card is under Discover.
+		await page.getByRole('button', { name: /^Discover \(\d+\)$/ }).click()
 		await page.getByRole('button', { name: 'Add existing' }).click()
 		await expect(
 			page.getByRole('heading', { name: 'Add an existing GitHub organization' }),

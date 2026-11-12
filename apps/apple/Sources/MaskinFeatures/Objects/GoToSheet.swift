@@ -58,6 +58,8 @@ struct GoToContent: View {
 				viewRow(.all, symbol: "square.stack.3d.up", label: "All objects", count: total)
 				Divider().overlay(MaskinSurface.separator)
 				viewRow(.favourites, symbol: "star", label: "Favourites", count: favourites > 0 ? "\(favourites)" : nil)
+				Divider().overlay(MaskinSurface.separator)
+				viewRow(.files, symbol: "doc.on.doc", label: "Files", count: nil)
 			}
 			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
 			.padding(.top, MaskinSpace.s7)

@@ -545,8 +545,8 @@ test.describe('Mobile chat — long content, send button and safe areas @ 375', 
 		await page.getByLabel('First message').fill('A long first message. '.repeat(40))
 		await assertNoHorizontalOverflow(page, 'New chat (long first message)', VIEWPORTS.mobile)
 
-		const start = page.getByRole('button', { name: 'Start chat' })
-		await start.scrollIntoViewIfNeeded()
-		await expect(start).toBeInViewport()
+		const send = page.getByRole('button', { name: 'Send message' })
+		await send.scrollIntoViewIfNeeded()
+		await expect(send).toBeInViewport()
 	})
 })

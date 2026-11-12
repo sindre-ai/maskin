@@ -106,6 +106,44 @@ public final class IntegrationsStore {
 		connected.filter { $0.provider != Self.toolServerProvider }
 	}
 
+	/// Whether `name` is shown for the typed `query` and the chosen `category` (nil is All).
+	private func matches(
+		name: String, providerID: String, query: String, category: IntegrationCategory?
+	) -> Bool {
+		if let category, IntegrationCategory.category(for: providerID) != category { return false }
+		let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+		return needle.isEmpty || name.localizedCaseInsensitiveContains(needle)
+	}
+
+	/// The Connected tab's provider accounts under a search and a category chip.
+	public func connectedAccounts(query: String, category: IntegrationCategory?) -> [ConnectedIntegration] {
+		accounts.filter {
+			matches(name: displayName(for: $0), providerID: $0.provider, query: query, category: category)
+		}
+	}
+
+	/// The Discover tab: providers nobody has connected, under a search and a category chip.
+	public func availableProviders(query: String, category: IntegrationCategory?) -> [IntegrationProvider] {
+		available.filter {
+			$0.id != Self.toolServerProvider
+				&& matches(name: $0.displayName, providerID: $0.id, query: query, category: category)
+		}
+	}
+
+	/// The Connected tab's tool servers; they sit under the All and Custom chips only.
+	public func connectedToolServers(query: String, category: IntegrationCategory?) -> [ConnectedIntegration] {
+		guard category == nil || category == .custom else { return [] }
+		return toolServers.filter {
+			matches(name: displayName(for: $0), providerID: $0.provider, query: query, category: nil)
+		}
+	}
+
+	/// The number beside the Connected tab: accounts plus tool servers.
+	public var connectedCount: Int { accounts.count + toolServers.count }
+
+	/// The number beside the Discover tab.
+	public var discoverCount: Int { availableProviders(query: "", category: nil).count }
+
 	public func displayName(for integration: ConnectedIntegration) -> String {
 		if integration.provider == Self.toolServerProvider {
 			let name = integration.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)

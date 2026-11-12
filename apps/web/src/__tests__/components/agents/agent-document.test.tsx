@@ -219,6 +219,55 @@ describe('AgentDocumentView', () => {
 		expect(onUpdateName).not.toHaveBeenCalled()
 	})
 
+	it('Esc restores the saved name and does not save it', async () => {
+		const user = userEvent.setup()
+		const onUpdateName = vi.fn()
+		render(<AgentDocumentView {...baseProps({ onUpdateName })} />)
+
+		const nameInput = screen.getByLabelText('Agent name')
+		await user.clear(nameInput)
+		await user.type(nameInput, 'New Agent')
+		await user.keyboard('{Escape}')
+
+		expect(nameInput).toHaveValue('Scout')
+		expect(nameInput).not.toHaveFocus()
+		expect(onUpdateName).not.toHaveBeenCalled()
+	})
+
+	it('Esc restores the saved description and does not save it', async () => {
+		const user = userEvent.setup()
+		const onUpdateDescription = vi.fn()
+		const agent = buildActorResponse({
+			name: 'Scout',
+			type: 'agent',
+			description: 'Watches alerts',
+		})
+		render(<AgentDocumentView {...baseProps({ agent, onUpdateDescription })} />)
+
+		const input = screen.getByLabelText('Short description')
+		await user.clear(input)
+		await user.type(input, 'Something else')
+		await user.keyboard('{Escape}')
+
+		expect(input).toHaveValue('Watches alerts')
+		expect(onUpdateDescription).not.toHaveBeenCalled()
+	})
+
+	it('still saves a changed name on blur after an earlier Esc', async () => {
+		const user = userEvent.setup()
+		const onUpdateName = vi.fn()
+		render(<AgentDocumentView {...baseProps({ onUpdateName })} />)
+
+		const nameInput = screen.getByLabelText('Agent name')
+		await user.type(nameInput, ' X')
+		await user.keyboard('{Escape}')
+		await user.clear(nameInput)
+		await user.type(nameInput, 'Renamed')
+		await user.tab()
+
+		expect(onUpdateName).toHaveBeenCalledWith('Renamed')
+	})
+
 	it('calls onNewConversation when the New Conversation button is clicked', async () => {
 		const user = userEvent.setup()
 		const onNewConversation = vi.fn()

@@ -10,11 +10,13 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
 const NON_CACHEABLE_STATUSES = new Set([408, 425, 429])
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-/** True when any object in the body carries an api_key field, at any depth. */
+/** True when any object in the body carries an api_key or secret field, at any depth. */
 function carriesApiKey(value: unknown): boolean {
 	if (Array.isArray(value)) return value.some(carriesApiKey)
 	if (value === null || typeof value !== 'object') return false
-	return Object.entries(value).some(([k, v]) => k === 'api_key' || carriesApiKey(v))
+	return Object.entries(value).some(
+		([k, v]) => k === 'api_key' || k === 'secret' || carriesApiKey(v),
+	)
 }
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null
@@ -114,8 +116,8 @@ export function createIdempotencyMiddleware(db: Database) {
 			const body = (await cloned.json()) as unknown
 
 			// A credential must never sit in the ledger in plaintext for the TTL. Skip
-			// the write for any response that carries an api_key (signup, login, invite
-			// accept, key rotation); a retry re-runs the handler.
+			// the write for any response that carries an api_key or secret (signup, login, invite
+			// accept, key rotation, a new personal key); a retry re-runs the handler.
 			if (carriesApiKey(body)) return
 
 			await db

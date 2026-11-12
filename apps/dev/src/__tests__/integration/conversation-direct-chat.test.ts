@@ -175,6 +175,26 @@ describe('POST /api/conversations: the direct message', () => {
 		expect(await idOf(reopened)).toBe(dmId)
 	})
 
+	it('marks the DM in the chat list and leaves a topical chat with the same agent unmarked', async () => {
+		const dmId = await idOf(
+			await open(personId, { title: 'Scout', participant_actor_ids: [agentId], direct: true }),
+		)
+		const topicalId = await idOf(
+			await open(personId, { title: 'Launch plan', participant_actor_ids: [agentId] }),
+		)
+
+		const res = await appFor(personId).request(
+			jsonRequest('GET', '/api/conversations', undefined, ws()),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			conversations: Array<{ id: string; directPairKey: string | null }>
+		}
+		const keyOf = (id: string) => body.conversations.find((c) => c.id === id)?.directPairKey
+		expect(keyOf(dmId)).toEqual(expect.any(String))
+		expect(keyOf(topicalId)).toBeNull()
+	})
+
 	it('creates a topical chat first and a DM later without taking over the topical one', async () => {
 		const topicalId = await idOf(
 			await open(personId, { title: 'Launch plan', participant_actor_ids: [agentId] }),

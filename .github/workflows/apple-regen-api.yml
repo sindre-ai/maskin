@@ -2,8 +2,8 @@ name: Apple regenerate API client
 
 # Manually triggered. Runs apps/apple/scripts/gen-api.sh on the same macOS runner as apple.yml
 # and commits the regenerated apps/apple/Sources/MaskinAPI/Generated back to the branch you pass in.
-# Exists because the generator needs Swift, which the agent sandboxes do not have, and the
-# "Apple generated API client is up to date" step (apple-drift in ci.yml) fails on any diff.
+# Exists because the generator needs Swift, which the agent sandboxes do not have; without it the
+# generated client drifts from apps/apple/openapi.json (no CI check enforces it).
 #
 # Run it after any change to apps/apple/openapi.json (refresh that first, see the error text in
 # apple.yml). Run it from Actions > "Apple regenerate API client" > Run workflow, pick any ref to
@@ -68,7 +68,7 @@ jobs:
           swift --version
 
       - name: Cache SwiftPM and the generator build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             apps/apple/.build

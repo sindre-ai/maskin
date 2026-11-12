@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { openIntegrationCard } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -87,6 +88,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 		await stubIntegrations(page, account.workspaceId, account.actorId, state)
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Linear/)
 		const toggle = page.getByRole('button', { name: /Agent access/ })
 		await expect(toggle).toBeVisible({ timeout: 15_000 })
 		// Collapsed: one line, no list.
@@ -152,6 +154,7 @@ test('the access section reads in light and dark', async ({ page, account }) => 
 	const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
 	await stubIntegrations(page, account.workspaceId, account.actorId, state)
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
+	await openIntegrationCard(page, /Linear/)
 	await page.getByRole('button', { name: /Agent access/ }).click()
 
 	for (const scheme of ['light', 'dark'] as const) {
@@ -165,20 +168,16 @@ test('the access section reads in light and dark', async ({ page, account }) => 
 const GMAIL = { name: 'gmail', displayName: 'Gmail' }
 
 for (const vp of SHIP_GATE_VIEWPORTS) {
-	test(`Gmail has the same three levels, and says each email still needs approval @ ${vp.label}`, async ({
-		page,
-		account,
-	}) => {
+	test(`Gmail has the same three levels @ ${vp.label}`, async ({ page, account }) => {
 		await page.setViewportSize({ width: vp.width, height: vp.height })
 		const writer = await account.api.createAgentActor('Sales Rep', account.workspaceId)
 		const state: State = { defaultAgentAccess: 'read', agentGrants: [] }
 		await stubIntegrations(page, account.workspaceId, account.actorId, state, GMAIL)
 
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await openIntegrationCard(page, /Gmail/)
 		await page.getByRole('button', { name: /Agent access/ }).click()
 
-		// Read & write on Gmail lets an agent draft; each email still waits for a person.
-		await expect(page.getByText(/Each email still waits for your approval/)).toBeVisible()
 		await page.getByRole('combobox', { name: 'Add an agent' }).click()
 		await page.getByRole('option', { name: 'Sales Rep' }).click()
 		const level = page.getByRole('combobox', { name: 'Access for Sales Rep' })
