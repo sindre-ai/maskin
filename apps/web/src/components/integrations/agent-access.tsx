@@ -26,7 +26,7 @@ import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 /** The levels offered for one agent, and for "All other agents". */
 export const ACCESS_ORDER: AgentGrantAccess[] = ['read', 'read_write', 'none']
@@ -133,6 +133,8 @@ export function AgentAccess({
 }) {
 	const isKey = kind === 'key'
 	const [open, setOpen] = useState(false)
+	const panelRef = useRef<HTMLDivElement>(null)
+	const toggleRef = useRef<HTMLButtonElement>(null)
 	const { workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const { data: actors } = useActors(workspaceId)
@@ -160,13 +162,26 @@ export function AgentAccess({
 	// An agent set to what "All other agents" already get has nothing of its own to keep: its entry
 	// goes and it falls back into that group. For a key, Full access is the default's 'read'.
 	const changeAgent = (actorId: string, access: AgentGrantAccess) => {
-		if (matchesDefault(defaultAccess, access, isKey)) removeGrant.mutate(actorId)
-		else setGrant.mutate({ actorId, access })
+		if (matchesDefault(defaultAccess, access, isKey)) {
+			removeGrant.mutate(actorId, { onSuccess: focusToggle })
+		} else setGrant.mutate({ actorId, access })
+	}
+
+	// The row or picker that had focus is about to unmount, so focus would fall to the page. Hand it
+	// to the toggle, which stays. Skipped when the person has already moved on outside the panel.
+	function focusToggle() {
+		requestAnimationFrame(() => {
+			const active = document.activeElement
+			if (!active || active === document.body || panelRef.current?.contains(active)) {
+				toggleRef.current?.focus()
+			}
+		})
 	}
 
 	return (
-		<div className="mt-1 border-t border-border pt-2">
+		<div ref={panelRef} className="mt-1 border-t border-border pt-2">
 			<button
+				ref={toggleRef}
 				type="button"
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
@@ -250,14 +265,18 @@ export function AgentAccess({
 							<Select
 								value=""
 								onValueChange={(actorId) =>
-									setGrant.mutate({
-										actorId,
-										access: isKey
-											? defaultAccess === 'read'
-												? 'none'
-												: 'read_write'
-											: startingAccess(defaultAccess),
-									})
+									setGrant.mutate(
+										{
+											actorId,
+											access: isKey
+												? defaultAccess === 'read'
+													? 'none'
+													: 'read_write'
+												: startingAccess(defaultAccess),
+										},
+										// Adding the last addable agent removes this picker.
+										{ onSuccess: addable.length === 1 ? focusToggle : undefined },
+									)
 								}
 								disabled={!canWrite || busy}
 							>
