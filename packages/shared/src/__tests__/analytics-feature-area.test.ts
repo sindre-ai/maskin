@@ -5,6 +5,8 @@ describe('featureAreaForEvent', () => {
 	it.each([
 		['chat_session_started', 'chats'],
 		['chat_reply_posted', 'chats'],
+		['turn_sent_back', 'chats'],
+		['turn_check_cap_hit', 'chats'],
 		['agent_chat_started_message', 'chats'],
 		['foryou_card_shown', 'for_you'],
 		['foryou_card_action', 'for_you'],
