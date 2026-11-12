@@ -7,7 +7,7 @@ extension TeamDisplayOptions {
 		set { layout = newValue ? .sections : .oneList }
 	}
 
-	/// The Agents / Recent switch under the Chats title: one row per agent, or the list by date.
+	/// The Agents / Recent switch under the Chats title: one row per agent, or the flat newest-first list.
 	/// Any other grouping chosen in Display reads as Recent.
 	public enum ListView: String, CaseIterable, Sendable {
 		case agents, recent
@@ -16,7 +16,7 @@ extension TeamDisplayOptions {
 
 	public var listView: ListView {
 		get { grouping == .byAgent ? .agents : .recent }
-		set { grouping = newValue == .agents ? .byAgent : .byTime }
+		set { grouping = newValue == .agents ? .byAgent : .newestFirst }
 	}
 
 	/// Anything off its default, so Display can show it and Reset can appear.

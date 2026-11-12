@@ -21,15 +21,15 @@ struct ChatsDisplayTests {
 		#expect(options.layout == .oneList && options.isCustomised)
 	}
 
-	@Test("the Agents / Recent switch is the Agents grouping or the by-date one, and Agents is the default")
+	@Test("the Agents / Recent switch is the Agents grouping or the flat newest-first one, and Agents is the default")
 	func listView() {
 		var options = TeamDisplayOptions.default
 		#expect(options.listView == .agents && options.grouping == .byAgent)
 		options.listView = .recent
-		#expect(options.grouping == .byTime && options.isCustomised)
+		#expect(options.grouping == .newestFirst && options.isCustomised)
 		options.listView = .agents
 		#expect(!options.isCustomised)
-		options.grouping = .newestFirst
+		options.grouping = .byTime
 		#expect(options.listView == .recent, "any other grouping reads as Recent")
 	}
 
