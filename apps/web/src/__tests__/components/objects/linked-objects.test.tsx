@@ -223,6 +223,23 @@ describe('LinkedObjectsView', () => {
 		expect(screen.getByRole('button', { name: 'Link to file' })).toBeInTheDocument()
 	})
 
+	it('returns focus to the empty-state button that opened the picker, not the "+" button', async () => {
+		const user = userEvent.setup()
+		const Wrapper = createWorkspaceWrapper()
+		render(<LinkedObjectsView {...baseProps} asSource={[]} asTarget={[]} allObjects={[]} />, {
+			wrapper: Wrapper,
+		})
+
+		const opener = screen.getByRole('button', { name: 'Link to item' })
+		await user.click(opener)
+		expect(screen.getByPlaceholderText(/Search items/)).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+		expect(screen.queryByPlaceholderText(/Search items/)).not.toBeInTheDocument()
+		expect(opener).toHaveFocus()
+		expect(screen.getByRole('button', { name: 'Add link' })).not.toHaveFocus()
+	})
+
 	it('shows a loading skeleton band when isLoading', () => {
 		render(
 			<LinkedObjectsView {...baseProps} isLoading asSource={[]} asTarget={[]} allObjects={[]} />,

@@ -602,9 +602,8 @@ export function AddLinkForm({
 	/** Which picker tab opens by default. Files → default relation-type
 	 *  becomes `attached` per Designer spec §4. */
 	defaultKind?: PickerTab | 'object' | 'file'
-	/** Where focus goes when the form closes. Defaults to whatever had focus
-	 *  when the form opened; pass this when the opener is gone by then (a
-	 *  menu item). */
+	/** Fallback for where focus goes when the form closes, used when the
+	 *  element that had focus on open is gone by then (a menu item). */
 	returnFocusRef?: RefObject<HTMLElement | null>
 	onCreateRelationship: (data: CreateRelationshipInput, context?: { targetTitle?: string }) => void
 	onClose: () => void
@@ -636,12 +635,15 @@ export function AddLinkForm({
 	const searchInputRef = useRef<HTMLInputElement | null>(null)
 
 	// Move focus into the search field on open and hand it back to the opener
-	// on close (Esc, successful link or the Cancel button).
+	// on close (Esc, successful link or the Cancel button). A menu item is gone
+	// by close time, so fall back to `returnFocusRef` when the opener is.
 	useEffect(() => {
 		const opener = document.activeElement
 		searchInputRef.current?.focus()
 		return () => {
-			const target = returnFocusRef?.current ?? opener
+			const openerStillThere =
+				opener instanceof HTMLElement && opener !== document.body && opener.isConnected
+			const target = openerStillThere ? opener : returnFocusRef?.current
 			if (target instanceof HTMLElement && target.isConnected) target.focus()
 		}
 	}, [returnFocusRef])
