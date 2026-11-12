@@ -11,6 +11,8 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
+import { findCurrentApproval } from '../../lib/object-delivery'
+import { buildObjectPreview } from '../../lib/object-preview'
 import {
 	insertActor,
 	insertAgentGrant,
@@ -382,6 +384,37 @@ describe('approve_draft_from_chat: a person said yes in the chat', () => {
 			expect(res.status).toBe(200)
 			expect(await approvals(s, note.id)).toHaveLength(1)
 		}
+	})
+
+	it('withdraws a LinkedIn post approval when the post is edited afterwards', async () => {
+		const s = await setup()
+		const post = await insertObject(db, s.workspace.id, s.agent.id, {
+			type: 'task',
+			status: 'todo',
+			content: 'We are live on Thursday.',
+			metadata: { kind: 'linkedin_post' },
+			createdAt: s.t0,
+			updatedAt: s.t0,
+		})
+		if (!post) throw new Error('post was not inserted')
+		await say(s, s.agent.id, link(s, post.id), 1)
+		const yes = await say(s, s.human, 'just post', 2)
+		expect((await approve(s, post.id, yes.id)).status).toBe(200)
+
+		const hashOf = async () => {
+			const [row] = await db.select().from(objects).where(eq(objects.id, post.id))
+			const preview = row ? buildObjectPreview(row) : null
+			if (!preview) throw new Error('post has no preview')
+			return preview.content_hash
+		}
+		expect(await findCurrentApproval(db, s.workspace.id, post.id, await hashOf())).not.toBeNull()
+
+		await db
+			.update(objects)
+			.set({ content: 'We are live on Friday.' })
+			.where(eq(objects.id, post.id))
+
+		expect(await findCurrentApproval(db, s.workspace.id, post.id, await hashOf())).toBeNull()
 	})
 
 	it('refuses a draft that has no send tool, such as one typed by hand', async () => {

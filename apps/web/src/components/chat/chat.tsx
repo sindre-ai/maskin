@@ -218,6 +218,11 @@ export interface ComposerProps {
 	 * draft and the sent text are markdown. Off by default; the chat callers pass the flag.
 	 */
 	richText?: boolean
+	/**
+	 * Called when the up arrow is pressed in an empty box. The caller opens its latest message
+	 * for editing. Without it the arrow keeps its normal job in the box.
+	 */
+	onEditLast?: () => void
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -335,6 +340,7 @@ export function Composer({
 	fillRequest,
 	inlineTags: inlineTagsProp = false,
 	richText = false,
+	onEditLast,
 }: ComposerProps) {
 	const inlineTags = inlineTagsProp || richText
 	// Every send from a composer is a write, so a viewer gets the box switched off.
@@ -827,6 +833,21 @@ export function Composer({
 					return
 				}
 			}
+			if (
+				e.key === 'ArrowUp' &&
+				onEditLast &&
+				valueRef.current === '' &&
+				tagIdsRef.current.length === 0 &&
+				!e.shiftKey &&
+				!e.altKey &&
+				!e.ctrlKey &&
+				!e.metaKey &&
+				!e.nativeEvent.isComposing
+			) {
+				e.preventDefault()
+				onEditLast()
+				return
+			}
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
@@ -837,7 +858,15 @@ export function Composer({
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[handleSubmit, isMobile, mentionTrigger, mentionFlatRows, mentionHighlightIndex, commitMention],
+		[
+			handleSubmit,
+			isMobile,
+			mentionTrigger,
+			mentionFlatRows,
+			mentionHighlightIndex,
+			commitMention,
+			onEditLast,
+		],
 	)
 
 	const handleChange = useCallback(
@@ -900,6 +929,9 @@ export function Composer({
 			handleKeyDown({
 				key: e.key,
 				shiftKey: e.shiftKey,
+				altKey: e.altKey,
+				ctrlKey: e.ctrlKey,
+				metaKey: e.metaKey,
 				nativeEvent: e,
 				preventDefault: () => e.preventDefault(),
 			} as unknown as KeyboardEvent<HTMLDivElement>)

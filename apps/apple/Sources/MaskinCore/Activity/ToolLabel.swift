@@ -130,7 +130,7 @@ public enum ToolLabel {
 			return .init(label: "Read the activity", detail: nil, category: .read)
 		case "list_integrations", "list_integration_providers":
 			return .init(label: "Checked connected integrations", detail: nil, category: .read)
-		case "create_session", "run_agent":
+		case "create_sub_chat":
 			return .init(label: "Started an agent", detail: nil, category: .delegate)
 		case "get_session", "get_session_logs", "list_sessions":
 			return .init(label: "Checked an agent run", detail: nil, category: .read)

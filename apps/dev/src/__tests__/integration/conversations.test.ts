@@ -2052,15 +2052,15 @@ describe('Conversations Integration', () => {
 			)
 			const conversation = (await created.json()) as { id: string }
 
-			// Seed 5 consecutive agent-authored messages directly (bypassing the
+			// Seed 20 consecutive agent-authored messages directly (bypassing the
 			// responder, which has no real LLM credentials in this test env),
 			// simulating an agent-to-agent chain already in progress. The
-			// triggering message below is itself agent-authored (the 6th in a
+			// triggering message below is itself agent-authored (the 21st in a
 			// row) and @mentions the other agent — this is the runaway
 			// ping-pong shape the cap exists to stop. A human message would
 			// reset the tail count to zero, which is correct and NOT what this
 			// test is checking.
-			for (let i = 0; i < 5; i++) {
+			for (let i = 0; i < 20; i++) {
 				await db.insert(messages).values({
 					conversationId: conversation.id,
 					actorId: agent.id,

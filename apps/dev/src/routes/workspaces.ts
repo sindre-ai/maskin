@@ -159,7 +159,8 @@ const createWorkspaceRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Actor has reached their workspace-ownership cap for their plan tier',
+			description:
+				'Caller is an agent (workspaces are created by people), or the actor has reached their workspace-ownership cap for their plan tier',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		500: {
@@ -170,6 +171,12 @@ const createWorkspaceRoute = createRoute({
 })
 
 app.openapi(createWorkspaceRoute, async (c) => {
+	// Workspaces are created by people. Every create seeds a default roster and a
+	// welcome session at Maskin's cost, so an agent key never gets that far.
+	if (c.get('actorType') === 'agent') {
+		return c.json(createApiError('FORBIDDEN', 'Only people can create workspaces'), 403)
+	}
+
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')

@@ -35,7 +35,7 @@ export function ConversationAvatarStack({ participants, className }: Conversatio
 					type={p.actorType}
 					id={p.actorId}
 					size="sm"
-					className="size-[22px] rounded-[7px] text-[9px] font-bold ring-2 ring-background"
+					className="size-[22px] ring-2 ring-background"
 				/>
 			))}
 			{extra > 0 ? (

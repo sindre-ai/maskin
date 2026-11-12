@@ -42,7 +42,7 @@ describe('alias_use event through the real SDK path', () => {
 			telemetrySink: (event, target) => {
 				captured.push({ event, target })
 			},
-			// A session that is already finished, so run_agent returns after one poll.
+			// A session that is already finished, so create_sub_chat returns after one poll.
 			respond: ({ method, path }) => {
 				if (method === 'POST' && path === '/api/sessions') return { id: 's1', status: 'pending' }
 				if (method === 'GET' && path === '/api/sessions/s1')
@@ -193,94 +193,74 @@ describe('alias_use event through the real SDK path', () => {
 		})
 	})
 
-	describe('run_agent', () => {
-		const legacyCall = {
-			actor_id: U1,
-			action_prompt: SECRET,
-			config: { runtime: 'codex' },
-			poll_interval_seconds: 5,
-			timeout_seconds: 120,
-			depends_on_session_ids: [U2],
-		}
+	describe('create_sub_chat', () => {
+		const call = { workspace_id: DEFAULT_WORKSPACE_ID, actor_id: U1, action_prompt: SECRET }
 
-		it('is listed in tools/list with a one line deprecated description', async () => {
-			const listed = (await harness.listTools()) as Array<{ name: string; description?: string }>
-			const entry = listed.find((t) => t.name === 'run_agent')
+		it('is listed in tools/list, and create_session and run_agent are not', async () => {
+			const listed = (await harness.listTools()) as Array<{ name: string }>
 
-			expect(entry?.description).toBe('Deprecated, use create_session with wait true.')
-			expect(listed.some((t) => t.name === 'create_session')).toBe(true)
+			expect(listed.some((t) => t.name === 'create_sub_chat')).toBe(true)
+			expect(listed.some((t) => t.name === 'create_session')).toBe(false)
+			expect(listed.some((t) => t.name === 'run_agent')).toBe(false)
 		})
 
-		it('lists only the minimal parameters, not the ones it drops', async () => {
+		it('lists no wait parameter', async () => {
 			const listed = await harness.listTools()
-			const schema = listed.find((t) => t.name === 'run_agent')?.inputSchema as {
+			const schema = listed.find((t) => t.name === 'create_sub_chat')?.inputSchema as {
 				properties: Record<string, unknown>
-				required?: string[]
 			}
 
-			expect(Object.keys(schema.properties).sort()).toEqual([
-				'action_prompt',
-				'actor_id',
-				'spawned_by_message_id',
-				'workspace_id',
-			])
-			expect(schema.required?.sort()).toEqual(['action_prompt', 'actor_id'])
+			expect(Object.keys(schema.properties)).not.toContain('wait')
+			expect(Object.keys(schema.properties)).toEqual(
+				expect.arrayContaining(['action_prompt', 'actor_id', 'workspace_id']),
+			)
 		})
 
 		it(
-			'creates a session, returns create_session-with-wait shaped output, and records one alias_use',
+			'creates a session, returns at once, and records no alias_use',
 			{ timeout: 20_000 },
 			async () => {
-				const { outcome, uses } = await callAndCapture('run_agent', legacyCall)
+				const { outcome, uses } = await callAndCapture('create_sub_chat', call)
 
 				expect(outcome.isError).toBe(false)
-				const parsed = JSON.parse(outcome.text)
-				expect(parsed).toMatchObject({ session_id: 's1', settled: true, logs: [] })
+				expect(JSON.parse(outcome.text)).toMatchObject({ id: 's1' })
 
 				const create = outcome.requests.find(
 					(r) => r.method === 'POST' && r.path === '/api/sessions',
 				)
-				expect(create?.body).toMatchObject({ actor_id: U1, action_prompt: SECRET })
-				expect(create?.workspace).toBe(DEFAULT_WORKSPACE_ID)
-				for (const dropped of [
-					'config',
-					'poll_interval_seconds',
-					'timeout_seconds',
-					'depends_on_session_ids',
-				]) {
-					expect(create?.body).not.toHaveProperty(dropped)
-				}
-
-				expect(uses).toHaveLength(1)
-				expect(uses[0].event).toMatchObject({
-					tool_name: 'run_agent',
-					renames: [],
-					both_sent: false,
-					dropped_keys: [
-						'config',
-						'poll_interval_seconds',
-						'timeout_seconds',
-						'depends_on_session_ids',
-					],
-					tool_alias: { old: 'run_agent', new: 'create_session' },
+				expect(create?.body).toMatchObject({
+					actor_id: U1,
+					action_prompt: SECRET,
+					notify_on_complete: true,
 				})
-				expect(captured.filter((c) => c.event.event_type === 'tool_call')).toHaveLength(1)
-				const serialised = JSON.stringify(uses[0].event)
-				expect(serialised).not.toContain(SECRET)
-				expect(serialised).not.toContain('codex')
+				expect(create?.workspace).toBe(DEFAULT_WORKSPACE_ID)
+				expect(uses).toHaveLength(0)
 			},
 		)
 
-		it('still records the use when validation then fails', async () => {
-			const { outcome, uses } = await callAndCapture('run_agent', {
+		it(
+			'still returns at once when a caller sends the removed wait flag, and never forwards it',
+			{ timeout: 20_000 },
+			async () => {
+				const { outcome } = await callAndCapture('create_sub_chat', { ...call, wait: false })
+
+				expect(outcome.isError).toBe(false)
+				expect(JSON.parse(outcome.text)).toMatchObject({ id: 's1' })
+				const create = outcome.requests.find(
+					(r) => r.method === 'POST' && r.path === '/api/sessions',
+				)
+				expect(create?.body).not.toHaveProperty('wait')
+			},
+		)
+
+		it('reports a validation error for a bad actor id', async () => {
+			const { outcome } = await callAndCapture('create_sub_chat', {
+				workspace_id: DEFAULT_WORKSPACE_ID,
 				actor_id: 'not-a-uuid',
 				action_prompt: 'x',
-				config: {},
 			})
 
 			expect(isValidationError(outcome)).toBe(true)
-			expect(uses).toHaveLength(1)
-			expect(uses[0].event.dropped_keys).toEqual(['config'])
 		})
 	})
 })
