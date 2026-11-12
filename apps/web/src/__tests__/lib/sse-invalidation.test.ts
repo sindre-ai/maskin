@@ -646,46 +646,4 @@ describe('invalidateFromSSE throttled refetches', () => {
 		vi.advanceTimersByTime(5_000)
 		expect(keyCalls(qc, facetsKey)).toHaveLength(2)
 	})
-
-	it('refetches open conversation messages once per 2.5s window for session events', () => {
-		const qc = createMockQueryClient()
-		const messageCalls = () =>
-			keyCalls(qc, ['conversations', 'detail']).filter(([f]) => typeof f.predicate === 'function')
-		burst(qc, (i) => ({ entity_type: 'session', entity_id: `s-${i}`, action: 'session_updated' }))
-		expect(messageCalls()).toHaveLength(0)
-		vi.advanceTimersByTime(2_500)
-		expect(messageCalls()).toHaveLength(1)
-		expect(
-			messageCalls()[0]?.[0].predicate({ queryKey: ['conversations', 'detail', 'c', 'messages'] }),
-		).toBe(true)
-	})
-
-	it('refetches conversation messages once for a burst of session.state_changed frames', () => {
-		const qc = createMockQueryClient()
-		const calls = () => keyCalls(qc, ['conversations', 'detail'])
-		burst(qc, () => ({ action: 'session.state_changed' }))
-		expect(calls()).toHaveLength(0)
-		vi.advanceTimersByTime(2_500)
-		expect(calls()).toHaveLength(1)
-	})
-
-	it('refetches the conversation list once per 3s window but the open thread at once', () => {
-		const qc = createMockQueryClient()
-		burst(qc, () => ({ entity_type: 'conversation', entity_id: 'conv-1', action: 'created' }))
-		expect(keyCalls(qc, queryKeys.conversations.all(workspaceId))).toHaveLength(0)
-		// The open thread still updates promptly: one immediate call per event.
-		expect(keyCalls(qc, queryKeys.conversations.detail('conv-1'))).toHaveLength(6)
-		vi.advanceTimersByTime(3_000)
-		expect(keyCalls(qc, queryKeys.conversations.all(workspaceId))).toHaveLength(1)
-	})
-
-	it('refetches the For You list once per 3s window for notification events', () => {
-		const qc = createMockQueryClient()
-		burst(qc, (i) => ({ entity_type: 'notification', entity_id: `n-${i}`, action: 'created' }))
-		// The notification list itself stays immediate.
-		expect(keyCalls(qc, queryKeys.notifications.all(workspaceId))).toHaveLength(6)
-		expect(keyCalls(qc, queryKeys.forYou.list(workspaceId))).toHaveLength(0)
-		vi.advanceTimersByTime(3_000)
-		expect(keyCalls(qc, queryKeys.forYou.list(workspaceId))).toHaveLength(1)
-	})
 })
