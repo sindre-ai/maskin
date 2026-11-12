@@ -10353,7 +10353,7 @@ public struct Client: APIProtocol {
             }
         )
     }
-    /// Rename a conversation or change its tags
+    /// Rename a conversation, change its tags, make it a room, or make it about a flow
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
