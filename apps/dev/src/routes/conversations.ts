@@ -1500,8 +1500,8 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
-	// An agent posting mid-turn answers where the human is talking: in the thread of the message
-	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
+	// An agent posting mid-turn answers where the human is talking: in the thread the turn's message
+	// sits in, if any, as the end-of-turn reply does. Only for the agent's own session in
 	// this chat (a verified sessionId), so humans and other callers post exactly as before.
 	// An explicit thread_root_id wins, top_level opts out.
 	// A thread session answers in its own thread; any other session follows the message that
@@ -1518,25 +1518,9 @@ app.openapi(postMessageRoute, (async (c) => {
 		})
 		sessionThreadRootId = placed.sessionThreadRootId
 		if (body.thread_root_id === undefined && body.top_level !== true) {
+			// Only a thread a person already started is continued. A turn started by a top-level
+			// message posts to the main timeline: agents do not start threads on their own.
 			turnThreadRootId = placed.threadRootId
-			// A turn started by a top-level message: interim notes hang under that message as a
-			// thread, so a long run does not fill the main timeline. Only the end-of-turn reply
-			// (interactive-turn-finalizer) lands in the main timeline. Best-effort, like
-			// resolveThreadRootId: a message that is not a top-level message of this chat is skipped.
-			if (turnThreadRootId === null && turnMessageId !== null) {
-				const [origin] = await db
-					.select({ id: messages.id })
-					.from(messages)
-					.where(
-						and(
-							eq(messages.id, turnMessageId),
-							eq(messages.conversationId, id),
-							isNull(messages.threadRootId),
-						),
-					)
-					.limit(1)
-				if (origin) turnThreadRootId = origin.id
-			}
 		}
 	}
 
