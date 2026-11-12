@@ -65,6 +65,19 @@ function fakeDb(landed = false) {
 	return { db, updates }
 }
 
+/**
+ * The text a tile-note update wrote. The config value is a drizzle sql`` object whose chunks
+ * hold column references (circular), so it cannot go through JSON.stringify; read its string values.
+ */
+function noteWritten(update: unknown): string {
+	const chunks = (update as { config: { queryChunks: unknown[] } }).config.queryChunks
+	const texts: string[] = []
+	for (const chunk of chunks) {
+		if (typeof chunk === 'string') texts.push(chunk)
+	}
+	return texts.join('')
+}
+
 /** Answers the four Graph calls the job makes, by URL. */
 function graphFetch(opts: {
 	events?: unknown[]
@@ -175,7 +188,7 @@ describe('syncMicrosoftIntegration', () => {
 		await expect(run(db, graphFetch({ transcripts: off }))).resolves.toBe(0)
 
 		expect(updates).toHaveLength(1)
-		expect(JSON.stringify(updates[0])).toContain(TILE_NOTE_TRANSCRIPTS_OFF)
+		expect(noteWritten(updates[0])).toContain(TILE_NOTE_TRANSCRIPTS_OFF)
 		expect(track).toHaveBeenCalledWith({ provider: 'microsoft', actorId: 'actor-1', ok: false })
 	})
 
@@ -196,7 +209,7 @@ describe('syncMicrosoftIntegration', () => {
 		const { db, updates } = fakeDb()
 		const r = { ...row(), config: { status_note: TILE_NOTE_TRANSCRIPTS_OFF } }
 		await run(db, graphFetch({}), r)
-		expect(JSON.stringify(updates.at(-1))).toContain(TILE_NOTE_DEFAULT)
+		expect(noteWritten(updates.at(-1))).toContain(TILE_NOTE_DEFAULT)
 	})
 
 	it('carries on with the next event when one fails for another reason', async () => {
