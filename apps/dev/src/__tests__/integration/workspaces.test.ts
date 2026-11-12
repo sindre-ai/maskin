@@ -347,6 +347,9 @@ describe('Workspaces Integration', () => {
 			const ours = await (
 				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Ours' }))
 			).json()
+			// A trial-tier actor may only own one workspace, so raise the first to pro
+			// (no subscription, so still not paying) before creating the second.
+			await setWorkspacePlan(db, ours.id, 'pro')
 			const outside = await (
 				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Outside' }))
 			).json()

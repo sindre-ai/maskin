@@ -162,6 +162,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'agents',
 			$process_person_profile: false,
 		})
@@ -183,6 +185,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'agents',
 			$process_person_profile: false,
 		})
