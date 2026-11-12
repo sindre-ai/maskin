@@ -3156,6 +3156,7 @@
 					"Objects"
 				],
 				"summary": "Search objects by text",
+				"description": "Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.",
 				"parameters": [
 					{
 						"schema": {

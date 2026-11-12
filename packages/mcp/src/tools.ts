@@ -600,7 +600,9 @@ export const tools = {
 			q: z
 				.string()
 				.min(1)
-				.describe('Search query — matches against title and content (case-insensitive)'),
+				.describe(
+					'Search query — matches against title and content (case-insensitive). Only the first 6 distinct words of 3 or more letters are used; further words are ignored, not an error.',
+				),
 			type: z
 				.string()
 				.describe(
@@ -3103,7 +3105,9 @@ export const legacyListTools = {
 			q: z
 				.string()
 				.min(1)
-				.describe('Search query — matches against title and content (case-insensitive)'),
+				.describe(
+					'Search query — matches against title and content (case-insensitive). Only the first 6 distinct words of 3 or more letters are used; further words are ignored, not an error.',
+				),
 			type: z
 				.string()
 				.describe(
