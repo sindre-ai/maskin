@@ -1,10 +1,11 @@
-// A session that completes while its task is still in progress gets restarted (twice at most);
-// a task that moved on, or has a live session, is left alone.
+// A Developer session that completes while its task is still in progress gets restarted (twice at
+// most); a task that moved on, has a live session, or was run by another agent is left alone.
 
 import { events, objects, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+	DEVELOPER_NAME,
 	MAX_TASK_RESTARTS,
 	RESTART_DELAY_MS,
 	TASK_RESTART_KILLSWITCH_ENV_VAR,
@@ -43,6 +44,7 @@ const MINUTE = 60_000
 describe('TaskSessionRestarter', () => {
 	let workspaceId: string
 	let actorId: string
+	let developerId: string
 	let ctoId: string
 	let now: Date
 
@@ -50,13 +52,15 @@ describe('TaskSessionRestarter', () => {
 		startSessionMock.mockClear()
 		actorId = getTestActorId()
 		workspaceId = (await insertWorkspace(db, actorId)).id
+		const developer = await insertActor(db, { type: 'agent', name: DEVELOPER_NAME })
+		developerId = developer.id
 		const cto = await insertActor(db, { type: 'agent', name: 'CTO' })
 		await ensureWorkspaceMember(db, workspaceId, cto.id)
 		ctoId = cto.id
 		now = new Date()
 		// Stand-in for the real startSession: inserts the live row the new session would have.
 		startSessionMock.mockImplementation(async (input) => {
-			const started = await insertSession(db, workspaceId, actorId, actorId, {
+			const started = await insertSession(db, workspaceId, developerId, actorId, {
 				status: 'running',
 				config: input.config ?? {},
 				initiatedFromObjectId: input.initiatedFromObjectId,
@@ -69,7 +73,7 @@ describe('TaskSessionRestarter', () => {
 		insertObject(db, workspaceId, actorId, {
 			type: 'task',
 			status,
-			driver: actorId,
+			driver: developerId,
 			...overrides,
 		})
 
@@ -78,8 +82,9 @@ describe('TaskSessionRestarter', () => {
 		taskId: string,
 		endedMinutesAgo = 10,
 		overrides?: Record<string, unknown>,
+		sessionActorId = developerId,
 	) =>
-		insertSession(db, workspaceId, actorId, actorId, {
+		insertSession(db, workspaceId, sessionActorId, actorId, {
 			status: 'completed',
 			interactive: false,
 			initiatedFromObjectId: taskId,
@@ -134,7 +139,7 @@ describe('TaskSessionRestarter', () => {
 	it('leaves a task alone while a session on it is still running', async () => {
 		const task = await makeTask('in_progress')
 		await endedSession(task.id)
-		await insertSession(db, workspaceId, actorId, actorId, {
+		await insertSession(db, workspaceId, developerId, actorId, {
 			status: 'running',
 			initiatedFromObjectId: task.id,
 			createdAt: new Date(now.getTime() - 2 * MINUTE),
@@ -152,6 +157,16 @@ describe('TaskSessionRestarter', () => {
 		await endedSession(stopped.id, 10, { status: 'user_stopped' })
 		const chat = await makeTask('in_progress')
 		await endedSession(chat.id, 10, { interactive: true })
+
+		await sweep()
+
+		expect(startSessionMock).not.toHaveBeenCalled()
+	})
+
+	it('leaves alone a session by another agent on a task it drives', async () => {
+		const reviewer = await insertActor(db, { type: 'agent', name: 'Code Reviewer' })
+		const task = await makeTask('in_progress', { driver: reviewer.id })
+		await endedSession(task.id, 10, undefined, reviewer.id)
 
 		await sweep()
 
