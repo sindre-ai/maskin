@@ -444,6 +444,22 @@ const messageColumns = {
 	threadAlsoInChannel: messages.threadAlsoInChannel,
 }
 
+// What a 'loop' subject can be: a marketplace install, or a flow (an object of type loop), which
+// is what the flow page's room is about.
+async function findLoopSubject(db: Database, workspaceId: string, id: string) {
+	const [installed] = await db
+		.select({ id: installedLoops.id })
+		.from(installedLoops)
+		.where(and(eq(installedLoops.id, id), eq(installedLoops.workspaceId, workspaceId)))
+		.limit(1)
+	if (installed) return [installed]
+	return db
+		.select({ id: objects.id })
+		.from(objects)
+		.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+		.limit(1)
+}
+
 // The chat that already exists for a subject, if any.
 async function findSubjectConversation(
 	db: Database,
@@ -618,11 +634,7 @@ app.openapi(createConversationRoute, (async (c) => {
 						.from(objects)
 						.where(and(eq(objects.id, id), eq(objects.workspaceId, workspaceId)))
 						.limit(1)
-				: await db
-						.select({ id: installedLoops.id })
-						.from(installedLoops)
-						.where(and(eq(installedLoops.id, id), eq(installedLoops.workspaceId, workspaceId)))
-						.limit(1)
+				: await findLoopSubject(db, workspaceId, id)
 		if (!target) {
 			return c.json(
 				createApiError('BAD_REQUEST', 'The subject was not found in this workspace', [

@@ -126,6 +126,52 @@ describe('Conversation subjects', () => {
 		expect(member?.leftAt).toBeNull()
 	})
 
+	it('opens a flow as the subject of a chat and copies no comments either way', async () => {
+		const flowId = (await insertObject(db, workspaceId, ownerId, { type: 'loop' })).id
+		await postComment(db, {
+			workspaceId,
+			actorId: ownerId,
+			entityId: flowId,
+			content: 'Written before the room',
+		})
+
+		const res = await open(ownerId, {
+			title: 'Weekly review',
+			participant_actor_ids: [otherId],
+			subject: { type: 'loop', id: flowId },
+			initial_message: 'First word in the room',
+		})
+		expect(res.status).toBe(201)
+		const created = (await res.json()) as { id: string; subjectType: string; subjectId: string }
+		expect([created.subjectType, created.subjectId]).toEqual(['loop', flowId])
+
+		const list = await appFor(ownerId).request(
+			jsonGet(`/api/conversations?subject_type=loop&subject_id=${flowId}`, ws()),
+		)
+		const { conversations: found } = (await list.json()) as { conversations: { id: string }[] }
+		expect(found.map((c) => c.id)).toEqual([created.id])
+
+		// The old comment is not copied into the chat, and the chat message is not copied out.
+		const inChat = await db.select().from(messages).where(eq(messages.conversationId, created.id))
+		expect(inChat.map((m) => m.content)).toEqual(['First word in the room'])
+		const comments = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, flowId), eq(events.action, 'commented')))
+		expect(comments.map((c) => (c.data as { content: string }).content)).toEqual([
+			'Written before the room',
+		])
+	})
+
+	it('refuses a loop subject that is neither a flow nor an install', async () => {
+		const res = await open(ownerId, {
+			title: 'Not a flow',
+			participant_actor_ids: [],
+			subject: { type: 'loop', id: objectId },
+		})
+		expect(res.status).toBe(400)
+	})
+
 	it('rejects a subject that is not in this workspace', async () => {
 		const res = await open(ownerId, {
 			title: 'Ghost',
