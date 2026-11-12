@@ -31,7 +31,7 @@ import type {
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Plus } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { DataTableControls } from './data-table/data-table-controls'
@@ -118,6 +118,10 @@ export function LinkedObjectsView({
 	const [activeFilter, setActiveFilter] = useState<string>('all')
 	const [addLinkKind, setAddLinkKind] = useState<'object' | 'file' | null>(null)
 	const canWrite = useCanWrite()
+	const addButtonRef = useRef<HTMLButtonElement | null>(null)
+	// Set when a menu item opens the picker so the menu's own close-focus
+	// (back to the `+` button) doesn't steal focus from the search field.
+	const pickerOpenedFromMenuRef = useRef(false)
 
 	// External open trigger (file-detail's `Link to item` button). Watching
 	// the nonce (not the kind) so the same-kind click retriggers.
@@ -232,6 +236,7 @@ export function LinkedObjectsView({
 					<ViewerTooltip>
 						<DropdownMenuTrigger asChild>
 							<Button
+								ref={addButtonRef}
 								variant="ghost"
 								size="icon"
 								className="h-8 w-8"
@@ -243,19 +248,38 @@ export function LinkedObjectsView({
 							</Button>
 						</DropdownMenuTrigger>
 					</ViewerTooltip>
-					<DropdownMenuContent align="end" className="min-w-[180px]">
+					<DropdownMenuContent
+						align="end"
+						className="min-w-[180px]"
+						onCloseAutoFocus={(e) => {
+							if (pickerOpenedFromMenuRef.current) {
+								e.preventDefault()
+								pickerOpenedFromMenuRef.current = false
+							}
+						}}
+					>
 						{/* Keyboard hints "O" / "F" match Designer §7 — the picker
 						  itself also intercepts O/F to jump between tabs. On
 						  file-detail the primary CTA is `Link to item`, so the
 						  menu's leading item flips accordingly. */}
-						<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.primary.kind ?? 'object')}>
+						<DropdownMenuItem
+							onSelect={() => {
+								pickerOpenedFromMenuRef.current = true
+								openLinkTo(menuLabels?.primary.kind ?? 'object')
+							}}
+						>
 							<span className="flex-1">{menuLabels?.primary.label ?? 'Link to item'}</span>
 							<span className="ml-3 font-mono text-[10px] text-muted-foreground">
 								{(menuLabels?.primary.kind ?? 'object') === 'object' ? 'O' : 'F'}
 							</span>
 						</DropdownMenuItem>
 						{menuLabels?.secondary !== null && (
-							<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.secondary?.kind ?? 'file')}>
+							<DropdownMenuItem
+								onSelect={() => {
+									pickerOpenedFromMenuRef.current = true
+									openLinkTo(menuLabels?.secondary?.kind ?? 'file')
+								}}
+							>
 								<span className="flex-1">{menuLabels?.secondary?.label ?? 'Link to file'}</span>
 								<span className="ml-3 font-mono text-[10px] text-muted-foreground">
 									{(menuLabels?.secondary?.kind ?? 'file') === 'file' ? 'F' : 'O'}
@@ -275,6 +299,7 @@ export function LinkedObjectsView({
 					relationshipTypes={relationshipTypes}
 					existingRelationships={existingRelationships}
 					defaultKind={addLinkKind}
+					returnFocusRef={addButtonRef}
 					onCreateRelationship={onCreateRelationship}
 					onClose={() => setAddLinkKind(null)}
 				/>
@@ -563,6 +588,7 @@ export function AddLinkForm({
 	existingRelationships,
 	defaultRelationshipType,
 	defaultKind,
+	returnFocusRef,
 	onCreateRelationship,
 	onClose,
 }: {
@@ -576,6 +602,10 @@ export function AddLinkForm({
 	/** Which picker tab opens by default. Files → default relation-type
 	 *  becomes `attached` per Designer spec §4. */
 	defaultKind?: PickerTab | 'object' | 'file'
+	/** Where focus goes when the form closes. Defaults to whatever had focus
+	 *  when the form opened; pass this when the opener is gone by then (a
+	 *  menu item). */
+	returnFocusRef?: RefObject<HTMLElement | null>
 	onCreateRelationship: (data: CreateRelationshipInput, context?: { targetTitle?: string }) => void
 	onClose: () => void
 }) {
@@ -604,6 +634,17 @@ export function AddLinkForm({
 	// once per pause, not once per keystroke.
 	const [announcement, setAnnouncement] = useState('')
 	const searchInputRef = useRef<HTMLInputElement | null>(null)
+
+	// Move focus into the search field on open and hand it back to the opener
+	// on close (Esc, successful link or the Cancel button).
+	useEffect(() => {
+		const opener = document.activeElement
+		searchInputRef.current?.focus()
+		return () => {
+			const target = returnFocusRef?.current ?? opener
+			if (target instanceof HTMLElement && target.isConnected) target.focus()
+		}
+	}, [returnFocusRef])
 
 	const existingIds = useMemo(
 		() => new Set(existingRelationships.flatMap((r) => [r.sourceId, r.targetId])),
