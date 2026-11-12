@@ -49,6 +49,7 @@ import {
 	trackMessageSentTagged,
 } from '../lib/analytics/chat-tag-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
@@ -74,7 +75,11 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
-import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
+import {
+	attachedFileIds,
+	insertConversationMessage,
+	mirrorAsObjectComment,
+} from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import {
@@ -744,6 +749,14 @@ app.openapi(createConversationRoute, (async (c) => {
 	}
 
 	if (initialMessage) {
+		// The first message can carry files too: link them to the new chat like any later message.
+		await linkFilesToConversation(db, {
+			workspaceId,
+			conversationId: conversation.id,
+			fileIds: attachedFileIds(initialMessage.metadata),
+			createdBy: callerId,
+			metadata: { messageId: initialMessage.id },
+		})
 		await mirrorAsObjectComment(db, {
 			conversationId: conversation.id,
 			workspaceId,
