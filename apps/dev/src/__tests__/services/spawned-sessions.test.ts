@@ -1,4 +1,7 @@
-import { clearSessionFrameCaches } from '../../lib/session-frame-cache'
+import {
+	clearSessionFrameCaches,
+	forgetConversationParticipants,
+} from '../../lib/session-frame-cache'
 import {
 	formatActiveSessionsNote,
 	isConversationParticipant,
@@ -228,6 +231,46 @@ describe('loadSessionStateChangeFrame', () => {
 		const frame = await loadSessionStateChangeFrame(db, {
 			sessionId: 'session-1',
 			workspaceId: 'ws-2',
+			actorId: 'actor-1',
+		})
+		expect(frame).toBeNull()
+	})
+
+	it('does not cache a session that has no anchor message yet', async () => {
+		const { db, mockResults } = createTestContext()
+		const unanchored = { ...baseRow, spawnedByMessageId: null, conversationId: null }
+		mockResults.selectQueue = [[unanchored]]
+		const first = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+		expect(first).toBeNull()
+
+		// The agent anchors the session; the next frame must see it straight away.
+		mockResults.selectQueue = [[baseRow], [{ actorId: 'actor-1' }]]
+		const second = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+		expect(second?.session_id).toBe('session-1')
+	})
+
+	it('refuses a removed participant right after the cached set is forgotten', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[baseRow], [{ actorId: 'actor-1' }]]
+		await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+		})
+
+		forgetConversationParticipants('conv-1')
+		mockResults.selectQueue = [[baseRow], []]
+		const frame = await loadSessionStateChangeFrame(db, {
+			sessionId: 'session-1',
+			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 		})
 		expect(frame).toBeNull()

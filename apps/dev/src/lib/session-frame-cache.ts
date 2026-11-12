@@ -35,6 +35,10 @@ export class TtlCache<K, V> {
 		this.entries.set(key, { value, expiresAt: this.now() + this.ttlMs })
 	}
 
+	delete(key: K): void {
+		this.entries.delete(key)
+	}
+
 	clear(): void {
 		this.entries.clear()
 	}
@@ -78,6 +82,11 @@ export async function isCachedConversationParticipant(
 		participantsCache.set(conversationId, set)
 	}
 	return set.has(actorId)
+}
+
+/** Drop the cached participant set, so a removal takes effect on the next frame instead of after the TTL. */
+export function forgetConversationParticipants(conversationId: string): void {
+	participantsCache.delete(conversationId)
 }
 
 export function clearSessionFrameCaches(): void {

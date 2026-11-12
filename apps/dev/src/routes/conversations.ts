@@ -54,6 +54,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { serializeMessage } from '../lib/serialize-message'
+import { forgetConversationParticipants } from '../lib/session-frame-cache'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
@@ -1263,6 +1264,7 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		.returning({ actorId: conversationParticipants.actorId })
 
 	if (removed.length > 0) {
+		forgetConversationParticipants(id)
 		await recordEvent(db, {
 			workspaceId,
 			actorId: callerId,

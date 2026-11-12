@@ -250,7 +250,9 @@ export async function loadSessionStateChangeFrame(
 			spawnedByMessageId: full.spawnedByMessageId,
 			conversationId: full.conversationId,
 		}
-		sessionAnchorCache.set(opts.sessionId, anchor)
+		// An unanchored session gets its anchor message later; caching it now would keep refusing the
+		// live frames for the rest of the TTL once the agent anchors it.
+		if (anchor.spawnedByMessageId !== null) sessionAnchorCache.set(opts.sessionId, anchor)
 		row = full
 	}
 
