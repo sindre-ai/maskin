@@ -3,11 +3,12 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// A flow opened from the Team list (spec 7 §4, flow channel). A flow's channel is its timeline, so
-/// the content is that timeline under the flow's name as a 24pt heading, nothing else. The nav bar
+/// A flow opened from the Team list (spec 7 §4, flow channel). A flow's channel is its room (the
+/// flow's chat with its comments and events merged in), so the content is that room under the flow's
+/// name as a 24pt heading, nothing else. The nav bar
 /// carries a centred flow name (tap it for the flow's own page), a status line only while agents
 /// are running, up to three member avatars with the lead first, and a pin button. The composer is
-/// the shared one, "Message {flow}".
+/// the shared one, "Message the room".
 struct FlowChannelScreen: View {
 	let environment: AppEnvironment
 	let store: ConversationsStore
@@ -105,6 +106,7 @@ struct FlowChannelScreen: View {
 		composer(model)
 			.padding(.horizontal, MaskinSpace.s7)
 			.padding(.bottom, MaskinSpace.s3)
+			.flowNoticeAlert(model)
 	}
 
 	private func composer(_ model: FlowTimelineModel) -> some View {
@@ -119,7 +121,6 @@ struct FlowChannelScreen: View {
 	private func composerConfig(_ model: FlowTimelineModel) -> MaskinComposerConfig {
 		var config = model.config
 		config.roster = runtime?.mentionRoster()?.roster
-		if model.replyingTo == nil { config.placeholder = "Message" }
 		return config
 	}
 

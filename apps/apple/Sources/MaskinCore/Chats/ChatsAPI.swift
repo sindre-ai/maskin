@@ -30,6 +30,15 @@ public protocol ConversationsAPI: Sendable {
 	func latestMessageID(conversationID: String) async throws -> Int?
 	/// Threads you started or replied in, across conversations, most recently active first.
 	func threads(limit: Int) async throws -> [ThreadListItem]
+	/// The chat that belongs to a flow (`GET /api/conversations?subject_type=loop&subject_id=`): its
+	/// room. Nil when the flow has none yet.
+	func flowConversation(flowID: String, archived: Bool) async throws -> ConversationSummary?
+	/// `POST /api/conversations` with the flow as the chat's subject. Asking again for the same flow
+	/// returns the chat that exists, so two people posting first cannot make two rooms.
+	func createFlowRoom(
+		flowID: String, title: String, participantIDs: [String], initialMessage: String,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary
 }
 
 extension ConversationsAPI {
@@ -52,6 +61,13 @@ extension ConversationsAPI {
 
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
 	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
+	public func flowConversation(flowID: String, archived: Bool) async throws -> ConversationSummary? { nil }
+	public func createFlowRoom(
+		flowID: String, title: String, participantIDs: [String], initialMessage: String,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		throw ChatsError("Flow rooms aren't available here.")
+	}
 
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		try await list(archived: archived, pinnedOnly: false, unreadOnly: false, limit: limit, offset: offset)

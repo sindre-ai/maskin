@@ -1,11 +1,13 @@
+import MaskinAPI
 import MaskinCore
 import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// A flow's timeline: the flow's own comments and events, the same thread the object page shows as
-/// Activity (a flow is an object, so its channel is its timeline, not a separate room). One model
-/// and two views, shared by the Flows detail Activity tab and the Team-side flow channel:
+/// A flow's room: one thread where people and agents talk, with the flow's own comments and events
+/// merged in by time (events as quiet lines). The messages are the flow's chat; the comments and
+/// events are the same ones the object page shows as Activity. One model and two views, shared by
+/// the Flows detail Room tab and the Team-side flow channel:
 ///
 /// ```swift
 /// let model = FlowTimelineModel(environment: environment, flowID: id)
@@ -17,32 +19,76 @@ import SwiftUI
 @Observable
 final class FlowTimelineModel {
 	let flowID: String
-	/// For the placeholder: "Message {flow}". Nil reads "Message this flow".
+	/// The title of the flow's chat when this composer starts it. Nil reads "Flow".
 	let flowName: String?
 	let store: ObjectDetailStore
 	let composer: ChatComposerModel
-	/// The agent that drives the flow, when it has one. A flow's composer then offers "Message {owner}",
-	/// which opens a chat with that agent; the comment path stays what it was, a comment on the flow.
+	/// The agent that drives the flow, when it has one. It is the one agent invited when the room is
+	/// started by the first message.
 	var owner: ChatParticipant?
-	var mode: ObjectComposerMode = .comment
 	/// The event a held-down Reply picked; the next comment threads under it.
 	fileprivate(set) var replyingTo: TimelineItem?
+	/// The flow's chat, once it exists. Nil until it is found or the first message creates it.
+	private(set) var room: ChatStore?
+	/// Why the last message did not go, for an alert.
+	var notice: String?
 	@ObservationIgnored private let events: EventHub?
+	@ObservationIgnored private let environment: AppEnvironment
+	@ObservationIgnored private let chats: APIChatsSource
+	@ObservationIgnored private var isOpeningRoom = false
+	@ObservationIgnored private var roomVisible = false
 
 	init(environment: AppEnvironment, flowID: String, flowName: String? = nil) {
 		self.flowID = flowID
 		self.flowName = flowName
 		store = ObjectsServices(environment: environment).detailStore(for: flowID)
-		composer = ChatComposerModel(
-			uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? ""),
-			selfActorID: environment.auth.session?.actorId ?? "")
+		let chats = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		composer = ChatComposerModel(uploader: chats, selfActorID: environment.auth.session?.actorId ?? "")
+		self.chats = chats
+		self.environment = environment
 		events = environment.events
 	}
 
-	/// Loads the thread and follows live events until the surrounding task is cancelled.
+	/// Loads the comments and events, finds the chat, and follows live events until the surrounding
+	/// task is cancelled.
 	func start() async {
+		let roomTask = Task { await startRoom() }
 		await store.load()
 		if let events { await store.observe(events.subscribe()) }
+		roomTask.cancel()
+		await roomTask.value
+		room?.stop()
+	}
+
+	private func startRoom() async {
+		if room == nil, let found = try? await FlowRoom.find(flowID: flowID, api: chats) { adopt(found) }
+		await room?.start()
+	}
+
+	@discardableResult
+	private func adopt(_ conversation: ConversationSummary) -> ChatStore {
+		if let room { return room }
+		let session = environment.auth.session
+		let chat = ChatStore(
+			conversationID: conversation.id, currentActorID: session?.actorId ?? "",
+			currentActorName: session?.name ?? "You", api: chats,
+			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
+			cache: environment.snapshotCache)
+		chat.isActive = roomVisible
+		room = chat
+		return chat
+	}
+
+	/// The room is on screen and the app is active: only then does the chat count as read. Events
+	/// and old comments are not part of the chat, so they never make it unread.
+	func setRoomVisible(_ visible: Bool) {
+		roomVisible = visible
+		room?.isActive = visible
+	}
+
+	/// The flow's comments, events and chat messages in one list.
+	var items: [TimelineItem] {
+		FlowRoom.merged(timeline: store.timeline, messages: room?.messages ?? [])
 	}
 
 	func startReply(to item: TimelineItem) {
@@ -51,21 +97,23 @@ final class FlowTimelineModel {
 		composer.reply(to: store.authorName(for: item), text: ActivityGrouping.summary(of: item))
 	}
 
-	/// "Message {owner}" in message mode, "Comment on {flow}" otherwise. A flow with no driver agent has
-	/// nobody to message, so the composer says what it does: it comments on the flow.
-	private var defaultPlaceholder: String {
-		Self.placeholder(ownerName: owner?.name, mode: mode, flowName: flowName)
+	/// Retry a room message that did not go. False for anything else, which the page handles.
+	func retry(_ item: TimelineItem) -> Bool {
+		guard let id = FlowRoom.messageID(fromItemID: item.id) else { return false }
+		room?.retrySend(id)
+		return true
 	}
 
-	static func placeholder(ownerName: String?, mode: ObjectComposerMode, flowName: String?) -> String {
-		if let ownerName, mode == .message { return "Message \(ownerName)" }
-		return "Comment on \(flowName ?? "this flow")"
+	func discard(_ item: TimelineItem) -> Bool {
+		guard let id = FlowRoom.messageID(fromItemID: item.id) else { return false }
+		room?.discard(id)
+		return true
 	}
 
 	var config: MaskinComposerConfig {
 		MaskinComposerConfig(
 			variant: .floating,
-			placeholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? defaultPlaceholder,
+			placeholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? FlowRoom.placeholder,
 			suggestions: { [store, composer] query in
 				CommentMentions.candidates(
 					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
@@ -74,7 +122,13 @@ final class FlowTimelineModel {
 			})
 	}
 
+	/// A message to the room, or a comment when a held-down Reply picked an old comment (decisions
+	/// and asks stay comments).
 	func send() {
+		if replyingTo != nil { sendComment() } else { sendMessage() }
+	}
+
+	private func sendComment() {
 		let text = composer.trimmedText
 		guard !text.isEmpty, !composer.isUploading, !composer.hasFailedAttachment else { return }
 		let mentions = composer.mentions.map(\.id).filter { $0 != store.currentActorId }
@@ -84,55 +138,80 @@ final class FlowTimelineModel {
 		replyingTo = nil
 		Task { await store.postComment(text, mentions: mentions, attachments: files, parentEventId: parent) }
 	}
+
+	private func sendMessage() {
+		guard !isOpeningRoom, let (text, metadata) = composer.take() else { return }
+		if let room {
+			if room.send(text, metadata: metadata) == nil { giveBack(text, reason: room.notice) }
+			return
+		}
+		if SecretScanner.firstSecret(in: text) != nil {
+			giveBack(text, reason: ChatsHTTPError.rawSecretMessage)
+			return
+		}
+		isOpeningRoom = true
+		Task {
+			defer { isOpeningRoom = false }
+			do {
+				// Someone may have started the room since this page loaded; ask before making one.
+				if let existing = try await FlowRoom.find(flowID: flowID, api: chats) {
+					let chat = adopt(existing)
+					await chat.start()
+					if chat.send(text, metadata: metadata) == nil { giveBack(text, reason: chat.notice) }
+					return
+				}
+				let created = try await chats.createFlowRoom(
+					flowID: flowID, title: flowName ?? "Flow", participantIDs: owner.map { [$0.id] } ?? [],
+					initialMessage: text, initialMetadata: metadata, idempotencyKey: IdempotencyKey.make())
+				await adopt(created).start()
+			} catch {
+				giveBack(text, reason: ChatStore.message(error))
+			}
+		}
+	}
+
+	/// Put the words back in the composer rather than lose them.
+	private func giveBack(_ text: String, reason: String?) {
+		composer.text = text
+		notice = reason ?? "Couldn't send that message."
+	}
 }
 
-/// The timeline itself, grouped by day with replies under their parents. Hold an event to reply;
-/// tap an object a comment links to to open it.
+/// The room itself, grouped by day with replies under their parents. Hold a comment to reply; tap an
+/// object a comment links to to open it. Showing it marks the flow's chat read.
 struct FlowTimelineView: View {
 	@Bindable var model: FlowTimelineModel
 	var now: Date = Date()
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.scenePhase) private var scenePhase
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			ObjectActivityView(
 				store: model.store, onOpenObject: { runtime?.openObject($0) },
-				onReply: { model.startReply(to: $0) }, now: now)
+				onReply: { model.startReply(to: $0) }, now: now, items: model.items,
+				emptyState: (title: FlowRoom.emptyTitle, body: FlowRoom.emptyBody),
+				onRetry: { model.retry($0) }, onDiscard: { model.discard($0) })
 		}
+		.onAppear { model.setRoomVisible(scenePhase == .active) }
+		.onDisappear { model.setRoomVisible(false) }
+		.onChange(of: scenePhase) { _, phase in model.setRoomVisible(phase == .active) }
 	}
 }
 
-/// The shared composer for a flow's timeline: pin it to the bottom from the host. With a driver agent
-/// it offers "Comment | Message {owner}": message mode sends into the chat with that agent about this
-/// flow (found or created through `AgentThreads`) and shows it in a sheet.
+/// The shared composer for a flow's room: pin it to the bottom from the host. It sends a message to
+/// the flow's chat, or a comment while a held-down Reply is open.
 struct FlowTimelineComposer: View {
 	let model: FlowTimelineModel
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
-	@State private var thread: FlowOwnerThread?
-	@State private var isOpening = false
-	@State private var notice: String?
 
 	var body: some View {
-		VStack(spacing: MaskinSpace.s4) {
-			if let owner = model.owner, runtime != nil {
-				ObjectComposerModeToggle(mode: Bindable(model).mode, agentName: owner.name)
+		MaskinComposer(model: model.composer, config: config, onSend: { model.send() })
+			.task { await runtime?.mentionRoster()?.load() }
+			.onChange(of: model.composer.replyTo == nil) { _, cleared in
+				if cleared { model.clearReply() }
 			}
-			MaskinComposer(model: model.composer, config: config, onSend: send)
-		}
-		.task { await runtime?.mentionRoster()?.load() }
-		.onChange(of: model.composer.replyTo == nil) { _, cleared in
-			if cleared { model.clearReply() }
-		}
-		.sheet(item: $thread) { thread in
-			if let environment = runtime?.environment { FlowOwnerThreadSheet(environment: environment, thread: thread) }
-		}
-		.alert(
-			"Couldn't message the owner", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })
-		) {
-			Button("OK", role: .cancel) {}
-		} message: {
-			Text(notice ?? "")
-		}
+			.flowNoticeAlert(model)
 	}
 
 	/// The workspace roster, with roles, like every other composer's `@` list.
@@ -141,85 +220,18 @@ struct FlowTimelineComposer: View {
 		config.roster = runtime?.mentionRoster()?.roster
 		return config
 	}
-
-	private func send() {
-		guard model.mode == .message, let owner = model.owner, let environment = runtime?.environment else {
-			model.send()
-			return
-		}
-		guard !isOpening, let (text, metadata) = model.composer.take() else { return }
-		isOpening = true
-		let conversations = ConversationsStore(
-			api: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? ""), events: nil)
-		let subject = model.flowName ?? "this flow"
-		Task {
-			defer { isOpening = false }
-			do {
-				let opened = try await AgentThreads.open(
-					withAgent: owner.id, titled: AgentThreads.title(about: subject),
-					alsoInvite: metadata?.mentions ?? [], conversations: conversations)
-				model.mode = .comment
-				thread = FlowOwnerThread(
-					conversations: conversations, conversationID: opened.outcome.conversation.id,
-					recipient: opened.recipient, text: text,
-					metadata: opened.recipient.id.map { AgentThreads.tagging($0, in: metadata) } ?? metadata)
-			} catch {
-				// Give the words back rather than lose them.
-				model.composer.text = text
-				notice = error is AgentThreads.AgentNotFound
-					? "\(owner.name) is no longer in this workspace." : "\(ChatStore.message(error))"
-			}
-		}
-	}
 }
 
-/// The chat a flow's composer opened with the flow's owner, and the message it carries.
-struct FlowOwnerThread: Identifiable {
-	let conversations: ConversationsStore
-	let conversationID: String
-	let recipient: AgentThreads.Recipient
-	let text: String
-	let metadata: ChatSendMetadata?
-	var id: String { conversationID }
-}
-
-/// The real conversation with the owner, in a sheet: the Chats thread and composer, with the message
-/// that opened it sent once through the same queue as any chat send.
-struct FlowOwnerThreadSheet: View {
-	let environment: AppEnvironment
-	let thread: FlowOwnerThread
-	@Environment(\.dismiss) private var dismiss
-	@State private var built: (chat: ChatStore, composer: ChatComposerModel)?
-
-	var body: some View {
-		NavigationStack {
-			Group {
-				if let built {
-					ChatThreadView(store: built.chat, composer: built.composer, conversations: thread.conversations)
-				} else {
-					Color.clear
-				}
-			}
-			.navigationTitle(thread.recipient.name)
-			#if os(iOS)
-			.navigationBarTitleDisplayMode(.inline)
-			#endif
-			.toolbar {
-				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-			}
-		}
-		.ambientBackground(showsBottom: false)
-		.task {
-			guard built == nil else { return }
-			let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
-			let desk = ChiefOfStaffDesk(
-				conversations: thread.conversations, uploader: source,
-				selfActorID: environment.auth.session?.actorId ?? "")
-			let chat = ChiefOfStaffSheet.makeChat(
-				environment: environment, desk: desk, conversationID: thread.conversationID)
-			let composer = ChatComposerModel(uploader: source, selfActorID: environment.auth.session?.actorId ?? "")
-			built = (chat, composer)
-			if chat.send(thread.text, metadata: thread.metadata) == nil { composer.text = thread.text }
+extension View {
+	/// "Couldn't send" with the reason a room message did not go.
+	func flowNoticeAlert(_ model: FlowTimelineModel) -> some View {
+		alert(
+			"Couldn't send",
+			isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })
+		) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text(model.notice ?? "")
 		}
 	}
 }

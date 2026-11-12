@@ -21,6 +21,13 @@ struct ObjectActivityView: View {
 	var include: (TimelineItem) -> Bool = { _ in true }
 	/// Pins "now" for snapshots; the live page uses the clock.
 	var now: Date = Date()
+	/// Shown instead of the store's timeline, when the page merges more into it (a flow's room).
+	var items: [TimelineItem]?
+	/// Replaces the default words when there is nothing to show at all.
+	var emptyState: (title: String, body: String)?
+	/// Retry or discard an item that is not one of the store's comments (a room message).
+	var onRetry: ((TimelineItem) -> Bool)?
+	var onDiscard: ((TimelineItem) -> Bool)?
 
 	@State private var filter: ActivityFilter = .all
 	@State private var retrying = false
@@ -28,15 +35,15 @@ struct ObjectActivityView: View {
 	private var loadState: ActivityLoadState {
 		.of(
 			fetched: store.hasFetched, revalidateFailed: store.freshness.lastRevalidateFailed,
-			hasItems: !store.timeline.isEmpty, retrying: retrying)
+			hasItems: !(items ?? store.timeline).isEmpty, retrying: retrying)
 	}
 
 	var body: some View {
-		let days = ActivityGrouping.days(filter.apply(to: store.timeline.filter(include)), now: now)
+		let days = ActivityGrouping.days(filter.apply(to: (items ?? store.timeline).filter(include)), now: now)
 		let dividers = filter == .all
 			? ActivityPhases.dividers(
 				newestFirst: days.flatMap { $0.entries.map(\.id) },
-				statuses: ActivityPhases.statuses(of: store.timeline))
+				statuses: ActivityPhases.statuses(of: items ?? store.timeline))
 			: [:]
 		VStack(alignment: .leading, spacing: 0) {
 			ActivityFilterChips(selected: $filter)
@@ -54,10 +61,20 @@ struct ObjectActivityView: View {
 				case .loading:
 					LoadingSkeleton(rows: 3)
 				case .ready:
-					Text(filter == .all ? "No activity yet. Start the conversation below." : "Nothing under \(filter.title) yet.")
-						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.ink4)
+					if let emptyState, filter == .all {
+						VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+							Text(emptyState.title).maskinText(.body).fontWeight(.semibold)
+								.foregroundStyle(MaskinColor.ink)
+							Text(emptyState.body).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+						}
 						.padding(.top, MaskinSpace.s5)
+						.accessibilityElement(children: .combine)
+					} else {
+						Text(filter == .all ? "No activity yet. Start the conversation below." : "Nothing under \(filter.title) yet.")
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.ink4)
+							.padding(.top, MaskinSpace.s5)
+					}
 				}
 			}
 			ForEach(days) { day in
@@ -69,8 +86,11 @@ struct ObjectActivityView: View {
 					.padding(.bottom, MaskinSpace.s3)
 					.accessibilityAddTraits(.isHeader)
 				ForEach(day.entries) { entry in
-					ActivityEntryView(store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply)
-						.id(entry.id)
+					ActivityEntryView(
+						store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply, onRetry: onRetry,
+						onDiscard: onDiscard
+					)
+					.id(entry.id)
 					if let status = dividers[entry.id] {
 						PhaseDivider(label: MaskinStatus.sentenceLabel(for: status))
 					}
@@ -171,6 +191,19 @@ struct ActivityEntryView: View {
 	let entry: ActivityEntry
 	var onOpenObject: ((String) -> Void)?
 	var onReply: ((TimelineItem) -> Void)?
+	var onRetry: ((TimelineItem) -> Bool)?
+	var onDiscard: ((TimelineItem) -> Bool)?
+
+	/// The page may own the item (a room message); otherwise it is one of the store's comments.
+	private func retry(_ item: TimelineItem) {
+		if onRetry?(item) == true { return }
+		Task { await store.retryComment(item.id) }
+	}
+
+	private func discard(_ item: TimelineItem) {
+		if onDiscard?(item) == true { return }
+		store.discardComment(item.id)
+	}
 
 	private static var replyIndent: CGFloat { MaskinSpace.s12 + MaskinSpace.s1 }
 
@@ -218,15 +251,15 @@ struct ActivityEntryView: View {
 					guard let parent = entry.item.eventId else { return }
 					Task { await store.postComment(label, parentEventId: parent) }
 				},
-				retry: { Task { await store.retryComment(entry.item.id) } },
-				discard: { store.discardComment(entry.item.id) },
+				retry: { retry(entry.item) },
+				discard: { discard(entry.item) },
 				time: entry.timeLabel)
 		case .event:
 			QuietEventRow(
 				who: store.authorName(for: entry.item), what: ActivityGrouping.summary(of: entry.item),
 				time: entry.timeLabel, delivery: entry.item.delivery,
-				retry: { Task { await store.retryComment(entry.item.id) } },
-				discard: { store.discardComment(entry.item.id) })
+				retry: { retry(entry.item) },
+				discard: { discard(entry.item) })
 		}
 	}
 
