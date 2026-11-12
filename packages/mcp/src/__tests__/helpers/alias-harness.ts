@@ -188,6 +188,20 @@ export const ROW_SCENARIOS: RowScenario[] = [
 		control: { workspace_id: WS, updates: [{ id: U2 }] },
 	},
 	{
+		covers: ['create_objects objects'],
+		tool: 'create_objects',
+		old: { workspace_id: WS, objects: [node] },
+		canonical: { workspace_id: WS, nodes: [node] },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['update_objects objects'],
+		tool: 'update_objects',
+		old: { workspace_id: WS, objects: [{ id: U2, title: 'New title' }] },
+		canonical: { workspace_id: WS, updates: [{ id: U2, title: 'New title' }] },
+		control: { workspace_id: WS },
+	},
+	{
 		covers: ['create_trigger actor_id'],
 		tool: 'create_trigger',
 		old: {
