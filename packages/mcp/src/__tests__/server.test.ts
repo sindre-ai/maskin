@@ -3487,8 +3487,11 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(JSON.parse(res.content[0].text)).toEqual(res.structuredContent.events)
+			const text = JSON.parse(res.content[0].text)
+			expect(text.events).toEqual(res.structuredContent.events)
 			expect(res.structuredContent.events).toHaveLength(10)
+			expect(text.next_cursor).toEqual(res.structuredContent.next_cursor)
+			expect(text.next_cursor).toBeTruthy()
 		})
 
 		it('a workspace-wide walk at limit 99 returns 297 distinct ids over three pages', async () => {
@@ -7527,7 +7530,7 @@ describe('url field injection', () => {
 		const handler = noUrlHandlers.get('list_objects')
 		if (!handler) throw new Error('list_objects handler not registered')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
-		const parsed = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>
+		const parsed = JSON.parse(result.content[0].text).objects as Array<Record<string, unknown>>
 		expect(parsed[0].url).toBeUndefined()
 	})
 
@@ -7551,7 +7554,7 @@ describe('url field injection', () => {
 		const handler = trailingHandlers.get('list_objects')
 		if (!handler) throw new Error('list_objects handler not registered')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
-		const parsed = JSON.parse(result.content[0].text) as Array<{ url: string }>
+		const parsed = JSON.parse(result.content[0].text).objects as Array<{ url: string }>
 		expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
 	})
 
@@ -7569,7 +7572,10 @@ describe('url field injection', () => {
 				structuredContent: { objects: Array<{ id: string; url?: string }> }
 			}
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			const parsed = JSON.parse(result.content[0].text).objects as Array<{
+				id: string
+				url: string
+			}>
 			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
 			expect(result.structuredContent.objects[0].url).toBe(
 				'https://maskin.example.com/ws-default-123/objects/obj-1',
