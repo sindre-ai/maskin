@@ -93,10 +93,6 @@ export function trackAgentCreated(p: BaseProps & { entity_type: 'agent' }): void
 	trackEvent('agent_created', fillBase(p))
 }
 
-export function trackTriggerCreated(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_created', fillBase(p))
-}
-
 // Success metric for the standalone-trigger detail bet: counts completed
 // standalone-trigger saves through the trigger detail screen per week.
 export function trackTriggerUpdated(p: BaseProps & { entity_type: 'trigger' }): void {
@@ -416,7 +412,7 @@ export function trackLoopViewed(p: { entity_id: string }): void {
 // or approved one from its card beside the view (bet Act on items inside loop views). Sent on
 // the click, before the change is saved, so every saved change has a click to match. `surface`
 // is loop_view here, not the app-wide web; ids and action categories only, never titles or text.
-export type LoopViewCardAction = 'open' | 'status_change' | 'approve'
+export type LoopViewCardAction = 'open' | 'status_change' | 'approve' | 'date_change'
 
 export function trackLoopViewCardAction(p: {
 	entity_id: string
@@ -446,10 +442,39 @@ export function trackAgentOpened(p: { entity_id: string }): void {
 export function trackChatFirstReplyReceived(p: {
 	entity_id: string
 	latency_ms: number | null
+	session_id?: string | null
 }): void {
 	trackEvent('chat_first_reply_received', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
 		latency_ms: p.latency_ms,
+		session_id: p.session_id ?? null,
+		feature_area: 'chats',
+	})
+}
+
+// The person pressed Stop on a reply that was still being written. `session_id` is the run
+// they stopped and `seconds_running` how long it had been going (null when its start is unknown).
+export function trackChatStopClicked(p: {
+	session_id: string
+	seconds_running: number | null
+}): void {
+	trackEvent('chat_stop_clicked', {
+		...fillBase({ entity_id: p.session_id, entity_type: 'session' }),
+		session_id: p.session_id,
+		seconds_running: p.seconds_running,
+		feature_area: 'chats',
+	})
+}
+
+// The person wrote again in a chat within 60 seconds of their last message, before any agent
+// answered. Derived on the page from the messages it already holds, not sent by the server.
+export function trackChatMessageResent(p: {
+	entity_id: string
+	seconds_since_previous: number
+}): void {
+	trackEvent('chat_message_resent', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		seconds_since_previous: p.seconds_since_previous,
 		feature_area: 'chats',
 	})
 }
@@ -729,16 +754,35 @@ export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }
 	})
 }
 
+// Whole seconds from when a card was raised (the ask's `created_at`) to now. `null` when
+// the card has no usable time, so the property is missing rather than a made-up number.
+export function secondsSince(
+	iso: string | null | undefined,
+	now: number = Date.now(),
+): number | null {
+	if (!iso) return null
+	const at = Date.parse(iso)
+	if (Number.isNaN(at)) return null
+	return Math.max(0, Math.round((now - at) / 1000))
+}
+
+// `seconds_to_action` runs from the card's creation to the tap, and `session_id` is the
+// run that wrote the ask (null for a card a person raised). Both are read off the card, so
+// neither needs a lookup.
 export function trackForyouCardAction(p: {
 	card_kind: CardKind
 	card_id: string
 	action_id: string
+	seconds_to_action?: number | null
+	session_id?: string | null
 }): void {
 	trackEmailReturn('foryou_card_action')
 	trackEvent('foryou_card_action', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 		action_id: p.action_id,
+		seconds_to_action: p.seconds_to_action ?? null,
+		session_id: p.session_id ?? null,
 	})
 }
 

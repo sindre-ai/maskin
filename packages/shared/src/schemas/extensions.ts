@@ -54,9 +54,23 @@ const literalOrPathSchema = z.union([
 
 export const webhookConfigSchema = z
 	.object({
-		signatureScheme: z.enum(['hmac-sha256', 'hmac-sha1', 'timestamp', 'ed25519']),
+		signatureScheme: z.enum([
+			'hmac-sha256',
+			'hmac-sha1',
+			'timestamp',
+			'ed25519',
+			'standard-webhooks',
+			'stripe',
+		]),
 		signatureHeader: z.string().min(1),
 		signaturePrefix: z.string().optional(),
+		/**
+		 * How the HMAC digest is written, for hmac-sha256, hmac-sha1 and timestamp. Hex when
+		 * absent. The standard-webhooks and stripe presets fix their own.
+		 */
+		digestEncoding: z.enum(['hex', 'base64']).optional(),
+		/** Header with the message id. Required for the standard-webhooks preset. */
+		idHeader: z.string().min(1).optional(),
 		timestampHeader: z.string().optional(),
 		/**
 		 * Signing base for the 'timestamp' and 'ed25519' schemes, e.g. "v0:{timestamp}:{body}"
@@ -77,6 +91,22 @@ export const webhookConfigSchema = z
 			.default({ perMinute: 60 }),
 	})
 	.superRefine((cfg, ctx) => {
+		const presetScheme =
+			cfg.signatureScheme === 'standard-webhooks' || cfg.signatureScheme === 'stripe'
+		if (cfg.digestEncoding && (presetScheme || cfg.signatureScheme === 'ed25519')) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['digestEncoding'],
+				message: `The ${cfg.signatureScheme} scheme sets its own digest encoding`,
+			})
+		}
+		if (cfg.signatureScheme === 'standard-webhooks') {
+			const message = 'Required for the standard-webhooks scheme'
+			if (!cfg.idHeader) ctx.addIssue({ code: 'custom', path: ['idHeader'], message })
+			if (!cfg.timestampHeader) {
+				ctx.addIssue({ code: 'custom', path: ['timestampHeader'], message })
+			}
+		}
 		if (cfg.signatureScheme === 'timestamp' || cfg.signatureScheme === 'ed25519') {
 			const message = `Required for the ${cfg.signatureScheme} scheme`
 			if (!cfg.timestampHeader) {

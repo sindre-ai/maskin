@@ -113,6 +113,14 @@ export const FLAGS = {
 	 * once it is on for everyone.
 	 */
 	LOOP_VIEW_ITEM_PANEL: 'loop-view-item-panel',
+	/**
+	 * Gates date and time changes from a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
+	 * when a view proposes a new day or post time for an item, the loop page asks the person
+	 * "Move to 14 Nov?" and saves only after they confirm. Frontend only: read once, in
+	 * `LoopViewTab`. Off means a view's proposal is ignored and nothing can be changed from a view.
+	 * Retire once it is on for everyone.
+	 */
+	LOOP_VIEW_DATE_CHANGE: 'loop-view-date-change',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

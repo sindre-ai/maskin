@@ -56,6 +56,45 @@ export const LIST_METADATA_KEYS = [
 	'published_at',
 ] as const
 
+/**
+ * The only fields a view may propose a change to, each with the shape its value must have.
+ * A view may propose a field only if it also named it in a list's `fields`, so a view can
+ * ask to change what it shows and nothing else.
+ */
+export const PROPOSABLE_FIELDS = ['scheduled_date', 'post_time'] as const
+export type ProposableField = (typeof PROPOSABLE_FIELDS)[number]
+
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/** The value to save for a proposed change, or null when the field or value is not one the app accepts. */
+export function parseProposedValue(field: string, value: unknown): string | null {
+	if (typeof value !== 'string') return null
+	if (field === 'post_time') return TIME_RE.test(value) ? value : null
+	if (field !== 'scheduled_date') return null
+	const m = DATE_RE.exec(value)
+	if (!m) return null
+	const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+	// 2026-02-31 rolls over to March; a date that does not round-trip is not a date.
+	return date.toISOString().slice(0, 10) === value ? value : null
+}
+
+/** The proposable fields a view named in its declared lists. */
+export function declaredProposableFields(
+	lists: ReadonlyMap<string, ListSourceEntry>,
+): Set<ProposableField> {
+	const declared = new Set<ProposableField>()
+	for (const entry of lists.values()) {
+		if (entry?.list !== 'objects') continue
+		for (const field of entry.fields) {
+			if ((PROPOSABLE_FIELDS as readonly string[]).includes(field)) {
+				declared.add(field as ProposableField)
+			}
+		}
+	}
+	return declared
+}
+
 /** Columns a view may ask for besides the always-present id, title, status and url. */
 const LIST_COLUMN_FIELDS = ['driver', 'createdAt', 'updatedAt'] as const
 const LIST_SORT_COLUMNS = ['createdAt', 'updatedAt', 'title', 'status'] as const
