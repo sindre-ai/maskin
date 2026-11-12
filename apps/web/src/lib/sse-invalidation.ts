@@ -329,5 +329,12 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			invalidate(queryClient, { queryKey: queryKeys.conversations.all(workspaceId) })
 			invalidate(queryClient, { queryKey: queryKeys.conversations.detail(event.entity_id) })
 			break
+		default:
+			// Object types are workspace-defined, so an object event can carry any type name
+			// (a LinkedIn post draft, an email) that the cases above do not list. Refresh the
+			// object's own cache so a chat preview card follows an agent's edit. A key nobody
+			// has cached is a no-op, so an event for a non-object entity costs nothing.
+			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+			break
 	}
 }
