@@ -83,10 +83,9 @@ export type FlowErrorProps = {
 }
 
 export function isFlowStep(flow: string, step: string): boolean {
-	const steps: readonly string[] | undefined = (FLOW_STEPS as Record<string, readonly string[]>)[
-		flow
-	]
-	return steps?.includes(step) ?? false
+	// Own keys only: a flow like "toString" would otherwise find an inherited function.
+	if (!Object.prototype.hasOwnProperty.call(FLOW_STEPS, flow)) return false
+	return (FLOW_STEPS as Record<string, readonly string[]>)[flow].includes(step)
 }
 
 function toErrorCategory(value: string): FlowErrorCategory {
