@@ -237,6 +237,249 @@ describe('Targets extension', () => {
 		})
 	})
 
+	describe('PATCH /api/objects/:id by an agent', () => {
+		// existing object, workspace membership, workspace settings (only when the body
+		// carries a status, to check it), then the in-transaction re-read.
+		function patchAs(actorType: string, existing: ReturnType<typeof buildObject>, body: object) {
+			const { app, mockResults, calls } = createTestApp(
+				objectsRoutes,
+				'/api/objects',
+				'test-actor-id',
+				actorType,
+			)
+			mockResults.selectQueue =
+				'status' in body
+					? [[existing], [buildWorkspaceMember()], [workspaceWithTargets()], [existing]]
+					: [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [{ ...existing, ...body }]
+			mockResults.insert = [{}]
+			return {
+				calls,
+				res: app.request(jsonRequest('PATCH', `/api/objects/${existing.id}`, body)),
+			}
+		}
+
+		const target = () =>
+			buildObject({
+				workspaceId: wsId,
+				type: TARGET_TYPE,
+				status: 'open',
+				title: '10 paying customers',
+				metadata: targetMetadata,
+			})
+
+		it.each([
+			['actual', { actual: 10 }],
+			['target', { target: 20 }],
+			['deadline', { deadline: '2027-01-31' }],
+			['source', { source: 'metric:other' }],
+		])(
+			'refuses an agent changing the %s of a target, and says to use a decision card',
+			async (field, change) => {
+				const existing = target()
+				const { res, calls } = patchAs('agent', existing, {
+					metadata: { ...targetMetadata, ...change },
+				})
+
+				const response = await res
+				expect(response.status).toBe(403)
+				const body = await response.json()
+				expect(body.error.message).toContain(field)
+				expect(body.error.message).toContain('decision card')
+				expect(calls.updates).toHaveLength(0)
+				// The refusal is logged with counts and ids only: no field name, no value.
+				expect(calls.inserts).toHaveLength(1)
+				expect(calls.inserts[0]).toMatchObject({
+					action: 'agent_write_refused',
+					entityType: 'object',
+					entityId: existing.id,
+				})
+				expect(calls.inserts[0]).toHaveProperty('data', {
+					object_type: TARGET_TYPE,
+					field_count: 1,
+					session_id: null,
+				})
+			},
+		)
+
+		it('refuses an agent setting the status of a target, and says to use a decision card', async () => {
+			const existing = target()
+			const { res, calls } = patchAs('agent', existing, { status: 'hit' })
+
+			const response = await res
+			expect(response.status).toBe(403)
+			const body = await response.json()
+			expect(body.error.message).toContain('status')
+			expect(body.error.message).toContain('decision card')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('lets an agent write the status of a target back unchanged', async () => {
+			const { res } = patchAs('agent', target(), { status: 'open' })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('lets a person set the status of a target', async () => {
+			const { res } = patchAs('human', target(), { status: 'hit' })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('refuses an agent changing the label of a target', async () => {
+			const { res } = patchAs('agent', target(), { title: '20 paying customers' })
+
+			expect((await res).status).toBe(403)
+		})
+
+		it('lets an agent write a target field back unchanged', async () => {
+			const { res } = patchAs('agent', target(), { metadata: { actual: 3 } })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('lets a person change the fields of a target', async () => {
+			const { res } = patchAs('human', target(), { metadata: { ...targetMetadata, actual: 10 } })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('refuses an agent changing what defines done on a flow', async () => {
+			for (const metadata of [
+				{ targets: [{ label: 'Signups', source: 'manual', actual: 1, target: 5 }] },
+				{ close_condition: 'Never closes' },
+				{ entry_condition: 'Everything enters' },
+				{ closed_statuses: { task: ['todo'] } },
+				{ closed_when: { task: ['loop_stage=live'] } },
+			]) {
+				const flow = buildObject({
+					workspaceId: wsId,
+					type: 'loop',
+					status: 'live',
+					metadata: {
+						targets: [],
+						entry_condition: 'A lead is found',
+						close_condition: 'Shipped',
+						closed_statuses: { task: ['done'] },
+						closed_when: { task: ['loop_stage=done'] },
+					},
+				})
+				const { res } = patchAs('agent', flow, { metadata })
+
+				const response = await res
+				expect(response.status).toBe(403)
+				expect((await response.json()).error.message).toContain('decision card')
+			}
+		})
+
+		it('lets an agent change other flow fields and pause a flow', async () => {
+			const flow = buildObject({
+				workspaceId: wsId,
+				type: 'loop',
+				status: 'live',
+				metadata: { targets: [], close_condition: 'Shipped', note: 'a' },
+			})
+			const { res } = patchAs('agent', flow, { metadata: { note: 'b', targets: [] } })
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('lets a person change the closed statuses and entry condition of a flow', async () => {
+			const flow = buildObject({
+				workspaceId: wsId,
+				type: 'loop',
+				status: 'live',
+				metadata: { entry_condition: 'A', closed_statuses: { task: ['done'] } },
+			})
+			const { res } = patchAs('human', flow, {
+				metadata: { entry_condition: 'B', closed_statuses: { task: ['todo'] } },
+			})
+
+			expect((await res).status).toBe(200)
+		})
+
+		it('lets a person change the targets of a flow', async () => {
+			const flow = buildObject({
+				workspaceId: wsId,
+				type: 'loop',
+				status: 'live',
+				metadata: { targets: [] },
+			})
+			const { res } = patchAs('human', flow, {
+				metadata: { targets: [{ label: 'Signups', source: 'manual', actual: 1, target: 5 }] },
+			})
+
+			expect((await res).status).toBe(200)
+		})
+	})
+
+	describe('POST /api/objects/bulk-update by an agent', () => {
+		function bulkAs(actorType: string, existing: ReturnType<typeof buildObject>, patch: object) {
+			const { app, mockResults, calls } = createTestApp(
+				objectsRoutes,
+				'/api/objects',
+				'test-actor-id',
+				actorType,
+			)
+			mockResults.selectQueue = [[existing], [buildWorkspace({ id: wsId })]]
+			mockResults.update = [{ ...existing, ...patch }]
+			mockResults.insert = [{}]
+			return {
+				calls,
+				res: app.request(
+					jsonRequest(
+						'POST',
+						'/api/objects/bulk-update',
+						{ ids: [existing.id], patch },
+						{ 'x-workspace-id': wsId },
+					),
+				),
+			}
+		}
+
+		const flow = () =>
+			buildObject({
+				workspaceId: wsId,
+				type: 'loop',
+				status: 'live',
+				metadata: { entry_condition: 'A lead is found', closed_statuses: { task: ['done'] } },
+			})
+
+		it('refuses an agent changing what defines done, per id, and logs the refusal', async () => {
+			const existing = flow()
+			const { res, calls } = bulkAs('agent', existing, {
+				metadata: { closed_statuses: { task: ['todo'] } },
+			})
+
+			const response = await res
+			expect(response.status).toBe(200)
+			const { results } = await response.json()
+			expect(results[0].ok).toBe(false)
+			expect(results[0].error).toContain('decision card')
+			expect(calls.updates).toHaveLength(0)
+			expect(calls.inserts).toHaveLength(1)
+			expect(calls.inserts[0]).toMatchObject({
+				action: 'agent_write_refused',
+				entityId: existing.id,
+				data: { object_type: 'loop', field_count: 1 },
+			})
+		})
+
+		it('lets an agent change a flow field that does not define done', async () => {
+			const { res } = bulkAs('agent', flow(), { metadata: { note: 'b' } })
+
+			const { results } = await (await res).json()
+			expect(results[0].ok).toBe(true)
+		})
+
+		it('lets a person change what defines done', async () => {
+			const { res } = bulkAs('human', flow(), { metadata: { entry_condition: 'Anything' } })
+
+			const { results } = await (await res).json()
+			expect(results[0].ok).toBe(true)
+		})
+	})
+
 	describe('POST /api/graph (the create_objects tool)', () => {
 		it('creates a company target and a flow target linked with breaks_into', async () => {
 			const company = buildObject({ workspaceId: wsId, type: TARGET_TYPE, status: 'open' })

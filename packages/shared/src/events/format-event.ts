@@ -53,6 +53,12 @@ export function formatEventDescription(event: EventLike, ctx?: FormatContext): s
 			return `unverified ${entityType}`
 		case 'knowledge_write_undone':
 			return 'undid a Knowledge Author write'
+		case 'next_step_set':
+			return `set the next step on this ${entityType}`
+		case 'next_step_updated':
+			return `changed the next step on this ${entityType}`
+		case 'next_step_closed':
+			return `closed the next step on this ${entityType}`
 		case 'updated':
 		case 'status_changed':
 			if (OBJECT_ENTITY_TYPES.has(entityType)) {

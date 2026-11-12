@@ -298,6 +298,142 @@ describe('Loops read API integration', () => {
 		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
 	})
 
+	describe('flow targets from target objects', () => {
+		type TargetsBody = {
+			loops: Array<{
+				id: string
+				targets: Array<{
+					label: string
+					source: string
+					actual: number
+					target: number
+					ownerActorId?: string
+					pace_policy?: string
+				}> | null
+			}>
+		}
+
+		async function targetOf(loopId: string, overrides: Record<string, unknown>) {
+			const target = await insertObject(db, workspaceId, actorId, {
+				type: 'target',
+				status: 'open',
+				...overrides,
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: target.id,
+				targetType: 'object',
+				targetId: loopId,
+				type: 'target_of',
+			})
+			return target
+		}
+
+		async function listTargets(loopId: string) {
+			const res = await makeApp(actorId).request(
+				jsonGet(`/api/loops?id=${loopId}`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			return ((await res.json()) as TargetsBody).loops[0]?.targets
+		}
+
+		it('returns the same fields as an old row, taken from the linked target objects', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+			await targetOf(loop.id, {
+				title: 'Posts published',
+				driver: actorId,
+				metadata: { source: 'metric:posts.published', actual: 6, target: 8 },
+			})
+
+			expect(await listTargets(loop.id)).toEqual([
+				{
+					label: 'Posts published',
+					source: 'metric:posts.published',
+					actual: 6,
+					target: 8,
+					ownerActorId: actorId,
+				},
+			])
+		})
+
+		it('prefers target objects over old rows, and hides dropped targets', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'Flow',
+				metadata: {
+					targets: [{ label: 'Old row', source: 'old', actual: 1, target: 2 }],
+				},
+			})
+			await targetOf(loop.id, {
+				title: 'Kept',
+				metadata: { source: 'kept', actual: 3, target: 4 },
+			})
+			await targetOf(loop.id, {
+				title: 'Dropped',
+				status: 'dropped',
+				metadata: { source: 'dropped', actual: 5, target: 6 },
+			})
+
+			const targets = await listTargets(loop.id)
+			expect(targets?.map((t) => t.label)).toEqual(['Kept'])
+		})
+
+		it('keeps the hand-set actual of the old row when the object has none', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'Flow',
+				metadata: {
+					targets: [
+						{
+							label: 'Replies sent',
+							source: 'replies',
+							actual: 7,
+							target: 10,
+							pace_policy: 'strict',
+						},
+					],
+				},
+			})
+			await targetOf(loop.id, {
+				title: 'Replies sent',
+				metadata: { source: 'replies', target: 12 },
+			})
+
+			const [row] = (await listTargets(loop.id)) ?? []
+			expect(row).toMatchObject({ actual: 7, target: 12, pace_policy: 'strict' })
+		})
+
+		it('falls back to the old rows for a flow with no target objects, per flow', async () => {
+			const withObjects = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'With objects',
+			})
+			const withRows = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'With rows',
+				metadata: { targets: [{ label: 'Row', source: 'row', actual: 1, target: 2 }] },
+			})
+			await targetOf(withObjects.id, {
+				title: 'Object',
+				metadata: { source: 'object', actual: 3, target: 4 },
+			})
+
+			const res = await makeApp(actorId).request(
+				jsonGet('/api/loops', { 'x-workspace-id': workspaceId }),
+			)
+			const byId = new Map(((await res.json()) as TargetsBody).loops.map((l) => [l.id, l.targets]))
+			expect(byId.get(withObjects.id)?.map((t) => t.label)).toEqual(['Object'])
+			expect(byId.get(withRows.id)).toEqual([{ label: 'Row', source: 'row', actual: 1, target: 2 }])
+		})
+
+		it('ignores target objects with a missing number, and returns null with nothing left', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+			await targetOf(loop.id, { title: 'No numbers', metadata: { source: 'x' } })
+
+			expect(await listTargets(loop.id)).toBeNull()
+		})
+	})
+
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',

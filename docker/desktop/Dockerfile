@@ -41,8 +41,10 @@ RUN useradd -m -s /bin/bash user \
 
 # Chromium flags, set here (not on one command line) so the dock and menu
 # launchers get them too. No --no-sandbox: the sandbox is on.
+# The debugging port is on this machine only (nothing publishes it). desktopd reads it to
+# confirm a password field has focus before a saved password is typed.
 RUN printf '%s\n' \
-    'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check"' \
+    'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"' \
     > /etc/chromium.d/desktop-flags
 
 # Pages open at 67 percent zoom so more of each page fits on the 1920x1080 screen. The

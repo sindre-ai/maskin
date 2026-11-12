@@ -16,7 +16,9 @@ import {
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
+	setNextStepSchema,
 	skillNameSchema,
+	updateNextStepSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
 
@@ -515,6 +517,24 @@ export const tools = {
 				)
 				.default([])
 				.describe('Relationships to create between existing objects'),
+		}),
+	},
+	set_next_step: {
+		description:
+			'Give an object you drive its next step: what happens next, who does it and by when. An object has at most one open or blocked next step, so a second one is refused (409) unless you pass replace: true, which closes the old one as skipped. Pass the action (one short sentence), due_at (an ISO time with a timezone) and optionally owner_id (an agent or person in the workspace; defaults to you). To say the step waits on something, pass exactly one of blocked_on_object_id, blocked_on_actor_id (then blocked_reason holds the question) or blocked_on_decision_comment_id: prose alone is not enough for a blocked step. This stores the step; it does not wake anyone. The step shows at the top of the object page for people. Use update_next_step to change it or close it.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...setNextStepSchema.shape,
+		}),
+	},
+	update_next_step: {
+		description:
+			'Change or close the next step on an object (its open or blocked step). Pass only what changes: action, due_at, owner_id, or status. status done or skipped closes the step and needs evidence (a link or result for done, the reason for skipped). status blocked needs exactly one of blocked_on_object_id, blocked_on_actor_id (with blocked_reason holding the question) or blocked_on_decision_comment_id; status open clears what it waited on. 404 when the object has no open or blocked step: use set_next_step to create one. To close it and plan the following step, call this with status done and then set_next_step.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...updateNextStepSchema.shape,
 		}),
 	},
 	delete_object: {

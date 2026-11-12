@@ -32,6 +32,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/activity', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/keychain-credentials', // newer MCP tool, route not yet checked for the token's workspace pin
+	'PATCH /api/objects/x/next-step', // update_next_step: newer MCP tool, route not yet checked for the token's workspace pin
 	'PATCH /api/workspaces/x', // update_workspace: workspace settings
 	'POST /api/actors', // create_actor: returns a new API key
 	'POST /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
@@ -47,6 +48,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/invites', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/approval', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/chat-approval', // approve_draft_from_chat: an approval gate, never through a person's own AI tool
+	'POST /api/objects/x/next-step', // set_next_step: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/ask', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/computer-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/connect-card', // newer MCP tool, route not yet checked for the token's workspace pin
