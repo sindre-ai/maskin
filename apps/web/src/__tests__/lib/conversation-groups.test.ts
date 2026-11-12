@@ -69,6 +69,20 @@ describe('groupConversations', () => {
 		expect(groups[4].items[0].title).toBe('old')
 	})
 
+	it('recent mode lists pinned first, then every chat newest first, direct messages included', () => {
+		const groups = groupConversations(
+			[
+				buildConversation({ title: 'older', lastMessageAt: daysAgo(0, 8) }),
+				buildConversation({ title: 'dm', directPairKey: 'pair-1', lastMessageAt: daysAgo(0, 9) }),
+				buildConversation({ title: 'pinned', pinned: true, lastMessageAt: daysAgo(40) }),
+				buildConversation({ title: 'yesterday', lastMessageAt: daysAgo(1) }),
+			],
+			{ now: NOW, mode: 'recent' },
+		)
+		expect(groups.map((g) => g.label)).toEqual(['Pinned', 'Today', 'Yesterday'])
+		expect(groups[1].items.map((c) => c.title)).toEqual(['dm', 'older'])
+	})
+
 	it('lists direct messages first, in their own group, by the marker and not the title', () => {
 		const groups = groupConversations(
 			[

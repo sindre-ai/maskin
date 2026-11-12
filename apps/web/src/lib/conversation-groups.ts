@@ -1,4 +1,5 @@
 import type { ConversationListItemResponse } from '@/lib/api'
+import { type ConversationListEntry, activityMs } from '@/lib/conversation-agent-rows'
 
 /** Midnight of `d` in the viewer's local timezone, as epoch ms. */
 export function startOfDay(d: Date): number {
@@ -10,10 +11,14 @@ export interface ConversationGroup {
 	key: string
 	/** Rendered as an `.eyebrow` mono uppercase label. */
 	label: string
+	/** Every chat in the group. */
 	items: ConversationListItemResponse[]
+	/** What the group draws when it is not one row per chat (the Agents view folds an agent's
+	 *  chats into one row). The header counts these. */
+	entries?: ConversationListEntry[]
 }
 
-export type ConversationGroupMode = 'default' | 'archived' | 'search' | 'unread'
+export type ConversationGroupMode = 'default' | 'archived' | 'search' | 'unread' | 'recent'
 
 interface GroupOptions {
 	/** `archived` collapses everything into one ARCHIVED group, `search` into
@@ -31,7 +36,8 @@ interface GroupOptions {
  *
  * A direct message (DM) is a chat marked with `directPairKey`, never one picked
  * out by its title or its two participants: a topical chat with one agent has
- * both too. The archived and search lists stay flat.
+ * both too. The archived and search lists stay flat. `recent` is the Recent view: one
+ * newest-first list, pinned on top, direct messages in the time buckets like any other chat.
  */
 export function groupConversations(
 	conversations: ConversationListItemResponse[],
@@ -48,8 +54,11 @@ export function groupConversations(
 	}
 
 	// One pinned row per person or agent, above everything else. Each chat is placed once.
-	const direct = conversations.filter((c) => c.directPairKey)
-	const topical = conversations.filter((c) => !c.directPairKey)
+	const recent = mode === 'recent'
+	const direct = recent ? [] : conversations.filter((c) => c.directPairKey)
+	const topical = recent
+		? [...conversations].sort((a, b) => activityMs(b) - activityMs(a))
+		: conversations.filter((c) => !c.directPairKey)
 	const directGroup: ConversationGroup = {
 		key: 'direct',
 		label: 'Direct messages',

@@ -5,7 +5,10 @@ import { Spinner } from '@/components/ui/spinner'
 import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { type ConversationListItemResponse, api } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
+import { type ChatListView, DEFAULT_CHAT_LIST_VIEW } from '@/lib/chat-list-view'
 import { cn } from '@/lib/cn'
+import { groupByAgent } from '@/lib/conversation-agent-rows'
 import { groupConversations } from '@/lib/conversation-groups'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
@@ -13,6 +16,7 @@ import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from '
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
+import { ConversationAgentRow } from './conversation-agent-row'
 import { ConversationListRow } from './conversation-list-row'
 import { ReplyThreadList } from './replies/reply-thread-list'
 
@@ -135,6 +139,9 @@ interface ConversationListProps {
 	/** Hide the "Start a new one" link in the empty state — set beside the new
 	 *  chat screen, where the link would point at the page the reader is on. */
 	hideStartLink?: boolean
+	/** Agents folds each agent's chats into one row; Recent is the flat newest-first list. Only the
+	 *  full list ("All", no search) takes a view; the other filters stay single lists. */
+	view?: ChatListView
 }
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
@@ -180,6 +187,7 @@ function ChatConversationList({
 	className,
 	expanded,
 	hideStartLink,
+	view = DEFAULT_CHAT_LIST_VIEW,
 }: ConversationListProps) {
 	// Omit `archived` unless it's the active filter — the backend already
 	// defaults the list to non-archived conversations (see
@@ -303,9 +311,14 @@ function ChatConversationList({
 					.includes(needle),
 			)
 		: conversations
-	const groups = groupConversations(shown, {
-		mode: filter === 'archived' ? 'archived' : 'unread',
-	})
+	const viewed = filter === 'all' && !needle
+	const groups =
+		viewed && view === 'agents'
+			? groupByAgent(shown, getStoredActor()?.id)
+			: groupConversations(shown, {
+					mode:
+						filter === 'archived' ? 'archived' : viewed && view === 'recent' ? 'recent' : 'unread',
+				})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
@@ -436,7 +449,7 @@ function ChatConversationList({
 											/>
 											<span>{group.label}</span>
 											<span className="font-medium text-muted-foreground">
-												{group.items.length}
+												{group.entries?.length ?? group.items.length}
 											</span>
 										</button>
 										{group.key === 'unread' ? (
@@ -449,14 +462,34 @@ function ChatConversationList({
 											</button>
 										) : null}
 									</div>
-									{(collapsed.has(group.key) ? [] : group.items).map((c) => (
-										<ConversationListRow
-											key={c.id}
-											workspaceId={workspaceId}
-											conversation={c}
-											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
-										/>
-									))}
+									{collapsed.has(group.key)
+										? null
+										: group.entries
+											? group.entries.map((entry) =>
+													entry.kind === 'agent' ? (
+														<ConversationAgentRow
+															key={entry.key}
+															workspaceId={workspaceId}
+															entry={entry}
+															threadUnreadByChat={threadUnreadByChat}
+														/>
+													) : (
+														<ConversationListRow
+															key={entry.key}
+															workspaceId={workspaceId}
+															conversation={entry.conversation}
+															threadUnread={threadUnreadByChat.get(entry.conversation.id) ?? 0}
+														/>
+													),
+												)
+											: group.items.map((c) => (
+													<ConversationListRow
+														key={c.id}
+														workspaceId={workspaceId}
+														conversation={c}
+														threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+													/>
+												))}
 								</div>
 							))}
 							{hasNextPage ? (

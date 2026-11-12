@@ -22,6 +22,9 @@ interface ConversationListRowProps {
 	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
 	 *  separate reads, so a chat can look read while a thread inside it is not. */
 	threadUnread?: number
+	/** Names the row when its own title would repeat the line above it (a direct message folded
+	 *  under its agent reads "Direct message"). */
+	label?: string
 }
 
 /**
@@ -34,6 +37,7 @@ export function ConversationListRow({
 	workspaceId,
 	conversation,
 	threadUnread = 0,
+	label,
 }: ConversationListRowProps) {
 	// Counterparts first, the viewer last: a one-to-one thread reads as "the
 	// agent's row". A thread with nobody else falls back to its own participants.
@@ -43,7 +47,8 @@ export function ConversationListRow({
 	const lead = others[0] ?? conversation.participants[0]
 	// A direct message is the pair's own line, so it is named after who is on the other end.
 	// Whatever title it was created with is not a topic.
-	const title = conversation.directPairKey && others[0] ? others[0].actorName : conversation.title
+	const title =
+		label ?? (conversation.directPairKey && others[0] ? others[0].actorName : conversation.title)
 	const isUnread = conversation.unread_count > 0
 	const workingActorIds = new Set(conversation.working_actor_ids)
 	const workingNames = conversation.participants
