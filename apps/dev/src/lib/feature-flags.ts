@@ -112,6 +112,15 @@ export const FLAGS = {
 	 * flag off. Retire once the block is on for everyone.
 	 */
 	NEXT_STEP_BLOCK: 'next-step-block',
+	/**
+	 * Gates the "Jobs you are handed" block in chat prompts (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Link every job to its flow target](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/08e1e494-86ad-4a98-b085-c88c8a64c2b4)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace when a chat session
+	 * launches. Off means chat prompts are built exactly as before. Switch on only once the cap on
+	 * self-started work is live in production, because the block tells the agent to start follow-up
+	 * steps on its own. Retire once it is on for everyone.
+	 */
+	JOB_TARGET_IN_CHAT: 'job-target-in-chat',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
