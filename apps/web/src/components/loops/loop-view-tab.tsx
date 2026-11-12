@@ -1,8 +1,10 @@
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
+import { LoopViewChangePrompt } from '@/components/loops/loop-view-change-prompt'
 import { LoopViewItemPanel } from '@/components/loops/loop-view-item-panel'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
+import type { ProposedChange } from '@/lib/loop-view-bridge'
 import { useState } from 'react'
 
 /**
@@ -12,6 +14,10 @@ import { useState } from 'react'
  * When a view asks to open an item, its card shows beside the view (a sheet on a phone), where
  * the person can change its status or approve it. With the flag off, Open goes to the object's
  * page as before.
+ *
+ * When a view proposes a new day or time for an item, the page asks the person to confirm and
+ * saves only on yes (flag loop-view-date-change; off, the proposal is ignored). The view never
+ * saves anything itself.
  */
 export function LoopViewTab({
 	workspaceId,
@@ -21,6 +27,10 @@ export function LoopViewTab({
 	const [failure, setFailure] = useState<string | null>(null)
 	const [openId, setOpenId] = useState<string | null>(null)
 	const itemPanel = useFeatureFlag('loop-view-item-panel')
+	const dateChange = useFeatureFlag('loop-view-date-change')
+	const [proposed, setProposed] = useState<ProposedChange | null>(null)
+	// Raised on each saved change so the view reloads its lists and shows the new value.
+	const [reloadToken, setReloadToken] = useState(0)
 	const isMobile = useIsMobile()
 	// A failed view is unmounted, not just annotated, so its frame is gone from the page.
 	if (failure) {
@@ -49,6 +59,8 @@ export function LoopViewTab({
 					fileId={fileId}
 					onFailure={setFailure}
 					onOpenItem={itemPanel ? setOpenId : undefined}
+					onProposeChange={dateChange ? setProposed : undefined}
+					reloadToken={reloadToken}
 				/>
 			</div>
 			{panel && !isMobile ? (
@@ -68,6 +80,18 @@ export function LoopViewTab({
 						{panel}
 					</SheetContent>
 				</Sheet>
+			) : null}
+			{dateChange ? (
+				<LoopViewChangePrompt
+					workspaceId={workspaceId}
+					loopId={loopId}
+					change={proposed}
+					onCancel={() => setProposed(null)}
+					onSaved={() => {
+						setProposed(null)
+						setReloadToken((n) => n + 1)
+					}}
+				/>
 			) : null}
 		</div>
 	)

@@ -2,7 +2,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { useFile } from '@/hooks/use-files'
 import { api } from '@/lib/api'
-import { handleBridgeMessage, sourcesAffectedBy } from '@/lib/loop-view-bridge'
+import { type ProposedChange, handleBridgeMessage, sourcesAffectedBy } from '@/lib/loop-view-bridge'
 import {
 	dropCachedResult,
 	formatUpdatedAt,
@@ -15,6 +15,7 @@ import {
 	type ListAnswer,
 	type ListSource,
 	type ListSourceEntry,
+	declaredProposableFields,
 	fetchListRows,
 } from '@/lib/view-lists'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
@@ -46,6 +47,10 @@ interface LoopCustomViewProps {
 	onFailure: (reason: string) => void
 	/** What a view's window.maskin.open(id) does. Without it the viewer goes to that object's page. */
 	onOpenItem?: (objectId: string) => void
+	/** What a view's window.maskin.propose(id, field, value) does. Without it a proposal is ignored. It must ask the person before anything is saved. */
+	onProposeChange?: (change: ProposedChange) => void
+	/** Raised after a proposed change was saved: the view reloads its lists so it shows the new value. */
+	reloadToken?: number
 }
 
 export function LoopCustomView({
@@ -53,6 +58,8 @@ export function LoopCustomView({
 	fileId,
 	onFailure,
 	onOpenItem,
+	onProposeChange,
+	reloadToken,
 }: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
@@ -79,6 +86,8 @@ export function LoopCustomView({
 			workspaceId={workspaceId}
 			onFailure={onFailure}
 			onOpenItem={onOpenItem}
+			onProposeChange={onProposeChange}
+			reloadToken={reloadToken}
 		/>
 	)
 }
@@ -90,6 +99,8 @@ function ViewFrame({
 	workspaceId,
 	onFailure,
 	onOpenItem,
+	onProposeChange,
+	reloadToken,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
@@ -97,6 +108,8 @@ function ViewFrame({
 	workspaceId: string
 	onFailure: (reason: string) => void
 	onOpenItem?: (objectId: string) => void
+	onProposeChange?: (change: ProposedChange) => void
+	reloadToken?: number
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const navigate = useNavigate()
@@ -149,6 +162,10 @@ function ViewFrame({
 	onFailureRef.current = onFailure
 	const onOpenItemRef = useRef(onOpenItem)
 	onOpenItemRef.current = onOpenItem
+	const onProposeRef = useRef(onProposeChange)
+	onProposeRef.current = onProposeChange
+	// Ids of the items this view was given in its lists. A proposal about any other id is ignored.
+	const givenIdsRef = useRef(new Set<string>())
 
 	// The view draws from the last saved answers when it has them, then the host asks the
 	// server again behind it. `updatedAt` is the age of the oldest answer on screen; `refreshing`
@@ -198,6 +215,7 @@ function ViewFrame({
 			pendingRef.current += 1
 			const answer = fetchListRows(workspaceId, source)
 				.then((rows) => {
+					for (const row of rows) givenIdsRef.current.add(row.id)
 					const fetchedAt = Date.now()
 					answeredAtRef.current.set(`list:${name}`, fetchedAt)
 					syncUpdatedAt()
@@ -240,6 +258,14 @@ function ViewFrame({
 		})
 		if (changed || hadLists) setFrameKey((k) => k + 1)
 	}, [queryAndStore])
+
+	// A saved change from the page's confirm step: reload the lists so the view shows it.
+	const handledReloadRef = useRef(reloadToken ?? 0)
+	useEffect(() => {
+		if (reloadToken === undefined || reloadToken === handledReloadRef.current) return
+		handledReloadRef.current = reloadToken
+		void refreshAll()
+	}, [reloadToken, refreshAll])
 
 	useEffect(() => {
 		// The view runs one frame inside the iframe we render (see prepareIsolatedViewHtml), so
@@ -287,6 +313,14 @@ function ViewFrame({
 									params: { workspaceId, objectId },
 								}),
 					listAnswer: answerList,
+					// Not passed at all when the page has no confirm step, so a proposal is ignored.
+					...(onProposeRef.current
+						? {
+								onPropose: (change: ProposedChange) => onProposeRef.current?.(change),
+								proposableFields: () => declaredProposableFields(listsRef.current),
+								hasItem: (objectId: string) => givenIdsRef.current.has(objectId),
+							}
+						: {}),
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
 						const given = (result: DataQueryResult) => {

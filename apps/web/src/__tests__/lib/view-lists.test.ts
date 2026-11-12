@@ -2,9 +2,11 @@ import { type ObjectResponse, api } from '@/lib/api'
 import {
 	LIST_REFUSED_MESSAGE,
 	MAX_LIST_ROWS,
+	declaredProposableFields,
 	fetchListRows,
 	isListDeclaration,
 	parseListSource,
+	parseProposedValue,
 	projectObjectRow,
 	projectOpportunity,
 } from '@/lib/view-lists'
@@ -406,5 +408,44 @@ describe('fetchListRows: objects', () => {
 			limit: '20',
 			offset: '0',
 		})
+	})
+})
+
+describe('parseProposedValue', () => {
+	it('accepts a real day and a 24-hour time', () => {
+		expect(parseProposedValue('scheduled_date', '2026-11-14')).toBe('2026-11-14')
+		expect(parseProposedValue('scheduled_date', '2028-02-29')).toBe('2028-02-29')
+		expect(parseProposedValue('post_time', '09:30')).toBe('09:30')
+		expect(parseProposedValue('post_time', '23:59')).toBe('23:59')
+	})
+
+	it('refuses anything else, and any field it does not know', () => {
+		expect(parseProposedValue('scheduled_date', '2026-02-29')).toBeNull()
+		expect(parseProposedValue('scheduled_date', '2026-13-01')).toBeNull()
+		expect(parseProposedValue('scheduled_date', '2026-11-14 09:00')).toBeNull()
+		expect(parseProposedValue('post_time', '24:00')).toBeNull()
+		expect(parseProposedValue('post_time', '9:30')).toBeNull()
+		expect(parseProposedValue('status', 'done')).toBeNull()
+		expect(parseProposedValue('scheduled_date', null)).toBeNull()
+	})
+})
+
+describe('declaredProposableFields', () => {
+	const list = (fields: string[]) =>
+		parseListSource({ list: 'objects', params: { type: 'content', fields } })
+
+	it('is the proposable fields a view named in its lists, and nothing it did not name', () => {
+		const lists = new Map([
+			['a', list(['platform', 'scheduled_date'])],
+			['b', list(['cluster'])],
+			['refused', null],
+		])
+		expect([...declaredProposableFields(lists)]).toEqual(['scheduled_date'])
+	})
+
+	it('is empty for a view with no objects list', () => {
+		expect(declaredProposableFields(new Map()).size).toBe(0)
+		const opps = parseListSource({ list: 'opportunities' })
+		expect(declaredProposableFields(new Map([['o', opps]])).size).toBe(0)
 	})
 })

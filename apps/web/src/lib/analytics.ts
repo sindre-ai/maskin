@@ -412,7 +412,7 @@ export function trackLoopViewed(p: { entity_id: string }): void {
 // or approved one from its card beside the view (bet Act on items inside loop views). Sent on
 // the click, before the change is saved, so every saved change has a click to match. `surface`
 // is loop_view here, not the app-wide web; ids and action categories only, never titles or text.
-export type LoopViewCardAction = 'open' | 'status_change' | 'approve'
+export type LoopViewCardAction = 'open' | 'status_change' | 'approve' | 'date_change'
 
 export function trackLoopViewCardAction(p: {
 	entity_id: string

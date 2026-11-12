@@ -13,18 +13,35 @@ vi.mock('@/components/loops/loop-custom-view', () => ({
 		fileId,
 		onFailure,
 		onOpenItem,
+		onProposeChange,
+		reloadToken,
 	}: {
 		fileId: string
 		onFailure: (reason: string) => void
 		onOpenItem?: (id: string) => void
+		onProposeChange?: (change: { id: string; field: string; value: string }) => void
+		reloadToken?: number
 	}) => {
 		useEffect(() => {
 			if (fileId === 'bad') onFailure('The view file is not an HTML file.')
 		}, [fileId, onFailure])
 		return (
-			<div data-testid="view" data-can-open={onOpenItem ? 'yes' : 'no'}>
+			<div
+				data-testid="view"
+				data-can-open={onOpenItem ? 'yes' : 'no'}
+				data-can-propose={onProposeChange ? 'yes' : 'no'}
+				data-reload={reloadToken}
+			>
 				<button type="button" onClick={() => onOpenItem?.('obj-1')}>
 					open item
+				</button>
+				<button
+					type="button"
+					onClick={() =>
+						onProposeChange?.({ id: 'obj-1', field: 'scheduled_date', value: '2026-11-14' })
+					}
+				>
+					propose
 				</button>
 			</div>
 		)
@@ -43,6 +60,29 @@ vi.mock('@/components/loops/loop-view-item-panel', () => ({
 			</button>
 		</div>
 	),
+}))
+
+vi.mock('@/components/loops/loop-view-change-prompt', () => ({
+	LoopViewChangePrompt: ({
+		change,
+		onCancel,
+		onSaved,
+	}: {
+		change: { id: string; value: string } | null
+		onCancel: () => void
+		onSaved: () => void
+	}) =>
+		change ? (
+			<div data-testid="prompt">
+				{change.id}:{change.value}
+				<button type="button" onClick={onCancel}>
+					no
+				</button>
+				<button type="button" onClick={onSaved}>
+					yes
+				</button>
+			</div>
+		) : null,
 }))
 
 describe('LoopViewTab', () => {
@@ -90,5 +130,30 @@ describe('LoopViewTab', () => {
 		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" />)
 		fireEvent.click(screen.getByText('open item'))
 		expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('panel'))
+	})
+
+	it('ignores a proposed change, and shows no question, when the flag is off', () => {
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" />)
+		expect(screen.getByTestId('view')).toHaveAttribute('data-can-propose', 'no')
+		expect(screen.queryByTestId('prompt')).toBeNull()
+	})
+
+	it('asks before anything is saved, and a no leaves the view as it was', () => {
+		flag.on = true
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" />)
+		fireEvent.click(screen.getByText('propose'))
+		expect(screen.getByTestId('prompt')).toHaveTextContent('obj-1:2026-11-14')
+		fireEvent.click(screen.getByText('no'))
+		expect(screen.queryByTestId('prompt')).toBeNull()
+		expect(screen.getByTestId('view')).toHaveAttribute('data-reload', '0')
+	})
+
+	it('reloads the view after a yes saved the change', () => {
+		flag.on = true
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" />)
+		fireEvent.click(screen.getByText('propose'))
+		fireEvent.click(screen.getByText('yes'))
+		expect(screen.queryByTestId('prompt')).toBeNull()
+		expect(screen.getByTestId('view')).toHaveAttribute('data-reload', '1')
 	})
 })

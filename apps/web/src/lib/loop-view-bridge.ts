@@ -1,6 +1,7 @@
 import type { DataQuerySpec } from '@maskin/shared'
 import {
 	BRIDGE_OPEN_MESSAGE,
+	BRIDGE_PROPOSE_MESSAGE,
 	BRIDGE_QUERY_MESSAGE,
 	BRIDGE_RESULT_MESSAGE,
 	VIEWER_DOC_SIZE_MESSAGE,
@@ -11,6 +12,8 @@ import {
 	type ListAnswer,
 	type ListSource,
 	type ListSourceEntry,
+	type ProposableField,
+	parseProposedValue,
 } from './view-lists'
 
 // Host side of the loop-view data bridge (see the bridge section in mini-app.ts
@@ -26,7 +29,18 @@ import {
 //     the frame wrote. The file viewer gives only rows its Refresh click fetched; the loop
 //     page fetches a declared list for the viewer when the frame asks, like a count;
 //   - an open message carries one object id and nothing else: it is used only if it is a
-//     UUID, and the host decides where that goes (never a web address from the frame).
+//     UUID, and the host decides where that goes (never a web address from the frame);
+//   - a propose message is a question, not a save: it is passed on only when the host opts in,
+//     the id is an item the host gave this view, the field is one the view named in a list and
+//     the app allows, and the value has that field's shape. The host then asks the person and
+//     saves only after their yes. The frame is never told how it went.
+
+/** A change a view proposed, already checked: a UUID, a proposable field and a value of that field's shape. */
+export interface ProposedChange {
+	id: string
+	field: ProposableField
+	value: string
+}
 
 export interface BridgeHost {
 	/** The iframe's current window; compared against event.source. */
@@ -48,6 +62,12 @@ export interface BridgeHost {
 	listAnswer?: (name: string, source: ListSource) => ListAnswer | Promise<ListAnswer>
 	/** Takes the viewer to this object's page. Only ever called with a UUID. */
 	onOpen?: (objectId: string) => void
+	/** Asks the viewer to confirm a change the view proposed. Never saves by itself. A host that leaves it off ignores proposals. */
+	onPropose?: (proposal: ProposedChange) => void
+	/** The fields the view may propose a change to: those it named in a list and the app allows. */
+	proposableFields?: () => ReadonlySet<string>
+	/** Whether this host gave the view this item (it came back in one of the view's lists). */
+	hasItem?: (objectId: string) => boolean
 	post: (message: Record<string, unknown>) => void
 	onDocHeight: (height: number) => void
 	/** The view's content is wider than its frame: the width it needs. Optional; hosts that never scroll sideways skip it. */
@@ -86,6 +106,8 @@ export async function handleBridgeMessage(
 		type?: unknown
 		id?: unknown
 		name?: unknown
+		field?: unknown
+		value?: unknown
 		h?: unknown
 		w?: unknown
 		cw?: unknown
@@ -101,6 +123,15 @@ export async function handleBridgeMessage(
 	}
 	if (data.type === BRIDGE_OPEN_MESSAGE) {
 		if (typeof data.id === 'string' && UUID_RE.test(data.id)) host.onOpen?.(data.id)
+		return
+	}
+	if (data.type === BRIDGE_PROPOSE_MESSAGE) {
+		if (!host.onPropose) return
+		const { id, field, value } = data
+		if (typeof id !== 'string' || !UUID_RE.test(id) || !host.hasItem?.(id)) return
+		if (typeof field !== 'string' || !host.proposableFields?.().has(field)) return
+		const accepted = parseProposedValue(field, value)
+		if (accepted !== null) host.onPropose({ id, field: field as ProposableField, value: accepted })
 		return
 	}
 	if (data.type !== BRIDGE_QUERY_MESSAGE) return
