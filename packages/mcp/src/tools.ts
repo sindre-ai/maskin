@@ -1554,7 +1554,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread. Ignored when thread_root_id or sub_chat_session_id is given.',
+					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread; a turn started by a top-level message always posts to the main timeline. People start threads, you continue them. Ignored when thread_root_id or sub_chat_session_id is given.',
 				),
 			wait: z
 				.boolean()

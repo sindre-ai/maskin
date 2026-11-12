@@ -696,10 +696,11 @@ export const postMessageSchema = z
 		thread_root_id: z.number().int().positive().optional(),
 		// With thread_root_id: also show the reply in the main timeline.
 		also_in_channel: z.boolean().optional(),
-		// An agent posting mid-turn lands in the thread of the message that started the turn when
-		// no thread_root_id is given; when that message is top-level, the post starts a thread under
-		// it. true opts out and posts to the main timeline. Ignored when
-		// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+		// An agent posting mid-turn continues the thread the turn's message was written in when
+		// no thread_root_id is given; a turn started by a top-level message posts to the main
+		// timeline, since people start threads and agents do not. true opts out of the thread.
+		// Ignored when thread_root_id is given, and for anyone but an agent in its own session
+		// for this chat.
 		top_level: z.boolean().optional(),
 	})
 	.refine((v) => v.content.length > 0 || hasAttachments(v.metadata), {
