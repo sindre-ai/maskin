@@ -10,6 +10,7 @@ import {
 	triggers,
 	workspaceMembers,
 } from '@maskin/db/schema'
+import { TARGET_OF_RELATIONSHIP_TYPE, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
 	type LoopTarget,
 	SAFE_METADATA_FIELD_NAME_RE,
@@ -24,7 +25,7 @@ import {
 	normalizeTags,
 	readChanges,
 } from '@maskin/shared'
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -196,6 +197,44 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 	return cleaned.length > 0 ? cleaned : null
 }
 
+/** Target objects in these statuses are not shown on a flow. */
+const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
+
+type TargetObjectRow = {
+	title: string
+	driver: string | null
+	metadata: unknown
+}
+
+/**
+ * A flow's targets list from its target objects (linked with `target_of`).
+ * Same row shape as `readLoopTargets`: title is the label, driver the owner.
+ * Where the object has no `actual` number, the actual (and `pace_policy`) of
+ * the old row with the same label is kept, so a hand-set actual still shows.
+ * Rows that fail the shape check are dropped, like the old rows. `null` when
+ * nothing usable is left, so the caller can fall back to the old rows.
+ */
+function targetsFromObjects(
+	rows: TargetObjectRow[],
+	legacy: LoopTarget[] | null,
+): LoopTarget[] | null {
+	const cleaned: LoopTarget[] = []
+	for (const row of rows) {
+		const meta = (row.metadata as Record<string, unknown> | null) ?? {}
+		const old = legacy?.find((l) => l.label === row.title)
+		const parsed = loopTargetSchema.safeParse({
+			label: row.title,
+			source: meta.source,
+			actual: typeof meta.actual === 'number' ? meta.actual : old?.actual,
+			target: meta.target,
+			ownerActorId: row.driver ?? undefined,
+			pace_policy: old?.pace_policy,
+		})
+		if (parsed.success) cleaned.push(parsed.data)
+	}
+	return cleaned.length > 0 ? cleaned : null
+}
+
 /**
  * Everything the loop reads need to decide "is this member closed", for a set of loops:
  * the per-type closed statuses, the `closed_when` rules, and the SQL predicate over the
@@ -311,6 +350,34 @@ app.openapi(listLoopsRoute, (async (c) => {
 	}
 
 	const loopIds = loopRows.map((l) => l.id)
+
+	// Target objects linked to these loops (source = target object, target =
+	// loop). Oldest link first, so the list keeps a steady order.
+	const targetObjectRows = await db
+		.select({
+			loopId: relationships.targetId,
+			title: objects.title,
+			driver: objects.driver,
+			metadata: objects.metadata,
+		})
+		.from(relationships)
+		.innerJoin(objects, eq(objects.id, relationships.sourceId))
+		.where(
+			and(
+				eq(relationships.type, TARGET_OF_RELATIONSHIP_TYPE),
+				inArray(relationships.targetId, loopIds),
+				eq(objects.workspaceId, workspaceId),
+				eq(objects.type, TARGET_TYPE),
+				notInArray(objects.status, HIDDEN_TARGET_STATUSES),
+			),
+		)
+		.orderBy(asc(relationships.createdAt), asc(objects.createdAt))
+	const targetObjectsByLoop = new Map<string, TargetObjectRow[]>()
+	for (const row of targetObjectRows) {
+		const list = targetObjectsByLoop.get(row.loopId) ?? []
+		list.push(row)
+		targetObjectsByLoop.set(row.loopId, list)
+	}
 
 	// Trigger ids referenced in metadata.trigger_ids. Membership lives on the
 	// loop row (per T1(b)) since triggers can outlive their loop. Collect
@@ -573,7 +640,11 @@ app.openapi(listLoopsRoute, (async (c) => {
 				typeof meta.close_condition === 'string' && meta.close_condition.length > 0
 					? meta.close_condition
 					: null
-			const targets = readLoopTargets(meta)
+			// Target objects first; the rows in metadata.targets stay as the
+			// fallback for a flow with no target objects yet.
+			const legacyTargets = readLoopTargets(meta)
+			const targets =
+				targetsFromObjects(targetObjectsByLoop.get(row.id) ?? [], legacyTargets) ?? legacyTargets
 			const tags = normalizeTags(meta.tags)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
