@@ -207,6 +207,46 @@ describe('scheduling the next step for yourself', () => {
 	})
 })
 
+describe('editing a step that has a wake-up', () => {
+	it('refuses a new owner and leaves the wake-up and step alone', async () => {
+		const { agent, bet, workspace } = await setup()
+		const other = await insertActor(db, { type: 'agent', name: 'Other agent' })
+		await ensureWorkspaceMember(db, workspace.id, other.id)
+		const made = (await (
+			await schedule(agent.id, bet.id, { action: 'Check later', due_at: tomorrow() })
+		).json()) as { wake_up: { trigger_id: string }; next_step: { id: string } }
+
+		const res = await closeStep(agent.id, bet.id, { owner_id: other.id })
+		expect(res.status).toBe(409)
+		expect(JSON.stringify(await res.json())).toContain('schedule_next_step')
+		expect((await readStep(made.next_step.id))?.ownerActorId).toBe(agent.id)
+		expect((await readTrigger(made.wake_up.trigger_id))?.targetActorId).toBe(agent.id)
+	})
+
+	it('allows naming the current owner again', async () => {
+		const { agent, bet } = await setup()
+		await schedule(agent.id, bet.id, { action: 'Check later', due_at: tomorrow() })
+		const res = await closeStep(agent.id, bet.id, { owner_id: agent.id })
+		expect(res.status).toBe(200)
+	})
+
+	it('rewrites the wake-up prompt when the action changes', async () => {
+		const { agent, bet } = await setup()
+		const made = (await (
+			await schedule(agent.id, bet.id, { action: 'Read the numbers', due_at: tomorrow() })
+		).json()) as { wake_up: { trigger_id: string } }
+		const before = await readTrigger(made.wake_up.trigger_id)
+
+		const res = await closeStep(agent.id, bet.id, { action: 'Write the summary' })
+		expect(res.status).toBe(200)
+		const after = await readTrigger(made.wake_up.trigger_id)
+		expect(after?.actionPrompt).toContain('Write the summary')
+		expect(after?.actionPrompt).not.toContain('Read the numbers')
+		expect(after?.name).toContain('Write the summary')
+		expect(after?.config).toEqual(before?.config)
+	})
+})
+
 describe('the cap on wake-ups left by runs that started on their own', () => {
 	it('allows a few, then refuses the next one with a clear message', async () => {
 		const { human, agent, workspace } = await setup()

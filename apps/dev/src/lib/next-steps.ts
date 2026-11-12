@@ -229,16 +229,34 @@ async function cancelWake(tx: Transaction, ctx: WriteContext, step: NextStepRow)
 	})
 }
 
-/** Move the step's wake-up to a new time and switch it back on if it had already gone off. */
-async function rescheduleWake(tx: Transaction, ctx: WriteContext, step: NextStepRow, dueAt: Date) {
+/**
+ * Bring the step's wake-up in line with the step. A new time also switches it back on if it had
+ * already gone off; a new action rewrites the prompt it will wake the owner with.
+ */
+async function syncWake(
+	tx: Transaction,
+	ctx: WriteContext,
+	step: NextStepRow,
+	change: { dueAt?: Date; action?: string },
+) {
 	if (!step.wakeTriggerId) return
 	const [trigger] = await tx.select().from(triggers).where(eq(triggers.id, step.wakeTriggerId))
 	if (!trigger || trigger.type !== 'reminder') return
 	await tx
 		.update(triggers)
 		.set({
-			config: { ...(trigger.config as Record<string, unknown>), scheduled_at: dueAt.toISOString() },
-			enabled: true,
+			...(change.dueAt
+				? {
+						config: {
+							...(trigger.config as Record<string, unknown>),
+							scheduled_at: change.dueAt.toISOString(),
+						},
+						enabled: true,
+					}
+				: {}),
+			...(change.action
+				? { name: wakeName(change.action), actionPrompt: wakePrompt(change.action) }
+				: {}),
 			updatedAt: new Date(),
 		})
 		.where(eq(triggers.id, trigger.id))
@@ -368,6 +386,21 @@ export async function updateNextStep(
 	if (blockedOn) await assertBlockedOnExists(tx, object, blockedOn)
 	if (input.owner_id) {
 		await assertWorkspaceActor(tx, object.workspaceId, input.owner_id, 'owner_id')
+		// The wake-up is set for the owner, so a new owner would leave the old one woken and the
+		// new one not. Handing a step on is a new schedule, not an edit.
+		if (input.owner_id !== live.ownerActorId && live.wakeTriggerId) {
+			const [wake] = await tx
+				.select({ id: triggers.id })
+				.from(triggers)
+				.where(eq(triggers.id, live.wakeTriggerId))
+				.limit(1)
+			if (wake) {
+				throw new NextStepError(
+					'CONFLICT',
+					'This step has a wake-up set for its current owner, so the owner cannot be changed here. Use schedule_next_step with replace: true and the new owner_id: it cancels the old wake-up and sets up the right one.',
+				)
+			}
+		}
 	}
 
 	// Blocked keeps what it waits on unless a new one is given; every other state clears it.
@@ -403,11 +436,18 @@ export async function updateNextStep(
 	if (!row) throw new Error('next step update returned no row')
 
 	// The wake-up follows the step: closing cancels it, a new time or coming back from blocked
-	// moves it.
+	// moves it, a new action rewrites its prompt.
 	if (closing) {
 		await cancelWake(tx, ctx, live)
-	} else if (status === 'open' && (input.due_at || live.status === 'blocked')) {
-		await rescheduleWake(tx, ctx, live, row.dueAt)
+	} else {
+		const timeMoved = status === 'open' && (Boolean(input.due_at) || live.status === 'blocked')
+		const actionChanged = row.action !== live.action
+		if (timeMoved || actionChanged) {
+			await syncWake(tx, ctx, live, {
+				dueAt: timeMoved ? row.dueAt : undefined,
+				action: actionChanged ? row.action : undefined,
+			})
+		}
 	}
 
 	await recordEvent(tx, {
@@ -438,6 +478,11 @@ export interface ScheduleContext extends WriteContext {
 	/** From assertScheduledWorkWithinCap: set when the calling run started on its own. */
 	createdFromStartReason: string | null
 }
+
+const wakeName = (action: string) => `Next step: ${childTaskTitle(action)}`
+
+const wakePrompt = (action: string) =>
+	`Your next step is due: ${action}\n\nDo it, then close the step with update_next_step (done, with the result as evidence) and set the following one with schedule_next_step. If it cannot be done, say why and close it as skipped. ${WAKE_PROMPT_LATE_LINE}`
 
 /** A task title is a short label; the action can be a full sentence. */
 function childTaskTitle(action: string) {
@@ -567,10 +612,10 @@ export async function scheduleNextStep(
 		.insert(triggers)
 		.values({
 			workspaceId: object.workspaceId,
-			name: `Next step: ${childTaskTitle(input.action)}`,
+			name: wakeName(input.action),
 			type: 'reminder',
 			config: { scheduled_at: dueAt.toISOString(), object_id: object.id, step_id: step.id },
-			actionPrompt: `Your next step is due: ${input.action}\n\nDo it, then close the step with update_next_step (done, with the result as evidence) and set the following one with schedule_next_step. If it cannot be done, say why and close it as skipped. ${WAKE_PROMPT_LATE_LINE}`,
+			actionPrompt: wakePrompt(input.action),
 			targetActorId: ownerId,
 			enabled: true,
 			createdBy: ctx.actorId,
