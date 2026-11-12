@@ -1836,6 +1836,165 @@ ${surviving}
 		})
 	})
 
+	describe('replies that end with work still to do', () => {
+		function withRetry(options: { env?: NodeJS.ProcessEnv } = {}) {
+			const calls: Array<{ sessionId: string; payload: unknown }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				retryTurn: async (sessionId, payload) => {
+					calls.push({ sessionId, payload })
+				},
+				delay: async () => {},
+				...options,
+			})
+			return { instance, calls }
+		}
+
+		const announce = (what: string) =>
+			`${resultLine({ result: `Done with that part. Next I'll ${what}.` })}\n`
+
+		it('posts the reply, then sends the turn back once as a correction on the same session', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			// The human still reads what the agent did.
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('run the phone lookups')
+
+			expect(calls).toHaveLength(1)
+			expect(calls[0]?.sessionId).toBe(session.id)
+			const payload = calls[0]?.payload as { message?: { role?: string; content?: string } }
+			expect(payload.message?.role).toBe('user')
+			expect(payload.message?.content).toContain('[system correction]')
+			expect(payload.message?.content).toContain('next step')
+		})
+
+		it('sends a permission question back when the step sends nothing', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${toolUseLine('Bash')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ result: 'Six companies found. Do you want me to go ahead and score them?' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(1)
+		})
+
+		it('leaves a courtesy closing alone when the turn ran no tool', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${resultLine({ result: 'The cap is two. Let me know if you need more.' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+			expect(calls).toHaveLength(0)
+		})
+
+		it("does not send back a question about a step that sends in a person's name", async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${toolUseLine('Bash')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ result: 'The draft is ready. Do you want me to send the email to Hans?' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(0)
+		})
+
+		it('stops after two send-backs on one chat message and lets the third reply end the turn', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run lookup A'))
+			await feed(session.id, announce('run lookup B'))
+			await feed(session.id, announce('run lookup C'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(2)
+			expect(await messagesFor(conversationId)).toHaveLength(3)
+		})
+
+		it('gives a new human message its own two send-backs', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run lookup A'))
+			await feed(session.id, announce('run lookup B'))
+			await feed(session.id, announce('run lookup C'))
+			await feed(session.id, `${userTurnLine(9001)}\n`)
+			await feed(session.id, announce('run lookup D'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(3)
+		})
+
+		it('does not send back a replayed reply a second time', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(1)
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
+
+		it('does nothing when the killswitch is off, and still posts the reply', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry({ env: { FEATURE_TURN_SEND_BACK: '0' } })
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+			expect(calls).toHaveLength(0)
+		})
+
+		it('does not send back a helper session, which ends on its result', async () => {
+			const session = await seedSession({ config: { stop_on_result: true } })
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(0)
+		})
+	})
+
 	describe('turns whose last model call came back empty', () => {
 		const PRIMARY = 'deepseek/deepseek-v4-flash-0731'
 		const FALLBACK = 'deepseek/deepseek-v4-flash'
