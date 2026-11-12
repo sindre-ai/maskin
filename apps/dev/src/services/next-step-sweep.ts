@@ -97,7 +97,9 @@ export function bucketStart(now: Date, mode: 'record' | 'wake'): Date {
 
 /**
  * Of `objectIds`, those with a run on them now, or one that started in the last hour: by any
- * agent or person, from any mechanism. The sweep leaves these alone.
+ * agent or person, from any mechanism. The sweep leaves these alone. Two readings: sessions
+ * started from the object, and the object's own active_session_id (the lease) when it points at a
+ * session still running. A lease whose session has ended is stale and does not count.
  */
 export async function findBusyObjectIds(
 	db: Database,
@@ -117,7 +119,20 @@ export async function findBusyObjectIds(
 				),
 			),
 		)
-	return new Set(rows.flatMap((r) => (r.id ? [r.id] : [])))
+	const busy = new Set(rows.flatMap((r) => (r.id ? [r.id] : [])))
+	const leased = await db
+		.select({ id: objects.id })
+		.from(objects)
+		.innerJoin(sessions, eq(sessions.id, objects.activeSessionId))
+		.where(
+			and(
+				inArray(objects.id, objectIds),
+				isNull(sessions.completedAt),
+				notInArray(sessions.status, [...TERMINAL_STATUSES]),
+			),
+		)
+	for (const r of leased) busy.add(r.id)
+	return busy
 }
 
 /**

@@ -284,6 +284,29 @@ describe('NextStepSweep', () => {
 			expect(startSessionMock).not.toHaveBeenCalled()
 		})
 
+		it('an object whose active session is still running, even if it was not started from it', async () => {
+			const bet = await overdueBet()
+			const running = await insertSession(db, workspaceId, driverId, driverId, {
+				status: 'running',
+				initiatedFromObjectId: null,
+			})
+			await db.update(objects).set({ activeSessionId: running.id }).where(eq(objects.id, bet.id))
+			await sweep().sweepWorkspace(workspaceId)
+			expect(startSessionMock).not.toHaveBeenCalled()
+		})
+
+		it('wakes an object whose active session field points at a session that has ended', async () => {
+			const bet = await overdueBet()
+			const ended = await insertSession(db, workspaceId, driverId, driverId, {
+				status: 'completed',
+				completedAt: new Date(Date.now() - 3 * HOUR),
+				initiatedFromObjectId: null,
+			})
+			await db.update(objects).set({ activeSessionId: ended.id }).where(eq(objects.id, bet.id))
+			await sweep().sweepWorkspace(workspaceId)
+			expect(startSessionMock).toHaveBeenCalledTimes(1)
+		})
+
 		it('an object a run started on within the hour', async () => {
 			const bet = await overdueBet()
 			await insertSession(db, workspaceId, driverId, driverId, {
