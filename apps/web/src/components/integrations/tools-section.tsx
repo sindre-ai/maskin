@@ -280,6 +280,8 @@ function ServerRow({
 			subtitle={describeServer(row)}
 			tone="connected"
 			status={{ tone: 'ok', label: 'Active' }}
+			// The pencil lives in the opened section, so the row comes back open to take focus.
+			defaultOpen={restoreFocus}
 			actions={
 				canEdit &&
 				(confirmDelete ? (
