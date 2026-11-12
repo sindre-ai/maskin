@@ -86,19 +86,10 @@ private struct AgentsContainer: View {
 			.id(id)
 		}
 		.task { await store.start() }
-		.task { await loadTeams() }
 		.onDisappear { store.stop() }
 	}
 
 	private var displayAction: (() -> Void)? { { showDisplay = true } }
-
-	/// Teams are the flows that list an agent: a best-effort read, so a failure just leaves every
-	/// agent without a team (and the team chips hidden).
-	private func loadTeams() async {
-		guard let workspaceID = environment.workspaceId else { return }
-		let api = APILoopsSource(client: environment.client, workspaceID: workspaceID)
-		if let flows = try? await api.loops() { store.setFlows(flows) }
-	}
 
 	private var splitBody: some View {
 		NavigationSplitView {
@@ -124,7 +115,6 @@ private struct AgentsContainer: View {
 			}
 		}
 		.task { await store.start() }
-		.task { await loadTeams() }
 		.onDisappear { store.stop() }
 	}
 }

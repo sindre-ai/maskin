@@ -572,3 +572,57 @@ describe('NotificationPushFanout clear on handled', () => {
 		expect(sender.sendClearToActor).not.toHaveBeenCalled()
 	})
 })
+
+describe('NotificationPushFanout channel switches', () => {
+	const prefsRow = (over: Record<string, unknown>) => ({
+		timezone: null,
+		quietHoursStart: null,
+		quietHoursEnd: null,
+		categories: { needs_you: true, conversation: true, digest: true, tips: true },
+		browserCategories: null,
+		mutedWorkspaceIds: [],
+		...over,
+	})
+
+	async function run(prefs: Record<string, unknown>) {
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [[notif()], [prefsRow(prefs)]]
+		const phone = { channelKind: 'push', isEnabled: () => true, sendToActor: vi.fn() }
+		const browser = { channelKind: 'browser', isEnabled: () => true, sendToActor: vi.fn() }
+		const fanout = new NotificationPushFanout(db, new EventEmitter() as never, [
+			phone as unknown as PushChannel,
+			browser as unknown as PushChannel,
+		])
+		await fanout.handleEvent(event)
+		return { phone, browser }
+	}
+
+	it('sends to the phone and the browser when both are on', async () => {
+		const { phone, browser } = await run({})
+		expect(phone.sendToActor).toHaveBeenCalledTimes(1)
+		expect(browser.sendToActor).toHaveBeenCalledTimes(1)
+	})
+
+	it('keeps the phone push when only the browser switch is off', async () => {
+		const { phone, browser } = await run({ browserCategories: { conversation: false } })
+		expect(phone.sendToActor).toHaveBeenCalledTimes(1)
+		expect(browser.sendToActor).not.toHaveBeenCalled()
+	})
+
+	it('keeps the browser push when only the push switch is off', async () => {
+		const { phone, browser } = await run({
+			categories: { needs_you: true, conversation: false, digest: true, tips: true },
+			browserCategories: { conversation: true },
+		})
+		expect(phone.sendToActor).not.toHaveBeenCalled()
+		expect(browser.sendToActor).toHaveBeenCalledTimes(1)
+	})
+
+	it('treats a browser switch never asked about as the push switch', async () => {
+		const { phone, browser } = await run({
+			categories: { needs_you: true, conversation: false, digest: true, tips: true },
+		})
+		expect(phone.sendToActor).not.toHaveBeenCalled()
+		expect(browser.sendToActor).not.toHaveBeenCalled()
+	})
+})

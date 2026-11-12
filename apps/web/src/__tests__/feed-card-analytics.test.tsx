@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +25,9 @@ const trackForyouCardShown = vi.fn()
 const trackForyouCardMarkedRead = vi.fn()
 const trackForyouCardAction = vi.fn()
 vi.mock('@/lib/analytics', () => ({
+	// The real helper: it only does arithmetic, and the test reads its result.
+	secondsSince: (iso: string | null) =>
+		iso ? Math.round((Date.now() - Date.parse(iso)) / 1000) : null,
 	trackForyouCardShown: (...args: unknown[]) => trackForyouCardShown(...args),
 	trackForyouCardMarkedRead: (...args: unknown[]) => trackForyouCardMarkedRead(...args),
 	trackForyouCardAction: (...args: unknown[]) => trackForyouCardAction(...args),
@@ -110,7 +113,32 @@ function renderCard(overrides: Partial<React.ComponentProps<typeof FeedCard>> = 
 	return { props, ...render(<FeedCard {...props} />, { wrapper: TestWrapper }) }
 }
 
+// Drives the IntersectionObserver the card creates: reports the card as `ratio` visible.
+const observers: Array<(entries: IntersectionObserverEntry[]) => void> = []
+class FakeIntersectionObserver {
+	constructor(callback: (entries: IntersectionObserverEntry[]) => void) {
+		observers.push(callback)
+	}
+	observe() {}
+	unobserve() {}
+	disconnect() {}
+	takeRecords() {
+		return []
+	}
+}
+function scrollIntoView(ratio: number) {
+	const entry = {
+		isIntersecting: ratio > 0,
+		intersectionRatio: ratio,
+		intersectionRect: { height: 10 },
+	} as IntersectionObserverEntry
+	// The newest observer is the live one; earlier ones belong to unmounted cards.
+	act(() => observers[observers.length - 1]?.([entry]))
+}
+
 beforeEach(() => {
+	observers.length = 0
+	vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 	trackForyouCardShown.mockClear()
 	trackForyouCardMarkedRead.mockClear()
 	trackForyouCardAction.mockClear()
@@ -118,6 +146,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+	vi.unstubAllGlobals()
 	__resetImpressionsForTesting()
 })
 
@@ -142,7 +171,7 @@ describe('FeedCard analytics wiring', () => {
 		)
 	})
 
-	it('remounting the same card_id emits foryou_card_shown exactly once — module-scoped dedup', () => {
+	it('emits foryou_card_shown only once the card is in view, and once per card across remounts', () => {
 		const item = buildItem()
 		const props = {
 			workspaceId: 'ws-1',
@@ -156,6 +185,11 @@ describe('FeedCard analytics wiring', () => {
 		} as const
 
 		const first = render(<FeedCard {...props} />, { wrapper: TestWrapper })
+		// Rendered but off screen: nothing yet.
+		expect(trackForyouCardShown).not.toHaveBeenCalled()
+		scrollIntoView(0.2)
+		expect(trackForyouCardShown).not.toHaveBeenCalled()
+		scrollIntoView(0.8)
 		expect(trackForyouCardShown).toHaveBeenCalledTimes(1)
 		first.unmount()
 
@@ -164,6 +198,26 @@ describe('FeedCard analytics wiring', () => {
 		// the impression, inflating volume 5-8x. Module-scoped dedup makes it a
 		// no-op.
 		render(<FeedCard {...props} />, { wrapper: TestWrapper })
+		scrollIntoView(1)
 		expect(trackForyouCardShown).toHaveBeenCalledTimes(1)
+	})
+
+	it('foryou_card_action carries seconds since the ask was raised and the run that raised it', async () => {
+		const user = userEvent.setup()
+		const raisedAt = new Date(Date.now() - 90_000).toISOString()
+		renderCard({
+			expanded: true,
+			item: buildItem({
+				latest_mention: buildMention({ created_at: raisedAt, session_id: 'run-1' }),
+			}),
+		})
+
+		await user.click(screen.getByRole('button', { name: /Merge now/ }))
+
+		expect(trackForyouCardAction).toHaveBeenCalledTimes(1)
+		const call = trackForyouCardAction.mock.calls[0]?.[0] as { seconds_to_action: number }
+		expect(call).toMatchObject({ card_id: 'task-1', session_id: 'run-1' })
+		expect(call.seconds_to_action).toBeGreaterThanOrEqual(90)
+		expect(call.seconds_to_action).toBeLessThan(100)
 	})
 })

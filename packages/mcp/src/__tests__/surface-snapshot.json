@@ -86,6 +86,7 @@
 			"kind",
 			"mime_type",
 			"name",
+			"tags",
 			"workspace_id"
 		],
 		"create_loop": [
@@ -157,13 +158,12 @@
 			"workspace_id"
 		],
 		"create_relationship": ["source_id", "target_id", "type", "workspace_id"],
-		"create_session": [
+		"create_sub_chat": [
 			"action_prompt",
 			"actor_id",
 			"initiated_from_object_id",
 			"source_session_id",
 			"spawned_by_message_id",
-			"wait",
 			"workspace_id"
 		],
 		"create_trigger": [
@@ -171,6 +171,7 @@
 			"config",
 			"enabled",
 			"name",
+			"run_at",
 			"target_actor_id",
 			"type",
 			"workspace_id"
@@ -179,6 +180,7 @@
 		"create_workspace_field": ["field_type", "name", "required", "type", "values", "workspace_id"],
 		"create_workspace_skill": ["content", "name", "workspace_id"],
 		"delete_extension": ["id", "workspace_id"],
+		"delete_agent": ["id", "workspace_id"],
 		"delete_file": ["id", "workspace_id"],
 		"delete_loop": ["id", "workspace_id"],
 		"delete_object": ["id", "workspace_id"],
@@ -217,6 +219,7 @@
 			"workspace_id"
 		],
 		"get_started": ["confirm", "loop_id", "workspace_id", "workspace_name"],
+		"get_trigger": ["id", "workspace_id"],
 		"get_workspace_schema": ["type", "workspace_id"],
 		"get_workspace_skill": ["name", "workspace_id"],
 		"gmail_send_email": [
@@ -238,7 +241,8 @@
 			"workspace_id"
 		],
 		"list_extensions": ["cursor", "limit", "workspace_id"],
-		"list_files": ["cursor", "kind", "limit", "q", "workspace_id"],
+		"list_file_tags": ["workspace_id"],
+		"list_files": ["cursor", "kind", "limit", "q", "tags", "tags_match", "workspace_id"],
 		"list_integration_providers": [],
 		"list_integrations": ["cursor", "limit", "workspace_id"],
 		"list_keychain_credentials": ["workspace_id"],
@@ -285,6 +289,7 @@
 		"list_workspace_skills": ["cursor", "limit", "workspace_id"],
 		"list_workspaces": ["cursor", "limit"],
 		"mark_read": ["entity_id", "entity_type", "last_event_id", "workspace_id"],
+		"merge_file_tags": ["from", "into", "workspace_id"],
 		"pause_session": ["id", "workspace_id"],
 		"post_conversation_message": [
 			"content",
@@ -377,6 +382,7 @@
 			"metadata.voice_session_id",
 			"workspace_id"
 		],
+		"rename_file_tag": ["from", "to", "workspace_id"],
 		"request_keychain_access": ["credential_name", "hint", "workspace_id"],
 		"request_keychain_credential": [
 			"hint",
@@ -401,6 +407,7 @@
 		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
+		"transcribe_file": ["id", "language", "workspace_id"],
 		"traverse_graph": [
 			"direction",
 			"edge_type_allow_list",
@@ -447,6 +454,7 @@
 			"kind",
 			"mime_type",
 			"name",
+			"tags",
 			"workspace_id"
 		],
 		"update_integration_access": [

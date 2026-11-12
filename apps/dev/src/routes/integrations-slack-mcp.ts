@@ -9,7 +9,6 @@ import {
 	createSlackMcpServer,
 	isSlackBotToken,
 } from '../lib/integrations/providers/slack/mcp-server'
-import { directPostChannelsFromConfig } from '../lib/integrations/providers/slack/send-object'
 import { toolGateFor } from '../lib/integrations/tool-gate'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
@@ -37,7 +36,6 @@ async function resolveSlackBotToken(
 	botToken: string
 	integrationId: string
 	slackTeamId: string | undefined
-	directPostChannels: string[] | undefined
 } | null> {
 	const [integration] = await db
 		.select()
@@ -79,7 +77,6 @@ async function resolveSlackBotToken(
 		botToken: accessToken as string,
 		integrationId: integration.id,
 		slackTeamId: integration.externalId ?? undefined,
-		directPostChannels: directPostChannelsFromConfig(integration.config),
 	}
 }
 
@@ -150,7 +147,6 @@ app.post('/', async (c) => {
 			actorId,
 			slackTeamId: resolved.slackTeamId,
 			db,
-			directPostChannels: resolved.directPostChannels,
 		},
 		gate,
 	)

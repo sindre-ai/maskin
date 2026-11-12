@@ -32,6 +32,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
 	[
 		'POST',
+		'/api/email/stop',
+		'the stop link in an email, opened signed out and authenticated by its signed token',
+	],
+	[
+		'POST',
+		'/api/email/pick-dismiss',
+		'the Not useful link under a Marketplace pick, opened signed out and authenticated by its signed token',
+	],
+	[
+		'POST',
 		'/api/voice-sessions/:id/hangup',
 		'ends the caller’s own call; a member demoted to viewer mid-call must still be able to hang up, or the call keeps running and billing',
 	],
@@ -86,6 +96,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/oauth/grants/:id', 'ends a Claude connection of the caller only'],
 	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group B leftovers: no handler logic or no workspace data.
+	['DELETE', '/api/integrations/deepdots/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
@@ -184,6 +195,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/account/delete',
 		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
 	],
+	[
+		'POST',
+		'/api/account/api-keys',
+		'a person’s own keys are account-level, not workspace data: every role, viewers included, may make one; it acts only on the caller',
+	],
+	[
+		'DELETE',
+		'/api/account/api-keys/:id',
+		'revoking your own key must work for every role, viewers included; it acts only on the caller’s own keys',
+	],
 	// Group D leftovers: the two routes that are not gated on a human admin or owner.
 	[
 		'POST',
@@ -207,6 +228,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
  * entry needs a viewer 403 case in integration/viewer-read-only.test.ts.
  */
 export const HAND_GATED_ROUTES: OpenRoute[] = [
+	['POST', '/api/integrations/deepdots/mcp', 'MCP endpoint, tools read as the workspace'],
 	['POST', '/api/integrations/google-drive/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	[
@@ -215,11 +237,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP endpoint, tools read as the workspace',
 	],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
-	[
-		'PUT',
-		'/api/integrations/slack/direct-post-channels',
-		'human admin or owner only, checked in the handler (a viewer gets 403)',
-	],
 	[
 		'PUT',
 		'/api/send-permissions',

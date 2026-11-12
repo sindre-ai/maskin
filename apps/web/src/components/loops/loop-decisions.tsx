@@ -63,7 +63,12 @@ export function LoopDecisions({
 	}
 
 	return (
-		<section aria-label="Decisions" data-testid="loop-needs-you" className="flex flex-col gap-3">
+		<section
+			id="loop-decisions"
+			aria-label="Decisions"
+			data-testid="loop-needs-you"
+			className="flex flex-col gap-3"
+		>
 			<h2 className="px-1 text-[13px] font-semibold text-muted-foreground">Decisions</h2>
 			<div
 				data-testid="loop-decisions-card"

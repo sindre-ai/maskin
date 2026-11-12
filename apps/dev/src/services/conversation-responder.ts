@@ -23,16 +23,12 @@ import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
-// mirrors MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
-// auto-spawn), same purpose: prevent runaway agent-to-agent ping-pong. Kept
-// as its own constant since the two features can tune independently even
-// though the value happens to match today.
-const MAX_CONSECUTIVE_AGENT_REPLIES = 5
+// same purpose as MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
+// auto-spawn): prevent runaway agent-to-agent ping-pong. Its own constant, tuned
+// separately (here 20, there 5).
+const MAX_CONSECUTIVE_AGENT_REPLIES = 20
 const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
-// Thread sessions one agent may have live in one chat, next to its main-chat session. A thread
-// message past this falls back to the main-chat session.
-const MAX_THREAD_SESSIONS_PER_AGENT = 3
 
 /**
  * Why an agent was handed a turn, as the chat prompts word it. `legacy` is the plain wording
@@ -67,7 +63,7 @@ const GROUP_HANDOFF_HINT =
  * degrades to "stay silent" so a broken rule input can't spam a conversation.
  *
  * Returns 'agent_cap' when the turn is dropped because the conversation already
- * ends in 5 agent messages in a row, so a caller that cannot afford a silent
+ * ends in 20 agent messages in a row, so a caller that cannot afford a silent
  * drop can record it. Every other path returns nothing.
  */
 export async function evaluateAndRespond(ctx: {
@@ -101,6 +97,11 @@ export async function evaluateAndRespond(ctx: {
 		 * agents whose answers the user didn't ask to regenerate.
 		 */
 		targetAgentId?: string
+		/**
+		 * Do not apply the consecutive-agent-messages cap. Set for a finished sub-chat's result,
+		 * which must always wake the agent that started it: it is one message, not a ping-pong.
+		 */
+		skipAgentCap?: boolean
 	}
 }): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
@@ -212,7 +213,7 @@ export async function evaluateAndRespond(ctx: {
 		if (row.actorType === 'agent') consecutiveAgents++
 		else break
 	}
-	if (consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
+	if (!options?.skipAgentCap && consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
 		logger.info('Skipping conversation responder (consecutive agent cap reached)', {
 			conversationId,
 			consecutiveAgents,
@@ -800,10 +801,9 @@ export async function deliverTurnToAgent(params: {
  *
  * A thread gets its own session only when the message is in a thread and was written by a person
  * (never judged by the agent), and then: a live session for that thread is reused as is,
- * otherwise a new one starts unless the agent already has MAX_THREAD_SESSIONS_PER_AGENT thread
- * sessions in this chat or the workspace has no chat capacity. In those two cases the turn falls
- * back to the main-chat session rather than queueing, because a queued thread reply is slower
- * than the main session answering it.
+ * otherwise a new one starts, however many other threads the agent has going. Only when the
+ * workspace has no chat capacity does the turn fall back to the main-chat session rather than
+ * queueing, because a queued thread reply is slower than the main session answering it.
  */
 async function pickSessionThread(ctx: {
 	sessionManager: SessionManager
@@ -822,8 +822,6 @@ async function pickSessionThread(ctx: {
 	) {
 		return threadRootId
 	}
-	const live = await sessionManager.countActiveThreadSessions(conversationId, agentId)
-	if (live >= MAX_THREAD_SESSIONS_PER_AGENT) return null
 	if (!(await sessionManager.hasChatCapacity(ctx.workspaceId))) return null
 	return threadRootId
 }

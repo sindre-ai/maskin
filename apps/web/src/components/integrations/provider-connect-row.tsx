@@ -1,13 +1,15 @@
-import { AgentAccess } from '@/components/integrations/agent-access'
+import { AgentAccess, accessChipLabel } from '@/components/integrations/agent-access'
 import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
+	DeepdotsConnectDialog,
 	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
 	SkjaldConnectDialog,
 } from '@/components/integrations/provider-dialogs'
+import { ProviderLogo } from '@/components/integrations/provider-logo'
 import { ResendConnectDialog } from '@/components/integrations/resend/resend-connect-dialog'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
@@ -25,6 +27,7 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
+import { logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
@@ -53,6 +56,7 @@ const PROVIDER_TAGLINES: Record<string, string> = {
 	'google-drive': 'Files',
 	'linkedin-unipile': 'Posting and outreach',
 	linear: 'Issues',
+	microsoft: 'Teams transcripts',
 	posthog: 'Product analytics',
 	resend: 'Email sending',
 	slack: 'Channels and triggers',
@@ -65,6 +69,7 @@ export function ProviderRow({
 	onRequestApiKey,
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
+	onRequestDeepdotsConnect,
 	linkableCount,
 	onRequestLink,
 	returnTo,
@@ -83,6 +88,8 @@ export function ProviderRow({
 	 *  round-trip and hand off to the caller's ResendConnectDialog state.
 	 *  Undefined for every other provider. */
 	onRequestResendConnect?: () => void
+	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
+	onRequestDeepdotsConnect?: () => void
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -123,6 +130,10 @@ export function ProviderRow({
 			onRequestSkjaldConnect()
 			return
 		}
+		if (provider.name === 'deepdots' && onRequestDeepdotsConnect) {
+			onRequestDeepdotsConnect()
+			return
+		}
 		connect.mutate({ provider: provider.name, returnTo })
 	}
 
@@ -146,6 +157,13 @@ export function ProviderRow({
 		workspaceId,
 		provider.name,
 	)
+
+	// A line a provider keeps on its own row (Microsoft: what it covers, or that the company's
+	// IT admin has not switched transcripts on). Written by the server, shown as is.
+	const statusNote =
+		isConnected && typeof integration.config?.status_note === 'string'
+			? integration.config.status_note
+			: null
 
 	const connectedLabel = isConnected
 		? needsReconnect
@@ -181,6 +199,16 @@ export function ProviderRow({
 
 	return (
 		<ProviderCard
+			logo={
+				variant === 'settings' && introState === undefined ? (
+					<ProviderLogo name={provider.displayName} domain={logoDomainFor(provider.name)} />
+				) : undefined
+			}
+			chip={
+				integration
+					? accessChipLabel(integration.defaultAgentAccess ?? 'read', integration.agentGrants ?? [])
+					: undefined
+			}
 			name={provider.displayName}
 			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
 			compact={introState !== undefined}
@@ -203,6 +231,7 @@ export function ProviderRow({
 			}
 			notes={
 				<>
+					{statusNote && <p className="text-xs text-muted-foreground">{statusNote}</p>}
 					{isDrive && (
 						<>
 							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
@@ -252,7 +281,7 @@ export function ProviderRow({
 									<Button
 										variant="ghost"
 										size="sm"
-										className={cn(PILL_BUTTON, 'text-muted-foreground hover:text-error')}
+										className={cn(PILL_BUTTON, 'text-error hover:text-error')}
 										onClick={() => setConfirmingDisconnect(true)}
 										disabled={disconnect.isPending || !canWrite}
 									>
@@ -451,15 +480,17 @@ export function GroupedProviderRow({
 	}
 
 	return (
-		<div className="overflow-hidden rounded-xl border border-border bg-card">
+		<div className="overflow-hidden rounded-2xl border border-border bg-card">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
+				className="flex w-full items-center gap-3 p-[18px] text-left transition-colors hover:bg-bg-hover max-md:min-h-11"
 			>
+				<ProviderLogo name={provider.displayName} domain={logoDomainFor(provider.name)} />
+				<span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
-					<p className="text-[15px] font-semibold text-foreground truncate">
+					<p className="text-base font-semibold text-foreground truncate">
 						{provider.displayName} · {count}
 					</p>
 					<p className="text-[13px] text-muted-foreground truncate">
@@ -692,6 +723,7 @@ export function ProviderConnectRow({
 	const [skjaldOpen, setSkjaldOpen] = useState(false)
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [resendOpen, setResendOpen] = useState(false)
+	const [deepdotsOpen, setDeepdotsOpen] = useState(false)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere binds to the existing installation.
@@ -730,6 +762,9 @@ export function ProviderConnectRow({
 					onRequestResendConnect={
 						provider.name === 'resend' ? () => setResendOpen(true) : undefined
 					}
+					onRequestDeepdotsConnect={
+						provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
+					}
 					linkableCount={linkableCount}
 					onRequestLink={() => setLinkGithubOpen(true)}
 					returnTo={returnTo}
@@ -764,6 +799,13 @@ export function ProviderConnectRow({
 					open={linkGithubOpen}
 					onClose={() => setLinkGithubOpen(false)}
 					returnTo={returnTo}
+				/>
+			)}
+			{provider.name === 'deepdots' && (
+				<DeepdotsConnectDialog
+					workspaceId={workspaceId}
+					open={deepdotsOpen}
+					onClose={() => setDeepdotsOpen(false)}
 				/>
 			)}
 			{provider.name === 'resend' && (

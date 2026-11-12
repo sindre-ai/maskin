@@ -1,6 +1,7 @@
 import { ReactButton, ReactionChips } from '@/components/chat/message-reactions'
 import type { MessageReaction } from '@/lib/api'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 afterEach(cleanup)
@@ -115,5 +116,24 @@ describe('ReactionChips', () => {
 	it('is switched off for a viewer', () => {
 		render(<ReactionChips reactions={[reaction()]} meId="me" onToggle={vi.fn()} disabled />)
 		expect(screen.getByRole('button', { name: /reacted with 👍/ })).toBeDisabled()
+	})
+
+	it('says why a viewer cannot press a chip, and still names who reacted', async () => {
+		render(<ReactionChips reactions={[reaction()]} meId="me" onToggle={vi.fn()} disabled />)
+		const chip = screen.getByRole('button', { name: /reacted with 👍/ })
+		await userEvent.hover(chip.parentElement as HTMLElement)
+		expect(
+			(await screen.findAllByText('Viewers can read but not change this')).length,
+		).toBeGreaterThan(0)
+		expect(screen.getAllByText(/Magnus and Rune reacted with 👍/).length).toBeGreaterThan(0)
+	})
+
+	it('adds no read only note for someone who can react', async () => {
+		render(<ReactionChips reactions={[reaction()]} meId="me" onToggle={vi.fn()} />)
+		await userEvent.hover(screen.getByRole('button', { name: /reacted with 👍/ }))
+		expect((await screen.findAllByText(/Magnus and Rune reacted with 👍/)).length).toBeGreaterThan(
+			0,
+		)
+		expect(screen.queryByText('Viewers can read but not change this')).not.toBeInTheDocument()
 	})
 })

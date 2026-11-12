@@ -379,15 +379,25 @@ struct DecisionCardView: View {
 
 	/// The ask continues the message: the question, then one pill per option, then the agent's
 	/// own reasoning for its suggestion in a quiet line.
-	private func ask(_ decision: DecisionPrompt) -> some View {
+	private func ask(_ decision: DecisionPrompt, showsQuestion: Bool = true) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			Text(decision.ask)
-				.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold))
-				.tracking(-0.15)
-				.foregroundStyle(MaskinColor.ink)
-				.frame(maxWidth: .infinity, alignment: .leading)
+			if showsQuestion, !decision.ask.isEmpty {
+				Text(decision.ask)
+					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold))
+					.tracking(-0.15)
+					.foregroundStyle(MaskinColor.ink)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
 			// v6: the recommended option is a full-width ink button; the rest share one row beneath.
-			ForEach(primaryOptions(of: decision)) { option in optionButton(option) }
+			ForEach(primaryOptions(of: decision)) { option in
+				optionButton(option)
+				if style == .row, let consequence = option.consequences.first {
+					Text(consequence)
+						.font(MaskinTypeface.sans(MaskinFontSize.t13))
+						.foregroundStyle(MaskinColor.ink4)
+						.frame(maxWidth: .infinity, alignment: .leading)
+				}
+			}
 			let others = alternateOptions(of: decision)
 			if !others.isEmpty {
 				if others.count <= 3 {
@@ -407,7 +417,7 @@ struct DecisionCardView: View {
 					.frame(maxWidth: .infinity, alignment: .leading)
 					.fixedSize(horizontal: false, vertical: true)
 			}
-			if isExpanded, let line = Self.suggestedLine(for: decision) {
+			if isExpanded, style == .card, let line = Self.suggestedLine(for: decision) {
 				Text(line).font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
@@ -752,7 +762,7 @@ extension DecisionCardView {
 	fileprivate var rowStatus: (text: String, hot: Bool)? {
 		if entry.backFromLater { return ("Back again", true) }
 		switch entry.bucket {
-		case .needs: return entry.urgency.map { ($0.text, true) }
+		case .needs: return entry.urgency.map { ($0.text, $0.isHot) }
 		case .fyi: return ("Update", false)
 		case .waiting: return ("Waiting for \(agent?.name ?? sender ?? "an agent")", false)
 		case .done: return nil
@@ -760,7 +770,7 @@ extension DecisionCardView {
 	}
 
 	fileprivate var rowMetaText: String {
-		var parts = [whoName]
+		var parts = [whoName.count > 18 ? (whoName.split(separator: " ").first.map(String.init) ?? whoName) : whoName]
 		if let date = card.latestActivityAt ?? card.mention?.createdAt {
 			parts.append(RelativeTimeFormatter.string(for: date, now: now, style: .relative))
 		}
@@ -827,14 +837,18 @@ extension DecisionCardView {
 	/// What opens under the header: the message, the object, drafts, the options and the reply.
 	fileprivate var rowDetails: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			say
-			objectLine
+			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+				say
+				objectLine
+			}
+			.padding(MaskinSpace.s7)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 			if let draft = card.decision?.draft, !draftIsElsewhere(draft) { DraftPreview(draft: draft) }
 			if let drafts = card.decision?.drafts.filter({ !draftIsElsewhere($0) }), !drafts.isEmpty {
 				DraftStackView(drafts: drafts, act: actions.actOnDraft, allDone: actions.dismiss)
 			}
-			draftPointer
-			if let decision = card.decision { ask(decision) } else { noDecisionRow }
+			if let decision = card.decision { ask(decision, showsQuestion: false) } else { noDecisionRow }
 			replyArea
 		}
 	}

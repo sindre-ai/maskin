@@ -11,11 +11,14 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
+import { findCurrentApproval } from '../../lib/object-delivery'
+import { buildObjectPreview } from '../../lib/object-preview'
 import {
 	insertActor,
 	insertAgentGrant,
 	insertConversation,
 	insertObject,
+	insertSendMode,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -75,6 +78,13 @@ async function setup(opts: { agentInChat?: boolean } = {}) {
 	await db
 		.insert(workspaceMembers)
 		.values({ workspaceId: workspace.id, actorId: agent.id, role: 'member' })
+	// A yes in the chat matters for an agent that asks first, so that is how this agent is set.
+	await insertSendMode(db, {
+		workspaceId: workspace.id,
+		agentId: agent.id,
+		kind: 'email',
+		mode: 'ask_first',
+	})
 	const [resend] = await db
 		.insert(integrations)
 		.values({
@@ -342,16 +352,78 @@ describe('approve_draft_from_chat: a person said yes in the chat', () => {
 		expect(await approvals(s)).toHaveLength(0)
 	})
 
-	it('refuses a person calling it, and a draft that is not an email', async () => {
+	it('refuses a person calling it', async () => {
 		const s = await setup()
 		const yes = await shownAndAnswered(s)
 		expect((await approve(s, s.email.id, yes.id, s.human)).status).toBe(403)
+		expect(await approvals(s)).toHaveLength(0)
+	})
 
+	it('approves a LinkedIn or Slack draft the same way, for exactly its text', async () => {
+		const s = await setup()
+		const drafts = [
+			{ kind: 'linkedin_message', to: 'Ada Lovelace' },
+			{ kind: 'linkedin_post' },
+			{ kind: 'linkedin_comment', post_id: 'urn:li:activity:1' },
+			{ kind: 'slack_message', channel: '#general' },
+		]
+		let order = 3
+		for (const metadata of drafts) {
+			const note = await insertObject(db, s.workspace.id, s.agent.id, {
+				type: 'task',
+				status: 'todo',
+				content: `Hi there, thanks for the chat (${metadata.kind}).`,
+				metadata,
+				createdAt: s.t0,
+				updatedAt: s.t0,
+			})
+			if (!note) throw new Error('note was not inserted')
+			await say(s, s.agent.id, link(s, note.id), order++)
+			const yes = await say(s, s.human, 'send it', order++)
+			const res = await approve(s, note.id, yes.id)
+			expect(res.status).toBe(200)
+			expect(await approvals(s, note.id)).toHaveLength(1)
+		}
+	})
+
+	it('withdraws a LinkedIn post approval when the post is edited afterwards', async () => {
+		const s = await setup()
+		const post = await insertObject(db, s.workspace.id, s.agent.id, {
+			type: 'task',
+			status: 'todo',
+			content: 'We are live on Thursday.',
+			metadata: { kind: 'linkedin_post' },
+			createdAt: s.t0,
+			updatedAt: s.t0,
+		})
+		if (!post) throw new Error('post was not inserted')
+		await say(s, s.agent.id, link(s, post.id), 1)
+		const yes = await say(s, s.human, 'just post', 2)
+		expect((await approve(s, post.id, yes.id)).status).toBe(200)
+
+		const hashOf = async () => {
+			const [row] = await db.select().from(objects).where(eq(objects.id, post.id))
+			const preview = row ? buildObjectPreview(row) : null
+			if (!preview) throw new Error('post has no preview')
+			return preview.content_hash
+		}
+		expect(await findCurrentApproval(db, s.workspace.id, post.id, await hashOf())).not.toBeNull()
+
+		await db
+			.update(objects)
+			.set({ content: 'We are live on Friday.' })
+			.where(eq(objects.id, post.id))
+
+		expect(await findCurrentApproval(db, s.workspace.id, post.id, await hashOf())).toBeNull()
+	})
+
+	it('refuses a draft that has no send tool, such as one typed by hand', async () => {
+		const s = await setup()
 		const note = await insertObject(db, s.workspace.id, s.agent.id, {
 			type: 'task',
 			status: 'todo',
 			content: 'Hi there, thanks for the chat.',
-			metadata: { kind: 'linkedin_message', to: 'Ada Lovelace' },
+			metadata: { kind: 'manual_message', to: 'Ada Lovelace', channel: 'Facebook' },
 			createdAt: s.t0,
 			updatedAt: s.t0,
 		})

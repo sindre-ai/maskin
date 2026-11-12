@@ -58,6 +58,7 @@ function buildFile(overrides: Partial<FileListItem> = {}): FileListItem {
 		workspaceId: 'ws-1',
 		name: 'dashboard.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 1024,
 		storageKey: 'ws-1/dashboard.html',

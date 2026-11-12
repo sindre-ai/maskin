@@ -52,6 +52,8 @@ export const forYouItemSchema = z.object({
 			attention: z.number().nullable(),
 			// With each draft's text and, for an email or message, its `preview`.
 			decision: feedDecisionSchema.nullable(),
+			// The run that wrote the comment; null when a person wrote it. Analytics only.
+			session_id: z.string().uuid().nullable().optional(),
 		})
 		.optional(),
 })

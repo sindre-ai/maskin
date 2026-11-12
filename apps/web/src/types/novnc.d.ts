@@ -10,6 +10,7 @@ declare module '@novnc/novnc/lib/rfb' {
 		viewOnly: boolean
 		scaleViewport: boolean
 		resizeSession: boolean
+		qualityLevel: number
 		focusOnClick: boolean
 		background: string
 		disconnect(): void

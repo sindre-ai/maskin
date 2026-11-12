@@ -9,13 +9,18 @@ import {
 	api,
 } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
+import { sortByName } from '../lib/sort'
 import { useWorkspace } from '../lib/workspace-context'
+
+const sortActors = (actors: ActorListItem[]) => sortByName(actors)
 
 export function useActors(workspaceId?: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.actors.all(workspaceId),
 		queryFn: () => api.actors.list(workspaceId),
 		enabled: options?.enabled,
+		// Every picker and list that reads actors gets them A→Z by name.
+		select: sortActors,
 	})
 }
 

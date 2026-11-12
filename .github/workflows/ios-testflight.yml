@@ -104,7 +104,7 @@ jobs:
           chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
 
       # The certificate clean-up script needs Node; the Mac image does not guarantee it.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.gate.outputs.enabled == 'true'
         with:
           node-version: 20

@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessionStats, useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -37,7 +36,6 @@ function AgentsRoute() {
 	// neither grows with the size of the session history.
 	const { data: sessions, isLoading: recentLoading } = useWorkspaceSessions(workspaceId)
 	const { data: stats } = useWorkspaceSessionStats(workspaceId)
-	const { data: loops } = useLoops(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 	const canWrite = useCanWrite()
 	const [query, setQuery] = useState('')
@@ -107,7 +105,6 @@ function AgentsRoute() {
 					agents={agents}
 					sessions={sessions ?? []}
 					stats={stats}
-					loops={loops}
 					query={query}
 					onQueryChange={setQuery}
 				/>

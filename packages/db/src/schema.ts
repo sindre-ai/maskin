@@ -321,6 +321,11 @@ export const objects = pgTable(
 		// built CONCURRENTLY.
 		index('objects_ws_title_trgm_idx').using('gin', t.workspaceId, t.title.op('gin_trgm_ops')),
 		index('objects_ws_content_trgm_idx').using('gin', t.workspaceId, t.content.op('gin_trgm_ops')),
+		// Plain trigram indexes (migrations 0146 and 0147, CONCURRENTLY) for the object list/search
+		// `q` filter in routes/objects.ts. The workspace-keyed pair above is not picked by the planner
+		// for that query; these are. See 0146 for the EXPLAIN evidence.
+		index('objects_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
+		index('objects_content_trgm_idx').using('gin', t.content.op('gin_trgm_ops')),
 	],
 )
 
@@ -348,6 +353,9 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// Target-side edge lookups (graph, relationships list, spawned-session lookup); the unique
+		// above leads with source_id. Built CONCURRENTLY in migration 0143.
+		index('relationships_target_type_idx').on(t.targetId, t.type),
 		// S2 · widened to admit `conversation` and `session` endpoint kinds so
 		// the writer hook can persist automatic provenance edges
 		// (conversation→session `spawned`, session→object|file `produced_by`).
@@ -401,6 +409,12 @@ export const events = pgTable(
 		index('events_commented_mentions_idx')
 			.using('gin', sql`(${t.data} -> 'mentions')`)
 			.where(sql`${t.action} = 'commented'`),
+		// The daily-budget summary scheduler's "already posted for this day?" check, once per
+		// workspace per tick (services/daily-budget-events.ts). Holds one entry per workspace per
+		// day. Built CONCURRENTLY in migration 0143.
+		index('events_daily_budget_summary_day_idx')
+			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
+			.where(sql`${t.action} = 'daily_budget_summary'`),
 	],
 )
 
@@ -810,7 +824,7 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
-		// The session whose create_session / @mention call started this
+		// The session whose create_sub_chat / @mention call started this
 		// one: the sender a finished helper reports back to. Only ever set after the
 		// claimed session was checked to belong to the authenticated caller. NULL =
 		// no known sender. NOT source_session_id, which means "restore that session's
@@ -823,7 +837,7 @@ export const sessions = pgTable(
 		// Handed-off strip anchors: the assistant message that triggered this
 		// sub-agent spawn, and the sessions this one is blocked behind. Both
 		// nullable — pre-migration rows read NULL ("no strip"). Written from the
-		// create_session path when the caller supplies a message id / blockers.
+		// create_sub_chat path when the caller supplies a message id / blockers.
 		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
 		// message must not delete the session, it just stops rendering a strip.
 		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
@@ -909,6 +923,11 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// Sessions spawned by a chat message, and the ON DELETE SET NULL FK. Built CONCURRENTLY in
+		// migration 0144.
+		index('sessions_spawned_by_message_id_idx')
+			.on(t.spawnedByMessageId)
+			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
@@ -979,11 +998,12 @@ export const sessions = pgTable(
 
 // ── API Keys ───────────────────────────────────────────────────────────────
 
-export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session'
+export type ApiKeyKind = 'primary' | 'login' | 'login_ios' | 'session' | 'personal'
 
 /**
  * Hashed API keys. One actor holds many: a primary key (shown once at creation or rotation),
- * one per web or iOS login, and one per agent session launch. key_hash is the hex SHA-256 of
+ * one per web or iOS login, one per agent session launch, and any number of named personal keys a
+ * person makes by hand (capped in lib/api-keys). key_hash is the hex SHA-256 of
  * the full ank_ token, so a lookup is one indexed equality and a database leak yields no
  * usable keys. A key authenticates while revoked_at is null and expires_at is null or future.
  */
@@ -997,6 +1017,8 @@ export const apiKeys = pgTable(
 		keyHash: text('key_hash').notNull().unique(),
 		last4: text('last4').notNull(),
 		kind: text('kind').$type<ApiKeyKind>().notNull(),
+		/** Set only on personal keys: the label the person gave it. */
+		name: text('name'),
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -1006,7 +1028,10 @@ export const apiKeys = pgTable(
 	(t) => [
 		index('api_keys_actor_kind_idx').on(t.actorId, t.kind),
 		index('api_keys_session_idx').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
-		check('api_keys_kind_enum', sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session')`),
+		check(
+			'api_keys_kind_enum',
+			sql`${t.kind} IN ('primary', 'login', 'login_ios', 'session', 'personal')`,
+		),
 	],
 )
 export type ApiKey = typeof apiKeys.$inferSelect
@@ -1775,6 +1800,9 @@ export const files = pgTable(
 		// there, so a loop's incidental output files stay out of the row. Null for
 		// ordinary files.
 		kind: text('kind'),
+		// Free-form labels, trimmed and lowercased on write (see fileTagsSchema). Empty for
+		// a file nobody tagged. GIN-indexed for the "has all" (@>) and "has any" (&&) filters.
+		tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
 		// Pinned review annotations (humans pin comments on rendered HTML files).
 		// Stored on the row so they round-trip with the file for every reader —
 		// UI and MCP get_file — without an extra S3 fetch.
@@ -1789,6 +1817,7 @@ export const files = pgTable(
 		index('files_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('files_ws_name_idx').on(t.workspaceId, t.name),
 		index('files_ws_kind_created_at_idx').on(t.workspaceId, t.kind, t.createdAt),
+		index('files_tags_gin_idx').using('gin', t.tags),
 	],
 )
 
@@ -1811,6 +1840,8 @@ export const fileUploads = pgTable(
 		name: text('name').notNull(),
 		description: text('description'),
 		kind: text('kind'),
+		// Copied onto the file row when the upload completes.
+		tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
 		mimeType: text('mime_type').notNull(),
 		sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
 		storageKey: text('storage_key').notNull(),
@@ -2061,6 +2092,37 @@ export const workspaceCreditLedger = pgTable(
 			.where(sql`${t.type} = 'debit' AND ${t.sessionId} IS NOT NULL`),
 		index('workspace_credit_ledger_workspace_created_idx').on(t.workspaceId, t.createdAt),
 	],
+)
+
+// ── Workspace AI Usage ──────────────────────────────────────────────────────
+// Plan spend on the Maskin-funded OpenRouter account that does not belong to a
+// session, such as `transcribe_file`. Plan usage is otherwise summed from
+// `sessions` rows (`getWorkspacePlanUsdCentsUsage`); that function adds this
+// table's `cost_usd` on top, so the cap check, the usage page and the prepaid
+// credit overage all count these calls without a fake session row.
+//
+// `cost_usd` is what OpenRouter reported for the request (`usage.cost`), never
+// an estimate. `actor_id` and `file_id` are `set null` so deleting an agent or a
+// file never deletes the spend it caused.
+export const workspaceAiUsage = pgTable(
+	'workspace_ai_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		// 'transcription'
+		kind: text('kind').notNull(),
+		// The provider model that served the call, for the usage breakdown.
+		model: text('model').notNull(),
+		costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull(),
+		// Seconds of audio sent for transcription.
+		audioSeconds: numeric('audio_seconds', { precision: 10, scale: 2 }),
+		fileId: uuid('file_id').references(() => files.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_ai_usage_workspace_created_idx').on(t.workspaceId, t.createdAt)],
 )
 
 // ── Idempotency Records ─────────────────────────────────────────────────────
@@ -2851,6 +2913,9 @@ export const notificationPreferences = pgTable(
 			.$type<Record<string, boolean>>()
 			.notNull()
 			.default(sql`'{"needs_you":true,"conversation":true,"digest":true,"tips":true}'::jsonb`),
+		// Browser switch per kind, e.g. { conversation: false }. null or a missing kind means never
+		// asked: it follows that kind's push switch. Empty on every existing row. Migration 0139.
+		browserCategories: jsonb('browser_categories').$type<Record<string, boolean>>(),
 		briefingEnabled: boolean('briefing_enabled').notNull().default(true),
 		briefingTime: smallint('briefing_time').notNull().default(510),
 		mutedWorkspaceIds: uuid('muted_workspace_ids').array().notNull().default(sql`'{}'::uuid[]`),
@@ -2863,6 +2928,31 @@ export const notificationPreferences = pgTable(
 			.$type<Record<string, string>>()
 			.notNull()
 			.default(sql`'{}'::jsonb`),
+		// Email switch per kind other than the summary, e.g. { flow_activity: true }. null or a
+		// missing kind means off. Empty on every existing row. Migration 0147.
+		emailCategories: jsonb('email_categories').$type<Record<string, boolean>>(),
+		// { <flow id>: ISO time } of the last Flow activity email per flow; the hourly claim. Migration 0147.
+		flowEmailSent: jsonb('flow_email_sent').$type<Record<string, string>>(),
+		// The summary email choice. null means no choice yet (every row that existed before
+		// migration 0138); true/false is a saved choice and always wins. Migration 0138.
+		emailDigestEnabled: boolean('email_digest_enabled'),
+		// Summary email series: 0 = none sent, 1 to 3 = onboarding mails sent. Migration 0138.
+		emailOnboardingStep: smallint('email_onboarding_step').notNull().default(0),
+		// Date of the last summary email, set by the email sender. Migration 0138.
+		emailLastSentOn: date('email_last_sent_on', { mode: 'string' }),
+		// The "Marketplace picks" switch for the summary email. Off for everyone until the person
+		// turns it on. Migration 0146.
+		marketplacePicksEnabled: boolean('marketplace_picks_enabled').notNull().default(false),
+		// Marketplace flows the person marked "Not useful"; never picked for them again. Migration 0146.
+		marketplaceDismissedLoopIds: uuid('marketplace_dismissed_loop_ids')
+			.array()
+			.notNull()
+			.default(sql`'{}'::uuid[]`),
+		// Date of the last summary email that carried a pick; at most one a week. Migration 0146.
+		marketplacePickLastSentOn: date('marketplace_pick_last_sent_on', { mode: 'string' }),
+		// How often the summary email comes: 'daily' or 'weekly'. null means no choice, which is
+		// daily. Off is email_digest_enabled = false, not a value here. Migration 0145.
+		emailRhythm: text('email_rhythm'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2878,6 +2968,14 @@ export const notificationPreferences = pgTable(
 		check(
 			'notification_preferences_briefing_time_chk',
 			sql`${t.briefingTime} >= 0 AND ${t.briefingTime} <= 1439`,
+		),
+		check(
+			'notification_preferences_email_step_chk',
+			sql`${t.emailOnboardingStep} >= 0 AND ${t.emailOnboardingStep} <= 3`,
+		),
+		check(
+			'notification_preferences_email_rhythm_chk',
+			sql`${t.emailRhythm} IS NULL OR ${t.emailRhythm} IN ('daily', 'weekly')`,
 		),
 	],
 )

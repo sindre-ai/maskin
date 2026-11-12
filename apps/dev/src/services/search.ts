@@ -11,7 +11,14 @@ import {
 } from '@maskin/shared'
 import { type SQL, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
-import { TITLE_COVERAGE_SCALE, TITLE_HIT_WEIGHT, tokenIlikePattern } from '../lib/search-rank'
+import {
+	NAME_WHOLE_WORD_BONUS,
+	NAME_WORD_PREFIX_BONUS,
+	TITLE_COVERAGE_SCALE,
+	TITLE_HIT_WEIGHT,
+	tokenIlikePattern,
+	tokenRegexEscape,
+} from '../lib/search-rank'
 import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
 
 /** A source that takes longer than this is reported as partial instead of failing the request. */
@@ -101,6 +108,13 @@ export interface SearchSource {
 	 * (the people list and last message of every chat). Without it the flag reads `candidates`.
 	 */
 	overScanCap?: (ctx: SearchContext) => SQL
+	/**
+	 * Optional. The `sub` line is a list of names (the chat participants), so a word that hits one
+	 * earns the title weight, plus a bonus for a whole-word or word-start name match.
+	 */
+	rankSub?: boolean
+	/** Optional. Under relevance sort, rows with status 'unread' come before read ones of equal score. */
+	unreadFirst?: boolean
 }
 
 /** The objects source rows (loops have their own source), optionally cut to the rows holding every word. */
@@ -119,6 +133,8 @@ export const SEARCH_SOURCES: SearchSource[] = [
 	{
 		key: 'chats',
 		fixedTypes: ['chat'],
+		rankSub: true,
+		unreadFirst: true,
 		statusPairs: () => sql`
 			SELECT 'chat'::text AS type, v.status AS status
 			FROM (VALUES ('archived'), ('unread'), ('read')) AS v(status)`,
@@ -297,6 +313,21 @@ function matchCondition(tokens: string[], source: SearchSource, hasDeep: boolean
 }
 
 /**
+ * What a word earns for hitting the names in the sub line of the candidate row `s`: the title
+ * weight, plus a bonus when it is a whole word of a name or the start of one. Names are split
+ * by ', ' in the list and by anything that is not a letter or digit inside a name.
+ */
+function nameScore(token: string, pattern: string): SQL {
+	const escaped = tokenRegexEscape(token)
+	const wordStart = `(^|[^[:alnum:]])${escaped}`
+	return sql`(case
+		when s.sub ~* ${`${wordStart}($|[^[:alnum:]])`} then ${TITLE_HIT_WEIGHT}::int + ${NAME_WHOLE_WORD_BONUS}::int
+		when s.sub ~* ${wordStart} then ${TITLE_HIT_WEIGHT}::int + ${NAME_WORD_PREFIX_BONUS}::int
+		when s.sub ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int
+		else 0 end)`
+}
+
+/**
  * Same per-word formula as /api/objects/search: title hit plus coverage, body hit worth 1. It
  * reads the candidate row `s` and runs for the matched rows only, so the second look at the
  * title and body costs next to nothing.
@@ -308,7 +339,8 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
 		const body = hasDeep
 			? sql`(s.body ilike ${pattern} or ${deepHitExpr(source, pattern)})`
 			: sql`(s.body ilike ${pattern})`
-		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) else 0 end) + (case when ${body} then 1 else 0 end))`
+		const name = source.rankSub ? nameScore(token, pattern) : sql`0`
+		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) else 0 end) + ${name} + (case when ${body} then 1 else 0 end))`
 	})
 	return sql.join(perToken, sql` + `)
 }
@@ -319,9 +351,12 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
  */
 const SNIPPET = sql`substr(s.body, 1, 160)`
 
-function orderBy(sort: SearchQuery['sort']): SQL {
+function orderBy(sort: SearchQuery['sort'], source: SearchSource): SQL {
 	if (sort === 'recent') return sql`m.updated_at desc nulls last, m.id`
 	if (sort === 'az') return sql`lower(m.title) asc, m.id`
+	if (source.unreadFirst) {
+		return sql`m.score desc, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
+	}
 	return sql`m.score desc, m.updated_at desc nulls last, m.id`
 }
 
@@ -502,7 +537,7 @@ async function runSource(
 		passingPairs.length === 0
 			? sql`false`
 			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
-	const ordering = orderBy(query.sort)
+	const ordering = orderBy(query.sort, source)
 	// The snippet of a returned row is the deep text that hit, when the row had its
 	// deep text checked; otherwise the body.
 	const pickedSnippet =
@@ -573,6 +608,36 @@ async function runSource(
 		updatedAt: row.updated_iso,
 	}))
 	return result
+}
+
+/**
+ * Each source holds a pooled connection for the length of its transaction, and a search is sent on
+ * every keystroke of the command palette. All sources at once meant one search took up to six
+ * connections of the pool of 20; three at a time keeps the rest for everyone else, and the sources
+ * are short.
+ */
+export const SEARCH_MAX_CONCURRENT_SOURCES = 3
+
+/** Like Promise.allSettled over `items`, but with at most `limit` running at once. Order is kept. */
+export async function settleWithLimit<T, R>(
+	items: T[],
+	limit: number,
+	run: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+	const results = new Array<PromiseSettledResult<R>>(items.length)
+	let next = 0
+	const worker = async () => {
+		while (next < items.length) {
+			const i = next++
+			try {
+				results[i] = { status: 'fulfilled', value: await run(items[i] as T) }
+			} catch (reason) {
+				results[i] = { status: 'rejected', reason }
+			}
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+	return results
 }
 
 /** Each source runs in its own transaction so the statement timeout is scoped to it. */
@@ -795,6 +860,25 @@ async function addTypoHits(
 }
 
 /**
+ * Keeps at most `perGroup` rows of each source group, then fills the free room (up to `limit`)
+ * with the rows that were left out. `rows` come in group order and keep it.
+ */
+function capPerGroup(rows: SearchResultRow[], perGroup: number, limit: number): SearchResultRow[] {
+	const seen = new Map<SearchSourceGroup, number>()
+	const keep = new Set<SearchResultRow>()
+	for (const row of rows) {
+		const n = seen.get(row.group) ?? 0
+		seen.set(row.group, n + 1)
+		if (n < perGroup) keep.add(row)
+	}
+	for (const row of rows) {
+		if (keep.size >= limit) break
+		keep.add(row)
+	}
+	return rows.filter((row) => keep.has(row))
+}
+
+/**
  * Runs the six sources in parallel and folds them into one response. A source
  * that throws or times out is left out of every count and listed in `partial`. A
  * source that hit its scan cap keeps its counts and is listed in `partial` too.
@@ -808,8 +892,8 @@ export async function runSearch(
 ): Promise<SearchResponse> {
 	const startedAt = Date.now()
 	const tokens = searchTokens(query.q)
-	const settled = await Promise.allSettled(
-		sources.map((source) => runSourceWithTimeout(db, source, ctx, query, tokens)),
+	const settled = await settleWithLimit(sources, SEARCH_MAX_CONCURRENT_SOURCES, (source) =>
+		runSourceWithTimeout(db, source, ctx, query, tokens),
 	)
 
 	const partial: SearchSourceGroup[] = []
@@ -856,7 +940,9 @@ export async function runSearch(
 			.flatMap(({ result }) => result.typoRows)
 			.sort((a, b) => a.distance - b.distance)
 			.map(({ row }) => row)
-		results = [...byGroup.flatMap(({ result }) => result.rows), ...typoRows].slice(0, query.limit)
+		const exactRows = byGroup.flatMap(({ result }) => result.rows)
+		const shown = query.per_group ? capPerGroup(exactRows, query.per_group, query.limit) : exactRows
+		results = [...shown, ...typoRows].slice(0, query.limit)
 	} else {
 		// The top N of a union is inside the union of each source's top N.
 		const sort = query.sort

@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { openIntegrationCard } from '../helpers/integrations.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -32,6 +33,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 		// The server we added, with where it points and no secrets.
 		await expect(tools.getByText('Docs search', { exact: true })).toBeVisible()
+		await openIntegrationCard(tools, 'Docs search')
 		await expect(tools.getByText(/stdio · npx -y docs-mcp/)).toBeVisible()
 
 		// Nobody has it yet; give it to one agent.
@@ -46,6 +48,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 		// It stuck: a reload shows the same.
 		await page.reload()
+		await openIntegrationCard(tools, 'Docs search')
 		await tools.getByRole('button', { name: /Agents/ }).click()
 		await expect(
 			page.getByRole('region', { name: 'Tool servers' }).getByRole('switch', {
@@ -66,9 +69,11 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			access.getByRole('switch', { name: 'Docs search for this agent' }),
 		).not.toBeChecked()
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
-		await expect(
-			page.getByRole('region', { name: 'Tool servers' }).getByRole('button', { name: /Agents/ }),
-		).toContainText('No agents use it yet')
+		const toolsAgain = page.getByRole('region', { name: 'Tool servers' })
+		await openIntegrationCard(toolsAgain, 'Docs search')
+		await expect(toolsAgain.getByRole('button', { name: /Agents/ })).toContainText(
+			'No agents use it yet',
+		)
 
 		// Nothing spills out sideways.
 		const overflow = await page.evaluate(
@@ -87,6 +92,7 @@ test('an HTTP server has Read, Read & write and No access like a built-in integr
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
 	const tools = page.getByRole('region', { name: 'Tool servers' })
 	await expect(tools).toBeVisible({ timeout: 15_000 })
+	await openIntegrationCard(tools, 'Docs API')
 	await tools.getByRole('button', { name: /Agent access/ }).click()
 	await tools.getByRole('combobox', { name: 'Add an agent' }).click()
 	await page.getByRole('option', { name: 'Docs Reader' }).click()
@@ -114,7 +120,7 @@ test('add a server from the form, then remove it', async ({ page, account }) => 
 	const tools = page.getByRole('region', { name: 'Tool servers' })
 	await expect(tools).toBeVisible({ timeout: 15_000 })
 
-	await tools.getByRole('button', { name: /Add tool server/ }).click()
+	await tools.getByRole('button', { name: /Add your own MCP server/ }).click()
 	await tools.getByLabel('Name').fill('Filesystem')
 	await tools.getByLabel('Command').fill('npx')
 	await tools
@@ -122,12 +128,13 @@ test('add a server from the form, then remove it', async ({ page, account }) => 
 		.fill('-y, @modelcontextprotocol/server-filesystem')
 	await tools.getByRole('button', { name: 'Save' }).click()
 	await expect(tools.getByText('Filesystem', { exact: true })).toBeVisible()
+	await openIntegrationCard(tools, 'Filesystem')
 	await expect(
 		tools.getByText(/stdio · npx -y @modelcontextprotocol\/server-filesystem/),
 	).toBeVisible()
 
 	// A second server under the same name is refused, in the form.
-	await tools.getByRole('button', { name: /Add tool server/ }).click()
+	await tools.getByRole('button', { name: /Add your own MCP server/ }).click()
 	await tools.getByLabel('Name').fill('filesystem')
 	await tools.getByLabel('Command').fill('npx')
 	await tools.getByRole('button', { name: 'Save' }).click()
@@ -147,7 +154,7 @@ test('the Tools section reads in light and dark', async ({ page, account }) => {
 		const tools = page.getByRole('region', { name: 'Tool servers' })
 		await expect(tools.getByText('Maskin', { exact: true })).toBeVisible()
 		await expect(tools.getByText('Docs search', { exact: true })).toBeVisible()
-		await expect(tools.getByRole('button', { name: /Add tool server/ })).toBeVisible()
+		await expect(tools.getByRole('button', { name: /Add your own MCP server/ })).toBeVisible()
 	}
 })
 
@@ -169,7 +176,7 @@ test('a header can use a saved Keychain credential instead of a pasted secret', 
 	await page.goto(`/${account.workspaceId}/settings/integrations`)
 	const tools = page.getByRole('region', { name: 'Tool servers' })
 	await expect(tools).toBeVisible({ timeout: 15_000 })
-	await tools.getByRole('button', { name: /Add tool server/ }).click()
+	await tools.getByRole('button', { name: /Add your own MCP server/ }).click()
 	await tools.getByLabel('Name').fill('Billing')
 	await tools.getByRole('combobox', { name: 'Transport' }).click()
 	await page.getByRole('option', { name: 'HTTP' }).click()
@@ -186,6 +193,7 @@ test('a header can use a saved Keychain credential instead of a pasted secret', 
 	await expect(tools.getByText('Billing', { exact: true })).toBeVisible()
 
 	// Reopened, it still names the credential (not a mask), and the secret is nowhere on the page.
+	await openIntegrationCard(tools, 'Billing')
 	await tools.getByRole('button', { name: 'Edit Billing' }).click()
 	await expect(tools.getByLabel('Headers value')).toHaveValue(
 		'Bearer ${KEYCHAIN_BYO_APIKEY_STRIPE}',

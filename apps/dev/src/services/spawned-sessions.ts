@@ -357,7 +357,7 @@ export async function anchorSpawnedSessionsToMessage(
 
 /**
  * Sub-sessions the chat's own agents have started that no message carries yet.
- * An agent calls `create_session` mid-turn and only narrates it afterwards, so
+ * An agent calls `create_sub_chat` mid-turn and only narrates it afterwards, so
  * for that stretch the handoff exists with nowhere to hang. Returned beside the
  * message list so the chat can show it straight away; once a message anchors
  * the session it moves into that message's embed and leaves this list.

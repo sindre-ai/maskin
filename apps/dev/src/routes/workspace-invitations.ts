@@ -29,6 +29,7 @@ import {
 	seatCapErrorBody,
 	seatCapForPlan,
 } from '../lib/workspace-capacity'
+import { createEmailOnPreferences } from '../services/email-preferences'
 
 type Env = {
 	Variables: {
@@ -359,6 +360,7 @@ app.post('/:token/accept', async (c) => {
 					throw new Error('Actor insert returned no row')
 				}
 				apiKey = (await issueApiKey(tx, { actorId: insertedActor.id, kind: 'primary' })).key
+				await createEmailOnPreferences(tx, insertedActor.id)
 
 				// Lock workspace, run seat-cap check exactly like POST /workspaces/:id/members.
 				const [locked] = await tx

@@ -28,7 +28,21 @@ import {
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import {
+	type SQL,
+	and,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	not,
+	or,
+	sql,
+} from 'drizzle-orm'
 import {
 	resolveChatTagClient,
 	trackMessageEditedWithTags,
@@ -42,6 +56,7 @@ import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
 	conversationListItemResponseSchema,
+	conversationParticipantResponseSchema,
 	conversationParticipantStateResponseSchema,
 	errorSchema,
 	idParamSchema,
@@ -61,7 +76,11 @@ import { shareReplyDigest } from '../services/chat-session-context'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
-import { findOrCreateDirectChat } from '../services/direct-chat'
+import {
+	directChatTitleForViewer,
+	ensureHumanDirectChats,
+	findOrCreateDirectChat,
+} from '../services/direct-chat'
 import { LIVE_STATUSES, openInteractiveTurnsByLog } from '../services/live-activity-push'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
@@ -493,14 +512,17 @@ async function conversationDetailForCaller(
 				eq(conversationParticipants.actorId, callerId),
 			),
 		)
-	const participants = await loadParticipantsByConversation(db, [conversation.id])
+	const participants = (await loadParticipantsByConversation(db, [conversation.id])).get(
+		conversation.id,
+	)
 	return {
 		...serialize(conversation),
+		title: directChatTitleForViewer(conversation, participants ?? [], callerId),
 		pinned: mine?.pinned ?? false,
 		archived: mine?.archived ?? false,
 		unread_count: 0,
 		last_read_message_id: mine?.lastReadMessageId ?? null,
-		participants: participants.get(conversation.id) ?? [],
+		participants: participants ?? [],
 	} as z.infer<typeof conversationDetailResponseSchema>
 }
 
@@ -756,14 +778,16 @@ app.openapi(createConversationRoute, (async (c) => {
 	if (reused) return c.json(await conversationDetailForCaller(db, conversation, callerId), 200)
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
+	const createdParticipants = participantsByConversation.get(conversation.id) ?? []
 	return c.json(
 		{
 			...serialize(conversation),
+			title: directChatTitleForViewer(conversation, createdParticipants, callerId),
 			pinned: false,
 			archived: false,
 			unread_count: 0,
 			last_read_message_id: null,
-			participants: participantsByConversation.get(conversation.id) ?? [],
+			participants: createdParticipants,
 		} as z.infer<typeof conversationDetailResponseSchema>,
 		201,
 	)
@@ -797,6 +821,13 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
+	// Every pair of people has a direct message, like an agent has with each person.
+	// They are made here, on the plain first page of the list, so they appear for
+	// both people without a hook on every way a member can join a workspace.
+	if (query.offset === 0 && !query.archived && !query.subject_type && !query.subject_id) {
+		await ensureHumanDirectChats(db, { workspaceId, actorId: callerId })
+	}
+
 	const conditions = [
 		eq(conversations.workspaceId, workspaceId),
 		eq(conversationParticipants.actorId, callerId),
@@ -821,19 +852,24 @@ app.openapi(listConversationsRoute, (async (c) => {
 			)`,
 		)
 	}
-	if (query.unread_only) {
-		// Table names (not Drizzle column refs) inside the correlated subquery —
-		// interpolating column objects here renders unqualified and silently
-		// binds to the inner `messages` alias for names both tables share (see
-		// known-pitfalls.md's correlated-subquery entry).
-		conditions.push(
-			sql`EXISTS (
-				SELECT 1 FROM messages m
-				WHERE m.conversation_id = conversations.id
-					AND m.actor_id != ${callerId}
-					AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
-			)`,
-		)
+	// Table names (not Drizzle column refs) inside the correlated subquery —
+	// interpolating column objects here renders unqualified and silently
+	// binds to the inner `messages` alias for names both tables share (see
+	// known-pitfalls.md's correlated-subquery entry).
+	const hasUnread = sql`EXISTS (
+		SELECT 1 FROM messages m
+		WHERE m.conversation_id = conversations.id
+			AND m.actor_id != ${callerId}
+			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
+	)`
+	if (query.unread_only) conditions.push(hasUnread)
+	if (query.scope) {
+		const isPriority = or(
+			isNotNull(conversations.directPairKey),
+			eq(conversationParticipants.pinned, true),
+			hasUnread,
+		) as SQL
+		conditions.push(query.scope === 'priority' ? isPriority : not(isPriority))
 	}
 
 	const rows = await db
@@ -891,6 +927,11 @@ app.openapi(listConversationsRoute, (async (c) => {
 	return c.json({
 		conversations: page.map((r) => ({
 			...serialize(r.conversation),
+			title: directChatTitleForViewer(
+				r.conversation,
+				participantsByConversation.get(r.conversation.id) ?? [],
+				callerId,
+			),
 			pinned: r.participant.pinned,
 			archived: r.participant.archived,
 			unread_count: unreadByConversation.get(r.conversation.id) ?? 0,
@@ -1062,6 +1103,11 @@ app.openapi(getConversationRoute, (async (c) => {
 	])
 	return c.json({
 		...serialize(row.conversation),
+		title: directChatTitleForViewer(
+			row.conversation,
+			participantsByConversation.get(id) ?? [],
+			callerId,
+		),
 		pinned: row.participant.pinned,
 		archived: row.participant.archived,
 		unread_count: unreadByConversation.get(id) ?? 0,
@@ -1160,7 +1206,7 @@ const addParticipantsRoute = createRoute({
 	responses: {
 		200: {
 			content: {
-				'application/json': { schema: z.array(conversationParticipantStateResponseSchema) },
+				'application/json': { schema: z.array(conversationParticipantResponseSchema) },
 			},
 			description: 'Updated participant list (state omitted — see GET /:id)',
 		},
@@ -1456,8 +1502,8 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
-	// An agent posting mid-turn answers where the human is talking: in the thread of the message
-	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
+	// An agent posting mid-turn answers where the human is talking: in the thread the turn's message
+	// sits in, if any, as the end-of-turn reply does. Only for the agent's own session in
 	// this chat (a verified sessionId), so humans and other callers post exactly as before.
 	// An explicit thread_root_id wins, top_level opts out.
 	// A thread session answers in its own thread; any other session follows the message that
@@ -1474,6 +1520,8 @@ app.openapi(postMessageRoute, (async (c) => {
 		})
 		sessionThreadRootId = placed.sessionThreadRootId
 		if (body.thread_root_id === undefined && body.top_level !== true) {
+			// Only a thread a person already started is continued. A turn started by a top-level
+			// message posts to the main timeline: agents do not start threads on their own.
 			turnThreadRootId = placed.threadRootId
 		}
 	}
@@ -1980,7 +2028,7 @@ const removeReactionRoute = createRoute({
 	},
 })
 
-/** The message must be a real (non-system) message of a conversation the caller is in. */
+/** The message must be a real (non-system), not deleted message of a conversation the caller is in. */
 async function findReactableMessage(
 	db: Database,
 	args: { conversationId: string; messageId: number; callerId: string; workspaceId: string },
@@ -1995,6 +2043,7 @@ async function findReactableMessage(
 				eq(messages.id, args.messageId),
 				eq(messages.conversationId, args.conversationId),
 				eq(messages.kind, 'message'),
+				isNull(messages.deletedAt),
 			),
 		)
 		.limit(1)

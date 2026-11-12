@@ -25,9 +25,14 @@ final class Dictation {
 
 	private(set) var state: State = .idle
 	var isListening: Bool { state == .listening }
-	/// Set when a server session handed over to the phone's recogniser by itself; says why in plain
-	/// words. Cleared when the session ends.
-	private(set) var fallbackNote: String?
+	/// A plain-words note for when dictation is not going as it should: the phone took over from the
+	/// server and why, the server heard no words, or nothing was sent. Nil while all is well. Kept after
+	/// the session ends (Done, Discard) so the person can still read it; cleared when the next one starts.
+	private(set) var engineNote: String?
+	/// While the server transcribes: the phone's live guess at the words it hasn't returned yet. Not shown
+	/// (the composer waits for the server's text); the phone's words only land if the server fails.
+	/// Empty when there is nothing waiting.
+	private(set) var previewText = ""
 
 	/// Built per session: an engine kept across sessions holds a stale input format once the audio
 	/// session has been deactivated or the route changed, and the tap then fails or delivers nothing.
@@ -73,7 +78,8 @@ final class Dictation {
 		accumulator = DictationAccumulator()
 		restartPolicy = DictationRestartPolicy()
 		backendText = ""
-		fallbackNote = nil
+		engineNote = nil
+		previewText = ""
 		guard await requestPermissions() else { return }
 		if backend, await startBackend() { return }
 		guard let recognizer = Self.makeRecognizer() else {
@@ -85,6 +91,7 @@ final class Dictation {
 		do {
 			try launch(recognizer)
 			state = .listening
+			DictationFallback.log.info("dictation engine: phone")
 		} catch {
 			stop()
 			state = .unavailable(
@@ -94,20 +101,29 @@ final class Dictation {
 	}
 
 	/// Starts dictating through the server. False means use the phone's recogniser: there is no
-	/// server service (previews, tests) or the microphone wouldn't open.
+	/// server service (previews, tests) or the microphone wouldn't open. Either way a note says why.
 	private func startBackend() async -> Bool {
-		guard let service = DictationBackend.service else { return false }
+		guard let service = DictationBackend.service else {
+			noteFallback(.serviceMissing)
+			return false
+		}
 		let run = BackendDictationRun(
 			service: service, language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
+			previewRecognizer: Self.makePreviewRecognizer(),
 			onText: { [weak self] text in
 				self?.backendText = text
 				self?.onText?(text)
 			},
+			onPreview: { [weak self] text in self?.previewText = text },
 			onFailure: { [weak self] reason in self?.backendFailed(reason) },
 			onInterrupted: { [weak self] in
 				self?.fail("Dictation was interrupted. Tap the microphone to continue.")
 			},
-			onLimit: { [weak self] in self?.backendLimitReached() })
+			onLimit: { [weak self] in self?.backendLimitReached() },
+			onAnswer: { [weak self] empty in
+				guard let self, backendRun != nil else { return }
+				engineNote = empty ? DictationFallback.emptyAnswerNote : nil
+			})
 		SpeechReader.shared.inputDidBegin()
 		do {
 			try run.start()
@@ -119,17 +135,21 @@ final class Dictation {
 		}
 		backendRun = run
 		state = .listening
+		DictationFallback.log.info("dictation engine: server")
 		return true
 	}
 
 	/// A request failed or the microphone changed under us: keep the text the server already
-	/// returned and carry on with the phone's recogniser, so dictation never just stops.
+	/// returned, and the grey words that were still waiting for it, and carry on with the phone's
+	/// recogniser, so dictation never just stops.
 	private func backendFailed(_ reason: DictationFallback) {
 		guard let run = backendRun else { return }
 		noteFallback(reason)
-		backendText = run.text
+		backendText = DictationText.merge(base: run.text, transcript: run.previewText)
 		run.cancel()
 		backendRun = nil
+		previewText = ""
+		onText?(backendText)
 		continueOnDevice()
 	}
 
@@ -137,7 +157,7 @@ final class Dictation {
 	/// over is never a silent change.
 	private func noteFallback(_ reason: DictationFallback) {
 		DictationFallback.log.error("server dictation fell back: \(reason.detail, privacy: .public)")
-		fallbackNote = reason.note
+		engineNote = reason.note
 	}
 
 	/// The session hit the server's length limit: let the phrases in flight land, then go on with
@@ -147,8 +167,11 @@ final class Dictation {
 		Task { [self] in
 			await run.finish()
 			guard backendRun === run, finishing == nil, state == .listening else { return }
+			noteFallback(.timeLimit)
+			run.dropPreview()
 			backendText = run.text
 			backendRun = nil
+			previewText = ""
 			continueOnDevice()
 		}
 	}
@@ -169,6 +192,13 @@ final class Dictation {
 
 	private func report() {
 		onText?(backendText.isEmpty ? accumulator.text : DictationText.merge(base: backendText, transcript: accumulator.text))
+	}
+
+	/// The recogniser for the grey live words, only when it can run on the phone: the audio is going to
+	/// the server already and must not go anywhere else as well.
+	private static func makePreviewRecognizer() -> SFSpeechRecognizer? {
+		guard let recognizer = makeRecognizer(), recognizer.supportsOnDeviceRecognition else { return nil }
+		return recognizer
 	}
 
 	private static func makeRecognizer() -> SFSpeechRecognizer? {
@@ -394,6 +424,7 @@ final class Dictation {
 		}
 		let task = Task { [self] in
 			await run.finish()
+			if run.phrasesSent == 0 { engineNote = DictationFallback.nothingSentNote }
 			stop()
 		}
 		finishing = task
@@ -404,7 +435,7 @@ final class Dictation {
 	func stop(flush: Bool = false) {
 		backendRun?.cancel()
 		backendRun = nil
-		fallbackNote = nil
+		previewText = ""
 		if flush, state == .listening, request != nil {
 			watchers.forEach { $0.cancel() }
 			watchers = []

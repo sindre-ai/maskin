@@ -187,6 +187,8 @@ public final class ObjectDetailStore {
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var editCount = 0
+	/// Where saved edits are counted. Tests pass their own.
+	@ObservationIgnored var analytics: Analytics = .shared
 	@ObservationIgnored private let cache: SnapshotCache?
 
 	/// The object and its links, as last seen. The activity stream is not cached: it is message
@@ -598,7 +600,8 @@ public final class ObjectDetailStore {
 	// MARK: Edits
 
 	/// Applies the patch locally, sends it, and puts back exactly what the patch overwrote if the
-	/// server refuses.
+	/// server refuses. A saved description is counted as `object_updated` (only after the server
+	/// accepts it; ids and counts only, never the text).
 	public func edit(_ patch: ObjectPatch) async {
 		guard let current = object else { return }
 		let updated = patch.applied(to: current)
@@ -615,6 +618,7 @@ public final class ObjectDetailStore {
 			object = merged
 			onObjectChanged?(merged)
 			actionError = nil
+			if patch.content != nil { analytics.objectUpdated(id: objectId, mutationType: "field") }
 		} catch {
 			if var now = object {
 				if patch.title != nil { now.title = current.title }

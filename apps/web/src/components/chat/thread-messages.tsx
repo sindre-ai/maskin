@@ -34,6 +34,7 @@ import { groupHandoffsByNextMessage } from '@/lib/handed-off-strip'
 import { extractLinkedObjectIds, splitOwnLinks } from '@/lib/linked-objects'
 import { isTimelineMessage } from '@/lib/message-threads'
 import { answeredQuestionIds as answeredQuestionIdsFor } from '@/lib/question-answers'
+import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { parseVoiceReceipt } from '@/lib/voice-receipts'
 import {
 	buildVoiceTranscript,
@@ -49,6 +50,7 @@ import { NeededTools } from './needed-tools'
 import { MessageThreadPill } from './replies/message-thread-pill'
 import { ResumeBanner } from './resume-banner'
 import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
+import { StarterPrompts } from './starter-prompts'
 import { SuggestedSteps } from './suggested-steps'
 import { VoiceCallBoundary, deriveVoiceCallBoundaries } from './voice-call-boundary'
 import { VoiceEventRow, VoiceSummaryCard } from './voice-receipts'
@@ -71,12 +73,19 @@ interface ThreadMessagesProps {
 	className?: string
 	/** Fills the composer with a fill step's prompt. */
 	onPickStep?: (prompt: string) => void
+	/**
+	 * Puts an agent's starter prompt in the composer after whatever the person already typed. Without
+	 * it an empty thread shows no starter chips: there is no composer to fill.
+	 */
+	onPickStarter?: (prompt: string) => void
 	/** Sends a send step's label as the person's message, with the intro step marker. */
 	onSendStep?: (content: string, metadata: MessageMetadata) => void
 	/** A step send is in flight. */
 	sendingStep?: boolean
 	/** Opens the reply thread rooted at this message id. Without it bubbles have no Reply action. */
 	onOpenReplies?: (rootId: number) => void
+	/** Opens the edit card on this message, as if its pencil was tapped. One request per nonce. */
+	editRequest?: { messageId: number; nonce: number } | null
 }
 
 export function ThreadMessages({
@@ -84,9 +93,11 @@ export function ThreadMessages({
 	conversationId,
 	className,
 	onPickStep,
+	onPickStarter,
 	onSendStep,
 	sendingStep = false,
 	onOpenReplies,
+	editRequest,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
@@ -378,6 +389,15 @@ export function ThreadMessages({
 	// Replies are not in `timeline`, so a loaded page of only replies is not an empty chat:
 	// older pages may still hold top-level messages.
 	if (timeline.length === 0 && !hasNextPage) {
+		// A chat with exactly one agent and nobody else: offer that agent's own openers. A tap
+		// fills the composer; nothing is sent until the person sends it.
+		const others = (conversation?.participants ?? []).filter((p) => p.actorId !== ownActorId)
+		const only = others.length === 1 ? others[0] : undefined
+		const starters =
+			only?.actorType === 'agent' ? starterPromptsForAgents([only.actorId], actors.data) : []
+		// "No messages yet" draws at once. The chips need the chat and the actor list, so they
+		// appear when those arrive; a slow or hung query only means no chips, never a blocked
+		// empty state.
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
 				<EmptyState
@@ -385,6 +405,14 @@ export function ThreadMessages({
 					title="No messages yet"
 					description="Send the first message to get the conversation started."
 				/>
+				{/* Chips need a composer to fill, so they show only where the caller passed one. */}
+				{onPickStarter ? (
+					<StarterPrompts
+						prompts={starters}
+						onPick={onPickStarter}
+						className="px-[var(--chat-gut)] pb-3"
+					/>
+				) : null}
 			</div>
 		)
 	}
@@ -566,6 +594,9 @@ export function ThreadMessages({
 										questionAnswered={answeredQuestionIds.has(message.id)}
 										spawnInfo={spawnByMessageId.get(message.id)}
 										onRetried={handleRetried}
+										editRequestNonce={
+											editRequest?.messageId === message.id ? editRequest.nonce : undefined
+										}
 										onReplyInThread={
 											onOpenReplies
 												? () => onOpenReplies(message.threadRootId ?? message.id)

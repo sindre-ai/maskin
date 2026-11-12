@@ -28,6 +28,7 @@ function buildHtmlFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		workspaceId: 'ws-1',
 		name: 'mockup.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 100,
 		storageKey: 'workspaces/ws-1/files/file-1',

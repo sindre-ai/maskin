@@ -3,6 +3,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import type { MessageReaction } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { QUICK_REACTIONS, hasReacted, reactionLabel } from '@/lib/message-reactions'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { SmilePlus } from 'lucide-react'
 import { useState } from 'react'
 
@@ -80,7 +81,8 @@ export function ReactButton({
 
 /**
  * The emoji under a message: one pill per emoji with its count, filled when you used it.
- * Pressing a pill adds or takes back your reaction. Hover or focus names who reacted.
+ * Pressing a pill adds or takes back your reaction. Hover or focus names who reacted. A viewer's
+ * pills are switched off, and the tooltip says why on top of naming who reacted.
  */
 export function ReactionChips({
 	reactions,
@@ -101,29 +103,34 @@ export function ReactionChips({
 			<div className={cn('flex flex-wrap items-center gap-1', className)}>
 				{reactions.map((reaction) => {
 					const label = reactionLabel(reaction, meId)
+					const chip = (
+						<button
+							type="button"
+							aria-pressed={reaction.reactedByMe}
+							aria-label={`${label}. ${reaction.reactedByMe ? 'Press to take it back' : 'Press to add yours'}`}
+							disabled={disabled}
+							onClick={() => onToggle(reaction.emoji)}
+							className={cn(
+								'inline-flex min-h-6 items-center gap-1 rounded-full border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 any-pointer-coarse:min-h-8',
+								reaction.reactedByMe
+									? 'border-foreground/40 bg-foreground/10 text-foreground'
+									: 'border-border bg-card text-muted-foreground hover:text-foreground',
+							)}
+						>
+							<span aria-hidden>{reaction.emoji}</span>
+							<span aria-hidden className="font-semibold tabular-nums">
+								{reaction.count}
+							</span>
+						</button>
+					)
 					return (
 						<Tooltip key={reaction.emoji}>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									aria-pressed={reaction.reactedByMe}
-									aria-label={`${label}. ${reaction.reactedByMe ? 'Press to take it back' : 'Press to add yours'}`}
-									disabled={disabled}
-									onClick={() => onToggle(reaction.emoji)}
-									className={cn(
-										'inline-flex min-h-6 items-center gap-1 rounded-full border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 any-pointer-coarse:min-h-8',
-										reaction.reactedByMe
-											? 'border-foreground/40 bg-foreground/10 text-foreground'
-											: 'border-border bg-card text-muted-foreground hover:text-foreground',
-									)}
-								>
-									<span aria-hidden>{reaction.emoji}</span>
-									<span aria-hidden className="font-semibold tabular-nums">
-										{reaction.count}
-									</span>
-								</button>
-							</TooltipTrigger>
-							<TooltipContent>{label}</TooltipContent>
+							{/* A disabled button swallows pointer events, so the tooltip hangs off a span. */}
+							<TooltipTrigger asChild>{disabled ? <span>{chip}</span> : chip}</TooltipTrigger>
+							<TooltipContent>
+								{label}
+								{disabled ? <span className="block">{VIEWER_READ_ONLY_MESSAGE}</span> : null}
+							</TooltipContent>
 						</Tooltip>
 					)
 				})}

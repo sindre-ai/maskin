@@ -27,9 +27,6 @@ public final class LoopsStore {
 	}
 	/// Loop id → its newest post, for the card's latest update (only the bounded set is loaded).
 	public private(set) var latestPosts: [String: LoopPost] = [:]
-	/// Loop id → the title of the newest decision still unanswered (no replies), else the newest
-	/// decision, for the card's "waiting on you" line. Loaded with `latestPosts`.
-	public private(set) var decisionTitles: [String: String] = [:]
 	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
 	public private(set) var freshness = Freshness()
 
@@ -171,9 +168,6 @@ public final class LoopsStore {
 			post: post, author: directory.name(post.actorID), limit: LoopLatestUpdate.cardLimit)
 	}
 
-	/// What the card's banner names: the title of the decision that waits, when the flow has one.
-	public func decisionTitle(for loop: LoopSummary) -> String? { decisionTitles[loop.id] }
-
 	/// Loads the newest post for the visible cards: at most `latestUpdateBound` flows, one graph
 	/// read each, and a flow is only read again after its `updatedAt` moved.
 	public func loadLatestUpdates() async {
@@ -216,9 +210,6 @@ public final class LoopsStore {
 			guard let posts = outcome else { continue }
 			updatesSeenAt[loop.id] = loop.updatedAt ?? .distantPast
 			latestPosts[loop.id] = posts.first
-			let decisions = posts.filter(\.isDecision)
-			decisionTitles[loop.id] = FlowsOverview.decisionTitle(
-				from: (decisions.first { $0.replyCount == 0 } ?? decisions.first))
 		}
 	}
 

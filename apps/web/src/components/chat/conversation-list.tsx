@@ -10,7 +10,7 @@ import { groupConversations } from '@/lib/conversation-groups'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
@@ -46,6 +46,12 @@ export function ConversationListHeader({
 	const searchRef = useRef<HTMLInputElement>(null)
 	const [focused, setFocused] = useState(false)
 	usePageSearchShortcut(() => focusField(searchRef.current))
+	// Esc clears the text and leaves the field (type=search never blurs on its own).
+	const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+		if (e.key !== 'Escape') return
+		onQueryChange('')
+		searchRef.current?.blur()
+	}
 	const expanded = focused || query !== ''
 	if (!titled) {
 		return (
@@ -58,6 +64,7 @@ export function ConversationListHeader({
 							type="search"
 							value={query}
 							onChange={(e) => onQueryChange(e.target.value)}
+							onKeyDown={onSearchKeyDown}
 							placeholder="Search chats"
 							aria-label="Search chats"
 							className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
@@ -90,6 +97,7 @@ export function ConversationListHeader({
 					type="search"
 					value={query}
 					onChange={(e) => onQueryChange(e.target.value)}
+					onKeyDown={onSearchKeyDown}
 					onFocus={() => setFocused(true)}
 					onBlur={() => setFocused(false)}
 					placeholder="Search chats"
@@ -177,22 +185,69 @@ function ChatConversationList({
 	// defaults the list to non-archived conversations (see
 	// `useConversationsInfinite`'s param-building note on why `archived: false`
 	// must never be sent as a literal query string).
-	const {
-		data,
-		isLoading,
-		isError,
-		refetch,
-		fetchNextPage,
-		hasNextPage,
-		isFetchingNextPage,
-		isFetchNextPageError,
-	} = useConversationsInfinite(workspaceId, {
-		...(filter === 'pinned' ? { pinned: true } : {}),
-		...(filter === 'archived' ? { archived: true } : {}),
-		...(filter === 'unread' ? { unread_only: true } : {}),
-	})
+	// The default list is two fetches, so every group's number and order is right on arrival:
+	// everything that is always listed in full (direct messages, pinned, unread) streams in until
+	// done, and "Earlier" opens with the newest chats and loads more on scroll. The Pinned,
+	// Unread and Archived filters are one scrolled list each.
+	const scoped = filter === 'all'
+	const single = useConversationsInfinite(
+		workspaceId,
+		{
+			...(filter === 'pinned' ? { pinned: true } : {}),
+			...(filter === 'archived' ? { archived: true } : {}),
+			...(filter === 'unread' ? { unread_only: true } : {}),
+		},
+		{ enabled: !scoped },
+	)
+	const priority = useConversationsInfinite(workspaceId, { scope: 'priority' }, { enabled: scoped })
+	const recent = useConversationsInfinite(workspaceId, { scope: 'recent' }, { enabled: scoped })
+	const { fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = scoped
+		? recent
+		: single
 
-	const fetched = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+	const {
+		hasNextPage: priorityHasMore,
+		isFetchingNextPage: priorityFetching,
+		isFetchNextPageError: priorityFailed,
+		fetchNextPage: fetchMorePriority,
+	} = priority
+	useEffect(() => {
+		if (scoped && priorityHasMore && !priorityFetching && !priorityFailed) fetchMorePriority()
+	}, [scoped, priorityHasMore, priorityFetching, priorityFailed, fetchMorePriority])
+
+	// A half-loaded priority set would show wrong counts, so the skeleton stays until it is whole.
+	const isLoading = scoped
+		? priority.isLoading || recent.isLoading || (priorityHasMore && !priorityFailed)
+		: single.isLoading
+	const isError = scoped ? priority.isError || recent.isError || priorityFailed : single.isError
+	const refetch = () => {
+		if (scoped) {
+			priority.refetch()
+			recent.refetch()
+		} else {
+			single.refetch()
+		}
+	}
+
+	// Pages are fetched by offset, so a chat created or bumped while the list is open shifts the
+	// next page and returns a chat already seen. Two rows with one id share a React key, and
+	// React then leaves one behind when its group folds. Keep the first copy of each chat.
+	const priorityData = priority.data
+	const recentData = recent.data
+	const singleData = single.data
+	const fetched = useMemo(() => {
+		const pages = scoped
+			? [...(priorityData?.pages ?? []), ...(recentData?.pages ?? [])]
+			: (singleData?.pages ?? [])
+		const seen = new Set<string>()
+		return pages
+			.flatMap((page) => page.conversations)
+			.filter((c) => {
+				if (seen.has(c.id)) return false
+				seen.add(c.id)
+				return true
+			})
+	}, [scoped, priorityData, recentData, singleData])
 	// Reading a chat opened from the Unread filter would drop its row on the
 	// next refetch and shift everything below it. Keep rows that were shown in
 	// place (as read) until the filter or workspace changes.
@@ -252,6 +307,7 @@ function ChatConversationList({
 		mode: filter === 'archived' ? 'archived' : 'unread',
 	})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
 		// Exactly the chats the Unread group lists (pinned chats sit in their own group).
@@ -288,6 +344,9 @@ function ChatConversationList({
 		// re-observing would refire the same request in a tight loop. The manual
 		// "Try again" below is the only way back in.
 		if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
+		// With every group folded the list is a few header rows, so the sentinel is always on
+		// screen and would pull in the whole history behind the reader's back.
+		if (allCollapsed) return
 		if (typeof IntersectionObserver === 'undefined') return
 		const observer = new IntersectionObserver(
 			(entries) => {
@@ -297,7 +356,7 @@ function ChatConversationList({
 		)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage])
+	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage, allCollapsed])
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -354,7 +413,7 @@ function ChatConversationList({
 						<>
 							{groups.map((group) => (
 								<div key={group.key} className="flex flex-col gap-px">
-									<div className="flex items-center gap-2 px-2 pt-3 pb-1.5 text-[13px]">
+									<div className="flex items-center gap-2 px-2 pt-3.5 pb-3 text-[15px]">
 										<button
 											type="button"
 											aria-expanded={!collapsed.has(group.key)}

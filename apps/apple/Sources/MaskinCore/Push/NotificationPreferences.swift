@@ -12,12 +12,18 @@ public struct NotificationPreferences: Equatable, Sendable {
 		public var digest: Bool
 		/// Tips and product updates.
 		public var tips: Bool
+		/// A flow of yours finished a run. Opt-in: off until the person switches it on.
+		public var flowActivity: Bool
 
-		public init(needsYou: Bool = true, conversation: Bool = true, digest: Bool = true, tips: Bool = true) {
+		public init(
+			needsYou: Bool = true, conversation: Bool = true, digest: Bool = true, tips: Bool = true,
+			flowActivity: Bool = false
+		) {
 			self.needsYou = needsYou
 			self.conversation = conversation
 			self.digest = digest
 			self.tips = tips
+			self.flowActivity = flowActivity
 		}
 	}
 
@@ -33,6 +39,16 @@ public struct NotificationPreferences: Equatable, Sendable {
 		public static let evening = QuietHours(start: 22 * 60, end: 7 * 60)
 	}
 
+	/// How often the summary email comes. Off is `emailDigestEnabled == false`, not a case here.
+	public enum EmailRhythm: String, Codable, CaseIterable, Sendable {
+		case daily, weekly
+	}
+
+	/// What the Summary email row shows: Off when the email switch is off, else the saved rhythm.
+	public enum EmailChoice: String, CaseIterable, Sendable {
+		case daily, weekly, off
+	}
+
 	/// IANA name; nil means the server has never been told (it then uses UTC).
 	public var timezone: String?
 	public var quietHours: QuietHours?
@@ -40,11 +56,30 @@ public struct NotificationPreferences: Equatable, Sendable {
 	public var briefingEnabled: Bool
 	/// Minutes from local midnight.
 	public var briefingTime: Int
+	/// The summary email switch. When the person never chose, the server sends what the sending
+	/// rule would give them, so this is always the state to show.
+	public var emailDigestEnabled: Bool
+	/// The Email switch per kind other than the summary. Each is off until the person switches it on.
+	public var emailNeedsYou: Bool
+	public var emailConversation: Bool
+	public var emailTips: Bool
+	public var emailFlowActivity: Bool
+	/// The Marketplace picks switch for the summary email. Off until the person turns it on.
+	public var marketplacePicksEnabled: Bool
+	/// Daily when the person never chose.
+	public var emailRhythm: EmailRhythm
 	public var mutedWorkspaceIds: [String]
+
+	public var emailChoice: EmailChoice {
+		emailDigestEnabled ? (emailRhythm == .weekly ? .weekly : .daily) : .off
+	}
 
 	public init(
 		timezone: String? = nil, quietHours: QuietHours? = nil, categories: Categories = .init(),
 		briefingEnabled: Bool = true, briefingTime: Int = NotificationPreferences.defaultBriefingTime,
+		emailDigestEnabled: Bool = false, emailNeedsYou: Bool = false, emailConversation: Bool = false,
+		emailTips: Bool = false, emailFlowActivity: Bool = false,
+		marketplacePicksEnabled: Bool = false, emailRhythm: EmailRhythm = .daily,
 		mutedWorkspaceIds: [String] = []
 	) {
 		self.timezone = timezone
@@ -52,6 +87,13 @@ public struct NotificationPreferences: Equatable, Sendable {
 		self.categories = categories
 		self.briefingEnabled = briefingEnabled
 		self.briefingTime = briefingTime
+		self.emailDigestEnabled = emailDigestEnabled
+		self.emailNeedsYou = emailNeedsYou
+		self.emailConversation = emailConversation
+		self.emailTips = emailTips
+		self.emailFlowActivity = emailFlowActivity
+		self.marketplacePicksEnabled = marketplacePicksEnabled
+		self.emailRhythm = emailRhythm
 		self.mutedWorkspaceIds = mutedWorkspaceIds
 	}
 
@@ -79,8 +121,16 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 	public var conversation: Bool?
 	public var digest: Bool?
 	public var tips: Bool?
+	public var flowActivity: Bool?
 	public var briefingEnabled: Bool?
 	public var briefingTime: Int?
+	public var emailDigestEnabled: Bool?
+	public var emailNeedsYou: Bool?
+	public var emailConversation: Bool?
+	public var emailTips: Bool?
+	public var emailFlowActivity: Bool?
+	public var marketplacePicksEnabled: Bool?
+	public var emailRhythm: NotificationPreferences.EmailRhythm?
 	public var mutedWorkspaceIds: [String]?
 
 	public init() {}
@@ -104,8 +154,16 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 		if let conversation { next.categories.conversation = conversation }
 		if let digest { next.categories.digest = digest }
 		if let tips { next.categories.tips = tips }
+		if let flowActivity { next.categories.flowActivity = flowActivity }
 		if let briefingEnabled { next.briefingEnabled = briefingEnabled }
 		if let briefingTime { next.briefingTime = briefingTime }
+		if let emailDigestEnabled { next.emailDigestEnabled = emailDigestEnabled }
+		if let emailNeedsYou { next.emailNeedsYou = emailNeedsYou }
+		if let emailConversation { next.emailConversation = emailConversation }
+		if let emailTips { next.emailTips = emailTips }
+		if let emailFlowActivity { next.emailFlowActivity = emailFlowActivity }
+		if let marketplacePicksEnabled { next.marketplacePicksEnabled = marketplacePicksEnabled }
+		if let emailRhythm { next.emailRhythm = emailRhythm }
 		if let mutedWorkspaceIds { next.mutedWorkspaceIds = mutedWorkspaceIds }
 		return next
 	}
@@ -122,9 +180,17 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 		enum Key: String, CodingKey {
 			case timezone, quietStart = "quiet_hours_start", quietEnd = "quiet_hours_end"
 			case categories, briefingEnabled = "briefing_enabled", briefingTime = "briefing_time"
+			case emailDigest = "email_digest_enabled", marketplacePicks = "marketplace_picks_enabled"
+			case emailRhythm = "email_rhythm"
 			case muted = "muted_workspace_ids"
+			case emailCategories = "email_categories"
 		}
-		enum CategoryKey: String, CodingKey { case needsYou = "needs_you", conversation, digest, tips }
+		enum CategoryKey: String, CodingKey {
+			case needsYou = "needs_you", conversation, digest, tips, flowActivity = "flow_activity"
+		}
+		enum EmailCategoryKey: String, CodingKey {
+			case needsYou = "needs_you", conversation, tips, flowActivity = "flow_activity"
+		}
 
 		func encode(to encoder: any Encoder) throws {
 			var c = encoder.container(keyedBy: Key.self)
@@ -143,15 +209,30 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 				try c.encodeNil(forKey: .quietStart)
 				try c.encodeNil(forKey: .quietEnd)
 			}
-			if patch.needsYou != nil || patch.conversation != nil || patch.digest != nil || patch.tips != nil {
+			if patch.needsYou != nil || patch.conversation != nil || patch.digest != nil || patch.tips != nil
+				|| patch.flowActivity != nil
+			{
 				var cat = c.nestedContainer(keyedBy: CategoryKey.self, forKey: .categories)
 				try cat.encodeIfPresent(patch.needsYou, forKey: .needsYou)
 				try cat.encodeIfPresent(patch.conversation, forKey: .conversation)
 				try cat.encodeIfPresent(patch.digest, forKey: .digest)
 				try cat.encodeIfPresent(patch.tips, forKey: .tips)
+				try cat.encodeIfPresent(patch.flowActivity, forKey: .flowActivity)
+			}
+			if patch.emailNeedsYou != nil || patch.emailConversation != nil || patch.emailTips != nil
+				|| patch.emailFlowActivity != nil
+			{
+				var email = c.nestedContainer(keyedBy: EmailCategoryKey.self, forKey: .emailCategories)
+				try email.encodeIfPresent(patch.emailNeedsYou, forKey: .needsYou)
+				try email.encodeIfPresent(patch.emailConversation, forKey: .conversation)
+				try email.encodeIfPresent(patch.emailTips, forKey: .tips)
+				try email.encodeIfPresent(patch.emailFlowActivity, forKey: .flowActivity)
 			}
 			try c.encodeIfPresent(patch.briefingEnabled, forKey: .briefingEnabled)
 			try c.encodeIfPresent(patch.briefingTime.map(NotificationPreferences.clamp(minutes:)), forKey: .briefingTime)
+			try c.encodeIfPresent(patch.emailDigestEnabled, forKey: .emailDigest)
+			try c.encodeIfPresent(patch.marketplacePicksEnabled, forKey: .marketplacePicks)
+			try c.encodeIfPresent(patch.emailRhythm, forKey: .emailRhythm)
 			try c.encodeIfPresent(patch.mutedWorkspaceIds, forKey: .muted)
 		}
 	}

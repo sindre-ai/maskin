@@ -99,11 +99,14 @@ export function buildExtensions(
 	placeholder: string | undefined,
 	extra: Extensions | undefined,
 	shortcutExtension?: Extension,
+	allowTables = false,
 ): Extensions {
 	const disallowed = new Set<EditorDisallowedNode>(disallowedNodes ?? [])
 	const headingLevels = HEADING_LEVELS_BY_VARIANT[variant]
 	const includeHeading = headingLevels.length > 0 && !disallowed.has('heading')
-	const includeTable = variant === 'document' && !disallowed.has('table')
+	// Only the document variant has tables by default. A host that takes pasted tables in a
+	// smaller variant (the chat message box) opts in; no table buttons come with it.
+	const includeTable = (variant === 'document' || allowTables) && !disallowed.has('table')
 	const includeTaskList = variant !== 'notification' && !disallowed.has('taskList')
 	const includeCodeBlock = !disallowed.has('codeBlock')
 

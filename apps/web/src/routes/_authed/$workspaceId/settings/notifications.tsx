@@ -1,4 +1,5 @@
 import { BrowserNotificationsToggle } from '@/components/profile/browser-notifications-row'
+import { EmailRhythmRow, emailChoice } from '@/components/settings/email-rhythm-row'
 import { SettingsPageTitle } from '@/components/settings/settings-page-title'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -13,7 +14,7 @@ import {
 import { useWebPush } from '@/hooks/use-web-push'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { sortBy } from '@/lib/sort'
-import type { UpdateNotificationPreferencesInput } from '@maskin/shared'
+import type { PushCategory, UpdateNotificationPreferencesInput } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
@@ -44,41 +45,150 @@ const SWITCH_CLASS =
 
 type SaveFn = (data: UpdateNotificationPreferencesInput) => void
 
+interface ChannelSwitch {
+	checked: boolean
+	onChange: (next: boolean) => void
+	/** The person was never asked about this channel; the switch shows what they get by default. */
+	notAsked?: boolean
+	/** Shown but not changeable here, like Needs you while on. */
+	locked?: boolean
+}
+
+/** One labelled switch in a fixed-width column. The label shows wherever there is no header above the columns. */
+function SwitchCell({
+	label,
+	ariaLabel,
+	channel,
+	labelClass,
+}: {
+	label: string
+	ariaLabel: string
+	channel: ChannelSwitch
+	labelClass: string
+}) {
+	return (
+		<div className="flex w-16 flex-col items-center gap-1">
+			<span className={`text-[11px] text-muted-foreground ${labelClass}`}>{label}</span>
+			<Switch
+				checked={channel.checked}
+				onCheckedChange={(next) => channel.onChange(!!next)}
+				aria-label={ariaLabel}
+				disabled={channel.locked}
+				className={SWITCH_CLASS}
+			/>
+			{channel.notAsked && <span className="text-[11px] text-muted-foreground">Not asked</span>}
+		</div>
+	)
+}
+
 function PreferenceRow({
 	title,
 	description,
 	checked,
 	onChange,
 	locked = false,
+	email,
+	browser,
+	columns = false,
 }: {
 	title: string
 	description: string
 	checked: boolean
 	onChange: (next: boolean) => void
-	/** Shown but not changeable here, e.g. "Needs you", which ignores quiet hours. */
+	/** Push is shown but not changeable here, e.g. "Needs you", which ignores quiet hours. */
 	locked?: boolean
+	/** A switch for the same row, sent by email instead of push. */
+	email?: ChannelSwitch
+	/** A switch for the same row, shown in this browser. */
+	browser?: ChannelSwitch
+	/** Part of the Email, Push, Browser table: keeps the switches in line when a row has fewer. */
+	columns?: boolean
 }) {
+	// Three fixed-width columns leave the text too little room at tablet width, so the table
+	// layout starts at lg. A row without columns has one switch and can go side by side sooner.
+	const labelClass = columns ? 'lg:hidden' : 'sm:hidden'
+	const empty = <div className="hidden w-16 lg:block" />
 	return (
-		<div className="flex items-center justify-between gap-4 px-2 py-3.5">
+		<div
+			className={`flex flex-col gap-3 px-2 py-3.5 ${
+				columns
+					? 'lg:flex-row lg:items-center lg:justify-between lg:gap-4'
+					: 'sm:flex-row sm:items-center sm:justify-between sm:gap-4'
+			}`}
+		>
 			<div className="min-w-0">
 				<span className="block text-[15px] font-medium leading-tight">{title}</span>
 				<span className="block text-[13px] text-muted-foreground">{description}</span>
 			</div>
-			<Switch
-				checked={checked}
-				onCheckedChange={(next) => onChange(!!next)}
-				aria-label={title}
-				disabled={locked}
-				className={SWITCH_CLASS}
-			/>
+			<div
+				className={`flex shrink-0 items-start gap-1 ${columns ? 'lg:items-center' : 'sm:items-center'}`}
+			>
+				{email ? (
+					<SwitchCell
+						label="Email"
+						ariaLabel={`${title} by email`}
+						channel={email}
+						labelClass={labelClass}
+					/>
+				) : (
+					columns && empty
+				)}
+				<SwitchCell
+					label="Push"
+					ariaLabel={title}
+					channel={{ checked, onChange, locked }}
+					labelClass={labelClass}
+				/>
+				{browser ? (
+					<SwitchCell
+						label="Browser"
+						ariaLabel={`${title} in the browser`}
+						channel={browser}
+						labelClass={labelClass}
+					/>
+				) : (
+					columns && empty
+				)}
+			</div>
+		</div>
+	)
+}
+
+/** The Marketplace picks switch: email only, off for everyone until the person turns it on. */
+function MarketplacePicksRow({
+	checked,
+	onChange,
+}: {
+	checked: boolean
+	onChange: (next: boolean) => void
+}) {
+	return (
+		<div className="flex flex-col gap-3 px-2 py-3.5 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+			<div className="min-w-0">
+				<span className="block text-[15px] font-medium leading-tight">Marketplace picks</span>
+				<span className="block text-[13px] text-muted-foreground">
+					One suggested flow under your summary email, at most once a week.
+				</span>
+			</div>
+			<div className="flex shrink-0 items-start gap-1 lg:items-center">
+				<SwitchCell
+					label="Email"
+					ariaLabel="Marketplace picks by email"
+					channel={{ checked, onChange }}
+					labelClass="lg:hidden"
+				/>
+				<div className="hidden w-16 lg:block" />
+				<div className="hidden w-16 lg:block" />
+			</div>
 		</div>
 	)
 }
 
 /**
- * Settings → Notifications. The API stores one switch per category and one for the daily
- * briefing, all for push; there is no per-channel (email, browser) setting, so this page has
- * the single Push column.
+ * Settings → Notifications. The API stores a Push and a Browser switch per category, one Push
+ * switch for the daily briefing, and one email switch, which sits on the Digests row; the Summary
+ * email row under it picks Daily, Weekly or Off for that same switch. A Browser
+ * switch the person never touched shows "Not asked" and follows that category's Push switch.
  */
 function NotificationsPage() {
 	useDocumentTitle('Notifications')
@@ -100,12 +210,24 @@ function NotificationsPage() {
 		)
 	}
 
+	const browserSwitch = (kind: PushCategory): ChannelSwitch => ({
+		checked: prefs.browser_categories[kind],
+		onChange: (next) => save({ browser_categories: { [kind]: next } }),
+		notAsked: prefs.browser_not_asked.includes(kind),
+		// Same rule as Push: Needs you stays on once on, and can always be turned on.
+		locked: kind === 'needs_you' && prefs.browser_categories[kind],
+	})
+
 	return (
 		<div className="max-w-[760px]">
 			<SettingsPageTitle title="Notifications" subtitle="Choose what reaches you, and where." />
 			<div className="flex items-center justify-between px-2 pb-1.5 text-[15px] font-semibold text-foreground">
 				<span>Notify me about</span>
-				<span>Push</span>
+				<div className="hidden items-center gap-1 lg:flex">
+					<span className="w-16 text-center">Email</span>
+					<span className="w-16 text-center">Push</span>
+					<span className="w-16 text-center">Browser</span>
+				</div>
 			</div>
 			<div className="divide-y divide-border-subtle border-y border-border-subtle">
 				<PreferenceRow
@@ -115,30 +237,81 @@ function NotificationsPage() {
 					locked={prefs.categories.needs_you}
 					checked={prefs.categories.needs_you}
 					onChange={(next) => save({ categories: { needs_you: next } })}
+					email={{
+						checked: prefs.email_categories.needs_you,
+						onChange: (next) => save({ email_categories: { needs_you: next } }),
+					}}
+					browser={browserSwitch('needs_you')}
+					columns
 				/>
 				<PreferenceRow
 					title="Chat replies"
 					description="When someone answers you in a chat."
 					checked={prefs.categories.conversation}
 					onChange={(next) => save({ categories: { conversation: next } })}
+					email={{
+						checked: prefs.email_categories.conversation,
+						onChange: (next) => save({ email_categories: { conversation: next } }),
+					}}
+					browser={browserSwitch('conversation')}
+					columns
 				/>
 				<PreferenceRow
 					title={`Daily briefing at ${formatMinuteOfDay(prefs.briefing_time)}`}
 					description="One message each morning, separate from Digests."
 					checked={prefs.briefing_enabled}
 					onChange={(next) => save({ briefing_enabled: next })}
+					columns
 				/>
 				<PreferenceRow
 					title="Digests"
 					description="Summaries of what your agents got done."
 					checked={prefs.categories.digest}
 					onChange={(next) => save({ categories: { digest: next } })}
+					email={{
+						checked: prefs.email_digest_enabled,
+						onChange: (next) => save({ email_digest_enabled: next }),
+					}}
+					browser={browserSwitch('digest')}
+					columns
+				/>
+				<MarketplacePicksRow
+					checked={prefs.marketplace_picks_enabled}
+					onChange={(next) => save({ marketplace_picks_enabled: next })}
+				/>
+				<PreferenceRow
+					title="Flow activity"
+					description="When one of your flows finishes a run. Off until you switch it on."
+					checked={prefs.categories.flow_activity}
+					onChange={(next) => save({ categories: { flow_activity: next } })}
+					email={{
+						checked: prefs.email_categories.flow_activity,
+						onChange: (next) => save({ email_categories: { flow_activity: next } }),
+					}}
+					browser={browserSwitch('flow_activity')}
+					columns
+				/>
+				<EmailRhythmRow
+					value={emailChoice(prefs.email_digest_enabled, prefs.email_rhythm)}
+					onChange={(next) =>
+						save(
+							next === 'off'
+								? { email_digest_enabled: false }
+								: { email_digest_enabled: true, email_rhythm: next },
+						)
+					}
 				/>
 				<PreferenceRow
 					title="Tips and updates"
 					description="What is new in Maskin."
 					checked={prefs.categories.tips}
 					onChange={(next) => save({ categories: { tips: next } })}
+					email={{
+						checked: prefs.email_categories.tips,
+						onChange: (next) => save({ email_categories: { tips: next } }),
+					}}
+					browser={browserSwitch('tips')}
+					columns
 				/>
 				<QuietHoursRow
 					start={prefs.quiet_hours_start}
