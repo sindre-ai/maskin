@@ -1,5 +1,4 @@
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
-import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopViewChangePrompt } from '@/components/loops/loop-view-change-prompt'
 import { LoopViewItemPanel } from '@/components/loops/loop-view-item-panel'
 import { Button } from '@/components/ui/button'
