@@ -1880,8 +1880,8 @@ ${surviving}
 			const { instance, calls } = withRetry()
 			finalizer = instance
 
-			await feed(session.id, toolUseLine('Bash'))
-			await feed(session.id, toolResultLine())
+			await feed(session.id, `${toolUseLine('Bash')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
 			await feed(
 				session.id,
 				`${resultLine({ result: 'Six companies found. Do you want me to go ahead and score them?' })}\n`,
@@ -1913,8 +1913,8 @@ ${surviving}
 			const { instance, calls } = withRetry()
 			finalizer = instance
 
-			await feed(session.id, toolUseLine('Bash'))
-			await feed(session.id, toolResultLine())
+			await feed(session.id, `${toolUseLine('Bash')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
 			await feed(
 				session.id,
 				`${resultLine({ result: 'The draft is ready. Do you want me to send the email to Hans?' })}\n`,
