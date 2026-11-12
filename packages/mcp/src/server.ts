@@ -6176,6 +6176,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
+			if (args.conversation_id) {
+				const chatParams = new URLSearchParams()
+				if (args.type) chatParams.set('type', args.type)
+				if (args.uploaded_by) chatParams.set('uploaded_by', args.uploaded_by)
+				const chatQs = chatParams.toString()
+				const chatFiles = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${args.conversation_id}/files${chatQs ? `?${chatQs}` : ''}`,
+					undefined,
+					{ workspaceId: wsId },
+				)) as { files: unknown[]; total: number; omitted: number }
+				return {
+					_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: buildListContentText(chatFiles) }],
+					structuredContent: chatFiles,
+				}
+			}
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
