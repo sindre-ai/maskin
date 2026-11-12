@@ -14,7 +14,8 @@
  * they count only when the turn ran at least one tool (the agent was doing work, not answering).
  *
  * Let through, whatever the phrase: the question is about a step that sends in a person's name,
- * spends or deletes; or the reply says what it is waiting on or that a wake-up is set.
+ * spends or deletes; or the reply says a wake-up is set; or the sentence with the phrase names a
+ * real wait (an outside thing that must finish first, or a time). Plain work verbs are not waits.
  *
  * Pure functions, no I/O, so each rule is tested apart.
  */
@@ -53,9 +54,17 @@ const NOTHING_SCHEDULED_RE =
 const SENSITIVE_STEP_RE =
 	/\b(?:send|sending|email|e-mail|publish|publishing|delete|deleting|remove|removing|pay|paying|purchase|buy|spend|charge|invite|inviting|reach out|dm|merge|merging|deploy|deploying|release|submit|submitting|book|cancel|sign up|approve)\b|\bpost(?:ing)?\b(?!-)|\bmessage (?:him|her|them|the)\b|\bcontact (?:him|her|them)\b/i
 
-/** The reply says what it is waiting on or that a wake-up is set, so nothing is left to do now. */
-const WAIT_OR_SCHEDULED_RE =
-	/\b(?:i(?:'ve| have) (?:scheduled|set (?:up )?a|created a (?:trigger|reminder))|(?:trigger|reminder|check) (?:is|has been) (?:set|scheduled)|i(?:'ll| will) (?:check|pick (?:it|this) up|look) (?:again )?(?:at|in|on|tomorrow|when|after)|waiting (?:for|on)|once (?:it|that|this|the [\w\s]{1,30}?) (?:finishes|completes|lands|is merged|is ready|is done|builds)|until (?:it|the|you))\b/i
+/** The reply says a wake-up is set, so nothing is left to do now. Read over the whole closing text. */
+const WAKE_UP_SET_RE =
+	/\bi(?:'ve| have) (?:scheduled\b|(?:set(?: up)?|created|added) (?:a|an|the|my) (?:wake-?up|reminder|trigger|follow-?up|timer|next check)\b)|\b(?:wake-?up|reminder|trigger|follow-?up) (?:is|has been) (?:set|scheduled|created)\b/i
+
+/**
+ * The sentence names a real wait: an outside thing that has to finish first, or a time. Read only
+ * in the sentence that carries the match, so a wait mentioned elsewhere does not excuse it, and
+ * plain work verbs ("look at", "check on") are not waits.
+ */
+const REAL_WAIT_RE =
+	/\bwaiting (?:for|on)\b|\b(?:once|after|when|until) (?:it|that|this|you|they|the [\w\s-]{1,30}?) (?:finish(?:es)?|complete[sd]?|lands?|(?:is|are) (?:merged|ready|done)|builds|passes|comes? back|repl(?:y|ies)|answers|arrives?)\b|\b(?:tomorrow|tonight|later today)\b(?!'s)|\bin (?:an?|\d+|a few|two|three) (?:minutes?|hours?|days?)\b/i
 
 function tailOf(text: string): string {
 	const trimmed = text.trim()
@@ -72,28 +81,55 @@ function sentenceAround(text: string, index: number): string {
 	return text.slice(start + 1, index + 260)
 }
 
+/** The whole sentence that carries the match, from the previous stop to the next one. */
+function sentenceOf(text: string, index: number): string {
+	const start = Math.max(
+		text.lastIndexOf('.', index - 1),
+		text.lastIndexOf('!', index - 1),
+		text.lastIndexOf('?', index - 1),
+		text.lastIndexOf('\n', index - 1),
+	)
+	const rest = text.slice(index)
+	const stop = rest.search(/[.!?\n]/)
+	return text.slice(start + 1, stop === -1 ? text.length : index + stop)
+}
+
+/** True when the sentence with the match names a real wait. */
+function isRealWait(text: string, index: number): boolean {
+	return REAL_WAIT_RE.test(sentenceOf(text, index))
+}
+
 /** Null when the reply ends cleanly or is one of the endings that are let through. */
 export function detectWorkLeft(text: string): WorkLeftMatch | null {
 	const tail = tailOf(text)
 	if (!tail) return null
-	if (WAIT_OR_SCHEDULED_RE.test(tail)) return null
+	if (WAKE_UP_SET_RE.test(tail)) return null
 
 	const next = NEXT_STEP_ANNOUNCED_RE.exec(tail)
-	if (next) return { kind: 'next_step_announced', needsToolCalls: false }
+	if (next) {
+		if (isRealWait(tail, next.index)) return null
+		return { kind: 'next_step_announced', needsToolCalls: false }
+	}
 
 	const offer = OFFER_MORE_RE.exec(tail)
 	if (offer) {
 		if (SENSITIVE_STEP_RE.test(sentenceAround(tail, offer.index))) return null
+		if (isRealWait(tail, offer.index)) return null
 		return { kind: 'offer_more', needsToolCalls: true }
 	}
 
 	const permission = PERMISSION_QUESTION_RE.exec(tail)
 	if (permission) {
 		if (SENSITIVE_STEP_RE.test(sentenceAround(tail, permission.index))) return null
+		if (isRealWait(tail, permission.index)) return null
 		return { kind: 'permission_question', needsToolCalls: true }
 	}
 
-	if (NOTHING_SCHEDULED_RE.test(tail)) return { kind: 'nothing_scheduled', needsToolCalls: true }
+	const idle = NOTHING_SCHEDULED_RE.exec(tail)
+	if (idle) {
+		if (isRealWait(tail, idle.index)) return null
+		return { kind: 'nothing_scheduled', needsToolCalls: true }
+	}
 	return null
 }
 

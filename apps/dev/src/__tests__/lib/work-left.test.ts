@@ -47,6 +47,17 @@ describe('detectWorkLeft', () => {
 			expect(detectWorkLeft("I haven't started on the invites.")?.kind).toBe('nothing_scheduled')
 		})
 
+		it.each([
+			"Fixed the first failure. Next I'll look at the second test and fix it.",
+			"Scored six companies. Next I'll check on the other lookups and then source people.",
+			'Next I will check in the other repos and open the PRs.',
+			// A wait named in another sentence does not excuse the announcement.
+			"Audit done. Next I'll draft the list. I was waiting for the export earlier, it came through.",
+			"Next I'll look at tomorrow's calendar and draft the agenda.",
+		])('flags a plain work verb that is not a wait: %s', (text) => {
+			expect(detectWorkLeft(text)?.kind).toBe('next_step_announced')
+		})
+
 		it('reads only the end of a long reply', () => {
 			const long = `${'The audit found nothing unusual. '.repeat(60)}Next I will draft the follow-up list.`
 			expect(detectWorkLeft(long)?.kind).toBe('next_step_announced')
@@ -78,6 +89,16 @@ describe('detectWorkLeft', () => {
 			expect(
 				detectWorkLeft("Waiting on the build. Next I'll open the PR once the build finishes."),
 			).toBeNull()
+		})
+
+		it.each([
+			"Next I'll check the deploy in an hour.",
+			"Next I'll look at the result tomorrow.",
+			"Next I'll pick this up when the export finishes.",
+			"Next I'll merge the PR after the review comes back.",
+			"Next I'll read the result. I've set a wake-up for it.",
+		])('lets through a next step that names a real wait or a set wake-up: %s', (text) => {
+			expect(detectWorkLeft(text)).toBeNull()
 		})
 
 		it('lets through a question that needs information only a person has', () => {
