@@ -40,7 +40,12 @@ public struct APIChatSearch: ChatSearching {
 	func makeRequest(query: String) async -> URLRequest {
 		let url = baseURL.appendingPathComponent("api/search")
 		var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
-		parts?.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "types", value: "chat")]
+		// The server leaves archived chats out unless Archived is among the statuses asked for;
+		// all five groups is "every chat".
+		parts?.queryItems = [
+			URLQueryItem(name: "q", value: query), URLQueryItem(name: "types", value: "chat"),
+			URLQueryItem(name: "statuses", value: "needs_you,in_progress,new,done,archived"),
+		]
 		var request = URLRequest(url: parts?.url ?? url)
 		request.httpMethod = "GET"
 		request.setValue("application/json", forHTTPHeaderField: "Accept")

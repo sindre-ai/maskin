@@ -27,7 +27,11 @@ test.describe('Chat list search reaches archived chats', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/chats`)
-			await page.getByRole('searchbox', { name: 'Search chats' }).fill(word)
+			await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
+			const search = page.getByRole('searchbox', { name: 'Search chats' })
+			// The desktop search is a round icon until it is clicked; the label around it opens it.
+			await search.locator('xpath=..').click()
+			await search.fill(word)
 
 			const results = page.getByTestId('conversation-search-results')
 			await expect(results.getByText('Old invoice export')).toBeVisible()

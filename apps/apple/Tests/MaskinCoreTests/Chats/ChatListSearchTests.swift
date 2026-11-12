@@ -126,6 +126,7 @@ struct APIChatSearchTests {
 		#expect(url.path == "/api/search")
 		#expect(items.first { $0.name == "q" }?.value == "csv export")
 		#expect(items.first { $0.name == "types" }?.value == "chat")
+		#expect(items.first { $0.name == "statuses" }?.value?.contains("archived") == true)
 		#expect(request.value(forHTTPHeaderField: "X-Workspace-Id") == "ws-1")
 		#expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ank_test")
 	}

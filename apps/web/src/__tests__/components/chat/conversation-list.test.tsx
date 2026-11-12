@@ -483,7 +483,11 @@ describe('ConversationList search', () => {
 		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
 		expect(api.search.query).toHaveBeenCalledWith(
 			'ws-1',
-			expect.objectContaining({ q: 'csv', types: 'chat' }),
+			expect.objectContaining({
+				q: 'csv',
+				types: 'chat',
+				statuses: 'needs_you,in_progress,new,done,archived',
+			}),
 			expect.anything(),
 		)
 		expect(screen.getByText('Archived')).toBeInTheDocument()
