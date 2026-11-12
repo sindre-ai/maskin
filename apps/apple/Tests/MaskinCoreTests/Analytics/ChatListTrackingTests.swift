@@ -54,7 +54,7 @@ struct ChatListTrackingTests {
 	func rooms() {
 		var free = chatConvo("free", last: ago(hours: 30))
 		free.roomKind = .free
-		var flowRoom = chatConvo("flow", last: ago(hours: 2), unread: 1)
+		var flowRoom = chatConvo("flow", last: ago(hours: 2), unread: 1, snippet: "hello")
 		flowRoom.roomKind = .flow
 		flowRoom.flowID = "flow-1"
 		let list = layout([flowRoom, free, chatConvo("plain", last: ago(hours: 3))])
