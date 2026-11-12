@@ -4,6 +4,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateSession } from '@/hooks/use-sessions'
 import type { LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatFigure } from '@/lib/format-number'
 import { toastSessionCreateError } from '@/lib/session-errors'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { FailedAgent } from './loop-brief'
@@ -106,7 +107,9 @@ export function LoopCard({
 			<div className="flex flex-col gap-2">
 				<div>
 					<p className="text-4xl font-bold leading-[1.1] tracking-tighter tabular-nums text-foreground">
-						{metric.total > 0 ? `${metric.actual} of ${metric.total}` : '0'}
+						{metric.total > 0
+							? `${formatFigure(metric.actual)} of ${formatFigure(metric.total)}`
+							: '0'}
 					</p>
 					<p className="mt-1.5 text-[12.5px] text-muted-foreground">{metric.label}</p>
 				</div>

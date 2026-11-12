@@ -57,6 +57,7 @@ services:
     restart: "no"
 
   app:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
