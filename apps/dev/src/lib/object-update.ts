@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import type { Transaction } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { objects, subscriptions, triggers } from '@maskin/db/schema'
 import { TARGET_FIELDS, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
@@ -22,8 +22,9 @@ export interface ApplyObjectUpdateInput {
 	body: ObjectUpdate
 	sessionId?: string
 	/**
-	 * The caller's actor type. An agent is refused a change to a target's fields or a flow's
-	 * targets and close condition. Left unset by callers that act for a person (a card tap).
+	 * The caller's actor type. An agent is refused a change to what defines done: a target's
+	 * fields and status, and a flow's targets, entry condition, close condition and closed
+	 * statuses. Left unset by callers that act for a person (a card tap).
 	 */
 	actorType?: string
 	/** Apply only if the object is still in this status, checked under the row lock. */
@@ -51,14 +52,25 @@ export class AgentFieldWriteError extends Error {
 }
 
 const TARGET_GUARDED_METADATA_KEYS: string[] = TARGET_FIELDS.map((f) => f.name)
-const LOOP_GUARDED_METADATA_KEYS = ['targets', 'close_condition']
+const LOOP_GUARDED_METADATA_KEYS = [
+	'targets',
+	'entry_condition',
+	'close_condition',
+	'closed_statuses',
+	'closed_when',
+]
 
 /**
- * The fields of this update that an agent may not change: a target object's label and numbers,
- * and a flow's targets and close condition. A value written back unchanged is not a change.
- * Scope written in prose cannot be told from a normal edit, so it is not guarded.
+ * The fields of this update that an agent may not change: a target object's label, numbers and
+ * status, and a flow's targets, entry condition, close condition and closed statuses
+ * (closed_when is the other way to say what counts as closed). A value written back unchanged is
+ * not a change. A target's owner is not guarded. Scope written in prose cannot be told from a
+ * normal edit, so it is not guarded.
  */
-function guardedFieldsChanged(current: typeof objects.$inferSelect, body: ObjectUpdate): string[] {
+export function guardedFieldsChanged(
+	current: typeof objects.$inferSelect,
+	body: Pick<ObjectUpdate, 'title' | 'status' | 'metadata'>,
+): string[] {
 	const keys =
 		current.type === TARGET_TYPE
 			? TARGET_GUARDED_METADATA_KEYS
@@ -71,12 +83,52 @@ function guardedFieldsChanged(current: typeof objects.$inferSelect, body: Object
 	if (current.type === TARGET_TYPE && body.title !== undefined && body.title !== current.title) {
 		changed.push('title')
 	}
+	if (current.type === TARGET_TYPE && body.status !== undefined && body.status !== current.status) {
+		changed.push('status')
+	}
 	const before = (current.metadata ?? {}) as Record<string, unknown>
 	const after = (body.metadata ?? {}) as Record<string, unknown>
 	for (const key of keys) {
 		if (key in after && !isDeepStrictEqual(after[key], before[key])) changed.push(key)
 	}
 	return changed
+}
+
+/**
+ * Log a refused agent write. Counts and ids only: no field names, no values, no content.
+ * Recorded outside the refused transaction, which has rolled back. A failure to log never
+ * changes the refusal.
+ */
+export async function recordAgentWriteRefused(
+	db: Database,
+	params: {
+		workspaceId: string
+		actorId: string
+		objectId: string
+		objectType: string
+		fieldCount: number
+		sessionId?: string
+	},
+): Promise<void> {
+	try {
+		await recordEvent(db, {
+			workspaceId: params.workspaceId,
+			actorId: params.actorId,
+			action: 'agent_write_refused',
+			entityType: 'object',
+			entityId: params.objectId,
+			data: {
+				object_type: params.objectType,
+				field_count: params.fieldCount,
+				session_id: params.sessionId ?? null,
+			},
+		})
+	} catch (err) {
+		logger.warn('agent_write_refused event failed', {
+			objectId: params.objectId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }
 
 /**
