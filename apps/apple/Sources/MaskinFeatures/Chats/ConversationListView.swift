@@ -60,14 +60,15 @@ struct ConversationListView: View {
 					if let id, !id.hasPrefix(TeamLayout.flowPinKey("")) { picking.toggle(id) }
 				} else {
 					selection = id
+					trackOpened(id, layout: layout)
 				}
 			})
 		List(selection: rowSelection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if let chatSearch, chatSearch.isAvailable, isSearching {
-				searchResults(chatSearch)
+			if let serverSearch, isSearching {
+				searchResults(serverSearch)
 			} else if store.showsArchivedList {
 				archivedSection
 			} else {
@@ -97,6 +98,21 @@ struct ConversationListView: View {
 		// Words in the search go to the server, which looks through every chat: titles, people and
 		// message text, archived ones included. The answer replaces the list while words are typed.
 		.task(id: search) { await chatSearch?.update(search) }
+		// One event per search that has settled, with how many chats it found: the server's hits
+		// when they replace the list, else the chats the on-screen filter shows.
+		.task(id: "\(search.trimmingCharacters(in: .whitespacesAndNewlines))|\(serverSearch?.phase == .loaded)") {
+			let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !query.isEmpty, (try? await Task.sleep(for: .seconds(1))) != nil else { return }
+			if let serverSearch {
+				guard serverSearch.phase == .loaded else { return }
+				Analytics.shared.chatListSearchUsed(resultCount: serverSearch.hits.count)
+				return
+			}
+			// Read again after the wait, so pages that arrived meanwhile are counted.
+			let settled = store.layout(
+				query: query, currentActorID: currentActorID, expandedSectionIDs: expandedSections, now: Date())
+			Analytics.shared.chatListSearchUsed(resultCount: settled.shownChatCount)
+		}
 		.task(id: store.showsArchivedList) {
 			if store.showsArchivedList {
 				await store.refreshArchived()
@@ -135,6 +151,9 @@ struct ConversationListView: View {
 	// MARK: Search
 
 	private var isSearching: Bool { !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+	/// The list search model when it can ask the server; nil keeps the on-screen filter.
+	private var serverSearch: ChatListSearchModel? { chatSearch.flatMap { $0.isAvailable ? $0 : nil } }
 
 	/// The server's hits for the typed words. A hit the default list leaves out (archived, or quiet
 	/// for a long while) is marked Archived; tapping any hit opens it, loaded or not.
@@ -225,6 +244,19 @@ struct ConversationListView: View {
 			// Selecting a flow row shows the flow in the detail column (`flow:<id>`).
 			base.tag(f.pinKey)
 		}
+	}
+
+	/// A person's tap opened a chat from the list. Flow rows are not chats and send nothing.
+	private func trackOpened(_ id: String?, layout: TeamLayout) {
+		guard let id, !id.hasPrefix(TeamLayout.flowPinKey("")) else { return }
+		let searching = isSearching
+		// A hit of the server search sits among the hits, not in the grouped list.
+		let place =
+			searching && serverSearch != nil
+			? ChatListTracking.searchPlace(of: id, among: serverSearch?.hits ?? [])
+			: layout.chatListPlace(of: id, searching: searching)
+		guard let place else { return }
+		Analytics.shared.chatOpenedFromList(place)
 	}
 
 	private func selectionID(of row: TeamLayout.Row) -> String? {
@@ -460,7 +492,14 @@ struct ConversationListView: View {
 							}
 						}
 					},
-					onOpen: { item in selection = item.id })
+					onOpen: { item in
+						selection = item.id
+						// The archive is a flat list, so a row's place is its place in that list.
+						if let index = store.archivedConversations.firstIndex(where: { $0.id == item.id }) {
+							Analytics.shared.chatOpenedFromList(
+								.init(source: .list, section: .recent, position: index + 1))
+						}
+					})
 				.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
 			}
 		} header: {

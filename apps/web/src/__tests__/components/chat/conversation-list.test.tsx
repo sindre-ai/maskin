@@ -25,6 +25,16 @@ vi.mock('sonner', () => ({ toast: { error: toastError, success: vi.fn() } }))
 import { ConversationList } from '@/components/chat/conversation-list'
 import { api } from '@/lib/api'
 
+const { trackOpened, trackSearch } = vi.hoisted(() => ({
+	trackOpened: vi.fn(),
+	trackSearch: vi.fn(),
+}))
+vi.mock('@/lib/analytics', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/lib/analytics')>()),
+	trackChatOpenedFromList: trackOpened,
+	trackChatListSearchUsed: trackSearch,
+}))
+
 function buildConversation(
 	overrides: Partial<ConversationListItemResponse> = {},
 ): ConversationListItemResponse {
@@ -439,6 +449,37 @@ describe('ConversationList collapse', () => {
 		expect(screen.queryAllByRole('link')).toHaveLength(0)
 		vi.unstubAllGlobals()
 	})
+	describe('tracking', () => {
+		beforeEach(() => {
+			trackOpened.mockClear()
+			trackSearch.mockClear()
+		})
+
+		it('reports the section and place of a row opened from the list', async () => {
+			mockScopedList({
+				priority: [
+					buildConversation({ id: 'p', title: 'Pinned one', pinned: true }),
+					buildConversation({ id: 'u', title: 'Unread one', unread_count: 2 }),
+				],
+				recent: [buildConversation({ id: 'r', title: 'Recent one' })],
+			})
+			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Unread one'))
+			await userEvent.click(screen.getByText('Recent one'))
+
+			expect(trackOpened).toHaveBeenNthCalledWith(1, {
+				source: 'list',
+				section: 'unread',
+				position: 2,
+			})
+			expect(trackOpened).toHaveBeenNthCalledWith(2, {
+				source: 'list',
+				section: 'recent',
+				position: 3,
+			})
+		})
+	})
 })
 
 describe('ConversationList search', () => {
@@ -511,5 +552,59 @@ describe('ConversationList search', () => {
 		render(<ConversationList workspaceId="ws-1" query="zzz" />, { wrapper: TestWrapper })
 
 		expect(await screen.findByText('No chats found')).toBeInTheDocument()
+	})
+
+	describe('tracking', () => {
+		beforeEach(() => {
+			trackOpened.mockClear()
+			trackSearch.mockClear()
+		})
+
+		it('reports a hit opened from search at its place among the hits, loaded or not', async () => {
+			mockScopedList({ recent: [buildConversation({ id: 'b', title: 'Dictation notes' })] })
+			answer([
+				searchRow({ id: 'a', title: 'Invoice export' }),
+				searchRow({ id: 'b', title: 'Dictation notes', status: 'read', statusGroup: 'done' }),
+			])
+			render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Dictation notes'))
+			await userEvent.click(screen.getByText('Invoice export'))
+
+			expect(trackOpened).toHaveBeenNthCalledWith(1, {
+				source: 'search',
+				section: 'search',
+				position: 2,
+			})
+			expect(trackOpened).toHaveBeenNthCalledWith(2, {
+				source: 'search',
+				section: 'search',
+				position: 1,
+			})
+		})
+
+		it('reports a settled search once, with the number of hits the server found', async () => {
+			mockScopedList({ recent: [buildConversation({ id: 'a', title: 'Billing retries' })] })
+			answer([
+				searchRow({ id: 'x', title: 'Invoice export' }),
+				searchRow({ id: 'y', title: 'Invoice review' }),
+				searchRow({ id: 'z', title: 'Invoice notes' }),
+			])
+			vi.useFakeTimers({ shouldAdvanceTime: true })
+			try {
+				render(<ConversationList workspaceId="ws-1" query="invoice" />, { wrapper: TestWrapper })
+				await screen.findByText('Invoice notes')
+				expect(trackSearch).not.toHaveBeenCalled()
+
+				await act(async () => {
+					vi.advanceTimersByTime(1100)
+				})
+				expect(trackSearch).toHaveBeenCalledTimes(1)
+				// The loaded list holds one chat; the count is the hits, not that list.
+				expect(trackSearch).toHaveBeenCalledWith({ result_count: 3 })
+			} finally {
+				vi.useRealTimers()
+			}
+		})
 	})
 })

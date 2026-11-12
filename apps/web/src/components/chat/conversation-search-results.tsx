@@ -23,6 +23,8 @@ interface ConversationSearchResultsProps {
 	known: ReadonlyMap<string, ConversationListItemResponse>
 	/** The default list, to tell which hits it leaves out. Null when a filter replaces it. */
 	loaded: LoadedList | null
+	/** A person opened a hit; the position is its 1-based place among the hits. */
+	onOpen: (position: number) => void
 }
 
 /**
@@ -36,6 +38,7 @@ export function ConversationSearchResults({
 	search,
 	known,
 	loaded,
+	onOpen,
 }: ConversationSearchResultsProps) {
 	const rows = search.data?.results ?? []
 	if (search.isError && !search.data) {
@@ -71,7 +74,7 @@ export function ConversationSearchResults({
 				(search.pending || search.isFetching) && 'opacity-60',
 			)}
 		>
-			{rows.map((row) => (
+			{rows.map((row, index) => (
 				<SearchHit
 					key={row.id}
 					workspaceId={workspaceId}
@@ -79,6 +82,7 @@ export function ConversationSearchResults({
 					query={query}
 					conversation={known.get(row.id)}
 					archived={isArchivedHit(row, loaded)}
+					onOpen={() => onOpen(index + 1)}
 				/>
 			))}
 			{search.data.capped ? (
@@ -96,12 +100,14 @@ function SearchHit({
 	query,
 	conversation,
 	archived,
+	onOpen,
 }: {
 	workspaceId: string
 	row: SearchResultRow
 	query: string
 	conversation: ConversationListItemResponse | undefined
 	archived: boolean
+	onOpen: () => void
 }) {
 	const self = getStoredActor()
 	const others = (conversation?.participants ?? []).filter((p) => p.actorId !== self?.id)
@@ -113,6 +119,7 @@ function SearchHit({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: row.id }}
+				onClick={onOpen}
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 			>
