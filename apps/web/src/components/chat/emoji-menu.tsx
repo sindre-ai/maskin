@@ -3,7 +3,7 @@ import {
 	ROW_CLASS,
 	isMobileViewport,
 	useKeyboardInset,
-} from '@/components/shared/slash-menu'
+} from '@/components/shared/floating-menu'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/cn'
 import type {

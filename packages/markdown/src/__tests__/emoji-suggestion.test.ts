@@ -78,8 +78,11 @@ describe('filterEmoji', () => {
 	})
 
 	it('lists shortcodes that start with the query before ones that only contain it', () => {
-		const ids = filterEmoji('heart').map((i) => i.shortcode)
-		expect(ids.indexOf('heart')).toBeLessThan(ids.indexOf('sparkling_heart'))
+		// kissing_heart is listed before heart, so only the ranking puts heart first. The cap
+		// of 8 rows would cut it off, so lift it.
+		const ids = filterEmoji('heart', EMOJI_ITEMS, 100).map((i) => i.shortcode)
+		expect(ids.indexOf('heart')).toBeGreaterThanOrEqual(0)
+		expect(ids.indexOf('heart')).toBeLessThan(ids.indexOf('kissing_heart'))
 	})
 
 	it('finds an emoji by an alias', () => {

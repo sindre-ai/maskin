@@ -147,7 +147,8 @@ const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 async function typeText(editor: Editor, text: string) {
 	for (const char of text) {
-		editor.commands.insertContent(char)
+		// A text node, not a string: a bare ' ' string is parsed as HTML and the space is dropped.
+		editor.commands.insertContent({ type: 'text', text: char })
 		await settle()
 	}
 }
