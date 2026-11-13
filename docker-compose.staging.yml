@@ -13,7 +13,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Internal only: no host port, no metrics port, keys come from env (no default).
+  # Internal only: no host port, keys come from env (no default).
   seaweedfs:
     image: chrislusf/seaweedfs
     entrypoint: ["/bin/sh", "-c"]
@@ -26,17 +26,22 @@ services:
     volumes:
       - seaweed_data:/data
 
-  # Staging for bet/dbe5-claude-oauth-connect. Differences from docker-compose.prod.yml:
-  # no /var/run/docker.sock mount (so no agent sessions here), no agent-base build,
-  # no GitHub App, no Resend, no prod PostHog. Do not add them back.
+  # Staging for the trial card step (PR 3172). Stripe TEST mode only: the keys in the Coolify
+  # settings of this app must be sk_test_ / pk_test_ / a test-mode webhook secret.
+  # Differences from docker-compose.prod.yml: no /var/run/docker.sock mount (no agent sessions
+  # here), no agent-base build, no GitHub App, no Resend, no prod PostHog. This shares a host
+  # with prod: do not add them back. Staging only, never merge.
   app:
-    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
       args:
         VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
-    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    command:
+      - sh
+      - -c
+      - |
+        node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js
     healthcheck:
       test:
         [
@@ -60,15 +65,22 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_REGION: ${S3_REGION:-us-east-1}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
-      APP_URL: https://staging.maskin.sindre.ai
-      # Claude sign-in (MCP OAuth) test. Listed explicitly: compose only passes
-      # what is named here.
-      MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-true}
-      MASKIN_OAUTH_ISSUER: ${MASKIN_OAUTH_ISSUER:-https://staging.maskin.sindre.ai}
-      # Tester flag vars (see .claude/rules/feature-flags.md). Unregistered flag ids
-      # resolve to false. Leave actor ids empty until a staging user exists.
-      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
-      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-mcp-oauth-consent}
+      APP_URL: ${SERVICE_URL_APP}
+      FRONTEND_URL: ${SERVICE_URL_APP}
+      MASKIN_BACKEND_URL: ${SERVICE_URL_APP}
+      # The card step is on for every sign-up on this copy only.
+      FF_SIGNUP_FEATURES: ${FF_SIGNUP_FEATURES:-trial-card-percent}
+      # The percent display is read per person: on for the listed testers on this copy only.
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-trial-card-percent}
+      FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-46de6719-5961-40ec-8375-098f928ee2b5}
+      # Stripe test mode. The webhook refuses to run without the two old dollar prices
+      # (test-mode ids), even though the card step never uses them.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_TEAM: ${STRIPE_PRICE_TEAM:-}
+      MASKIN_TRIAL_HARD_CAP_USD_CENTS: ${MASKIN_TRIAL_HARD_CAP_USD_CENTS:-286}
     depends_on:
       postgres:
         condition: service_healthy
