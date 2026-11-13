@@ -20,6 +20,7 @@
 // Exported so the seed config and its tests can share the exact same shape.
 // Snapshot helpers live in ./loop-snapshot; snapshot data in ./loop-data.
 
+import discoveryViewsData from './data/discovery-views.json'
 import { skillIdsForActor, triggerIdsForActor } from './loop-data'
 
 export { actorSnapshot, skillSnapshot, triggerSnapshot } from './loop-snapshot'
@@ -52,3 +53,10 @@ export const DISCOVERY_TRIGGER_IDS: readonly string[] =
 export const DISCOVERY_SKILL_IDS: readonly string[] = [
 	...new Set(DISCOVERY_ACTOR_IDS.flatMap(skillIdsForActor)),
 ]
+
+// The loop page's tabs, in order. Radar, Learning, Briefing and Opportunities
+// ship as empty starter pages for the agents to fill in; Pipeline reads live
+// counts and works in any workspace. See data/discovery-views.json.
+export const DISCOVERY_VIEW_IDS: readonly string[] = Object.values(discoveryViewsData)
+	.sort((a, b) => a.position - b.position)
+	.map((view) => view.id)

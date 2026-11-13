@@ -489,7 +489,7 @@ void runDefaultHeartbeatBackfillOnBoot(db)
 // database, and never blocks or fails startup.
 void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
-const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
+const loopVersionPusher = new LoopVersionPusher(db, agentStorage, undefined, storageProvider)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 

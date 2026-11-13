@@ -27,6 +27,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import {
 	trackLoopForked,
@@ -59,6 +60,12 @@ import {
 } from '../services/loop-provisioning'
 import { LoopVersionPusher } from '../services/loop-version-pusher'
 import {
+	deleteViewFileBytes,
+	removeInstalledViewFiles,
+	syncLoopViews,
+	toViewItems,
+} from '../services/loop-views-provisioning'
+import {
 	type CapturedLiveSession,
 	captureLiveSessions,
 	stopCapturedSandboxes,
@@ -75,6 +82,7 @@ type Env = {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		storageProvider: StorageProvider
 		sessionManager: SessionManager
 	}
 }
@@ -556,6 +564,20 @@ app.openapi(installLoopRoute, async (c) => {
 				.set({ objectId: loopObject.id })
 				.where(eq(installedLoops.id, installRow.id))
 
+			// The loop's custom views: each becomes a new page in this workspace and
+			// a tab on the loop object. Needs the loop object's id, so it runs here.
+			const viewItems = toViewItems(items)
+			if (viewItems.length > 0) {
+				await syncLoopViews({
+					db: tx,
+					storage: c.get('storageProvider'),
+					workspaceId,
+					loopObjectId: loopObject.id,
+					actorId,
+					items: viewItems,
+				})
+			}
+
 			await recordEvent(tx, {
 				workspaceId,
 				actorId,
@@ -950,7 +972,12 @@ app.openapi(updateInstalledLoopRoute, async (c) => {
 
 	let result: Awaited<ReturnType<LoopVersionPusher['updateInstallNow']>>
 	try {
-		result = await new LoopVersionPusher(db, agentStorage).updateInstallNow(id, actorId)
+		result = await new LoopVersionPusher(
+			db,
+			agentStorage,
+			undefined,
+			c.get('storageProvider'),
+		).updateInstallNow(id, actorId)
 	} catch (err) {
 		logger.error('Installed loop update now failed', {
 			installedLoopId: id,
@@ -1116,6 +1143,9 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// failed post-commit delete is inert — see workspace-skills.ts's DELETE route).
 	let removedSkillIds: string[] = []
 	let removedLoopObject = false
+	// Ids of the view files the install created, whose stored bytes are deleted
+	// after the tx commits (like the skills above).
+	let removedViewFileIds: string[] = []
 	// Live sessions belonging to the agents this uninstall deletes. Captured
 	// inside the tx (only there is the kept-vs-deleted actor split known) and
 	// stopped after it commits — see session-cleanup.ts. Without this their
@@ -1362,6 +1392,19 @@ app.openapi(uninstallLoopRoute, async (c) => {
 		// leaving an orphaned edge (comments/events are an audit log and are
 		// left in place, same as everywhere else objects are deleted).
 		if (!keepProvisionedItems && install.objectId) {
+			// The pages the install created for the loop's custom views go with the
+			// loop object that carries their tabs. Views a person added themselves
+			// are not in the install's record and stay.
+			const [loopObject] = await tx
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, install.objectId))
+				.limit(1)
+			removedViewFileIds = await removeInstalledViewFiles({
+				db: tx,
+				workspaceId: install.workspaceId,
+				metadata: loopObject?.metadata,
+			})
 			await tx
 				.delete(relationships)
 				.where(
@@ -1431,6 +1474,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			})
 		}
 	}
+
+	await deleteViewFileBytes(c.get('storageProvider'), install.workspaceId, removedViewFileIds)
 
 	logger.info('Installed loop removed', {
 		installedLoopId: install.id,
