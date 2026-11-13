@@ -25225,6 +25225,12 @@
 												"string",
 												"null"
 											]
+										},
+										"lastRunAt": {
+											"type": [
+												"string",
+												"null"
+											]
 										}
 									},
 									"required": [
@@ -25461,6 +25467,18 @@
 					{
 						"schema": {
 							"type": "string",
+							"enum": [
+								"true",
+								"false"
+							]
+						},
+						"required": false,
+						"name": "include_last_run",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
 							"format": "uuid"
 						},
 						"required": true,
@@ -25537,6 +25555,12 @@
 												]
 											},
 											"updatedAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"lastRunAt": {
 												"type": [
 													"string",
 													"null"
@@ -25622,6 +25646,176 @@
 			}
 		},
 		"/api/triggers/{id}": {
+			"get": {
+				"tags": [
+					"triggers"
+				],
+				"summary": "Get a trigger",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The trigger, with when it last fired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"type": {
+											"type": "string"
+										},
+										"config": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"actionPrompt": {
+											"type": "string"
+										},
+										"targetActorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"enabled": {
+											"type": "boolean"
+										},
+										"metadata": {
+											"type": [
+												"object",
+												"null"
+											],
+											"additionalProperties": {}
+										},
+										"createdBy": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"lastRunAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"id",
+										"workspaceId",
+										"name",
+										"type",
+										"config",
+										"actionPrompt",
+										"targetActorId",
+										"enabled",
+										"createdBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Trigger not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
 			"patch": {
 				"x-viewer-policy": "writer",
 				"tags": [
@@ -25866,6 +26060,12 @@
 											]
 										},
 										"updatedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"lastRunAt": {
 											"type": [
 												"string",
 												"null"
@@ -40454,6 +40654,12 @@
 														"string",
 														"null"
 													]
+												},
+												"lastRunAt": {
+													"type": [
+														"string",
+														"null"
+													]
 												}
 											},
 											"required": [
@@ -46413,6 +46619,18 @@
 						},
 						"required": false,
 						"name": "sort",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"priority",
+								"recent"
+							]
+						},
+						"required": false,
+						"name": "scope",
 						"in": "query"
 					},
 					{
@@ -82928,6 +83146,271 @@
 					},
 					"403": {
 						"description": "Not a workspace member",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/telemetry/client": {
+			"post": {
+				"tags": [
+					"Telemetry"
+				],
+				"summary": "Record a batch of allowlisted product analytics events from the iPhone app.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"events": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"name": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 64
+												},
+												"properties": {
+													"type": "object",
+													"additionalProperties": {
+														"anyOf": [
+															{
+																"type": "string",
+																"maxLength": 64
+															},
+															{
+																"type": "number"
+															},
+															{
+																"type": "boolean"
+															}
+														]
+													},
+													"default": {}
+												},
+												"occurred_at": {
+													"type": "string",
+													"format": "date-time"
+												}
+											},
+											"required": [
+												"name",
+												"occurred_at"
+											]
+										},
+										"minItems": 1,
+										"maxItems": 50
+									}
+								},
+								"required": [
+									"events"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Batch accepted. Events are dropped quietly when the workspace has usage sharing off.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"accepted": {
+											"type": "integer"
+										}
+									},
+									"required": [
+										"accepted"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Unknown event name, property that is not allowed, or invalid value",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not a workspace member, or the caller is not a person",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limited",
 						"content": {
 							"application/json": {
 								"schema": {

@@ -183,6 +183,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/subscriptions/subscribers',
 	'POST /api/subscriptions/unread',
 	'GET /api/telemetry/mcp/summary',
+	// The iPhone app's analytics batch: it needs a person signed in on the phone, and no MCP tool calls it.
+	'POST /api/telemetry/client',
 	'GET /api/user-display-settings',
 	'GET /api/user-display-settings/:object_type',
 	'PUT /api/user-display-settings/:object_type',
