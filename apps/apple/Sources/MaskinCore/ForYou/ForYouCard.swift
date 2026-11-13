@@ -8,16 +8,19 @@ public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 	public var recommended: Bool
 	/// Cannot be undone or reaches real people: the UI asks for a confirmation before sending it.
 	public var destructive: Bool
+	/// The agent carries this option out if nobody answers by the card's deadline.
+	public var defaultOnSilence: Bool
 	public var id: String { label }
 
 	public init(
 		label: String, consequences: [String] = [], recommended: Bool = false,
-		destructive: Bool = false
+		destructive: Bool = false, defaultOnSilence: Bool = false
 	) {
 		self.label = label
 		self.consequences = consequences
 		self.recommended = recommended
 		self.destructive = destructive
+		self.defaultOnSilence = defaultOnSilence
 	}
 
 	// Hand-written so caches written before `destructive` existed still decode.
@@ -27,6 +30,24 @@ public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 		consequences = try c.decode([String].self, forKey: .consequences)
 		recommended = try c.decode(Bool.self, forKey: .recommended)
 		destructive = try c.decodeIfPresent(Bool.self, forKey: .destructive) ?? false
+		defaultOnSilence = try c.decodeIfPresent(Bool.self, forKey: .defaultOnSilence) ?? false
+	}
+}
+
+/// What happens if nobody answers a card: "If nobody answers by Fri 14 Nov, 14:00, the default is
+/// "Hold"." The same line the web card shows. Nil when the card names no default or has no deadline.
+public enum SilenceDefault {
+	public static func line(options: [DecisionOption], expiresAt: Date?) -> String? {
+		guard let expiresAt, let option = options.first(where: \.defaultOnSilence) else { return nil }
+		let when = expiresAt.formatted(
+			.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
+		return "If nobody answers by \(when), the default is \"\(option.label)\"."
+	}
+
+	/// An ISO 8601 date-time as the server writes it, with or without fractional seconds.
+	public static func date(_ s: String) -> Date? {
+		let f = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+		return (try? f.parse(s)) ?? (try? Date.ISO8601FormatStyle().parse(s))
 	}
 }
 
@@ -72,10 +93,12 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var draft: DecisionDraft?
 	/// One card, several messages: each is shown as its own preview with its own Send and Skip.
 	public var drafts: [DecisionDraft]
+	/// When the ask runs out. With a default on one option, what happens then.
+	public var expiresAt: Date?
 
 	public init(
 		title: String, summary: String, ask: String, options: [DecisionOption],
-		draft: DecisionDraft? = nil, drafts: [DecisionDraft] = []
+		draft: DecisionDraft? = nil, drafts: [DecisionDraft] = [], expiresAt: Date? = nil
 	) {
 		self.title = title
 		self.summary = summary
@@ -83,6 +106,7 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 		self.options = options
 		self.draft = draft
 		self.drafts = drafts
+		self.expiresAt = expiresAt
 	}
 
 	// Hand-written so caches written before `drafts` existed still decode.
@@ -94,9 +118,12 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 		options = try c.decode([DecisionOption].self, forKey: .options)
 		draft = try c.decodeIfPresent(DecisionDraft.self, forKey: .draft)
 		drafts = try c.decodeIfPresent([DecisionDraft].self, forKey: .drafts) ?? []
+		expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
 	}
 
 	public var recommended: DecisionOption? { options.first(where: \.recommended) }
+	/// What happens if nobody answers, when the card names a default.
+	public var silenceLine: String? { SilenceDefault.line(options: options, expiresAt: expiresAt) }
 }
 
 /// The latest comment that @-mentioned the reader: why the card exists.

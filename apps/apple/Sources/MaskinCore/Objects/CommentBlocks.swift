@@ -6,6 +6,11 @@ public struct CommentDecision: Sendable, Equatable {
 	public var title: String
 	public var summary: String
 	public var options: [DecisionOption]
+	/// When the ask runs out. With a default on one option, what happens then.
+	public var expiresAt: Date?
+
+	/// What happens if nobody answers, when the card names a default.
+	public var silenceLine: String? { SilenceDefault.line(options: options, expiresAt: expiresAt) }
 
 	public static func parse(_ value: JSONValue?) -> CommentDecision? {
 		guard case .object(let fields)? = value, case .array(let raw)? = fields["options"] else { return nil }
@@ -17,12 +22,17 @@ public struct CommentDecision: Sendable, Equatable {
 			if case .bool(let b)? = entry["recommended"] { recommended = b }
 			var destructive = false
 			if case .bool(let b)? = entry["destructive"] { destructive = b }
+			var defaultOnSilence = false
+			if case .bool(let b)? = entry["default_on_silence"] { defaultOnSilence = b }
 			return DecisionOption(
-				label: label, consequences: consequences, recommended: recommended, destructive: destructive)
+				label: label, consequences: consequences, recommended: recommended, destructive: destructive,
+				defaultOnSilence: defaultOnSilence)
 		}
 		guard options.count >= 2 else { return nil }
 		let title = fields["title"]?.stringValue ?? fields["ask"]?.stringValue ?? ""
-		return CommentDecision(title: title, summary: fields["summary"]?.stringValue ?? "", options: options)
+		return CommentDecision(
+			title: title, summary: fields["summary"]?.stringValue ?? "", options: options,
+			expiresAt: fields["expires_at"]?.stringValue.flatMap(SilenceDefault.date))
 	}
 
 	/// The option a reply answers with: its text is one of the labels, whoever wrote it.

@@ -73,14 +73,16 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 								DecisionOption(
 									label: $0.label, consequences: $0.consequences,
 									recommended: $0.recommended ?? false,
-									destructive: $0.destructive ?? false)
+									destructive: $0.destructive ?? false,
+									defaultOnSilence: $0.default_on_silence ?? false)
 							},
 							// The server fills `body` from the draft object's current description. A draft
 							// with neither text nor a file (an object that is gone or empty) shows no box.
 							draft: d.draft.flatMap { Self.draft($0, fallbackLabel: "Draft") },
 							// One card, several messages. One with neither text nor file is left out
 							// and the rest stay.
-							drafts: (d.drafts ?? []).compactMap { Self.draft($0, fallbackLabel: "Draft") })
+							drafts: (d.drafts ?? []).compactMap { Self.draft($0, fallbackLabel: "Draft") },
+							expiresAt: d.expires_at)
 					})
 			}
 			return ForYouCard(
