@@ -429,6 +429,7 @@
 			"llm_config.provider",
 			"name",
 			"role",
+			"starter_prompts",
 			"system_prompt",
 			"tools",
 			"workspace_id"
