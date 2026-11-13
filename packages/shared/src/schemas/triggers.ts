@@ -82,6 +82,10 @@ export const eventConfigSchema = z.object({
 
 export const reminderConfigSchema = z.object({
 	scheduled_at: z.string().datetime(),
+	// Pin the wake-up to an object. The session starts on it and its prompt names it.
+	object_id: z.string().uuid().optional(),
+	// A step-pinned reminder does nothing when it fires more than an hour late.
+	step_id: z.string().uuid().optional(),
 })
 
 export const triggerConfigSchema = z.union([

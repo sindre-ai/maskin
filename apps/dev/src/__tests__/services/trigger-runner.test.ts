@@ -718,6 +718,9 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[], // cron triggers
 				[trigger], // reminder triggers
+				[], // trigger_cooldowns on load
+				[], // workspace_suppressions on load
+				[trigger], // the row re-read at fire time
 			]
 			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
@@ -737,6 +740,9 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[], // cron triggers
 				[trigger], // reminder triggers
+				[], // trigger_cooldowns on load
+				[], // workspace_suppressions on load
+				[trigger], // the row re-read at fire time
 			]
 			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()

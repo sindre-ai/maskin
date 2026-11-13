@@ -529,6 +529,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	update_objects: 'update',
 	delete_object: 'delete',
 	set_next_step: 'next_step_set',
+	schedule_next_step: 'next_step_schedule',
 	update_next_step: 'next_step_update',
 	create_relationship: 'relationship_create',
 	delete_relationship: 'relationship_delete',

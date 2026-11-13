@@ -323,6 +323,7 @@ export const ORDINARY_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_objects',
 	'update_objects',
 	'set_next_step',
+	'schedule_next_step',
 	'update_next_step',
 	'create_comment',
 	'mark_read',
