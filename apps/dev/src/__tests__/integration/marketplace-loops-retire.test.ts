@@ -151,8 +151,12 @@ describe('Marketplace loop retirement', () => {
 		}
 		const slugs = body.loops.map((l) => l.slug)
 		expect(slugs).not.toContain(legacy.slug)
-		expect(slugs.sort()).toEqual(['market-competitor-watch-loop', 'product-discovery-loop'])
-		expect(body.counts.total).toBe(2)
+		expect(slugs.sort()).toEqual([
+			'market-competitor-watch-loop',
+			'meeting-manager-loop',
+			'product-discovery-loop',
+		])
+		expect(body.counts.total).toBe(3)
 	})
 
 	it('restores a retired slug that is back in the seed list', async () => {
