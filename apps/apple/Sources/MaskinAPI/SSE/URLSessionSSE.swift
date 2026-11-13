@@ -14,6 +14,9 @@ extension SSEClient {
 			request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 			request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 			request.setValue(clientSource, forHTTPHeaderField: "X-Client-Source")
+			if let build = ClientBuild.current {
+				request.setValue(build, forHTTPHeaderField: ClientBuild.headerName)
+			}
 			if let creds = await credentials() {
 				request.setValue("Bearer \(creds.apiKey)", forHTTPHeaderField: "Authorization")
 				if let workspaceId = creds.workspaceId {
