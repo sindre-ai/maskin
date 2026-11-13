@@ -3,18 +3,32 @@ import MaskinAPI
 import Observation
 import OpenAPIRuntime
 
-/// Where each actor's uploaded picture lives. A protocol so `ActorPicturesStore` tests without a server.
-public protocol ActorPicturesAPI: Sendable {
-	/// Actor id to the path the picture is served from, for the actors that have one.
-	func pictures() async throws -> [String: String]
+/// How the workspace's actors look, read off the actor list: where each picture lives and the
+/// letters each actor chose for its avatar. Only actors that have one are in each map.
+public struct ActorLooks: Sendable, Equatable {
+	/// Actor id to the path the picture is served from.
+	public var picturePaths: [String: String]
+	/// Actor id to the letters the actor chose for its avatar.
+	public var initials: [String: String]
+
+	public init(picturePaths: [String: String] = [:], initials: [String: String] = [:]) {
+		self.picturePaths = picturePaths
+		self.initials = initials
+	}
 }
 
-/// Pictures for every person and agent in the workspace, so any avatar can look its picture up by
-/// actor id. The picture addresses are public, versioned paths: no sign-in key is needed to load one.
+/// Where each actor's uploaded picture and chosen letters live. A protocol so `ActorPicturesStore` tests without a server.
+public protocol ActorPicturesAPI: Sendable {
+	func pictures() async throws -> ActorLooks
+}
+
+/// Pictures and chosen initials for every person and agent in the workspace, so any avatar can look
+/// them up by actor id. The picture addresses are public, versioned paths: no sign-in key is needed to load one.
 @MainActor
 @Observable
 public final class ActorPicturesStore {
 	public private(set) var paths: [String: String] = [:]
+	public private(set) var chosenInitials: [String: String] = [:]
 	@ObservationIgnored private var baseURL: URL?
 
 	public init() {}
@@ -25,10 +39,14 @@ public final class ActorPicturesStore {
 		return URL(string: path, relativeTo: baseURL)?.absoluteURL
 	}
 
-	/// Loads the signed-in workspace's pictures; clears them when nobody is signed in.
+	/// The letters an actor chose for its avatar, or nil when it has set none.
+	public func initials(for actorID: String) -> String? { chosenInitials[actorID] }
+
+	/// Loads the signed-in workspace's pictures and initials; clears them when nobody is signed in.
 	public func load(environment: AppEnvironment) async {
 		guard let workspaceID = environment.workspaceId else {
 			paths = [:]
+			chosenInitials = [:]
 			return
 		}
 		await load(
@@ -36,21 +54,22 @@ public final class ActorPicturesStore {
 			baseURL: environment.baseURL)
 	}
 
-	/// A failed load keeps what is already shown; avatars fall back to initials.
+	/// A failed load keeps what is already shown; avatars fall back to the automatic initials.
 	func load(from api: any ActorPicturesAPI, baseURL: URL) async {
 		guard let fresh = try? await api.pictures() else { return }
 		self.baseURL = baseURL
-		paths = fresh
+		paths = fresh.picturePaths
+		chosenInitials = fresh.initials
 	}
 }
 
-/// Production source: the workspace actor list, which carries each actor's picture path.
+/// Production source: the workspace actor list, which carries each actor's picture path and chosen letters.
 struct APIActorPicturesSource: ActorPicturesAPI {
 	let client: Client
 	let workspaceID: String
 
-	func pictures() async throws -> [String: String] {
-		var found: [String: String] = [:]
+	func pictures() async throws -> ActorLooks {
+		var found = ActorLooks()
 		var offset = 0
 		let pageSize = 100
 		while offset < 10_000 {
@@ -61,7 +80,8 @@ struct APIActorPicturesSource: ActorPicturesAPI {
 			guard case .ok(let ok) = output else { throw AgentsError("Couldn't load pictures.") }
 			let rows = try ok.body.json
 			for row in rows {
-				if let path = row.avatar_url, !path.isEmpty { found[row.id] = path }
+				if let path = row.avatar_url, !path.isEmpty { found.picturePaths[row.id] = path }
+				if let letters = row.initials, !letters.isEmpty { found.initials[row.id] = letters }
 			}
 			if rows.count < pageSize { break }
 			offset += pageSize

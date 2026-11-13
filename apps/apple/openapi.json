@@ -8910,6 +8910,12 @@
 													"type": "string"
 												}
 											},
+											"initials": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -9424,6 +9430,13 @@
 											"maxLength": 60
 										},
 										"maxItems": 4
+									},
+									"initials": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 3
 									}
 								}
 							}

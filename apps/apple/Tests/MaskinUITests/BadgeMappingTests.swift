@@ -69,6 +69,16 @@ import Testing
 		#expect(ActorIdentity.initials(for: "x") == "X")
 	}
 
+	@Test("chosen letters come first, upper-cased; none chosen keeps the automatic letters")
+	func chosenInitials() {
+		#expect(ActorIdentity.initials(for: "Developer", chosen: "DEV") == "DEV")
+		#expect(ActorIdentity.initials(for: "Developer", chosen: " dev ") == "DEV")
+		#expect(ActorIdentity.initials(for: "Developer", chosen: nil) == "DE")
+		#expect(ActorIdentity.initials(for: "Developer", chosen: "") == "DE")
+		#expect(ActorIdentity.initials(for: "Chief of Staff", chosen: "  ") == "COS")
+		#expect(ActorIdentity.initials(for: "CTO", chosen: nil) == "CTO")
+	}
+
 	@Test("a short all-caps role and a three-word name show three letters, everything else stays at two")
 	func threeLetterAcronyms() {
 		#expect(ActorIdentity.initials(for: "CTO") == "CTO")
