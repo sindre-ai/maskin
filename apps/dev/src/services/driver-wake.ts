@@ -141,6 +141,9 @@ const REASON_TEXT: Record<DriverWakeReason, string> = {
 	step_overdue: 'The next step on this object is overdue.',
 	no_next_step: 'This object has no next step.',
 	behind_pace: 'This object is behind the pace its target needs.',
+	new_evidence: 'Someone else commented, or a new insight arrived, since your last run.',
+	floor_reached: 'Your last run was 3 days ago or more.',
+	nothing_due: 'Nothing is due on what you drive.',
 }
 
 export interface WakePromptInput {
