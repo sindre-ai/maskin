@@ -1,0 +1,83 @@
+{
+	"0825f727-b5f2-538e-ad13-4fbe58841234": {
+		"id": "0825f727-b5f2-538e-ad13-4fbe58841234",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Meeting ended: ingest Google Meet transcript on arrival",
+		"type": "event",
+		"config": {
+			"action": "ready",
+			"entity_type": "google_meet.transcript"
+		},
+		"actionPrompt": "A Google Meet transcript just became ready. Run the meeting-ownership skill on this meeting now instead of waiting for the 2-hour sweep, which stays as the backstop.\n\nDone means: one meeting object for this conference with the analysis in the body, attendees tagged and linked to existing contacts and companies, tasks, decisions and insights filed, and status processed.\n\nBefore anything else, dedupe: search_objects type=meeting for the Meet conference id and for a notetaker meeting on the same day with a start within 10 minutes. If one exists, enrich that object and never create a second. If it is already processed, stop silently.\n\nUse the Meet transcript as one source, and any notetaker notes on the same meeting as hints to check against it. If the transcript is empty or missing, stop silently. Do not send or draft anything outside the company. If this run starts more than 3 hours after the event, still run it, since a late ingest is better than none.",
+		"targetActorId": "8941afb0-cab2-553c-8370-2e45ada99d0e",
+		"enabled": true
+	},
+	"cb28e9af-83d8-5556-b722-b5ed39f00182": {
+		"id": "cb28e9af-83d8-5556-b722-b5ed39f00182",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Meeting follow-up check (weekdays 14:00 UTC, weekly review Mondays)",
+		"type": "cron",
+		"config": {
+			"expression": "0 14 * * 1-5",
+			"skip_when_idle": true
+		},
+		"actionPrompt": "Load the meeting-ownership skill and run its section on follow-through routines. Done means: for every meeting processed in the last 14 days, each commitment task (ours, theirs, internal) is done and verified, moving, or has one dated question to its owner (agent or person) on the task; every agreed next step with an outside party has been checked against the real trail (email drafts, objects, calendar); and the one-line register on the meeting is current.\n\nAlso each run: (1) ingest any meeting that ended in the last 24 hours with no analysis (notetaker, Google Meet or an attached transcript). (2) For any calendar event in the next 24 hours with the same company or attendees as a processed meeting, post the open commitments, objections and decisions as a comment on that meeting. (3) On Mondays also do the weekly review: open decisions nobody acted on, unresolved risks and blockers, promises by us and by them, contacts and companies with stale or conflicting data.\n\nOwed buyer replies: use list_actors to find the agent that coordinates the team and @mention it on the meeting the same day. If there is none, mention the workspace owner. Leave alone anything a person was already asked about in the last 3 working days. Do not notify twice for the same issue. Stop and ask a person only for private context. Stay silent when nothing is open. If this run starts more than 1 hour after 14:00 UTC, do nothing and say so in one line.",
+		"targetActorId": "8941afb0-cab2-553c-8370-2e45ada99d0e",
+		"enabled": true
+	},
+	"fcba3490-edc1-557e-8096-b1153bc7d8c5": {
+		"id": "fcba3490-edc1-557e-8096-b1153bc7d8c5",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Notetaker sweep: ingest new meetings (every 2h, weekdays)",
+		"type": "cron",
+		"config": {
+			"expression": "15 7-19/2 * * 1-5",
+			"skip_when_idle": true
+		},
+		"actionPrompt": "Load the meeting-ownership skill first. It adds to the steps below: classify every meeting and summarise by type, tag and update people and companies, file tasks for every meeting type with a suggested agent, record decisions and objection handling, set a follow-up date in the body, and add a My confidence section. Where it conflicts with the steps below, the skill wins.\n\nThis sweep is the backstop. Google Meet transcripts are ingested on arrival by the transcript trigger, so dedupe against meetings it already created. Notetaker tools without a webhook are picked up here, about 2 hours after the meeting ends. A run with nothing new is silent.\n\nDone means: every meeting from the last 7 days that has a transcript exists as one meeting object with the analysis in its body, every named participant is linked to it, the insights worth acting on are filed, and no meeting is left at a status that is older than its facts.\n\nSteps:\n1. Use the notetaker tools you have to list transcripts from the last 7 days (max 10 per run, oldest first). If you have no notetaker tools in this session, stop and post ONE comment (attention 2, no mention) on the loop that installed you saying so. Do not guess.\n2. Dedupe: search_objects type=meeting for the notetaker meeting id (store it in metadata external_id, for example \"notetaker-<id>\", and put the link in the body). If a meeting object exists with status processed, skip it. If not, create it at status happened (never past it) with meeting_date, participants and a meeting_type from the title and attendees: internal if all attendees share our own domain, sales_call if an outside prospect or buyer, customer_success if an existing customer, else other.\n3. Run your normal ingestion checklist on the transcript (it is the source, not a reflection). Write the analysis into the meeting body, keep the notetaker summary below it. For internal meetings also do the internal action items from the meeting-internal-jobs skill. Then set status processed.\n4. Participants: for each outside attendee, search_objects type=contact on name and email, reuse an existing contact, otherwise create ONE contact at its entry status with name, email and role if clear. Add the attends edge from the contact to the meeting. If the company is clear (email domain or said aloud), find or create the company and link contact to company and meeting to company. Our own team members have no contact objects: list them in the participants field only. Do not look anyone up on LinkedIn and do not draft messages.\n5. Insights: file the sharp ones per meeting, status new, with the source tag from the meeting-people-and-extraction skill. Product, market and customer signal only. Quote the speaker and say first-hand or second-hand. Add a relates_to edge from each insight to the meeting.\n6. If a notetaker meeting duplicates one that already exists (same day, start within 10 minutes), keep one meeting object and relate the other to it.\n7. Missing information (no transcript yet, attendee names absent, speaker labels only): say so in the meeting body under What is NOT captured. Never invent names.\n8. Reconcile stale meetings (every run): search_objects type=meeting at status scheduled or happened whose meeting_date is more than 1 day in the past (look back 60 days). For each, look for a transcript on the same day. If one exists, fill THIS object in (never create a duplicate), run steps 3 to 5 and set processed. If a scheduled meeting is past its date and no transcript or recording exists after 3 days, set it to happened and add one line to the body that no recording exists yet. Never set processed without a transcript or a human reflection.\n9. Our commitments: when the transcript shows something anyone promised (send documentation, send the recording, a follow-up mail), create one task per promise at its entry status, owner the person who promised it, with a relates_to edge to the meeting and a Suggested agent line in the body. Check search_objects type=task first so you do not duplicate. Do not send or draft the follow-up.\n10. Stop and ask a person only for private context. Otherwise no questions.",
+		"targetActorId": "8941afb0-cab2-553c-8370-2e45ada99d0e",
+		"enabled": true
+	},
+	"70a28de8-cf1e-50a5-ac5c-a9c745b6ef67": {
+		"id": "70a28de8-cf1e-50a5-ac5c-a9c745b6ef67",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Daily check: meeting pipeline health",
+		"type": "cron",
+		"config": {
+			"expression": "54 3 * * *",
+			"skip_when_idle": true
+		},
+		"actionPrompt": "Heartbeat. Once a day, check that what you own is moving and that no person is waiting on you.\n\n1. What you drive. List every object where you are the driver. Skip anything already finished.\n2. Your work. For each one, read where it stands now (status, latest comments, linked objects). If you can move it forward right now, do it in this run. If it is waiting on someone, ask them again only when that is needed to move it forward, with one concrete question: the agent who would know first, then the workspace owner.\n3. Your chats. Use list_chats to find chats you are in with people that had activity in the last 25 hours. Follow up if a person asked something you never answered, you promised something and have not done it, or their last message was a problem you only half fixed. Reply in that chat with the result, not a plan.\n4. Meeting pipeline health. Check three things:\n   a. The sweep ran: list_sessions for the notetaker sweep trigger. If the latest session is older than 26 hours, failed, or ended without a result, run the sweep's steps yourself now and say so in the summary.\n   b. Nothing stale: search_objects type=meeting at status scheduled or happened with a meeting_date more than 1 day in the past. For each, check whether a transcript or recording exists now. If yes, ingest it and set processed. If no, leave it alone and do not re-list the ones you already reported.\n   c. Nothing orphaned: insights you filed in the last 7 days with no relates_to edge to their meeting. Fix them.\n5. Done means nothing you drive is stalled and the three checks above are clean. For everything you drive, either fix it now or put the reason you cannot on the object. If all clean, say so in one line.",
+		"targetActorId": "8941afb0-cab2-553c-8370-2e45ada99d0e",
+		"enabled": true
+	},
+	"5fb38750-7c51-5c40-886e-2abcafaaf60f": {
+		"id": "5fb38750-7c51-5c40-886e-2abcafaaf60f",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Catch-up ingest: meetings stuck at happened",
+		"type": "cron",
+		"config": {
+			"expression": "17 7 * * 1-5"
+		},
+		"actionPrompt": "Catch-up sweep for meetings stuck at status happened. A meeting created directly at happened (for example a calendar shell) never takes a status change, so no event ingests it. This sweep is the only ingest path for those.\n\n1. list_objects with type=meeting, status=happened. Paginate the full list.\n2. For each meeting, apply the readiness gate. Ingest ONLY if ALL of these hold:\n   - meeting_date is today or in the past (not a future-dated shell), AND\n   - a usable source exists: a human-written comment of more than 500 characters (via get_comments, ignoring agent comments), OR an attached transcript file (.md, .txt, .vtt, .srt or any text file over 2KB, via get_objects with include files), OR a body with more than 500 characters of substantive human-written reflection, AND\n   - the meeting is not mid-edit: its updated_at is at least 1 hour old, AND\n   - the meeting does not already carry your analysis: no informs edge from the meeting to insights (via list_relationships) and no index comment from you on the meeting (via get_comments).\n3. For each qualifying meeting, run the standard ingestion checklist for its meeting_type from the meeting-ownership skill: write the distilled analysis into that object's BODY (never a knowledge object), file the insights with informs edges from the meeting, post ONE index comment, then set status processed. For internal meetings also file the action items as tasks.\n4. Meetings that fail the gate (empty shells awaiting a reflection) are skipped silently. Do not comment on them and do not flip them.\n5. Only act on meetings whose current status is exactly happened. Never touch scheduled, processed or any other status. Never re-ingest a meeting that already carries your analysis.\n\nIf no meeting qualifies, exit quietly.",
+		"targetActorId": "8941afb0-cab2-553c-8370-2e45ada99d0e",
+		"enabled": true
+	},
+	"fab68815-b190-5d38-a3d1-d1494402bb61": {
+		"id": "fab68815-b190-5d38-a3d1-d1494402bb61",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Draft agenda for scheduled internal meeting",
+		"type": "event",
+		"config": {
+			"action": "created",
+			"filter": {
+				"status": "scheduled",
+				"metadata.meeting_type": "internal"
+			},
+			"entity_type": "meeting"
+		},
+		"actionPrompt": "A meeting with meeting_type internal was just created. Run the agenda job from the meeting-internal-jobs skill.\n\nPreflight first: if the meeting already has a substantive body (more than 200 characters) at trigger time, stop silently, because someone drafted an agenda by hand and you must not overwrite it. If meeting_type is somehow not internal, stop silently.\n\nIf clear to run:\n1. Find the prior related meeting by title stem or participant set (search_objects type=meeting, meeting_type internal). If found, walk list_relationships from it to gather task objects with status todo or in_progress. If there is no prior related meeting, skip this.\n2. Draft the agenda with the template headings from the meeting-internal-jobs skill, verbatim. Fill in \"Open action items from last meeting\" with the tasks from step 1 (linked, with owner and status). Leave Purpose, Context, Agenda and Decisions as skeleton headings with the one-line hint beneath each. Do not invent content for those sections. Write the drafted markdown to the meeting's content with update_objects.\n3. Post ONE comment on the meeting, attention 2, one line: \"Draft agenda ready. Edit before the meeting. Open action items from [prior meeting title] pre-loaded.\" If step 1 was skipped: \"Draft agenda ready. Edit before the meeting. No prior related meeting found, so the open action items section is omitted.\" No @mention.\n\nDo not ingest, do not create knowledge, insight, decision or task objects, and do not change the meeting status. This trigger drafts agendas only.",
+		"targetActorId": "8941afb0-cab2-553c-8370-2e45ada99d0e",
+		"enabled": true
+	}
+}

@@ -188,6 +188,20 @@ export const ROW_SCENARIOS: RowScenario[] = [
 		control: { workspace_id: WS, updates: [{ id: U2 }] },
 	},
 	{
+		covers: ['create_objects objects'],
+		tool: 'create_objects',
+		old: { workspace_id: WS, objects: [node] },
+		canonical: { workspace_id: WS, nodes: [node] },
+		control: { workspace_id: WS },
+	},
+	{
+		covers: ['update_objects objects'],
+		tool: 'update_objects',
+		old: { workspace_id: WS, objects: [{ id: U2, title: 'New title' }] },
+		canonical: { workspace_id: WS, updates: [{ id: U2, title: 'New title' }] },
+		control: { workspace_id: WS },
+	},
+	{
 		covers: ['create_trigger actor_id'],
 		tool: 'create_trigger',
 		old: {
@@ -220,13 +234,6 @@ export const ROW_SCENARIOS: RowScenario[] = [
 		old: { workspace_id: WS, id: U2, actor_id: U1 },
 		canonical: { workspace_id: WS, id: U2, target_actor_id: U1 },
 		control: { workspace_id: WS, id: U2 },
-	},
-	{
-		covers: ['create_session target_actor_id'],
-		tool: 'create_session',
-		old: { workspace_id: WS, target_actor_id: U1, action_prompt: 'Go' },
-		canonical: { workspace_id: WS, actor_id: U1, action_prompt: 'Go' },
-		control: { workspace_id: WS, action_prompt: 'Go' },
 	},
 	{
 		covers: ['list_sessions target_actor_id'],

@@ -394,6 +394,44 @@ describe('Objects Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
+		it('answers 409 and writes nothing when expected_status no longer holds', async () => {
+			const existing = buildObject({ status: 'active' })
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			// existing, membership, then the in-transaction re-read, which finds the object already moved on.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [existing]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New title',
+					expected_status: 'opportunity',
+				}),
+			)
+
+			expect(res.status).toBe(409)
+			expect(await res.json()).toMatchObject({ error: { code: 'CONFLICT' } })
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('applies the update when expected_status still holds', async () => {
+			const existing = buildObject({ status: 'opportunity' })
+			const updated = { ...existing, title: 'New title' }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New title',
+					expected_status: 'opportunity',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
 		it("emits an 'updated' event with data.changes for a single-field edit", async () => {
 			const existing = buildObject({ title: 'Old title' })
 			const updated = { ...existing, title: 'New title' }

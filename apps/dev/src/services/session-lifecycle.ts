@@ -28,6 +28,7 @@ import {
 } from '../lib/analytics/ai-generation-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
+import { unclassifiedFingerprint } from '../lib/credit-classifier'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -37,6 +38,7 @@ import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import { admitSessionStart } from './self-start-limits'
+import { alertOwnersOncePerDay } from './run-death-alerts'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -1168,6 +1170,26 @@ export async function settleSession(
 			workspaceId: row.workspaceId,
 			actorId: row.actorId,
 			retryAt: outcome.retryAt,
+		})
+	}
+
+	// A death nothing recognised reaches the workspace owners: one card per cause per day, however
+	// many runs die the same way. The reason is already saved on the row, so a failed alert
+	// (swallowed inside) loses nothing but the card.
+	if (flipped && outcome.kind === 'fail' && outcome.failureReason?.reason_code === 'unclassified') {
+		const verbatim = outcome.failureReason.verbatim_output
+		logger.warn('Session ended with an unclassified exit', {
+			sessionId,
+			workspaceId: row.workspaceId,
+			exitCode: outcome.exitCode,
+			verbatim,
+		})
+		await alertOwnersOncePerDay(deps.db, {
+			workspaceId: row.workspaceId,
+			causeKey: `unclassified:${unclassifiedFingerprint(verbatim)}`,
+			headline: 'A run ended with an error nobody recognised',
+			rationale: `It was not retried. Last line it printed: ${verbatim ?? '(nothing)'}. You get one note per cause per day; later runs that end the same way today are not repeated.`,
+			sessionId,
 		})
 	}
 

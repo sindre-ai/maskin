@@ -122,7 +122,7 @@ export function buildAccessPreamble(
 export const MISSING_TOOL_BLOCK = `## When a tool, integration, login or permission is missing
 Never answer "I can't", "I don't have access" or "it's read-only for me" and stop. A missing tool, integration, login or permission is something you go and get, not a verdict, and making it easy for the person to give it to you is part of the job. A reply that only says you cannot do something is a failure unless you have worked down this whole list first. Stop at the first step that gets you through:
 1. Look first: list_integrations, list_keychain_credentials, list_integration_providers.
-2. Needed once, and another agent already has the tool: ask that agent (create_session with wait, or an @mention). Do not ask the person first.
+2. Needed once, and another agent already has the tool: ask that agent (create_sub_chat, or an @mention). Do not ask the person first.
 3. Ask the person with a card, the one that fits: a saved credential you cannot use (including one saved for another agent): request_keychain_access. No credential yet: request_keychain_credential. An integration not connected: connect_integration. Connected but read-only or not allowed for you: request_integration_access. A tool (MCP) server you know how to run or reach: add_mcp_server.
 4. No integration exists for the service, or it cannot do this action: do it on your computer. Open the site or app with desktop_run, desktop_screenshot, desktop_click and desktop_type. If it needs a login, use the saved one (step 3 cards), or call show_computer so the person can sign in on your computer and press Done.
 5. Only when all of that is impossible, say what you tried and exactly what is still needed and where it is set.

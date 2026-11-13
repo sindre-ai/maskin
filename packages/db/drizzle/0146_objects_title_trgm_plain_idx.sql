@@ -1,0 +1,28 @@
+-- Migration: trigram index on objects.title WITHOUT the workspace key, so the object search
+-- (GET /api/objects/search and the `q` filter of GET /api/objects) can use it. 1 of 2, content is 0147.
+--
+-- Why 0129/0130 are not enough for this query: those indexes lead with workspace_id (btree_gin).
+-- For buildObjectListConditions in apps/dev/src/routes/objects.ts the planner does not use their
+-- trigram key at all. It sees `workspace_id = X`, prefers the cheap workspace btree plus the
+-- ILIKE as a filter, and so reads and decompresses the body of every object of the workspace for
+-- every word. Measured on 22,000 objects (64 MB of body text, 12,000 of them in one workspace)
+-- with 0129/0130 present: one rare word 1.07 s, seven words 6.5 s, and `enable_seqscan = off` does
+-- not change the plan (it only uses the workspace_id key of the GIN index). With plain trigram
+-- indexes the planner picks a BitmapOr of the title and body indexes on its own, and the same
+-- queries take 1 ms (one rare word) and 21 ms (three words). The workspace filter then runs on
+-- the few hits. Words under 3 letters cannot use a trigram index (the search already drops them).
+--
+-- 0129/0130 stay: GET /api/search (services/search.ts) is shaped differently and still uses them.
+--
+-- Size: about 1.7 MB on the test set (the body twin in 0147 is the large one). Build: under 1 s.
+-- Each object write pays a small extra cost to keep it current.
+--
+-- Alone in its file: CREATE INDEX CONCURRENTLY cannot share a transaction with other statements
+-- (packages/db/MIGRATIONS.md Rule 1). CONCURRENTLY keeps object writes flowing during the build.
+-- IF NOT EXISTS lets a retry pass, but an interrupted CONCURRENTLY build leaves an INVALID index
+-- that IF NOT EXISTS then skips: check pg_index.indisvalid and DROP INDEX CONCURRENTLY the
+-- leftover before retrying.
+--
+-- Needs 0122 (pg_trgm). Reversible: drizzle/down/0146_objects_title_trgm_plain_idx_down.sql.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "objects_title_trgm_idx"
+  ON "objects" USING gin ("title" gin_trgm_ops);

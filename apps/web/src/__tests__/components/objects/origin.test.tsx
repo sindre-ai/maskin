@@ -1,6 +1,7 @@
-import { Origin, resolveLineage } from '@/components/objects/origin'
+import { Origin, OriginPanel, resolveLineage } from '@/components/objects/origin'
 import { render, screen } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
+import { useState } from 'react'
 import { buildActorListItem, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -169,6 +170,62 @@ describe('<Origin>', () => {
 		const deepLink = screen.getByRole('link', { name: /open chat at this moment/i })
 		expect(deepLink).toHaveAttribute('href', '/ws-1/chats/conv-1?msg=4242')
 		expect(screen.getByText(/System-written · not editable/i)).toBeInTheDocument()
+	})
+
+	it('draws the text variant as "Spawned by <name>, <age>" and opens the panel below on click', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const relationships = [
+			buildRelationshipResponse({
+				sourceType: 'session',
+				sourceId: 'session-1',
+				sourceTitle: 'Draft the outline',
+				targetType: 'bet',
+				targetId: 'obj-1',
+				type: 'produced_by',
+				createdBy: 'session-actor',
+				createdAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+			}),
+		]
+		function Host() {
+			const [open, setOpen] = useState(false)
+			const toggle = () => setOpen((o) => !o)
+			return (
+				<>
+					<Origin
+						object={{ id: 'obj-1' }}
+						relationships={relationships}
+						workspaceId="ws-1"
+						variant="text"
+						expanded={open}
+						onToggle={toggle}
+					/>
+					<OriginPanel
+						object={{ id: 'obj-1' }}
+						relationships={relationships}
+						workspaceId="ws-1"
+						expanded={open}
+						onToggle={toggle}
+					/>
+				</>
+			)
+		}
+		render(<Host />, { wrapper: createWorkspaceWrapper() })
+
+		const trigger = screen.getByRole('button', { name: 'Show where this came from' })
+		expect(trigger).toHaveTextContent('Spawned by Strategist, 3h ago')
+		expect(screen.queryByText('Session')).not.toBeInTheDocument()
+
+		await user.click(trigger)
+		expect(trigger).toHaveAttribute('aria-expanded', 'true')
+		expect(screen.getByText('Session')).toBeInTheDocument()
+	})
+
+	it('draws nothing for the text variant when there is no lineage', () => {
+		const { container } = render(
+			<Origin object={{ id: 'obj-1' }} relationships={[]} workspaceId="ws-1" variant="text" />,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+		expect(container.firstChild).toBeNull()
 	})
 
 	it('drops the Chat cell (file-origin variant) when the session has no parent conversation', async () => {

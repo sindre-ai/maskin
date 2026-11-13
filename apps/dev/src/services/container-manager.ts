@@ -192,7 +192,7 @@ export class ContainerManager {
 		// reads that body as container stdin: about 1 attach in 10. Left alone it
 		// lands in front of the first line we write, the CLI fails with "Error
 		// parsing streaming input line ... SyntaxError" and exits, and a session
-		// whose only input was that line (a helper started with create_session)
+		// whose only input was that line (a helper started with create_sub_chat)
 		// dies. One newline right after attaching ends any leaked bytes as a line of
 		// their own, which the CLI skips, and is a blank line it ignores otherwise.
 		// (Attaching without the body was tried: against a real daemon it never

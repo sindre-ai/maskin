@@ -14,6 +14,8 @@ interface WorkspaceAnalyticsInput {
 	/** False until the workspace has resolved from the user's memberships. */
 	resolved: boolean
 	isTeam: boolean
+	internal: boolean
+	paying: boolean
 	createdAt: string | undefined
 	shareUsage: boolean
 	anonymizeWorkspace: boolean
@@ -33,6 +35,8 @@ export function useWorkspaceAnalytics({
 	workspaceId,
 	resolved,
 	isTeam,
+	internal,
+	paying,
 	createdAt,
 	shareUsage,
 	anonymizeWorkspace,
@@ -46,6 +50,8 @@ export function useWorkspaceAnalytics({
 			actor_id: actor.id,
 			actor_type: actor.type,
 			is_team: isTeam,
+			internal,
+			paying,
 		})
 		setCapturingEnabled(shareUsage)
 		setWorkspaceGroup(workspaceId, createdAt)
@@ -60,5 +66,5 @@ export function useWorkspaceAnalytics({
 		}).then(() => {
 			if (shareUsage) trackAppActive()
 		})
-	}, [resolved, workspaceId, isTeam, createdAt, shareUsage, anonymizeWorkspace])
+	}, [resolved, workspaceId, isTeam, internal, paying, createdAt, shareUsage, anonymizeWorkspace])
 }

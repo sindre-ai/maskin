@@ -19,7 +19,8 @@ import { useEffect, useRef, useState } from 'react'
  *
  * `debounceMs` holds typing back from `onChange` for pages whose search is a
  * server filter (Items), while the field itself stays responsive. A change of
- * `value` from outside (a removed filter pill) replaces the text.
+ * `value` from outside (a removed filter pill) replaces the text. Esc clears the text and
+ * leaves the field, so the list is not left filtered.
  */
 export function PageSearchInput({
 	value,
@@ -64,6 +65,13 @@ export function PageSearchInput({
 		setOpen(true)
 	}
 
+	// Closing the takeover removes the focused input, which would drop the caret to
+	// the page body. Hand focus back to the icon button that opened it.
+	function closeNarrow() {
+		setOpen(false)
+		iconRef.current?.focus()
+	}
+
 	usePageSearchShortcut(() => {
 		// Wide: the field itself is on screen. Narrow: open the inline field (or, if it
 		// is already open, put the caret back in it).
@@ -101,7 +109,10 @@ export function PageSearchInput({
 				value={text}
 				onChange={(e) => handleChange(e.target.value)}
 				onKeyDown={(e) => {
-					if (e.key === 'Escape') setOpen(false)
+					if (e.key === 'Escape') {
+						handleChange('')
+						closeNarrow()
+					}
 				}}
 				placeholder={label}
 				aria-label={label}
@@ -134,7 +145,10 @@ export function PageSearchInput({
 					onFocus={() => setWideOpen(true)}
 					onBlur={() => setWideOpen(false)}
 					onKeyDown={(e) => {
-						if (e.key === 'Escape') e.currentTarget.blur()
+						if (e.key === 'Escape') {
+							handleChange('')
+							e.currentTarget.blur()
+						}
 					}}
 					placeholder={label}
 					aria-label={label}
@@ -173,7 +187,7 @@ export function PageSearchInput({
 						variant="ghost"
 						size="icon"
 						aria-label="Close search"
-						onClick={() => setOpen(false)}
+						onClick={closeNarrow}
 						className="size-[30px] shrink-0 rounded-lg text-muted-foreground"
 					>
 						<X aria-hidden size={15} />

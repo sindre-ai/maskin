@@ -2,6 +2,96 @@
 # x11vnc + noVNC — see README.md. Built and pushed to Docker Hub by
 # .github/workflows/desktop-docker.yml; the agent-server pulls `latest` for every
 # new desktop (DESKTOP_IMAGE).
+
+# Stage 1: build ffmpeg 8 with the whisper filter (speech to text, whisper.cpp). Debian
+# bookworm ships ffmpeg 5.1 (no whisper filter, added in 8.0) and no prebuilt static
+# ffmpeg 8 has it enabled, so it is compiled here. Only /out leaves this stage.
+# Every input is pinned to an exact version and its sha256, so a rebuild cannot change
+# silently. To bump one, change the version and the checksum together.
+FROM debian:bookworm-slim AS ffmpeg-build
+
+ARG WHISPER_CPP_VERSION=1.9.5
+ARG WHISPER_CPP_SHA256=ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720
+ARG FFMPEG_VERSION=8.1.3
+ARG FFMPEG_SHA256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+# base.en: about 150 MB on disk, English only. A larger model is a one-line change here
+# (small.en is about 470 MB) but every new agent computer then carries it.
+ARG WHISPER_MODEL_FILE=ggml-base.en.bin
+ARG WHISPER_MODEL_SHA256=a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    nasm \
+    curl \
+    xz-utils \
+    ca-certificates \
+    libx264-dev \
+    libmp3lame-dev \
+    libopus-dev \
+    libvpx-dev \
+    libass-dev \
+    libfreetype-dev \
+    libfontconfig-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# whisper.cpp as shared libraries (libwhisper, libggml*), installed under /usr/local so
+# ffmpeg finds whisper.pc. GGML_NATIVE=OFF: the CI runner that builds the image is not
+# the machine that runs it, and a native build can use CPU instructions the target lacks
+# (the run then dies with "illegal instruction").
+RUN curl -fsSL -o whisper.tar.gz "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
+  && echo "${WHISPER_CPP_SHA256}  whisper.tar.gz" | sha256sum -c - \
+  && tar xzf whisper.tar.gz \
+  && cmake -S "whisper.cpp-${WHISPER_CPP_VERSION}" -B whisper-build \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DCMAKE_INSTALL_LIBDIR=lib \
+       -DBUILD_SHARED_LIBS=ON \
+       -DGGML_NATIVE=OFF \
+       -DWHISPER_BUILD_EXAMPLES=OFF \
+       -DWHISPER_BUILD_TESTS=OFF \
+  && cmake --build whisper-build -j"$(nproc)" \
+  && cmake --install whisper-build \
+  && ldconfig
+
+# ffmpeg: the codecs a short video needs (H.264, VP9, MP3, Opus) and libass so subtitles
+# can be burned in, plus the whisper filter. ffmpeg itself is static; only whisper.cpp
+# stays shared. No ffplay and no docs.
+RUN curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+  && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
+  && tar xJf ffmpeg.tar.xz \
+  && cd "ffmpeg-${FFMPEG_VERSION}" \
+  && PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure \
+       --prefix=/usr/local \
+       --enable-gpl \
+       --enable-whisper \
+       --enable-libx264 \
+       --enable-libvpx \
+       --enable-libmp3lame \
+       --enable-libopus \
+       --enable-libass \
+       --enable-libfreetype \
+       --enable-libfontconfig \
+       --disable-ffplay \
+       --disable-doc \
+  && make -j"$(nproc)" \
+  && make install DESTDIR=/out \
+  && rm -rf /out/usr/local/include /out/usr/local/lib/pkgconfig /out/usr/local/lib/libav*.a /out/usr/local/lib/libsw*.a
+
+# The model, checked against its sha256.
+RUN mkdir -p /out/usr/local/share/whisper \
+  && curl -fsSL -o "/out/usr/local/share/whisper/${WHISPER_MODEL_FILE}" "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${WHISPER_MODEL_FILE}" \
+  && echo "${WHISPER_MODEL_SHA256}  /out/usr/local/share/whisper/${WHISPER_MODEL_FILE}" | sha256sum -c -
+
+# The whisper and ggml shared libraries ffmpeg loads at run time. Copied with cp -a so
+# the .so symlinks survive.
+RUN mkdir -p /out/usr/local/lib \
+  && cp -a /usr/local/lib/libwhisper.so* /usr/local/lib/libggml*.so* /out/usr/local/lib/
+
+# Stage 2: the desktop itself.
 FROM debian:bookworm-slim
 
 # xfwm4 (windows) + xfdesktop (wallpaper) + Plank (a macOS-style dock). No XFCE
@@ -30,6 +120,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/*
+
+# ffmpeg 8 with the whisper filter, built in the stage above. The run-time libraries
+# are the ones ffmpeg was linked against (x264, vpx, mp3lame, opus, libass and its
+# font stack) plus libgomp1 for ggml. /out holds ffmpeg, ffprobe, the whisper and ggml
+# shared libraries (/usr/local/lib) and the model (/usr/local/share/whisper).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libx264-164 \
+    libvpx7 \
+    libmp3lame0 \
+    libopus0 \
+    libass9 \
+    libfreetype6 \
+    libfontconfig1 \
+    libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=ffmpeg-build /out/ /
+RUN ldconfig
+
+# Smoke test, so a broken ffmpeg fails the build instead of reaching an agent: the
+# binaries resolve every library, the whisper filter is listed, and the filter really
+# loads the model and runs on one second of silence. The shared libraries missing is the
+# usual way this goes wrong, and it only shows when ffmpeg is run, not when it is built.
+RUN ! ldd /usr/local/bin/ffmpeg | grep -q 'not found' \
+  && ffprobe -version \
+  && ffmpeg -hide_banner -filters | grep -E '[[:space:]]whisper[[:space:]]' \
+  && ffmpeg -hide_banner -loglevel error -f lavfi -i anullsrc=r=16000:cl=mono -t 1 \
+       -af "whisper=model=/usr/local/share/whisper/ggml-base.en.bin:language=en" -f null -
+ENV WHISPER_MODEL=/usr/local/share/whisper/ggml-base.en.bin
 
 # Everything the person or agent sees runs as an ordinary user, not root: Chromium
 # refuses to enable its security sandbox as root. Passwordless sudo means nothing
@@ -88,6 +206,12 @@ COPY dock/keyfile /home/user/.config/glib-2.0/settings/keyfile
 
 # Everything above was written as root; hand the user its home.
 RUN chown -R user:user /home/user
+
+# Which build this is. A computer keeps the image it was created from, so the settings read
+# (GET /api/desktop/settings) reports this to tell an old computer from a current one. Set by
+# .github/workflows/desktop-docker.yml; "unknown" for a build by hand.
+ARG IMAGE_TAG=unknown
+RUN echo "$IMAGE_TAG" > /etc/maskin-desktop-image
 
 COPY entrypoint.sh /entrypoint.sh
 COPY desktopd.py /usr/local/bin/desktopd.py

@@ -53,6 +53,10 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 			c.set('actorType', result.type)
 			// Cached with the actor, so a route can refuse by kind of key without another query.
 			c.set('apiKeyKind', result.keyKind)
+			// The session a session key was minted for (null for every other kind). The key proves
+			// which session is calling, so a plain HTTP call from the agent's computer is attributed
+			// the same as an MCP call, with no header to remember.
+			c.set('apiKeySessionId', result.sessionId ?? null)
 
 			// Verify workspace membership when X-Workspace-Id header is present.
 			// By-ID routes also check membership via isWorkspaceMember() in workspace-auth.ts

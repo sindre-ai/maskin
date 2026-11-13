@@ -1,6 +1,7 @@
 import { AddLinkForm, LinkedObjectsView } from '@/components/objects/linked-objects'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { buildObjectResponse, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -222,6 +223,23 @@ describe('LinkedObjectsView', () => {
 		expect(screen.getByRole('button', { name: 'Link to file' })).toBeInTheDocument()
 	})
 
+	it('returns focus to the empty-state button that opened the picker, not the "+" button', async () => {
+		const user = userEvent.setup()
+		const Wrapper = createWorkspaceWrapper()
+		render(<LinkedObjectsView {...baseProps} asSource={[]} asTarget={[]} allObjects={[]} />, {
+			wrapper: Wrapper,
+		})
+
+		const opener = screen.getByRole('button', { name: 'Link to item' })
+		await user.click(opener)
+		expect(screen.getByPlaceholderText(/Search items/)).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+		expect(screen.queryByPlaceholderText(/Search items/)).not.toBeInTheDocument()
+		expect(opener).toHaveFocus()
+		expect(screen.getByRole('button', { name: 'Add link' })).not.toHaveFocus()
+	})
+
 	it('shows a loading skeleton band when isLoading', () => {
 		render(
 			<LinkedObjectsView {...baseProps} isLoading asSource={[]} asTarget={[]} allObjects={[]} />,
@@ -284,6 +302,31 @@ describe('AddLinkForm — Objects | Files tab strip', () => {
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /Items/ })).toHaveAttribute('aria-pressed', 'true'),
 		)
+	})
+
+	it('focuses the search field on open and returns focus to the opener on close', async () => {
+		const user = userEvent.setup()
+		const Wrapper = createWorkspaceWrapper()
+		function Host() {
+			const [open, setOpen] = useState(false)
+			return (
+				<>
+					<button type="button" onClick={() => setOpen(true)}>
+						Open picker
+					</button>
+					{open && <AddLinkForm {...commonProps} onClose={() => setOpen(false)} />}
+				</>
+			)
+		}
+		render(<Host />, { wrapper: Wrapper })
+
+		const opener = screen.getByRole('button', { name: 'Open picker' })
+		await user.click(opener)
+		expect(screen.getByPlaceholderText(/Search items/)).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+		expect(screen.queryByPlaceholderText(/Search items/)).not.toBeInTheDocument()
+		expect(opener).toHaveFocus()
 	})
 
 	it('carries role=listbox with role=option children and aria-selected on the active row', () => {

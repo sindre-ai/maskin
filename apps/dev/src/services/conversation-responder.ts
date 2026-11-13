@@ -8,6 +8,7 @@ import {
 import { HUMAN_MESSAGE_STYLE_SHORT, decideWakes } from '@maskin/shared'
 import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
 import { isHumanPaused } from '../lib/agent-pause'
+import { trackChatSessionSeeded } from '../lib/analytics/chat-session-events'
 import {
 	type AgentRoutingOutcome,
 	type GroupChatDelivery,
@@ -16,18 +17,22 @@ import {
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
 import { logger } from '../lib/logger'
-import { loadSiblingSessionsNote, loadThreadSeed, takeSessionDigests } from './chat-session-context'
+import {
+	loadChatFilesList,
+	loadSiblingSessionsNote,
+	loadThreadSeed,
+	takeSessionDigests,
+} from './chat-session-context'
 import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
-// mirrors MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
-// auto-spawn), same purpose: prevent runaway agent-to-agent ping-pong. Kept
-// as its own constant since the two features can tune independently even
-// though the value happens to match today.
-const MAX_CONSECUTIVE_AGENT_REPLIES = 5
+// same purpose as MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
+// auto-spawn): prevent runaway agent-to-agent ping-pong. Its own constant, tuned
+// separately (here 20, there 5).
+const MAX_CONSECUTIVE_AGENT_REPLIES = 20
 const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
 
@@ -64,7 +69,7 @@ const GROUP_HANDOFF_HINT =
  * degrades to "stay silent" so a broken rule input can't spam a conversation.
  *
  * Returns 'agent_cap' when the turn is dropped because the conversation already
- * ends in 5 agent messages in a row, so a caller that cannot afford a silent
+ * ends in 20 agent messages in a row, so a caller that cannot afford a silent
  * drop can record it. Every other path returns nothing.
  */
 export async function evaluateAndRespond(ctx: {
@@ -98,6 +103,11 @@ export async function evaluateAndRespond(ctx: {
 		 * agents whose answers the user didn't ask to regenerate.
 		 */
 		targetAgentId?: string
+		/**
+		 * Do not apply the consecutive-agent-messages cap. Set for a finished sub-chat's result,
+		 * which must always wake the agent that started it: it is one message, not a ping-pong.
+		 */
+		skipAgentCap?: boolean
 	}
 }): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
@@ -209,7 +219,7 @@ export async function evaluateAndRespond(ctx: {
 		if (row.actorType === 'agent') consecutiveAgents++
 		else break
 	}
-	if (consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
+	if (!options?.skipAgentCap && consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
 		logger.info('Skipping conversation responder (consecutive agent cap reached)', {
 			conversationId,
 			consecutiveAgents,
@@ -895,6 +905,10 @@ async function spawnOrJoinConversationSession(params: {
 		})
 	}
 
+	// The chat's files, rebuilt from the database on every fresh session: the history above is
+	// text only, so an upload from an early message would otherwise be out of sight.
+	const chatFiles = await loadChatFilesList(db, { conversationId, workspaceId })
+
 	try {
 		await startSession({
 			workspaceId,
@@ -911,6 +925,7 @@ async function spawnOrJoinConversationSession(params: {
 				groupWakeRule,
 				activeSessionsNote,
 				siblingSessionsNote,
+				filesNote: chatFiles.note,
 				threadRootId,
 			}),
 			config: {
@@ -953,6 +968,13 @@ async function spawnOrJoinConversationSession(params: {
 				})
 			}
 		}
+		void trackChatSessionSeeded({
+			workspaceId,
+			conversationId,
+			agentId,
+			threadRootId,
+			filesListedCount: chatFiles.listedCount,
+		})
 		return 'started_new_session'
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
@@ -1197,6 +1219,8 @@ function buildConversationReplyPrompt(ctx: {
 	activeSessionsNote: string
 	/** A thread session's note on the agent's other live sessions in this chat; '' for none. */
 	siblingSessionsNote: string
+	/** The chat's files from loadChatFilesList; '' for none. */
+	filesNote: string
 	threadRootId: number | null
 }): string {
 	return [
@@ -1213,6 +1237,7 @@ function buildConversationReplyPrompt(ctx: {
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
 		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
+		...(ctx.filesNote ? ['', ctx.filesNote] : []),
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,

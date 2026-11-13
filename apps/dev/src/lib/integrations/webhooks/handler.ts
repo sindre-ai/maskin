@@ -26,6 +26,7 @@ export class WebhookHandler {
 				signatureHeader: config.timestampSignatureHeader,
 				bodyTemplate: config.timestampBodyTemplate,
 				signaturePrefix: config.timestampSignaturePrefix,
+				digestEncoding: config.digestEncoding,
 			})
 		}
 
@@ -34,9 +35,21 @@ export class WebhookHandler {
 
 		switch (config.signatureScheme) {
 			case 'hmac-sha256':
-				return verifyHmacSha256(body, signature, secret, config.signaturePrefix)
+				return verifyHmacSha256(
+					body,
+					signature,
+					secret,
+					config.signaturePrefix,
+					config.digestEncoding,
+				)
 			case 'hmac-sha1':
-				return verifyHmacSha1(body, signature, secret, config.signaturePrefix)
+				return verifyHmacSha1(
+					body,
+					signature,
+					secret,
+					config.signaturePrefix,
+					config.digestEncoding,
+				)
 			default: {
 				const _exhaustive: never = config.signatureScheme
 				throw new Error(`Unsupported signature scheme: ${_exhaustive}`)
