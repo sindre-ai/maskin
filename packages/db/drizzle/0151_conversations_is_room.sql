@@ -4,6 +4,6 @@
 -- column with a constant default does not rewrite the table (Postgres 11+), and conversations is
 -- not on the hot-tables list (packages/db/MIGRATIONS.md), so a plain ALTER is fine. No back-fill:
 -- every existing chat stays a plain chat.
--- Down: drizzle/down/0149_conversations_is_room_down.sql.
+-- Down: drizzle/down/0151_conversations_is_room_down.sql.
 
 ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "is_room" boolean DEFAULT false NOT NULL;
