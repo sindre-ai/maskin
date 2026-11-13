@@ -70,6 +70,7 @@ import {
 import { serialize } from '../lib/serialize'
 import { serializeMessage } from '../lib/serialize-message'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
 import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
@@ -862,6 +863,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
 	)`
 	if (query.unread_only) conditions.push(hasUnread)
+	if (query.hide_quiet) conditions.push(visibleInDefaultListCondition(hasUnread))
 	if (query.scope) {
 		const isPriority = or(
 			isNotNull(conversations.directPairKey),

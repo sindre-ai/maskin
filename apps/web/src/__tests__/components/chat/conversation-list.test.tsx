@@ -126,6 +126,28 @@ describe('ConversationList', () => {
 		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', offset: '100' }))
 	})
 
+	it('asks the server to leave out empty agent DMs, retired agents and quiet topic chats', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a' })] })
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await screen.findByText('Earlier')
+
+		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', hide_quiet: 'true' }))
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'recent', hide_quiet: 'true' }))
+	})
+
+	it('does not apply the listing rules to the Archived filter', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a' })],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" filter="archived" />, { wrapper: TestWrapper })
+		await screen.findByText('Archived')
+
+		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
+		expect(calls.every((q) => q?.hide_quiet === undefined)).toBe(true)
+	})
+
 	it('hides the end-of-history line while more pages remain', async () => {
 		mockScopedList({ recent: [buildConversation({ id: 'a' })], recentHasMore: true })
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
