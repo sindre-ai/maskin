@@ -9657,7 +9657,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done. Then call desktop_screenshot to see what changed before you carry on.',
+						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done, with a screenshot of your computer taken at that moment. Look at it before you carry on; if the message says no screenshot could be taken, call desktop_screenshot yourself.',
 					},
 				],
 			}

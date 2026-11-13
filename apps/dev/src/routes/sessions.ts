@@ -87,6 +87,7 @@ import { wakeAgentFromCard } from '../services/chat-card-wake'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { resolveAskTargetHuman } from '../services/chief-of-staff-chat'
+import { computerHandbackForCard } from '../services/computer-handback'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { findOrCreateDirectChat } from '../services/direct-chat'
 import { findDirectChatQuestion } from '../services/direct-chat-question'
@@ -1222,17 +1223,43 @@ app.openapi(inputSessionRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
+	// A helper's Done on its computer card: the turn starts with a screenshot taken now, so the
+	// helper does not have to remember to look. Only for the card the helper is waiting on.
+	const awaiting = (session.config as { awaiting?: { message_id?: unknown } } | null)?.awaiting
+	const handback =
+		askConversationId &&
+		awaiting &&
+		body.card_answer?.outcome === 'done' &&
+		body.card_answer.message_id === awaiting.message_id
+			? await computerHandbackForCard(db, {
+					workspaceId,
+					conversationId: askConversationId,
+					cardMessageId: body.card_answer.message_id,
+					agentId: session.actorId,
+				}).catch((err: unknown) => {
+					logger.warn('Could not check the input for a computer handback', {
+						session_id: id,
+						error: String(err),
+					})
+					return null
+				})
+			: null
+
 	try {
 		await sessionManager.writeInput(
 			id,
 			{
 				type: 'user',
-				message: { role: 'user', content: body.content },
+				message: {
+					role: 'user',
+					content: handback ? `${body.content}\n\n${handback.note}` : body.content,
+				},
 			},
 			body.attachments,
 			undefined,
 			// Who typed it, so the run can be read back with each message credited to its author.
 			{ maskin_actor_id: actorId },
+			handback?.images,
 		)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
@@ -1243,7 +1270,6 @@ app.openapi(inputSessionRoute, (async (c) => {
 	// reply in the chat so the question there reads as answered. Inserted
 	// directly rather than through POST /messages — that would wake the chat's
 	// own agents with an answer meant for someone else.
-	const awaiting = (session.config as { awaiting?: { message_id?: unknown } } | null)?.awaiting
 	if (askConversationId && awaiting) {
 		await db
 			.update(sessions)

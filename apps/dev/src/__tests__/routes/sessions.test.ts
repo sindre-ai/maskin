@@ -870,6 +870,7 @@ describe('Sessions Routes', () => {
 				undefined,
 				undefined,
 				{ maskin_actor_id: expect.any(String) },
+				undefined,
 			)
 		})
 
@@ -917,6 +918,7 @@ describe('Sessions Routes', () => {
 				attachments,
 				undefined,
 				{ maskin_actor_id: expect.any(String) },
+				undefined,
 			)
 		})
 
