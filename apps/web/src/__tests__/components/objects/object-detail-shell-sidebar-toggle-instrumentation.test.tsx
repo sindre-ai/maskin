@@ -66,6 +66,8 @@ vi.mock('@tanstack/react-router', async () => {
 
 vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
+	trackObjectOpened: vi.fn(),
+	trackLoopResultOpened: vi.fn(),
 	trackSidebarToggle: (...args: unknown[]) => trackSidebarToggleMock(...args),
 	deriveSidebarViewport: (width: number) => {
 		if (width < 768) return 'mobile'
