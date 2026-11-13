@@ -73,21 +73,25 @@ export function showsObjectCard(
 	)
 }
 
+/** Types that are people or organisations to point at, not text to read or change: their link stays a reference. */
+const REFERENCE_ONLY_TYPES = new Set(['contact', 'company'])
+
 /**
- * Whether a task with text, in this workspace, is shown as its text. A task is where an agent puts
- * text for a person to read and edit (a message to paste, a post, a template), whatever channel it
- * is for and whether or not any integration can send it. Only where the link stands alone on its
- * own line in chat, and in the Items drawer: in a sentence, a list or a comment it stays what it
- * was, so a message that mentions many tasks does not grow into many open cards.
+ * Whether an object with text, in this workspace, is shown as its text card (open it to read, edit
+ * the text, move its status). Any work object qualifies: a task (where an agent puts text for a
+ * person to read and edit), an event, a bet, an insight. Contacts and companies stay references.
+ * Where the card appears is decided by the caller: alone on its own line in chat, the first
+ * linked object under a message that mentions it in a sentence, and in the Items drawer. A list
+ * or a comment never grows into many open cards.
  */
-export function showsTaskCard(
+export function showsTextCard(
 	object: { workspaceId: string; content?: string | null; type?: string } | null | undefined,
 	workspaceId: string,
 ): boolean {
 	return Boolean(
 		object &&
 			object.workspaceId === workspaceId &&
-			object.type === 'task' &&
+			!REFERENCE_ONLY_TYPES.has(object.type ?? '') &&
 			object.content?.trim(),
 	)
 }
@@ -620,6 +624,9 @@ export function placeLinkedCards(
 	const placed = { object: 0, file: 0 }
 	const trailed = new Set<string>()
 	const trailing: HastNode[] = []
+	// Whether the one text card under a message has been given out: the first object linked in a
+	// sentence, and only when no object is already its own card above it.
+	let textSlotTaken = false
 	const key = (t: LinkedTarget) => `${t.kind}:${t.id}`
 	// Loops and triggers cost no request of their own (they read shared lists), but they count
 	// toward the same caps as objects so there is one rule.
@@ -661,12 +668,15 @@ export function placeLinkedCards(
 			return true
 		})
 		if (objects.length + files.length === 0) return []
+		const textCard = !textSlotTaken && placed.object === 0 ? objects[0]?.id : undefined
+		if (objects.length > 0) textSlotTaken = true
 		const element: HastNode = {
 			type: 'element',
 			tagName: LINKED_CARDS_TAG,
 			properties: {
 				objects: objects.map((t) => t.id).join(','),
 				files: files.map((t) => t.id).join(','),
+				textCard: textCard ?? '',
 			},
 			children: [],
 		}

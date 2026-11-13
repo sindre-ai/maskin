@@ -9,6 +9,10 @@ struct LinkedTargetCard: View {
 	let target: LinkedTarget
 	var defaultExpanded = false
 	var onApproved: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// An object with text is a card that edits it and moves its status: alone on its line, and the
+	/// first one under a message. `chat` is the agent behind the message, told of an edit.
+	var editable = false
+	var chat: ObjectPatchChat?
 	@Environment(\.linkedItems) private var store
 
 	var body: some View {
@@ -18,7 +22,7 @@ struct LinkedTargetCard: View {
 		case .file(let file)?:
 			LinkedFileCard(file: file, defaultExpanded: defaultExpanded)
 		case .object(let object)?:
-			LinkedObjectCard(object: object)
+			LinkedObjectCard(object: object, editable: editable, chat: chat)
 		case .loop(let loop)?:
 			LinkedLoopCard(loop: loop)
 		case .trigger(let trigger)?:

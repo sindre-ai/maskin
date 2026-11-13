@@ -92,7 +92,8 @@ struct LinkedSheet: View {
 				target: reference.target, title: reference.title, kindLabel: reference.kindLabel,
 				symbol: reference.target.kind == .file ? "doc" : "doc.text")
 		case .ready?:
-			LinkedTargetCard(target: entry.target, onApproved: { title, body in onApproved(entry, title, body) })
+			LinkedTargetCard(
+				target: entry.target, onApproved: { title, body in onApproved(entry, title, body) }, editable: true)
 		case .unavailable?:
 			// Missing, in another workspace, or not reachable now: still a way to try it.
 			LinkedPlainRow(
