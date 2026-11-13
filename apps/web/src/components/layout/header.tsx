@@ -259,6 +259,7 @@ export function Header() {
 		newMenuPrimaryOverride,
 		newMenuDisabled,
 		hideTitle,
+		wrapActions,
 		hideBar,
 		gutter,
 	} = usePageHeader()
@@ -410,7 +411,8 @@ export function Header() {
 						'flex min-w-0 items-baseline gap-2',
 						// A page with title tabs/search wants them right beside the title,
 						// so the title block stops growing and the controls take the slack.
-						titleTabs ? 'shrink' : 'flex-1',
+						// wrapActions: keep the title's own width so the buttons wrap below it.
+						titleTabs || wrapActions ? 'shrink' : 'flex-1',
 						// From md the scrolling title in the page content draws it instead.
 						scrollsAway && 'md:hidden',
 					)}
