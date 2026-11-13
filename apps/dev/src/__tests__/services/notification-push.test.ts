@@ -657,4 +657,37 @@ describe('NotificationPushFanout channel switches', () => {
 		expect(phone.sendToActor).not.toHaveBeenCalled()
 		expect(browser.sendToActor).not.toHaveBeenCalled()
 	})
+
+	it('sends no notification_sent when the switches leave no channel to push to', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		const { phone, browser } = await run({
+			categories: { needs_you: true, conversation: false, digest: true, tips: true },
+			browserCategories: { conversation: false },
+		})
+		expect(phone.sendToActor).not.toHaveBeenCalled()
+		expect(browser.sendToActor).not.toHaveBeenCalled()
+		expect(trackNotificationSent).not.toHaveBeenCalled()
+	})
+
+	it('sends no notification_sent when the switch left on has no enabled channel behind it', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [
+			[notif()],
+			[prefsRow({ browserCategories: { conversation: false } })],
+		]
+		const browser = { channelKind: 'browser', isEnabled: () => true, sendToActor: vi.fn() }
+		const fanout = new NotificationPushFanout(db, new EventEmitter() as never, [
+			browser as unknown as PushChannel,
+		])
+		await fanout.handleEvent(event)
+		expect(browser.sendToActor).not.toHaveBeenCalled()
+		expect(trackNotificationSent).not.toHaveBeenCalled()
+	})
+
+	it('still sends notification_sent once when a channel is left on', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		await run({ browserCategories: { conversation: false } })
+		expect(trackNotificationSent).toHaveBeenCalledTimes(1)
+	})
 })

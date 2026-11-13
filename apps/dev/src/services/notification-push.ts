@@ -347,19 +347,22 @@ export class NotificationPushFanout {
 		}
 
 		this.record(n, meta, category, verdict, nowMs)
-		// One per notification that goes out as a push, whatever the channels: the ledger above
-		// stops a second send from this process, and a skipped or delayed one never gets here.
-		void trackNotificationSent({
-			workspaceId: n.workspaceId,
-			actorId: targetActorId,
-			notificationId: n.id,
-			notificationType: n.type,
-			category,
-			rollup: verdict.action === 'rollup',
-		})
-		// allSettled: a channel that throws (sendToActor should not) must not starve the others.
 		const wanted = channelsWanted(prefs, category)
 		const targets = channels.filter((c) => c.channelKind === undefined || wanted[c.channelKind])
+		// One per notification that goes out as a push, whatever the channels: the ledger above
+		// stops a second send from this process, and a skipped or delayed one never gets here. With
+		// no target left after the switches nothing goes out, so nothing is counted as sent.
+		if (targets.length > 0) {
+			void trackNotificationSent({
+				workspaceId: n.workspaceId,
+				actorId: targetActorId,
+				notificationId: n.id,
+				notificationType: n.type,
+				category,
+				rollup: verdict.action === 'rollup',
+			})
+		}
+		// allSettled: a channel that throws (sendToActor should not) must not starve the others.
 		await Promise.allSettled(targets.map((c) => c.sendToActor(targetActorId, message)))
 	}
 
