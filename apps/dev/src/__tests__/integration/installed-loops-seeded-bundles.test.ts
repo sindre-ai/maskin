@@ -1,7 +1,9 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { marketplaceLoops } from '@maskin/db/schema'
+import { marketplaceLoops, objects } from '@maskin/db/schema'
+import { readLoopViews } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
+import { eq } from 'drizzle-orm'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { seedMarketplaceLoops } from '../../lib/dev-bootstrap'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -19,6 +21,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		agentStorage: AgentStorageManager
+		storageProvider: StorageProvider
 	}
 }
 
@@ -69,12 +72,14 @@ function makeApp(actorId: string) {
 			return undefined
 		},
 	})
-	const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+	const storage = createMemoryStorage()
+	const agentStorage = new AgentStorageManager(storage, db)
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
 		c.set('actorType', 'human')
 		c.set('agentStorage', agentStorage)
+		c.set('storageProvider', storage)
 		await next()
 	})
 	app.route('/api/installed-loops', installedLoopsRoutes)
@@ -154,6 +159,18 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 			expect(
 				body.provisioned.actors + body.provisioned.triggers + body.provisioned.skills,
 			).toBeGreaterThan(0)
+
+			// A bundle that ships custom views leaves their tabs on the loop page.
+			const [loopObject] = await db
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, body.objectId as string))
+			const tabs = readLoopViews(loopObject?.metadata as Record<string, unknown>).map((v) => v.name)
+			expect(tabs).toEqual(
+				slug === 'product-discovery-loop'
+					? ['Radar', 'Learning', 'Briefing', 'Opportunities', 'Pipeline']
+					: [],
+			)
 		})
 	}
 })

@@ -2411,7 +2411,7 @@ export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 //
 // Frozen snapshots of each element that ships with a published marketplace
 // loop. `source_item_id` is the original actor/trigger/skill/integration id in
-// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// the publishing workspace (for a `view`, a stable id minted for that tab) — kept so intra-loop wiring inside `item_snapshot`
 // (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
@@ -2432,7 +2432,7 @@ export const marketplaceLoopItems = pgTable(
 		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
 			'marketplace_loop_items_item_type_check',
-			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration', 'view')`,
 		),
 	],
 )

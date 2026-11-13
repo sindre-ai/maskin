@@ -7,19 +7,22 @@ import {
 	DISCOVERY_LOOP,
 	DISCOVERY_SKILL_IDS,
 	DISCOVERY_TRIGGER_IDS,
+	DISCOVERY_VIEW_IDS,
 } from '../../../lib/marketplace-loops/discovery-loop'
 import {
 	getActorData,
 	getSkillData,
 	getTriggerData,
+	getViewData,
 } from '../../../lib/marketplace-loops/loop-data'
+import { LOOP_ID_TOKEN } from '../../../lib/marketplace-loops/view-snapshot'
 
 describe('Product Discovery Loop definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Loop')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.2.0')
+		expect(DISCOVERY_LOOP.version).toBe('1.3.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -162,5 +165,47 @@ describe('Product Discovery Loop definition', () => {
 		const foundIds =
 			text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []
 		for (const id of foundIds) expect(ownIds.has(id)).toBe(true)
+	})
+
+	it('ships the loop page tabs in order: Radar, Learning, Briefing, Opportunities, Pipeline', () => {
+		expect(DISCOVERY_VIEW_IDS.map((id) => getViewData(id).name)).toEqual([
+			'Radar',
+			'Learning',
+			'Briefing',
+			'Opportunities',
+			'Pipeline',
+		])
+		expect(new Set(DISCOVERY_VIEW_IDS).size).toBe(DISCOVERY_VIEW_IDS.length)
+	})
+
+	// The pages are copied into every installer's workspace, so they carry the
+	// same no-company-text scrub as the prompts. The loop id is the one id they
+	// may hold, as a token the install swaps for the new loop's id.
+	it('carries no workspace-specific text in its views', () => {
+		// The SVG namespace is a URL, not a year.
+		const text = JSON.stringify(DISCOVERY_VIEW_IDS.map(getViewData)).replaceAll(
+			'http://www.w3.org/2000/svg',
+			'',
+		)
+		const forbidden = [
+			/sebastian|sebk|magnus/i,
+			/vaerksted|skjald|meshfirm/i,
+			/maskin\.io/i,
+			/\bCTO\b|\bCCO\b|chief of staff/i,
+			/\b20\d\d\b/,
+			/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b/,
+			/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}\b/,
+		]
+		for (const pattern of forbidden) expect(text).not.toMatch(pattern)
+
+		const foundIds =
+			text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []
+		const ownIds = new Set<string>(DISCOVERY_VIEW_IDS)
+		for (const id of foundIds) expect(ownIds.has(id)).toBe(true)
+	})
+
+	it('scopes the Pipeline page to the installed loop through the loop id token', () => {
+		const pipeline = DISCOVERY_VIEW_IDS.map(getViewData).find((v) => v.name === 'Pipeline')
+		expect(pipeline?.html).toContain(`"scope":"${LOOP_ID_TOKEN}"`)
 	})
 })
