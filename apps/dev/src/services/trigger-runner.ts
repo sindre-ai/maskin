@@ -21,6 +21,7 @@ import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
 } from '../lib/analytics/comment-responder-events'
+import { trackDriverWoken } from '../lib/analytics/driver-woken-events'
 import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
 import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
 import {
@@ -33,6 +34,13 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
+import {
+	type PrecheckResult,
+	decidePrecheck,
+	isDailyHeartbeat,
+	readPrecheckFacts,
+} from '../lib/heartbeat-precheck'
 import {
 	CredentialResolutionTimeoutError,
 	LlmCredentialsUnavailableError,
@@ -1325,6 +1333,11 @@ export class TriggerRunner {
 			return
 		}
 
+		// Record-only: ask whether this daily heartbeat has anything to do, log the answer, and run
+		// it either way. After the claim, so one instance writes it, and before trigger_fired is
+		// recorded, so the last run is still the previous one. Fails open, like the idle check.
+		const precheck = await this.recordHeartbeatPrecheck(trigger, tick)
+
 		logger.info(`Cron trigger '${trigger.name}' firing`)
 
 		const eventData: Record<string, unknown> = {
@@ -1359,6 +1372,10 @@ export class TriggerRunner {
 			// correct value when no single originating object exists (spec §3.3,
 			// cron/reminder rows).
 			initiatedFromObjectId: null,
+			// Marks the run so DriverWaker reports whether it changed anything when it ends.
+			config: precheck
+				? { driver_wake: { source: 'heartbeat', reasons: precheck.reasons } }
+				: undefined,
 			await: 'none',
 		}).catch((err) =>
 			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
@@ -1369,6 +1386,56 @@ export class TriggerRunner {
 				}),
 			),
 		)
+	}
+
+	/**
+	 * The heartbeat pre-check, record-only (bet "Agents take the lead", sweep task, item 4). Behind
+	 * the next-step-sweep flag. Writes what it found as a heartbeat_precheck event on the trigger and
+	 * as driver_woken (source heartbeat, outcome skipped_nothing_due when it would have skipped).
+	 * It never stops a run: enforcing it is a separate step that needs the owners' agreement.
+	 */
+	private async recordHeartbeatPrecheck(
+		trigger: typeof triggers.$inferSelect,
+		tick: Date,
+	): Promise<PrecheckResult | null> {
+		if (!isDailyHeartbeat(trigger)) return null
+		if (!isFlagEnabledForWorkspace(trigger.workspaceId, FLAGS.NEXT_STEP_SWEEP)) return null
+		try {
+			const result = decidePrecheck(await readPrecheckFacts(this.db, trigger, tick))
+			logger.info(
+				`Heartbeat '${trigger.name}' pre-check: ${result.wouldSkip ? 'would have skipped' : 'has work'}`,
+				{ trigger_id: trigger.id, reasons: result.reasons },
+			)
+			await recordEvent(this.db, {
+				workspaceId: trigger.workspaceId,
+				actorId: trigger.targetActorId,
+				action: 'heartbeat_precheck',
+				entityType: 'trigger',
+				entityId: trigger.id,
+				data: {
+					would_skip: result.wouldSkip,
+					reasons: result.reasons,
+					last_run_at: result.facts.lastRunAt?.toISOString() ?? null,
+					overdue: result.facts.overdue,
+					missing: result.facts.missing,
+					other_actor_events: result.facts.otherActorEvents,
+					new_insights: result.facts.newInsights,
+				},
+			})
+			if (result.wouldSkip) {
+				void trackDriverWoken({
+					workspaceId: trigger.workspaceId,
+					agentId: trigger.targetActorId,
+					source: 'heartbeat',
+					reason: 'nothing_due',
+					outcome: 'skipped_nothing_due',
+				})
+			}
+			return result
+		} catch (err) {
+			logger.warn(`Heartbeat '${trigger.name}' pre-check failed, running anyway: ${String(err)}`)
+			return null
+		}
 	}
 
 	private async queryScopeMatches(

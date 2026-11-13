@@ -683,7 +683,14 @@ export interface ObjectNeedingNextStep {
  */
 export async function findObjectsNeedingNextStep(
 	db: Database,
-	opts: { workspaceId?: string; now?: Date; notUpdatedSince?: Date; limit?: number } = {},
+	opts: {
+		workspaceId?: string
+		driverId?: string
+		now?: Date
+		/** Only for objects with no step: those not touched since this time. An overdue step is flagged regardless. */
+		notUpdatedSince?: Date
+		limit?: number
+	} = {},
 ): Promise<ObjectNeedingNextStep[]> {
 	const now = opts.now ?? new Date()
 	const overdueBefore = new Date(now.getTime() - NEXT_STEP_OVERDUE_GRACE_MS)
@@ -713,9 +720,12 @@ export async function findObjectsNeedingNextStep(
 			and(
 				covered,
 				opts.workspaceId ? eq(objects.workspaceId, opts.workspaceId) : undefined,
-				opts.notUpdatedSince ? lt(objects.updatedAt, opts.notUpdatedSince) : undefined,
+				opts.driverId ? eq(objects.driver, opts.driverId) : undefined,
 				or(
-					isNull(nextSteps.id),
+					and(
+						isNull(nextSteps.id),
+						opts.notUpdatedSince ? lt(objects.updatedAt, opts.notUpdatedSince) : undefined,
+					),
 					and(eq(nextSteps.status, 'open'), lt(nextSteps.dueAt, overdueBefore)),
 				),
 			),

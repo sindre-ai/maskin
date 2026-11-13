@@ -128,6 +128,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'message_reactions',
 	'message_thread_reads',
 	'messages',
+	'next_step_sweep_claims',
 	'next_steps',
 	'oauth_authorization_codes',
 	'oauth_grants',

@@ -1198,6 +1198,44 @@ export const readings = pgTable(
 	],
 )
 
+// ── Next Step Sweep Claims ─────────────────────────────────────────────────
+
+// What the sweep for overdue or missing next steps decided about an object in a time bucket.
+// The unique indexes are the claim: one decision per object, reason and bucket across all server
+// instances (a day bucket for recorded rows, an hour bucket for the rest). mode: recorded (record-only period, nothing started), woken, or refused by the
+// self-start limits. No actor foreign key: it is a log. See 0151_next_step_sweep_claims.sql.
+export const nextStepSweepClaims = pgTable(
+	'next_step_sweep_claims',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		driverActorId: uuid('driver_actor_id').notNull(),
+		reason: text('reason').notNull(),
+		bucketStart: timestamp('bucket_start', { withTimezone: true }).notNull(),
+		mode: text('mode').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('next_step_sweep_claims_recorded_idx')
+			.on(t.objectId, t.reason, t.bucketStart)
+			.where(sql`${t.mode} = 'recorded'`),
+		uniqueIndex('next_step_sweep_claims_decided_idx')
+			.on(t.objectId, t.reason, t.bucketStart)
+			.where(sql`${t.mode} <> 'recorded'`),
+		index('next_step_sweep_claims_workspace_created_idx').on(t.workspaceId, t.createdAt),
+		check(
+			'next_step_sweep_claims_reason_check',
+			sql`${t.reason} in ('step_overdue', 'no_next_step')`,
+		),
+		check('next_step_sweep_claims_mode_check', sql`${t.mode} in ('recorded', 'woken', 'refused')`),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
