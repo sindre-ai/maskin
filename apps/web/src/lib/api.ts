@@ -629,6 +629,10 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+		forgotPassword: (email: string) =>
+			request<{ ok: true }>('/auth/forgot-password', { method: 'POST', body: { email } }),
+		resetPassword: (data: { token: string; password: string }) =>
+			request<{ ok: true }>('/auth/reset-password', { method: 'POST', body: data }),
 	},
 
 	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These

@@ -69,6 +69,16 @@ export const loginSchema = z.object({
 	password: z.string().min(1),
 })
 
+export const forgotPasswordSchema = z.object({
+	email: z.string().email(),
+})
+
+export const resetPasswordSchema = z.object({
+	token: z.string().min(1).max(200),
+	// Same floor as signup (createActorSchema).
+	password: z.string().min(8),
+})
+
 export const updateActorSchema = z.object({
 	name: z.string().min(1).optional(),
 	email: z.string().email().optional(),
