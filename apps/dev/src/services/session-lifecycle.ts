@@ -37,8 +37,8 @@ import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
-import { admitSessionStart } from './self-start-limits'
 import { alertOwnersOncePerDay } from './run-death-alerts'
+import { admitSessionStart } from './self-start-limits'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
