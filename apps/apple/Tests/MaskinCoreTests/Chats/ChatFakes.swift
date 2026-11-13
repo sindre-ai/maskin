@@ -201,7 +201,14 @@ actor FakeChatAPI: ChatAPI {
 		readCalls.append(lastMessageID)
 	}
 
-	func addParticipants(conversationID: String, actorIDs: [String]) async throws {}
+	private var addDecodeFails = false
+	/// The server adds the people, then the reply cannot be read (the bug behind "Key 'pinned' not found").
+	func setAddDecodeFails(_ v: Bool) { addDecodeFails = v }
+	func addParticipants(conversationID: String, actorIDs: [String]) async throws {
+		guard addDecodeFails else { return }
+		detailValue.participants += [chatSam].filter { actorIDs.contains($0.id) }
+		throw ChatsError("Couldn't add people.")
+	}
 	func actors() async throws -> [ChatActor] { actorList }
 }
 
@@ -220,6 +227,16 @@ actor FakeListAPI: ConversationsAPI {
 	func setFailList(_ v: Bool) { failList = v }
 
 	var listFilters: [String] = []
+	/// The `hideQuiet` flag of each list request, in order.
+	var hideQuietFlags: [Bool] = []
+
+	func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		hideQuietFlags.append(hideQuiet)
+		return try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, limit: limit, offset: offset)
+	}
 
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int) async throws
 		-> ConversationPage

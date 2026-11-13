@@ -15,7 +15,8 @@ import {
 	dailyBudgetSchema,
 } from '@maskin/shared'
 import { Check } from 'lucide-react'
-import { useState } from 'react'
+import type * as React from 'react'
+import { useId, useState } from 'react'
 import { toast } from 'sonner'
 
 type StopShare = (typeof DAILY_BUDGET_STOP_SHARES)[number]
@@ -82,6 +83,25 @@ function PillGroup<T extends string | number>({
 	onChange: (value: T) => void
 	disabled?: boolean
 }) {
+	const groupId = useId()
+	const enabledOptions = options.filter((option) => !option.disabled)
+	// One Tab stop: the selected pill, or the first enabled one when none is.
+	const stopValue = enabledOptions.some((option) => option.value === value)
+		? value
+		: enabledOptions[0]?.value
+
+	const onKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, current: T) => {
+		const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown'
+		if (!forward && e.key !== 'ArrowLeft' && e.key !== 'ArrowUp') return
+		e.preventDefault()
+		const idx = enabledOptions.findIndex((option) => option.value === current)
+		const step = forward ? 1 : -1
+		const next = enabledOptions[(idx + step + enabledOptions.length) % enabledOptions.length]
+		if (!next) return
+		onChange(next.value)
+		document.getElementById(`${groupId}-${next.value}`)?.focus()
+	}
+
 	return (
 		<div
 			role="radiogroup"
@@ -93,12 +113,15 @@ function PillGroup<T extends string | number>({
 				return (
 					<button
 						key={option.value}
+						id={`${groupId}-${option.value}`}
 						type="button"
 						// biome-ignore lint/a11y/useSemanticElements: custom pill styling; ARIA radio semantics preserved
 						role="radio"
 						aria-checked={active}
+						tabIndex={option.value === stopValue ? 0 : -1}
 						disabled={disabled || option.disabled}
 						onClick={() => onChange(option.value)}
+						onKeyDown={(e) => onKeyDown(e, option.value)}
 						className={cn(
 							'flex flex-1 items-center justify-center rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none',
 							active

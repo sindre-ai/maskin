@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useGithubPendingSelection,
 	useIntegrations,
@@ -70,6 +71,8 @@ const CONNECT_ERROR_COPY: Record<string, string> = {
 		"We couldn't read your account details from Google, so nothing was connected. Try again.",
 	post_install_failed:
 		'The sign-in worked, but setting up the connection failed. Try connecting again.',
+	admin_approval_needed:
+		"Your company's IT admin has to approve this app before you can connect. Ask them to approve it, then try again.",
 }
 const GENERIC_CONNECT_ERROR = "Connecting didn't work. Try again."
 
@@ -77,8 +80,10 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
+	// Deepdots stays out of the list until its flag is on for this person.
+	const deepdotsOn = useFeatureFlag('deepdots-connect')
 	const visibleProviders = sortBy(
-		providers ?? [],
+		(providers ?? []).filter((p) => p.name !== 'deepdots' || deepdotsOn),
 		(p) => p.displayName,
 		(p) => p.name,
 	)

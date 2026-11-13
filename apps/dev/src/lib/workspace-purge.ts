@@ -141,6 +141,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'user_display_settings',
 	'voice_sessions',
 	'voice_tool_calls',
+	'workspace_ai_usage',
 	'workspace_invitations',
 	'workspace_onboarding_prompts',
 	'workspace_skills',

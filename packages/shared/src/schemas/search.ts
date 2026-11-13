@@ -51,6 +51,12 @@ export const searchQuerySchema = z.object({
 	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: z.enum(SEARCH_SORTS).default('rel'),
 	limit: z.coerce.number().int().min(1).max(SEARCH_MAX_LIMIT).default(SEARCH_MAX_LIMIT),
+	/**
+	 * Relevance sort only: at most this many rows from each source group are kept first, so a few
+	 * rows (the launcher shows six) are shared across chats, agents and people. Unused room is
+	 * filled from the groups that have more.
+	 */
+	per_group: z.coerce.number().int().min(1).max(SEARCH_MAX_LIMIT).optional(),
 })
 
 export type SearchQuery = z.infer<typeof searchQuerySchema>

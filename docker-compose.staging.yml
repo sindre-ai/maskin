@@ -30,6 +30,7 @@ services:
   # no /var/run/docker.sock mount (so no agent sessions here), no agent-base build,
   # no GitHub App, no Resend, no prod PostHog. Do not add them back.
   app:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/dev/Dockerfile

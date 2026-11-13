@@ -293,6 +293,17 @@ app.openapi(createActorRoute, async (c) => {
 		creatorType = callerType
 
 		const ownWorkspace = body.auto_create_workspace === true
+		// Same rule as POST /api/workspaces: only people create workspaces, and this
+		// flag runs the same provisioning plus a welcome session.
+		if (ownWorkspace && callerType === 'agent') {
+			refuse('agent_auto_create_workspace', callerId, callerType)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Agents cannot create workspaces', [
+					{ field: 'auto_create_workspace', message: 'Not accepted from an agent caller' },
+				]),
+				400,
+			)
+		}
 		if (body.workspace_id && ownWorkspace) {
 			return c.json(
 				createApiError(

@@ -1,5 +1,39 @@
-/** The catch-all team for an agent that works in no flow. */
+/** The catch-all team for an agent with no tags. */
 export const NO_TEAM = 'No team'
+
+/** Tags compare without regard to case, digits by value: "team 2" before "Team 10". */
+export function compareTags(a: string, b: string): number {
+	return (
+		a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }) ||
+		(a < b ? -1 : a > b ? 1 : 0)
+	)
+}
+
+/**
+ * Each agent's team: its first tag (see `compareTags`), else the catch-all. Tags that differ
+ * only in case are one team, shown with the spelling that sorts first across all agents.
+ * Returns team by agent id.
+ */
+export function buildTeamByAgentId(agents: { id: string; tags?: string[] }[]): Map<string, string> {
+	const spelling = new Map<string, string>()
+	const cleaned = agents.map((a) => ({
+		id: a.id,
+		tags: (a.tags ?? []).map((t) => t.trim()).filter(Boolean),
+	}))
+	for (const { tags } of cleaned) {
+		for (const tag of tags) {
+			const key = tag.toLowerCase()
+			const known = spelling.get(key)
+			if (known === undefined || tag < known) spelling.set(key, tag)
+		}
+	}
+	return new Map(
+		cleaned.map(({ id, tags }) => {
+			const first = [...tags].sort(compareTags)[0]
+			return [id, first === undefined ? NO_TEAM : (spelling.get(first.toLowerCase()) ?? first)]
+		}),
+	)
+}
 
 export interface TeamChip {
 	team: string
@@ -8,8 +42,8 @@ export interface TeamChip {
 
 /**
  * One chip per team that has agents, A to Z with the catch-all last. A team is
- * the first flow an agent works in, so a flow whose agents all sit in an
- * earlier flow has no chip: a chip with a zero beside it filters to nothing.
+ * the first tag an agent carries, so a tag whose agents all sit under an
+ * earlier tag has no chip: a chip with a zero beside it filters to nothing.
  */
 export function buildTeamChips(teams: string[]): TeamChip[] {
 	const counts = new Map<string, number>()

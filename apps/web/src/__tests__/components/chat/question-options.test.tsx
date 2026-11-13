@@ -260,6 +260,20 @@ describe('QuestionOptions', () => {
 		})
 	})
 
+	it('puts the cursor in the reply box, and Esc closes it and returns focus to the button', async () => {
+		const user = userEvent.setup()
+		renderOptions()
+
+		await user.click(screen.getByRole('button', { name: 'or type your reply' }))
+		const box = screen.getByRole('textbox', { name: 'Your reply' })
+		expect(box).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+
+		expect(screen.queryByRole('textbox', { name: 'Your reply' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'or type your reply' })).toHaveFocus()
+	})
+
 	it("sends a helper's answer to its session, not to the chat", async () => {
 		sendMutate.mockClear()
 		inputMutate.mockClear()

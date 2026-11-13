@@ -17,6 +17,7 @@ describe('featureAreaForEvent', () => {
 		['agent_session_started', 'agents'],
 		['workspace_skill_uploaded', 'agents'],
 		['file_saved', 'files_briefings'],
+		['desktop_file_moved', 'files_briefings'],
 		['file_viewer_page_navigated', 'files_briefings'],
 		['integration_connected', 'integrations'],
 		['keychain_credential_created', 'integrations'],

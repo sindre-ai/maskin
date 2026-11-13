@@ -394,7 +394,13 @@ export interface ExtensionAttempted {
 	agents: { agentId: string; tools: string[]; lastAttemptedAt: string }[]
 }
 
-export type ExtensionSignatureScheme = 'hmac-sha256' | 'hmac-sha1' | 'timestamp' | 'ed25519'
+export type ExtensionSignatureScheme =
+	| 'hmac-sha256'
+	| 'hmac-sha1'
+	| 'timestamp'
+	| 'ed25519'
+	| 'standard-webhooks'
+	| 'stripe'
 
 export type LiteralOrPath = { literal: string } | { path: string }
 
@@ -423,6 +429,10 @@ export interface ExtensionWebhookConfig {
 	signaturePrefix?: string
 	timestampHeader?: string
 	timestampBodyTemplate?: string
+	/** How the HMAC digest is written (hex when left out). Set through the API, not the form. */
+	digestEncoding?: 'hex' | 'base64'
+	/** Header carrying the delivery id (standard-webhooks). Set through the API, not the form. */
+	idHeader?: string
 	maxAgeSeconds?: number
 	secretSource?: 'env' | 'credential'
 	eventMap: {
@@ -958,6 +968,9 @@ export const api = {
 				receive_subdomain?: string
 				install_new_org?: boolean
 				origin?: string
+				// Deepdots signs in with these (the connect route stores nothing if they fail).
+				email?: string
+				password?: string
 			},
 		) =>
 			request<{
@@ -2138,7 +2151,12 @@ export interface UnreadItem {
 	// shows when there is no source comment to lead with.
 	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
 	// by its comment instead.
-	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
+	curated?: {
+		headline: string
+		rationale: string | null
+		notification_id?: string | null
+		session_id?: string | null
+	}
 }
 
 export interface LatestMentionDecisionOption {
@@ -2186,6 +2204,8 @@ export interface LatestMention {
 	created_at: string
 	// The whole comment body, not a preview.
 	content: string
+	// The run that wrote the comment; null when a person wrote it. Analytics only.
+	session_id?: string | null
 	attention: number | null
 	// Present only when the agent asked for a structured decision. The card
 	// renders its options as the buttons the reader taps.
@@ -2278,6 +2298,8 @@ export interface UpdateObjectInput {
 	driver?: string | null
 	/** A status change made from a chat card: the server tells the agent behind it. */
 	chat?: ChatCardRef
+	/** Apply only if the object is still in this status; if it moved on, nothing is written and the answer is a 409. */
+	expected_status?: string
 }
 
 /** The chat a card sits in and the agent whose message holds it. */
@@ -2393,6 +2415,10 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	isDefault: boolean
 	/** Whether the caller is on our own team. Only used to mark analytics events. */
 	isTeam: boolean
+	/** Whether this workspace is one of ours. Only used to mark analytics events. */
+	internal: boolean
+	/** Whether this workspace has an active paid plan. Only used to mark analytics events. */
+	paying: boolean
 }
 
 export interface UpdateWorkspaceInput {

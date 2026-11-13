@@ -3,6 +3,7 @@ import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
+	DeepdotsConnectDialog,
 	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
@@ -55,6 +56,7 @@ const PROVIDER_TAGLINES: Record<string, string> = {
 	'google-drive': 'Files',
 	'linkedin-unipile': 'Posting and outreach',
 	linear: 'Issues',
+	microsoft: 'Teams transcripts',
 	posthog: 'Product analytics',
 	resend: 'Email sending',
 	slack: 'Channels and triggers',
@@ -67,6 +69,7 @@ export function ProviderRow({
 	onRequestApiKey,
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
+	onRequestDeepdotsConnect,
 	linkableCount,
 	onRequestLink,
 	returnTo,
@@ -85,6 +88,8 @@ export function ProviderRow({
 	 *  round-trip and hand off to the caller's ResendConnectDialog state.
 	 *  Undefined for every other provider. */
 	onRequestResendConnect?: () => void
+	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
+	onRequestDeepdotsConnect?: () => void
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -125,6 +130,10 @@ export function ProviderRow({
 			onRequestSkjaldConnect()
 			return
 		}
+		if (provider.name === 'deepdots' && onRequestDeepdotsConnect) {
+			onRequestDeepdotsConnect()
+			return
+		}
 		connect.mutate({ provider: provider.name, returnTo })
 	}
 
@@ -148,6 +157,13 @@ export function ProviderRow({
 		workspaceId,
 		provider.name,
 	)
+
+	// A line a provider keeps on its own row (Microsoft: what it covers, or that the company's
+	// IT admin has not switched transcripts on). Written by the server, shown as is.
+	const statusNote =
+		isConnected && typeof integration.config?.status_note === 'string'
+			? integration.config.status_note
+			: null
 
 	const connectedLabel = isConnected
 		? needsReconnect
@@ -215,6 +231,7 @@ export function ProviderRow({
 			}
 			notes={
 				<>
+					{statusNote && <p className="text-xs text-muted-foreground">{statusNote}</p>}
 					{isDrive && (
 						<>
 							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
@@ -706,6 +723,7 @@ export function ProviderConnectRow({
 	const [skjaldOpen, setSkjaldOpen] = useState(false)
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [resendOpen, setResendOpen] = useState(false)
+	const [deepdotsOpen, setDeepdotsOpen] = useState(false)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere binds to the existing installation.
@@ -744,6 +762,9 @@ export function ProviderConnectRow({
 					onRequestResendConnect={
 						provider.name === 'resend' ? () => setResendOpen(true) : undefined
 					}
+					onRequestDeepdotsConnect={
+						provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
+					}
 					linkableCount={linkableCount}
 					onRequestLink={() => setLinkGithubOpen(true)}
 					returnTo={returnTo}
@@ -778,6 +799,13 @@ export function ProviderConnectRow({
 					open={linkGithubOpen}
 					onClose={() => setLinkGithubOpen(false)}
 					returnTo={returnTo}
+				/>
+			)}
+			{provider.name === 'deepdots' && (
+				<DeepdotsConnectDialog
+					workspaceId={workspaceId}
+					open={deepdotsOpen}
+					onClose={() => setDeepdotsOpen(false)}
 				/>
 			)}
 			{provider.name === 'resend' && (

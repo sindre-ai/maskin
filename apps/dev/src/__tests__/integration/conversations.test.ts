@@ -15,7 +15,9 @@ import {
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
+import { z } from 'zod'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { conversationParticipantResponseSchema } from '../../lib/openapi-schemas'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -1220,6 +1222,40 @@ describe('Conversations Integration', () => {
 			expect(detailBody.pinned).toBe(true)
 		})
 
+		it('replies to an add with the participant list, matching the declared reply schema', async () => {
+			// Regression: the route declared the per-user state shape (pinned, archived,
+			// last_read_message_id) but sent the participant list, so the generated iOS client
+			// failed to decode the reply ("Key 'pinned' not found") after the person was added.
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Add reply shape', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/participants`,
+					{ actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const parsed = z.array(conversationParticipantResponseSchema).safeParse(body)
+			expect(parsed.success).toBe(true)
+			expect((body as Array<{ actorId: string }>).map((p) => p.actorId).sort()).toEqual(
+				[ownerId, other.id].sort(),
+			)
+		})
+
 		it('rejects a non-creator participant trying to remove another participant', async () => {
 			// Regression: any active participant used to be able to evict any
 			// other participant (including the creator) — only self-removal or
@@ -2016,15 +2052,15 @@ describe('Conversations Integration', () => {
 			)
 			const conversation = (await created.json()) as { id: string }
 
-			// Seed 5 consecutive agent-authored messages directly (bypassing the
+			// Seed 20 consecutive agent-authored messages directly (bypassing the
 			// responder, which has no real LLM credentials in this test env),
 			// simulating an agent-to-agent chain already in progress. The
-			// triggering message below is itself agent-authored (the 6th in a
+			// triggering message below is itself agent-authored (the 21st in a
 			// row) and @mentions the other agent — this is the runaway
 			// ping-pong shape the cap exists to stop. A human message would
 			// reset the tail count to zero, which is correct and NOT what this
 			// test is checking.
-			for (let i = 0; i < 5; i++) {
+			for (let i = 0; i < 20; i++) {
 				await db.insert(messages).values({
 					conversationId: conversation.id,
 					actorId: agent.id,

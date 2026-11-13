@@ -17,8 +17,9 @@ import {
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { isPayingWorkspace } from '../lib/analytics/paying-workspace'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isTeamActor } from '../lib/analytics/team-member'
+import { isInternalWorkspace, isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -110,6 +111,11 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	// Whether the caller is on our own team, for marking browser analytics events.
 	// A fact about the caller, so every row carries the same value.
 	isTeam: z.boolean(),
+	// Whether this workspace is one of ours, and whether it has an active paid
+	// plan, for marking browser analytics events. Derived here because the billing
+	// settings are hidden from plain members.
+	internal: z.boolean(),
+	paying: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -160,7 +166,8 @@ const createWorkspaceRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Actor has reached their workspace-ownership cap for their plan tier',
+			description:
+				'Caller is an agent (workspaces are created by people), or the actor has reached their workspace-ownership cap for their plan tier',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		500: {
@@ -171,6 +178,12 @@ const createWorkspaceRoute = createRoute({
 })
 
 app.openapi(createWorkspaceRoute, async (c) => {
+	// Workspaces are created by people. Every create seeds a default roster and a
+	// welcome session at Maskin's cost, so an agent key never gets that far.
+	if (c.get('actorType') === 'agent') {
+		return c.json(createApiError('FORBIDDEN', 'Only people can create workspaces'), 403)
+	}
+
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
@@ -314,6 +327,9 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
 		...workspaceForCaller(row, callerIsHuman && (row.role === 'owner' || row.role === 'admin')),
 		enterprise: isEnterprise({ ...row, enterpriseGranted }),
+		// Read from the raw row: the billing settings are hidden from plain members.
+		internal: isInternalWorkspace(row.id),
+		paying: isPayingWorkspace(row.settings),
 	}))
 
 	// Member counts come from a second grouped query, not a correlated subquery:

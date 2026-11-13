@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { getStatusColor, getTypeColor, statusLabel, typeIcons, typeLabel } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { DetailMetaStar } from './detail-meta-row'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -133,9 +133,8 @@ export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * The status and owner pills (v16): the shared 34px dropdown pills. The page
- * draws them on their own row under the Origin line; other hosts keep them on
- * the identity's meta line.
+ * The status and owner pills: the shared dropdown pills on the identity's meta
+ * line. A host that draws them elsewhere turns them off with `showPills`.
  */
 export function ObjectDetailPills({
 	object,
@@ -188,9 +187,13 @@ export function ObjectDetailIdentity({
 	onDriverChange,
 	onTitleChange,
 	showPills = true,
+	metaEnd,
 }: {
-	/** The page draws the pills on their own row (`ObjectDetailPills`) and turns them off here. */
+	/** Turns the status and owner pills off on the meta line, for a host that draws them itself. */
 	showPills?: boolean
+	/** Sits after the pills on the meta line (the page puts the quiet Origin text here). It drops
+	 *  to its own line when the row has no room. */
+	metaEnd?: ReactNode
 	object: ObjectResponse
 	statuses: string[]
 	members: MemberResponse[]
@@ -212,33 +215,44 @@ export function ObjectDetailIdentity({
 
 	return (
 		<div>
-			<div className="flex flex-wrap items-center gap-2 text-[11.5px] text-muted-foreground">
-				{/* The type's glyph leads the meta row (mockup 1058 `odTypeIcon`) —
-				    a 13px stroke in the type's own colour, not a filled tile. */}
-				{Icon && <Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />}
-				<span>{typeLabel(object.type)}</span>
-				{/* SPEC §D5: star sits left of the status chip on the detail meta row. */}
-				<DetailMetaStar objectId={object.id} />
-				{showPills && (
-					<ObjectDetailPills
-						object={object}
-						statuses={statuses}
-						members={members}
-						workspaceId={workspaceId}
-						creditsState={creditsState}
-						onStatusChange={onStatusChange}
-						onDriverChange={onDriverChange}
-					/>
-				)}
-			</div>
-
 			<EditableTitle
 				value={object.title}
 				entityId={object.id}
 				onChange={onTitleChange}
 				ariaLabel="Item title"
-				className="mt-2.5 text-[clamp(24px,3vw,30px)]"
+				className="text-[clamp(24px,3vw,30px)]"
 			/>
+
+			{/* One meta line under the title: star, type, status, owner, then origin. The first
+			    four stay together and wrap only on a phone; origin drops below them when the row
+			    is full. */}
+			<div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-muted-foreground">
+				<div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:shrink-0">
+					{/* SPEC §D5: the star leads the meta row. The -3px lines its 14px glyph up
+					    with the title's left edge. */}
+					<span className="-ml-[3px] inline-flex">
+						<DetailMetaStar objectId={object.id} />
+					</span>
+					{/* The type's glyph (mockup 1058 `odTypeIcon`) — a 13px stroke in the type's
+					    own colour, not a filled tile. */}
+					{Icon && (
+						<Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />
+					)}
+					<span>{typeLabel(object.type)}</span>
+					{showPills && (
+						<ObjectDetailPills
+							object={object}
+							statuses={statuses}
+							members={members}
+							workspaceId={workspaceId}
+							creditsState={creditsState}
+							onStatusChange={onStatusChange}
+							onDriverChange={onDriverChange}
+						/>
+					)}
+				</div>
+				{metaEnd}
+			</div>
 		</div>
 	)
 }

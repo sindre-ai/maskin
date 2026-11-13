@@ -938,6 +938,17 @@ struct ChatStoreTests {
 		await h.store.removeParticipant("relay")
 		#expect(h.store.participants.map(\.id) == ["me", "relay"])
 	}
+
+	@Test("adding people refreshes the chat even when the reply cannot be read, and shows no error")
+	func addParticipantsUnreadableReply() async {
+		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
+		await h.store.start()
+		await h.api.setAddDecodeFails(true)
+		let added = await h.store.addParticipants(["sam"])
+		#expect(added)
+		#expect(h.store.participants.map(\.id) == ["me", "relay", "sam"])
+		#expect(h.store.notice == nil)
+	}
 }
 
 @Suite("ChatSendMetadata")

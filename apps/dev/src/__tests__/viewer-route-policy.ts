@@ -96,6 +96,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/oauth/grants/:id', 'ends a Claude connection of the caller only'],
 	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group B leftovers: no handler logic or no workspace data.
+	['DELETE', '/api/integrations/deepdots/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
@@ -191,6 +192,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
 	[
 		'POST',
+		'/api/telemetry/client',
+		'Group E, telemetry: product analytics from the caller’s own phone, no workspace data written; a viewer’s usage counts too, and the workspace share-usage setting applies in the handler',
+	],
+	[
+		'POST',
 		'/api/account/delete',
 		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
 	],
@@ -227,6 +233,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
  * entry needs a viewer 403 case in integration/viewer-read-only.test.ts.
  */
 export const HAND_GATED_ROUTES: OpenRoute[] = [
+	['POST', '/api/integrations/deepdots/mcp', 'MCP endpoint, tools read as the workspace'],
 	['POST', '/api/integrations/google-drive/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	[

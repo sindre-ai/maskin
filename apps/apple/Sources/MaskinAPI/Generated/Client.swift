@@ -708,6 +708,8 @@ public struct Client: APIProtocol {
     }
     /// Search objects by text
     ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
+    ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
     public func get_sol_api_sol_objects_sol_search(_ input: Operations.get_sol_api_sol_objects_sol_search.Input) async throws -> Operations.get_sol_api_sol_objects_sol_search.Output {
@@ -1355,6 +1357,28 @@ public struct Client: APIProtocol {
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
                     return .notFound(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -10010,6 +10034,13 @@ public struct Client: APIProtocol {
                     explode: true,
                     name: "scope",
                     value: input.query.scope
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "hide_quiet",
+                    value: input.query.hide_quiet
                 )
                 try converter.setQueryItemAsURI(
                     in: &request,

@@ -64,6 +64,8 @@ import guardrailsRoutes from './routes/guardrails'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsDeepdotsRoutes from './routes/integrations-deepdots'
+import integrationsDeepdotsMcpRoutes from './routes/integrations-deepdots-mcp'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
@@ -104,6 +106,7 @@ import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
+import telemetryClientRoutes from './routes/telemetry-client'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
@@ -559,6 +562,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// more specific prefix wins the trie — same ordering as Slack's below.
 	// Skjald's one-click connect has its own two routes under /skjald; mounted before the generic catch-all.
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
+	// Deepdots connects from an email and password form, not an OAuth redirect.
+	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -570,6 +575,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// folder watches list + stop for the Drive detail page; its own prefix, so the
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
+	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
@@ -628,6 +634,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// of /api, and refused for Claude's own (mat_) tokens.
 	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
+	app.route('/api/telemetry', telemetryClientRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/saved-views', savedViewsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
