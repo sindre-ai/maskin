@@ -256,6 +256,17 @@ public struct ObjectDraft: Sendable, Equatable {
 }
 
 /// A partial update; `nil` leaves the field alone.
+/// The chat and the agent a card edit was made for (`chat` on `PATCH /api/objects/{id}`).
+public struct ObjectPatchChat: Sendable, Equatable {
+	public var conversationID: String
+	public var agentID: String
+
+	public init(conversationID: String, agentID: String) {
+		self.conversationID = conversationID
+		self.agentID = agentID
+	}
+}
+
 public struct ObjectPatch: Sendable, Equatable {
 	public var title: String?
 	public var content: String?
@@ -265,16 +276,19 @@ public struct ObjectPatch: Sendable, Equatable {
 	/// Shallow-merged into `metadata` (as the server does); an empty-string value removes that
 	/// key. `nil` leaves metadata alone.
 	public var metadata: [String: String]?
+	/// The chat card the edit was made from: the server tells the agent behind it. Nil elsewhere.
+	public var chat: ObjectPatchChat?
 
 	public init(
 		title: String? = nil, content: String? = nil, status: String? = nil, driver: String? = nil,
-		metadata: [String: String]? = nil
+		metadata: [String: String]? = nil, chat: ObjectPatchChat? = nil
 	) {
 		self.title = title
 		self.content = content
 		self.status = status
 		self.driver = driver
 		self.metadata = metadata
+		self.chat = chat
 	}
 
 	public func applied(to object: WorkObject) -> WorkObject {

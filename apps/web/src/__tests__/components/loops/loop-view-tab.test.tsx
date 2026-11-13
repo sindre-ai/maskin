@@ -8,6 +8,18 @@ const flag = vi.hoisted(() => ({ on: false }))
 const mobile = vi.hoisted(() => ({ on: false }))
 vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => flag.on }))
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mobile.on }))
+const files = vi.hoisted(() => ({ byId: {} as Record<string, unknown> }))
+vi.mock('@/hooks/use-files', () => ({
+	useFile: (_w: string, id: string) => ({ data: files.byId[id] }),
+}))
+vi.mock('@/components/loops/loop-briefing-stage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/components/loops/loop-briefing-stage')>()),
+	LoopBriefingStage: ({ fileId, hideTitle }: { fileId: string; hideTitle?: boolean }) => (
+		<div data-testid="stage" data-hide-title={hideTitle ? 'yes' : 'no'}>
+			{fileId}
+		</div>
+	),
+}))
 
 vi.mock('@/components/loops/loop-custom-view', () => ({
 	LoopCustomView: ({
@@ -90,6 +102,40 @@ describe('LoopViewTab', () => {
 	beforeEach(() => {
 		flag.on = false
 		mobile.on = false
+		files.byId = {}
+	})
+
+	it('shows a deck in the tall viewer, under the view name, not in the frame', () => {
+		files.byId = {
+			deck: {
+				id: 'deck',
+				name: 'Briefing.html',
+				mimeType: 'text/html',
+				kind: 'briefing',
+				encoding: 'utf8',
+				content: '<html></html>',
+			},
+		}
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="deck" name="Briefing" />)
+		expect(screen.getByRole('heading', { name: 'Briefing' })).toBeInTheDocument()
+		expect(screen.getByTestId('stage')).toHaveAttribute('data-hide-title', 'yes')
+		expect(screen.queryByTestId('view')).toBeNull()
+	})
+
+	it('keeps a list view in the self-sizing frame', () => {
+		files.byId = {
+			good: {
+				id: 'good',
+				name: 'Results.html',
+				mimeType: 'text/html',
+				kind: null,
+				encoding: 'utf8',
+				content: '<html><body><p>Results</p></body></html>',
+			},
+		}
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" />)
+		expect(screen.getByTestId('view')).toBeInTheDocument()
+		expect(screen.queryByTestId('stage')).toBeNull()
 	})
 
 	it('renders the view with no note when it loads', () => {

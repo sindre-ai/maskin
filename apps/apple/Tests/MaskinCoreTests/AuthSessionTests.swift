@@ -353,3 +353,53 @@ struct KeychainSecretStoreTests {
 		#expect(try store.read() == nil)
 	}
 }
+
+private struct ResetAuthenticator: Authenticating {
+	var failure: (any Error)?
+	func login(email: String, password: String) async throws -> LoginResult { throw AuthError.invalidCredentials }
+	func requestPasswordReset(email: String) async throws {
+		if let failure { throw failure }
+	}
+}
+
+@MainActor
+@Suite("AuthSession password reset")
+struct AuthSessionPasswordResetTests {
+	@Test("a request passes through and does not touch the session")
+	func passesThrough() async throws {
+		let store = InMemorySecretStore()
+		let auth = AuthSession(authenticator: ResetAuthenticator(), store: store)
+
+		try await auth.requestPasswordReset(email: "alice@example.com")
+
+		#expect(auth.credentials == nil)
+		#expect(try store.read() == nil)
+	}
+
+	@Test("a reset error is passed on as is")
+	func passesError() async {
+		let auth = AuthSession(
+			authenticator: ResetAuthenticator(failure: PasswordResetError.rateLimited),
+			store: InMemorySecretStore())
+
+		await #expect(throws: PasswordResetError.rateLimited) {
+			try await auth.requestPasswordReset(email: "alice@example.com")
+		}
+	}
+
+	@Test("any other error becomes a network error")
+	func wrapsOthers() async {
+		let auth = AuthSession(
+			authenticator: ResetAuthenticator(failure: URLError(.notConnectedToInternet)),
+			store: InMemorySecretStore())
+
+		do {
+			try await auth.requestPasswordReset(email: "alice@example.com")
+			Issue.record("expected a throw")
+		} catch let error as PasswordResetError {
+			if case .network = error {} else { Issue.record("expected .network, got \(error)") }
+		} catch {
+			Issue.record("expected PasswordResetError, got \(error)")
+		}
+	}
+}

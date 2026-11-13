@@ -245,6 +245,12 @@ struct MessageRow: View {
 		return LinkedMessageLayout.lookupTargets(isOwn ? found.filter { $0.kind == .object } : found)
 	}
 
+	/// The chat and agent behind this message, so an edit made on a card tells that agent; nil for a
+	/// person's own words.
+	private var agentChat: ObjectPatchChat? {
+		message.author == .agent ? ObjectPatchChat(conversationID: message.conversationID, agentID: message.actorID) : nil
+	}
+
 	/// What to draw for the text, or nil when no link in it is a card (the text then renders as it
 	/// always did, folding included). At most three cards, across every kind; an object that is a
 	/// card in an earlier message of the conversation stays a link here.
@@ -311,7 +317,7 @@ struct MessageRow: View {
 					)
 					.textSelection(.enabled)
 				case .card(let target):
-					LinkedTargetCard(target: target, onApproved: onApprovedDraft)
+					LinkedTargetCard(target: target, onApproved: onApprovedDraft, editable: true, chat: agentChat)
 				}
 			}
 		}
@@ -379,7 +385,7 @@ struct MessageRow: View {
 				if !attachmentsOnly {
 					Group {
 						if let soleCard {
-							LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft)
+							LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft, editable: true, chat: agentChat)
 						} else if hasOwnSurface(placingCards: placingCards) {
 							VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
 								if message.isEmojiOnly {
@@ -422,8 +428,12 @@ struct MessageRow: View {
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: true, actions: actions)
 			if let appended = layout?.appended, !appended.isEmpty {
+				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				VStack(alignment: .trailing, spacing: MaskinSpace.s3) {
-					ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+					ForEach(appended) { target in
+						LinkedTargetCard(
+							target: target, onApproved: onApprovedDraft, editable: target == textCard, chat: agentChat)
+					}
 				}
 				.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 			}
@@ -503,7 +513,11 @@ struct MessageRow: View {
 			.swipeToReply(onReply)
 			.messageContextMenu(message, isOwn: false, actions: menuActions)
 			if let appended = layout?.appended {
-				ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
+				ForEach(appended) { target in
+					LinkedTargetCard(
+						target: target, onApproved: onApprovedDraft, editable: target == textCard, chat: agentChat)
+				}
 			}
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }

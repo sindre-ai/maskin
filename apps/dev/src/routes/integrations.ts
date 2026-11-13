@@ -35,7 +35,6 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
@@ -281,12 +280,8 @@ const listProvidersRoute = createRoute({
 })
 
 app.openapi(listProvidersRoute, (async (c) => {
-	const actorId = c.get('actorId')
 	const providers = listProviders()
 		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
-		.filter(
-			(p) => p.config.name !== MICROSOFT_PROVIDER || isFlagEnabled(actorId, FLAGS.MICROSOFT_TEAMS),
-		)
 		.map((p) => ({
 			name: p.config.name,
 			displayName: p.config.displayName,
@@ -937,10 +932,6 @@ app.openapi(connectRoute, (async (c) => {
 		)
 	}
 
-	if (providerName === MICROSOFT_PROVIDER && !isFlagEnabled(actorId, FLAGS.MICROSOFT_TEAMS)) {
-		return c.json(createApiError('NOT_FOUND', 'Microsoft is not available yet'), 404)
-	}
-
 	let resolved: ResolvedProvider
 	try {
 		resolved = getProvider(providerName)
@@ -1527,7 +1518,24 @@ app.openapi(connectRoute, (async (c) => {
 		}
 	} else if (resolved.config.auth.type === 'oauth2') {
 		const handler = new OAuth2Handler(resolved.config.auth.config)
-		installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
+		try {
+			installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
+		} catch (err) {
+			// The app's client id is missing from the server settings. Say so instead of the
+			// generic unexpected-error 500, so the person knows it is not something they did.
+			logger.error(`Failed to build install URL for provider ${providerName}`, {
+				workspaceId,
+				actorId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					`Could not start the ${resolved.config.displayName} connection — this is a server misconfiguration, not a transient failure`,
+				),
+				500,
+			)
+		}
 	} else {
 		return c.json(
 			createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),

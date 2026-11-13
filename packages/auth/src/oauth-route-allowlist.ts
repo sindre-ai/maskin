@@ -222,6 +222,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 
 	// Skip authMiddleware (public, provider-signed or self-authenticating). A mat_ token never reaches the OAuth branch on these.
 	'POST /api/auth/login',
+	'POST /api/auth/forgot-password',
+	'POST /api/auth/reset-password',
 	'GET /api/health',
 	'GET /api/health/db',
 	'GET /api/integrations/:provider/callback',
@@ -286,6 +288,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'DELETE /api/integrations/google-drive/mcp',
 	'DELETE /api/integrations/google-drive/watched-folders/:folderId',
 	'DELETE /api/integrations/google-search-console/mcp',
+	'DELETE /api/integrations/microsoft/mcp',
 	'DELETE /api/live-activities/follows/:session_id',
 	'DELETE /api/live-activities/tokens/:id',
 	'DELETE /api/web-push/subscriptions/:id',
@@ -326,6 +329,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/google-drive/mcp',
 	'GET /api/integrations/google-drive/watched-folders',
 	'GET /api/integrations/google-search-console/mcp',
+	'GET /api/integrations/microsoft/mcp',
 	'GET /api/notification-preferences',
 	'GET /api/objects/facets',
 	'GET /api/search',
@@ -391,6 +395,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/integrations/gmail/send',
 	'POST /api/integrations/google-drive/mcp',
 	'POST /api/integrations/google-search-console/mcp',
+	'POST /api/integrations/microsoft/mcp',
 	'POST /api/integrations/google/disconnect',
 	'POST /api/integrations/resend/send',
 	'POST /api/internal/mcp-guard/report',

@@ -50,3 +50,11 @@ export const loopTargetSchema = z.object({
 	pace_policy: z.enum(['strict', 'window']).optional(),
 })
 export type LoopTarget = z.infer<typeof loopTargetSchema>
+
+/**
+ * A target row as the flows list returns it: the stored row plus `manual`, set on
+ * read and never stored. `true` when the number is the one an agent typed in (plain
+ * text, `event:` or unknown `metric:` source); `false` when it was counted live.
+ */
+export const loopTargetViewSchema = loopTargetSchema.extend({ manual: z.boolean().optional() })
+export type LoopTargetView = z.infer<typeof loopTargetViewSchema>

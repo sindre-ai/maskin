@@ -122,6 +122,63 @@ describe('DesktopViewer', () => {
 		expect(rfb.viewOnly).toBe(true)
 	})
 
+	describe('analytics flow', () => {
+		function renderWithFlow() {
+			const flow = {
+				opened: vi.fn(),
+				firstFrame: vi.fn(),
+				connectionLost: vi.fn(),
+				takeOver: vi.fn(),
+				closed: vi.fn(),
+			}
+			render(<DesktopViewer workspaceId={WS} agentId={VIEWED} flow={flow} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+			return flow
+		}
+
+		it('reports the time to first frame once the picture is live, and take-over starts and ends', async () => {
+			const user = userEvent.setup()
+			const flow = renderWithFlow()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+
+			act(() => rfb.emit('connect'))
+			await screen.findByText('Live')
+			expect(flow.firstFrame).toHaveBeenCalledTimes(1)
+			expect(flow.firstFrame).toHaveBeenCalledWith(expect.any(Number))
+
+			await user.click(screen.getByRole('button', { name: /take over/i }))
+			expect(flow.takeOver).toHaveBeenLastCalledWith(true)
+			await user.click(screen.getByRole('button', { name: /stop controlling/i }))
+			expect(flow.takeOver).toHaveBeenLastCalledWith(false)
+		})
+
+		it('reports a lost connection with whether a picture had been shown', async () => {
+			const flow = renderWithFlow()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+
+			act(() => rfb.emit('connect'))
+			await screen.findByText('Live')
+			act(() => rfb.emit('disconnect'))
+
+			expect(flow.connectionLost).toHaveBeenCalledTimes(1)
+			expect(flow.connectionLost).toHaveBeenCalledWith(true)
+		})
+
+		it('reports a stream that closed before any picture as lost without a first frame', async () => {
+			const flow = renderWithFlow()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+
+			act(() => rfb.emit('disconnect'))
+
+			expect(flow.firstFrame).not.toHaveBeenCalled()
+			expect(flow.connectionLost).toHaveBeenCalledWith(false)
+		})
+	})
+
 	describe('clipboard buttons', () => {
 		async function takeOver(user: ReturnType<typeof userEvent.setup>) {
 			renderViewer()

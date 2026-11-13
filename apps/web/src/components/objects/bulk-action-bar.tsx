@@ -79,6 +79,31 @@ export function resolvePlatformDevice(): PlatformDevice {
 	return 'desktop'
 }
 
+// Not necessarily an Element — a keydown dispatched at window/document targets
+// a non-Element EventTarget, so narrow before touching DOM APIs.
+function keyTarget(e: KeyboardEvent): HTMLElement | null {
+	return e.target instanceof HTMLElement ? e.target : null
+}
+
+function isTypingTarget(target: HTMLElement | null): boolean {
+	return !!(
+		target?.isContentEditable ||
+		(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+	)
+}
+
+// The status and owner pickers live in this same bar. Radix renders their
+// content as div/button — not INPUT/SELECT — and its typeahead does not stop
+// propagation, so typing `e` to reach "evaluating" would otherwise land here
+// as an unconfirmed bulk archive. The same goes for Esc closing them.
+function isInsideOpenPopper(target: HTMLElement | null): boolean {
+	return !!(
+		target?.closest(
+			'[data-radix-popper-content-wrapper],[role="menu"],[role="listbox"],[role="dialog"]',
+		) || document.querySelector('[data-radix-popper-content-wrapper]')
+	)
+}
+
 export function BulkActionBar({
 	selectedCount,
 	statusOptions = [],
@@ -124,33 +149,24 @@ export function BulkActionBar({
 	const canSelectAll = !!onSelectAll && totalCount > selectedCount
 	React.useEffect(() => {
 		if (!visible) return
+		// Radix closes a Select on Esc from a capture listener on document, and
+		// React may unmount its content before this bubble listener runs. Decide
+		// whether Esc belongs to a popper or a text field in the capture phase,
+		// while that popper is still mounted.
+		let escapeClaimed = false
+		const onEscapeCapture = (e: KeyboardEvent) => {
+			if (e.key !== 'Escape') return
+			const target = keyTarget(e)
+			escapeClaimed = isTypingTarget(target) || isInsideOpenPopper(target)
+		}
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && !confirmOpen) {
-				onClear()
+			if (e.key === 'Escape') {
+				if (!confirmOpen && !escapeClaimed && !e.defaultPrevented) onClear()
 				return
 			}
 			if (confirmOpen || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return
-			// Not necessarily an Element — a keydown dispatched at window/document
-			// targets a non-Element EventTarget, so narrow before touching DOM APIs.
-			const target = e.target instanceof HTMLElement ? e.target : null
-			if (
-				target?.isContentEditable ||
-				(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-			) {
-				return
-			}
-			// The status and owner pickers live in this same bar. Radix renders their
-			// content as div/button — not INPUT/SELECT — and its typeahead does not stop
-			// propagation, so typing `e` to reach "evaluating" would otherwise land here
-			// as an unconfirmed bulk archive. Bail while any Radix popper is mounted.
-			if (
-				target?.closest(
-					'[data-radix-popper-content-wrapper],[role="menu"],[role="listbox"],[role="dialog"]',
-				) ||
-				document.querySelector('[data-radix-popper-content-wrapper]')
-			) {
-				return
-			}
+			const target = keyTarget(e)
+			if (isTypingTarget(target) || isInsideOpenPopper(target)) return
 			if (e.key === 'a' && canSelectAll) {
 				e.preventDefault()
 				onSelectAll?.()
@@ -162,8 +178,12 @@ export function BulkActionBar({
 				onArchive()
 			}
 		}
+		window.addEventListener('keydown', onEscapeCapture, true)
 		window.addEventListener('keydown', onKey)
-		return () => window.removeEventListener('keydown', onKey)
+		return () => {
+			window.removeEventListener('keydown', onEscapeCapture, true)
+			window.removeEventListener('keydown', onKey)
+		}
 	}, [visible, confirmOpen, onClear, canSelectAll, onSelectAll, onArchive, emitCommit, canWrite])
 
 	// Close the confirm dialog automatically when the selection is cleared.

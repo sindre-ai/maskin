@@ -8,6 +8,7 @@ vi.mock('../../lib/logger', () => ({
 import {
 	flushRouteTiming,
 	parseClientBuild,
+	parseClientVersion,
 	requestTiming,
 	resolveClientSourceLabel,
 	setRouteTimingSink,
@@ -43,6 +44,7 @@ const row = {
 	stream: false,
 	clientSource: 'ui' as const,
 	clientBuild: '',
+	clientVersion: '',
 	requests: 3,
 	slowRequests: 1,
 	errors5xx: 0,
@@ -73,6 +75,7 @@ describe('createRouteTimingStore', () => {
 			stream: false,
 			clientSource: 'ui',
 			clientBuild: '',
+			clientVersion: '',
 			requests: 3,
 			slowRequests: 1,
 			errors5xx: 0,
@@ -90,6 +93,17 @@ describe('createRouteTimingStore', () => {
 		expect(written).toMatchObject({ build: 'abc123', clientBuild: '2611081015' })
 	})
 
+	it('writes the app release next to the app build', async () => {
+		const { db, values } = fakeDb()
+		createRouteTimingStore(
+			db,
+			'abc123',
+		)([{ ...row, clientBuild: '2611081015', clientVersion: '1.2' }])
+		await settle()
+		const [written] = values.mock.calls[0][0]
+		expect(written).toMatchObject({ clientBuild: '2611081015', clientVersion: '1.2' })
+	})
+
 	it('adds into an existing row when the same minute is written twice', async () => {
 		const { db, onConflictDoUpdate } = fakeDb()
 		createRouteTimingStore(db, 'abc123')([row], new Date('2026-11-08T10:15:42Z'))
@@ -99,7 +113,7 @@ describe('createRouteTimingStore', () => {
 			target: unknown[]
 			set: Record<string, unknown>
 		}
-		expect(arg.target).toHaveLength(7)
+		expect(arg.target).toHaveLength(8)
 		expect(Object.keys(arg.set).sort()).toEqual(
 			['dbMsSum', 'dbQueries', 'errors5xx', 'requests', 'slowRequests', 'totalMsSum'].sort(),
 		)
@@ -285,6 +299,33 @@ describe('flushRouteTiming with a sink', () => {
 		])
 	})
 
+	it('splits the counts per app release and counts a missing or bad header as none', async () => {
+		const { Hono } = await import('hono')
+		const app = new Hono()
+		app.use('*', requestTiming())
+		app.get('/api/objects/:id', (c) => c.json({}))
+		const sink = vi.fn()
+		setRouteTimingSink(sink)
+		const get = (headers: Record<string, string>) => app.request('/api/objects/1', { headers })
+		const ios = { 'X-Client-Source': 'ios', 'X-Client-Build': '2611081015' }
+		await get({ ...ios, 'X-Client-Version': '1.2' })
+		await get({ ...ios, 'X-Client-Version': '1.2' })
+		await get({ ...ios, 'X-Client-Version': '1.1' })
+		await get({ ...ios, 'X-Client-Version': '1.2-beta' })
+		await get(ios)
+		await get({ 'X-Client-Source': 'ui' })
+		flushRouteTiming()
+		const rows = sink.mock.calls[0][0] as Array<{
+			clientSource: string
+			clientBuild: string
+			clientVersion: string
+			requests: number
+		}>
+		expect(
+			rows.map((r) => `${r.clientSource}/${r.clientBuild}/${r.clientVersion}/${r.requests}`).sort(),
+		).toEqual(['ios/2611081015//2', 'ios/2611081015/1.1/1', 'ios/2611081015/1.2/2', 'ui///1'])
+	})
+
 	it('a sink that throws does not break the flush', async () => {
 		const { Hono } = await import('hono')
 		const app = new Hono()
@@ -316,5 +357,23 @@ describe('parseClientBuild', () => {
 		expect(parseClientBuild('1234\n')).toBe('')
 		expect(parseClientBuild('-1')).toBe('')
 		expect(parseClientBuild('abc')).toBe('')
+	})
+})
+
+describe('parseClientVersion', () => {
+	it('keeps 1 to 12 digits and dots and nothing else', () => {
+		expect(parseClientVersion('1.2')).toBe('1.2')
+		expect(parseClientVersion('1.12.3')).toBe('1.12.3')
+		expect(parseClientVersion('123456789.01')).toBe('123456789.01')
+		expect(parseClientVersion('1')).toBe('1')
+		expect(parseClientVersion('1234567890.123')).toBe('')
+		expect(parseClientVersion('')).toBe('')
+		expect(parseClientVersion(undefined)).toBe('')
+		expect(parseClientVersion(null)).toBe('')
+		expect(parseClientVersion('1.2 ')).toBe('')
+		expect(parseClientVersion('1.2\n')).toBe('')
+		expect(parseClientVersion('1.2-beta')).toBe('')
+		expect(parseClientVersion('v1.2')).toBe('')
+		expect(parseClientVersion('<script>')).toBe('')
 	})
 })
