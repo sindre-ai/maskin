@@ -172,6 +172,7 @@ const SEARCH_SETTLE_MS = 1000
 /** The list section a group reads as in the tracking events. Direct messages and the dated groups
  *  are `recent` until the agent rows exist. */
 function sectionOfGroup(groupKey: string): ChatListSection {
+	if (groupKey === 'rooms') return 'room'
 	if (groupKey === 'pinned') return 'pinned'
 	if (groupKey === 'unread') return 'unread'
 	return 'recent'

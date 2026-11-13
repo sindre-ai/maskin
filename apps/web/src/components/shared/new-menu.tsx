@@ -22,7 +22,16 @@ import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { defaultTypeColor, objectTypeDescriptions, typeColors } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search, Upload } from 'lucide-react'
+import {
+	Bot,
+	ChevronDown,
+	Hash,
+	MessageSquare,
+	Plus,
+	RefreshCw,
+	Search,
+	Upload,
+} from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 
 interface CreateConfig {
@@ -51,6 +60,8 @@ interface NewMenuProps {
 	// Only step that varies by page — the global header opens the docked chat
 	// panel, the For You page opens its own inline conversation composer.
 	onNewChat: () => void
+	// Opens the new room screen. The menu shows "New room" only where a page passes this.
+	onNewRoom?: () => void
 	// Object-detail pages drop the "Create an item" section — landing users
 	// on the generic object picker is disorienting when they're mid-edit on a
 	// specific object. New chat/loop/agent/search stay.
@@ -101,6 +112,7 @@ function ImportFlow({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 // the trigger and dropdown contents can never drift apart between pages.
 export function NewMenu({
 	onNewChat,
+	onNewRoom,
 	hideObjectSection,
 	primaryKind,
 	primaryOverride,
@@ -201,6 +213,19 @@ export function NewMenu({
 									</span>
 								</span>
 							</DropdownMenuItem>
+							{onNewRoom ? (
+								<DropdownMenuItem onSelect={onNewRoom} className="items-start gap-2.5 py-2">
+									<span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+										<Hash size={13} />
+									</span>
+									<span className="min-w-0 flex-1">
+										<span className="block text-sm font-medium">New room</span>
+										<span className="block text-xs text-muted-foreground">
+											A named chat for a topic that keeps coming back
+										</span>
+									</span>
+								</DropdownMenuItem>
+							) : null}
 							{!hideObjectSection && (
 								<>
 									<DropdownMenuSeparator />

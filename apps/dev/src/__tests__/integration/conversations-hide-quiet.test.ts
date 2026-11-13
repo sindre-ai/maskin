@@ -17,8 +17,8 @@ const { default: conversationsRoutes } = await import('../../routes/conversation
 
 /**
  * GET /api/conversations?hide_quiet=true leaves out empty direct messages with agents, chats with
- * retired agents and topic chats quiet for about 14 days. Pinned chats, unread chats, group chats
- * and people-only chats are never left out, and without the flag nothing is.
+ * retired agents and topic chats quiet for about 14 days. Pinned chats, unread chats, group chats,
+ * people-only chats and rooms are never left out, and without the flag nothing is.
  */
 
 type Env = { Variables: { db: Database; actorId: string; actorType: string } }
@@ -82,12 +82,14 @@ describe('GET /api/conversations hide_quiet', () => {
 			daysAgo?: number
 			pinned?: boolean
 			subject?: boolean
+			room?: boolean
 		} = {},
 	) {
 		const chat = await insertConversation(db, workspaceId, humanId, {
 			title: label,
 			directPairKey: opts.direct ? directPairKey(humanId, others[0]) : null,
 			lastMessageAt: new Date(Date.now() - (opts.daysAgo ?? 0) * DAY),
+			isRoom: opts.room ?? false,
 			...(opts.subject ? { subjectType: 'object', subjectId: crypto.randomUUID() } : {}),
 		})
 		await db
@@ -171,6 +173,14 @@ describe('GET /api/conversations hide_quiet', () => {
 		]) {
 			expect(shown).toContain(t)
 		}
+	})
+
+	it('never leaves out a room, even a quiet one or one with a retired agent', async () => {
+		await seedChat('quiet room', [agentId], { messageFrom: humanId, daysAgo: 30, room: true })
+		await seedChat('retired room', [retiredId], { messageFrom: humanId, room: true })
+		await seedChat('empty room', [agentId], { room: true, daysAgo: 30 })
+		const shown = await titles('hide_quiet=true')
+		for (const t of ['quiet room', 'retired room', 'empty room']) expect(shown).toContain(t)
 	})
 
 	it('hides nothing when the flag is not sent', async () => {
