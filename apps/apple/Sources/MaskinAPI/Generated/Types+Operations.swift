@@ -18836,6 +18836,8 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
                             public var trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_promo_code_id`.
+                            public var trial_promo_code_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -18862,6 +18864,7 @@ public enum Operations {
                             ///   - hard_cap_usd_cents:
                             ///   - trial_state:
                             ///   - trial_wallet:
+                            ///   - trial_promo_code_id:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -18875,6 +18878,7 @@ public enum Operations {
                                 hard_cap_usd_cents: Swift.Double? = nil,
                                 trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
                                 trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
+                                trial_promo_code_id: Swift.String? = nil,
                                 status: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -18888,6 +18892,7 @@ public enum Operations {
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
                                 self.trial_state = trial_state
                                 self.trial_wallet = trial_wallet
+                                self.trial_promo_code_id = trial_promo_code_id
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -18902,6 +18907,7 @@ public enum Operations {
                                 case hard_cap_usd_cents
                                 case trial_state
                                 case trial_wallet
+                                case trial_promo_code_id
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -21034,6 +21040,8 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
                             public var trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_promo_code_id`.
+                            public var trial_promo_code_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -21060,6 +21068,7 @@ public enum Operations {
                             ///   - hard_cap_usd_cents:
                             ///   - trial_state:
                             ///   - trial_wallet:
+                            ///   - trial_promo_code_id:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -21073,6 +21082,7 @@ public enum Operations {
                                 hard_cap_usd_cents: Swift.Double? = nil,
                                 trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
                                 trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
+                                trial_promo_code_id: Swift.String? = nil,
                                 status: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -21086,6 +21096,7 @@ public enum Operations {
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
                                 self.trial_state = trial_state
                                 self.trial_wallet = trial_wallet
+                                self.trial_promo_code_id = trial_promo_code_id
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -21100,6 +21111,7 @@ public enum Operations {
                                 case hard_cap_usd_cents
                                 case trial_state
                                 case trial_wallet
+                                case trial_promo_code_id
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
