@@ -265,6 +265,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	}
 
 	reportServerOk()
+	// 204 No Content has no body to parse; `res.json()` would throw on it and a call
+	// that worked would look failed.
+	if (res.status === 204) return undefined as T
 	return res.json()
 }
 

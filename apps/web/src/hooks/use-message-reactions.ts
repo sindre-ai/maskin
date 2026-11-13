@@ -92,6 +92,8 @@ export function useToggleReaction(id: string, workspaceId: string) {
 	}
 	const mutation = useMutation<void, Error, { messageId: number; emoji: string; adding: boolean }>({
 		scope: { id: `message-reactions:${id}` },
+		// The hook toasts its own failure; the global handler would stack a second one.
+		meta: { handlesOwnErrors: true },
 		mutationFn: ({ messageId, emoji, adding }) =>
 			adding
 				? api.conversations.reactToMessage(id, workspaceId, messageId, emoji)

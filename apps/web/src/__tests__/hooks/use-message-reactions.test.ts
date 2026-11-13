@@ -23,6 +23,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 import { useToggleReaction } from '@/hooks/use-message-reactions'
 import type { MessageResponse, MessagesListResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { queryClient as appQueryClient } from '@/lib/query'
 import { queryKeys } from '@/lib/query-keys'
 import { toast } from 'sonner'
 
@@ -191,6 +192,19 @@ describe('useToggleReaction', () => {
 			vi.mocked(api.conversations.unreactToMessage).mock.invocationCallOrder[0] ?? 0
 		expect(addOrder).toBeLessThan(removeOrder)
 		expect(queryClient.getQueryData(mainKey)).toBeDefined()
+	})
+
+	it('shows one toast for a refused call, not a second one from the app-wide handler', async () => {
+		vi.mocked(api.conversations.reactToMessage).mockRejectedValue(new Error('boom'))
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client: appQueryClient }, children)
+		const { result } = renderHook(() => useToggleReaction(conversationId, workspaceId), { wrapper })
+
+		act(() => result.current.toggle(1, '👍'))
+
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to react'))
+		expect(toast.error).toHaveBeenCalledTimes(1)
+		appQueryClient.clear()
 	})
 
 	it('undoes only the refused tap: 👍 refused, then ❤️ stays', async () => {
