@@ -11,7 +11,7 @@ import { api } from '../lib/api'
 import { getStoredActor } from '../lib/auth'
 import { hasReacted, setReacted } from '../lib/message-reactions'
 import { queryKeys } from '../lib/query-keys'
-import { isViewerRefusal } from '../lib/workspace-role'
+import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '../lib/workspace-role'
 
 type Me = { id: string; name: string }
 
@@ -92,6 +92,8 @@ export function useToggleReaction(id: string, workspaceId: string) {
 	}
 	const mutation = useMutation<void, Error, { messageId: number; emoji: string; adding: boolean }>({
 		scope: { id: `message-reactions:${id}` },
+		// The hook toasts its own failure; the global handler would stack a second one.
+		meta: { handlesOwnErrors: true },
 		mutationFn: ({ messageId, emoji, adding }) =>
 			adding
 				? api.conversations.reactToMessage(id, workspaceId, messageId, emoji)
@@ -105,8 +107,10 @@ export function useToggleReaction(id: string, workspaceId: string) {
 			// A later tap still runs after this one and decides what the server ends up holding.
 			if (me)
 				applyReacted(queryClient, id, messageId, emoji, me, later[later.length - 1] ?? !adding)
-			// A viewer's refused write already got the shared message.
-			if (!isViewerRefusal(error)) toast.error('Failed to react')
+			// The global handler is opted out above, so a viewer's refused write gets its shared
+			// message here, once, with the same id the global handler uses.
+			if (isViewerRefusal(error)) toast.error(VIEWER_READ_ONLY_MESSAGE, { id: 'viewer-read-only' })
+			else toast.error('Failed to react')
 		},
 	})
 	const { mutate } = mutation

@@ -1036,6 +1036,29 @@ export const apiKeys = pgTable(
 )
 export type ApiKey = typeof apiKeys.$inferSelect
 
+// ── Password Reset Tokens ──────────────────────────────────────────────────
+
+/**
+ * One-time links for "Forgot password". token_hash is the hex SHA-256 of the token in the emailed
+ * link; the token itself is never stored. A row works while used_at is null and expires_at is in
+ * the future. A newer request deletes the actor's older unused rows (lib/password-reset).
+ */
+export const passwordResetTokens = pgTable(
+	'password_reset_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [index('password_reset_tokens_actor_idx').on(t.actorId)],
+)
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect
+
 // ── Comment Responder Claims ───────────────────────────────────────────────
 // One responder session per (comment event, actor). The thread-reply spawn and the
 // CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that

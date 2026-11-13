@@ -690,6 +690,34 @@ describe('update_actor schema', () => {
 		const result = schema.parse({ id: uuid })
 		expect(result.workspace_id).toBeUndefined()
 	})
+
+	describe('starter_prompts', () => {
+		it('accepts up to 4 trimmed entries and [] to clear', () => {
+			expect(
+				schema.parse({ id: uuid, starter_prompts: [' What needs me today? '] }).starter_prompts,
+			).toEqual(['What needs me today?'])
+			expect(
+				schema.parse({ id: uuid, starter_prompts: ['a', 'b', 'c', 'd'] }).starter_prompts,
+			).toHaveLength(4)
+			expect(schema.parse({ id: uuid, starter_prompts: [] }).starter_prompts).toEqual([])
+		})
+
+		it('leaves starter_prompts undefined when omitted', () => {
+			expect(schema.parse({ id: uuid }).starter_prompts).toBeUndefined()
+		})
+
+		it('rejects a fifth entry, an empty one, an over-long one, a line break and a repeat', () => {
+			for (const starter_prompts of [
+				['a', 'b', 'c', 'd', 'e'],
+				['   '],
+				['x'.repeat(61)],
+				['two\nlines'],
+				['Keep going', 'keep going'],
+			]) {
+				expect(() => schema.parse({ id: uuid, starter_prompts })).toThrow()
+			}
+		})
+	})
 })
 
 describe('create_sub_chat schema', () => {

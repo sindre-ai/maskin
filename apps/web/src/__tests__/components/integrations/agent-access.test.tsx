@@ -5,7 +5,7 @@ import {
 	startingAccess,
 	summarizeAgentAccess,
 } from '@/components/integrations/agent-access'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildIntegrationResponse } from '../../factories'
@@ -43,6 +43,8 @@ vi.mock('@/lib/auth', () => ({ getStoredActor: () => mockActor() }))
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	setGrant.mockReset()
+	removeGrant.mockReset()
 	mockRole.mockReturnValue('member')
 	mockActor.mockReturnValue({ id: 'human-1', type: 'human' })
 })
@@ -167,8 +169,42 @@ describe('AgentAccess', () => {
 		expect(screen.queryByRole('button', { name: 'Remove Infra & DevOps' })).not.toBeInTheDocument()
 		await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
 		await user.click(await screen.findByRole('option', { name: 'Read' }))
-		expect(removeGrant).toHaveBeenCalledWith('agent-1')
+		expect(removeGrant).toHaveBeenCalledWith('agent-1', expect.anything())
 		expect(setGrant).not.toHaveBeenCalled()
+	})
+
+	it('moves focus to the Agent access toggle when an agent row drops out', async () => {
+		// The request resolves after the select has closed and handed focus back to its trigger.
+		removeGrant.mockImplementation((_id, opts) => {
+			setTimeout(() => opts.onSuccess(), 0)
+		})
+		const { open, user } = renderOpen({
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
+		await user.click(await screen.findByRole('option', { name: 'Read' }))
+		await waitFor(() => expect(screen.getByRole('button', { name: /Agent access/ })).toHaveFocus())
+	})
+
+	it('leaves focus alone when the person has already moved outside the panel', async () => {
+		let succeed = () => {}
+		removeGrant.mockImplementation((_id, opts) => {
+			succeed = opts.onSuccess
+		})
+		const outside = document.createElement('button')
+		document.body.appendChild(outside)
+		const { open, user } = renderOpen({
+			agentGrants: [{ actorId: 'agent-1', access: 'read_write' }],
+		})
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
+		await user.click(await screen.findByRole('option', { name: 'Read' }))
+		outside.focus()
+		succeed()
+		await new Promise((resolve) => requestAnimationFrame(resolve))
+		expect(outside).toHaveFocus()
+		outside.remove()
 	})
 
 	it('changes an override and the default', async () => {
@@ -210,7 +246,27 @@ describe('AgentAccess', () => {
 		// The agent that already has an entry is not offered again.
 		expect(screen.queryByRole('option', { name: 'Infra & DevOps' })).not.toBeInTheDocument()
 		await user.click(await screen.findByRole('option', { name: 'Code Reviewer' }))
-		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-2', access: 'read_write' })
+		expect(setGrant).toHaveBeenCalledWith(
+			{ actorId: 'agent-2', access: 'read_write' },
+			// Two agents are still addable, so the picker stays and nothing needs focus.
+			{ onSuccess: undefined },
+		)
+	})
+
+	it('moves focus to the toggle when adding the last addable agent removes the picker', async () => {
+		setGrant.mockImplementation((_v, opts) => {
+			setTimeout(() => opts?.onSuccess?.(), 0)
+		})
+		const { open, user } = renderOpen({
+			agentGrants: [
+				{ actorId: 'agent-1', access: 'read_write' },
+				{ actorId: 'agent-2', access: 'read_write' },
+			],
+		})
+		await open()
+		await user.click(screen.getByRole('combobox', { name: 'Add an agent' }))
+		await user.click(await screen.findByRole('option', { name: 'Writer' }))
+		await waitFor(() => expect(screen.getByRole('button', { name: /Agent access/ })).toHaveFocus())
 	})
 
 	it('adds an agent at read when the default is no access', async () => {
@@ -218,7 +274,10 @@ describe('AgentAccess', () => {
 		await open()
 		await user.click(screen.getByRole('combobox', { name: 'Add an agent' }))
 		await user.click(await screen.findByRole('option', { name: 'Writer' }))
-		expect(setGrant).toHaveBeenCalledWith({ actorId: 'agent-3', access: 'read' })
+		expect(setGrant).toHaveBeenCalledWith(
+			{ actorId: 'agent-3', access: 'read' },
+			{ onSuccess: undefined },
+		)
 	})
 
 	it('is read-only for a member who did not connect it', async () => {

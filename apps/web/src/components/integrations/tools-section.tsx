@@ -19,7 +19,7 @@ import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { FileJson, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 function errorText(err: unknown): string {
 	if (err instanceof ApiError) return err.message
@@ -213,11 +213,27 @@ function ServerRow({
 	const canWrite = useCanWrite()
 	const remove = useRemoveCustomMcpServer(workspaceId)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const binRef = useRef<HTMLButtonElement>(null)
+	const cancelRef = useRef<HTMLButtonElement>(null)
+	const returnFocus = useRef(false)
 	const me = getStoredActor()
 	const canEdit =
 		me?.type === 'human' &&
 		(row.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const name = row.displayName ?? 'Tool server'
+
+	// The bin button and the confirm group replace each other, so focus is moved by hand:
+	// to Cancel (the safe choice) when asking, back to the bin button when the ask is dropped.
+	useEffect(() => {
+		if (confirmDelete) cancelRef.current?.focus()
+		else if (returnFocus.current) binRef.current?.focus()
+		returnFocus.current = false
+	}, [confirmDelete])
+
+	const cancelDelete = () => {
+		returnFocus.current = true
+		setConfirmDelete(false)
+	}
 
 	return (
 		<ProviderCard
@@ -229,7 +245,14 @@ function ServerRow({
 			actions={
 				canEdit &&
 				(confirmDelete ? (
-					<div className="flex shrink-0 items-center gap-1">
+					<div
+						className="flex shrink-0 items-center gap-1"
+						onKeyDown={(e) => {
+							if (e.key !== 'Escape') return
+							e.stopPropagation()
+							cancelDelete()
+						}}
+					>
 						<ViewerTooltip>
 							<Button
 								size="sm"
@@ -240,7 +263,7 @@ function ServerRow({
 								Remove
 							</Button>
 						</ViewerTooltip>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+						<Button ref={cancelRef} size="sm" variant="ghost" onClick={cancelDelete}>
 							Cancel
 						</Button>
 					</div>
@@ -260,6 +283,7 @@ function ServerRow({
 						</ViewerTooltip>
 						<ViewerTooltip>
 							<Button
+								ref={binRef}
 								size="icon"
 								variant="ghost"
 								className="text-muted-foreground hover:text-error"

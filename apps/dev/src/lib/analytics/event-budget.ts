@@ -19,6 +19,7 @@ const TIER1_EXACT = new Set([
 	'integration_connect_started',
 	'integration_tool_called',
 	'meeting_transcript_landed',
+	'notification_sent',
 ])
 const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_', 'support_item_']
 
