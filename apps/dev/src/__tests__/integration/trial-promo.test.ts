@@ -17,7 +17,7 @@ import { insertActor, insertWorkspace } from '../factories'
 import { db } from './global-setup'
 
 // Promo codes at the start-trial page: a valid code starts the trial with no card for the code's
-// own trial_days (14 for a new code, 7 for a card), the server re-checks it when the trial starts, and the last use goes to exactly one caller.
+// own trial_days (14 by default, 7 for a card), the server re-checks it when the trial starts, and the last use goes to exactly one caller.
 
 const NOW = 1_800_000_000
 let seq = 0
@@ -77,7 +77,7 @@ describe('normalizePromoCode', () => {
 })
 
 describe('promoCodeTrialDays', () => {
-	it('gives 14 days for a new code, in any letter case, and does not use it up', async () => {
+	it('gives 14 days for a default code, in any letter case, and does not use it up', async () => {
 		const row = await insertCode()
 		expect(await promoCodeTrialDays(db, row.code.toLowerCase())).toBe(14)
 		expect(await redemptionsOf(row.id)).toBe(0)
@@ -139,7 +139,7 @@ describe('recordPromoTrialStart', () => {
 		expect(await redemptionsOf(row.id)).toBe(1)
 	})
 
-	it('keeps a 7 day trial for a code that carries 7 days, and a card trial is still 7', async () => {
+	it('keeps a 7 day trial for a code set to 7 days by hand, and a card trial is still 7', async () => {
 		const row = await insertCode({ trialDays: 7 })
 		const { ws } = await waitingWorkspace()
 
