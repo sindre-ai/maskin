@@ -357,6 +357,14 @@ export function useRemoveAgentGrant(workspaceId: string, integrationId: string) 
 	)
 }
 
+export function useRemoveChatGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(grantId: string) => api.integrations.removeChatGrant(integrationId, workspaceId, grantId),
+		'Chat access removed',
+	)
+}
+
 export function useSetDefaultAgentAccess(workspaceId: string, integrationId: string) {
 	return useGrantMutation(
 		workspaceId,

@@ -198,14 +198,22 @@ describe('KeychainAccessRequestCard', () => {
 	})
 
 	it('reads as allowed for this chat only when the grant is for this conversation', () => {
-		integrations = [credential({ chatGrants: [{ actorId: AGENT, conversationId: 'conv-1' }] })]
+		integrations = [
+			credential({
+				chatGrants: [{ id: 'g-1', actorId: AGENT, conversationId: 'conv-1', expiresAt: null }],
+			}),
+		]
 		renderCard()
 		expect(screen.getByText(/in this chat only/)).toBeInTheDocument()
 	})
 
 	it('still asks in a different chat than the one an Allow was given in', () => {
 		integrations = [
-			credential({ chatGrants: [{ actorId: AGENT, conversationId: 'another-chat' }] }),
+			credential({
+				chatGrants: [
+					{ id: 'g-2', actorId: AGENT, conversationId: 'another-chat', expiresAt: null },
+				],
+			}),
 		]
 		renderCard()
 		expect(screen.getByRole('button', { name: 'Allow in this chat' })).toBeEnabled()

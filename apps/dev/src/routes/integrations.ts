@@ -22,7 +22,7 @@ import {
 	webhookConfigSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import {
@@ -199,16 +199,32 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		.where(eq(agentGrants.workspaceId, workspaceId))
 	const chatRows = await db
 		.select({
+			id: agentChatGrants.id,
 			integrationId: agentChatGrants.integrationId,
 			actorId: agentChatGrants.actorId,
 			conversationId: agentChatGrants.conversationId,
+			expiresAt: agentChatGrants.expiresAt,
 		})
 		.from(agentChatGrants)
-		.where(eq(agentChatGrants.workspaceId, workspaceId))
-	const chatsByIntegration = new Map<string, { actorId: string; conversationId: string }[]>()
+		.where(
+			and(
+				eq(agentChatGrants.workspaceId, workspaceId),
+				// Same test the access resolver uses: a timed grant stops counting at its expiry.
+				or(isNull(agentChatGrants.expiresAt), gt(agentChatGrants.expiresAt, sql`now()`)),
+			),
+		)
+	const chatsByIntegration = new Map<
+		string,
+		{ id: string; actorId: string; conversationId: string; expiresAt: Date | null }[]
+	>()
 	for (const g of chatRows) {
 		const list = chatsByIntegration.get(g.integrationId) ?? []
-		list.push({ actorId: g.actorId, conversationId: g.conversationId })
+		list.push({
+			id: g.id,
+			actorId: g.actorId,
+			conversationId: g.conversationId,
+			expiresAt: g.expiresAt,
+		})
 		chatsByIntegration.set(g.integrationId, list)
 	}
 	const grantsByIntegration = new Map<string, { actorId: string; access: AgentGrantAccess }[]>()
