@@ -28,16 +28,6 @@ import {
 	mimeTypeForFileName,
 } from '../lib/desktop-save-file-command'
 import {
-	EMPTY_EXIT_CODE,
-	NOT_ALLOWED_EXIT_CODE,
-	NOT_FOUND_EXIT_CODE,
-	SAVE_FILE_MAX_BYTES,
-	SAVE_FILE_MAX_PER_HOUR,
-	TOO_BIG_EXIT_CODE,
-	buildSaveFileCommand,
-	mimeTypeForFileName,
-} from '../lib/desktop-save-file-command'
-import {
 	DESKTOP_SETTINGS_VERSION,
 	KEYFILE_NEEDS_CHROMIUM_RESTART,
 	buildApplySettingsCommand,
