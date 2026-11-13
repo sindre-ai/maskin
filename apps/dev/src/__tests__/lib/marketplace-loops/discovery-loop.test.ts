@@ -19,14 +19,14 @@ describe('Product Discovery Loop definition', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Loop')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.1.0')
+		expect(DISCOVERY_LOOP.version).toBe('1.2.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships the CPO, the Strategist and the Product Discovery Agent with six triggers and fourteen skills', () => {
+	it('ships the CPO, the Strategist and the Product Discovery Agent with eleven triggers and sixteen skills', () => {
 		expect(DISCOVERY_ACTOR_IDS.length).toBe(3)
-		expect(DISCOVERY_TRIGGER_IDS.length).toBe(6)
-		expect(DISCOVERY_SKILL_IDS.length).toBe(14)
+		expect(DISCOVERY_TRIGGER_IDS.length).toBe(11)
+		expect(DISCOVERY_SKILL_IDS.length).toBe(16)
 		expect(new Set(DISCOVERY_ACTOR_IDS).size).toBe(DISCOVERY_ACTOR_IDS.length)
 		expect(new Set(DISCOVERY_TRIGGER_IDS).size).toBe(DISCOVERY_TRIGGER_IDS.length)
 		expect(new Set(DISCOVERY_SKILL_IDS).size).toBe(DISCOVERY_SKILL_IDS.length)
@@ -40,7 +40,7 @@ describe('Product Discovery Loop definition', () => {
 		])
 	})
 
-	it('carries the six loop triggers, each driven by the right agent', () => {
+	it('carries the eleven loop triggers, each driven by the right agent', () => {
 		const byName = Object.fromEntries(
 			DISCOVERY_TRIGGER_IDS.map((id) => {
 				const t = getTriggerData(id)
@@ -49,11 +49,18 @@ describe('Product Discovery Loop definition', () => {
 		)
 		expect(byName).toEqual({
 			'Triage new insight': DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
-			'Signal sweep (Mon, Wed, Fri 03:30 UTC)': DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
-			'Re-cluster and hand over backlog (weekdays 02:30 UTC, one batch)':
+			'Insight synthesis (Mon, Wed, Fri 03:30 UTC)': DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
+			'Insight triage backlog (weekdays 02:30 UTC, one batch)':
 				DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
-			'Weekly Discovery Digest (Mon 04:30 UTC)': DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
-			'Rolling revalidation (weekdays 05:00 UTC)': DISCOVERY_ACTOR_CPO,
+			'Weekly discovery briefing (Mon 04:30 UTC)': DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
+			'Discovery evidence base: sources, changes, gate results (Mon 04:15 UTC)':
+				DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
+			'Discovery understanding update (Sun 18:00 UTC)': DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
+			'Discovery watch: keep the understanding current (weekdays 03:00 UTC)':
+				DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT,
+			'Opportunity review (weekdays 05:00 UTC)': DISCOVERY_ACTOR_CPO,
+			'Strategy check: beliefs vs evidence (Mon 03:50 UTC)': DISCOVERY_ACTOR_CPO,
+			'Discovery strategic review, critique and grading (Sun 20:00 UTC)': DISCOVERY_ACTOR_CPO,
 			'Shape the bet': DISCOVERY_ACTOR_STRATEGIST,
 		})
 	})
@@ -73,9 +80,22 @@ describe('Product Discovery Loop definition', () => {
 			'product-operating-model',
 		]
 		expect(skillNamesFor(DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT)).toEqual(
-			[...shared, 'insight-triage', 'loop-briefing-standard'].sort(),
+			[
+				...shared,
+				'drive-to-outcome',
+				'insight-triage',
+				'loop-briefing-standard',
+				'product-discovery-intelligence',
+			].sort(),
 		)
-		expect(skillNamesFor(DISCOVERY_ACTOR_CPO)).toEqual([...shared, 'loop-briefing-standard'].sort())
+		expect(skillNamesFor(DISCOVERY_ACTOR_CPO)).toEqual(
+			[
+				...shared,
+				'drive-to-outcome',
+				'loop-briefing-standard',
+				'product-discovery-intelligence',
+			].sort(),
+		)
 		expect(skillNamesFor(DISCOVERY_ACTOR_STRATEGIST)).toEqual(
 			[
 				...shared,
