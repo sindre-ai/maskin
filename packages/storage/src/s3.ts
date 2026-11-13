@@ -115,6 +115,18 @@ export class S3StorageProvider implements StorageProvider {
 		return Buffer.from(bytes)
 	}
 
+	async getStream(key: string): Promise<Readable> {
+		const response = await this.client.send(
+			new GetObjectCommand({
+				Bucket: this.bucket,
+				Key: key,
+			}),
+		)
+		// In Node the SDK's Body is the response's IncomingMessage, a Readable.
+		if (!(response.Body instanceof Readable)) throw new Error(`Empty response for key: ${key}`)
+		return response.Body
+	}
+
 	async list(prefix: string): Promise<string[]> {
 		const keys: string[] = []
 		let continuationToken: string | undefined
@@ -244,6 +256,16 @@ export class S3StorageProvider implements StorageProvider {
 				ResponseContentDisposition: options.contentDisposition,
 			}),
 			{ expiresIn: options.expiresInSeconds },
+		)
+	}
+
+	presignUpload(key: string, expiresInSeconds: number): Promise<string> {
+		return getSignedUrl(
+			this.presignClient,
+			new PutObjectCommand({ Bucket: this.bucket, Key: key }),
+			{
+				expiresIn: expiresInSeconds,
+			},
 		)
 	}
 

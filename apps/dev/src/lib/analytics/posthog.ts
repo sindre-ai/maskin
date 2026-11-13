@@ -5,7 +5,13 @@ import { featureAreaForEvent } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { logger } from '../logger'
 import { admitPosthogEvent } from './event-budget'
-import { __resetTeamMemberForTesting, configureTeamMember, isTeamActor } from './team-member'
+import { isPayingWorkspace } from './paying-workspace'
+import {
+	__resetTeamMemberForTesting,
+	configureTeamMember,
+	isInternalWorkspace,
+	isTeamActor,
+} from './team-member'
 
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const CAPTURE_TIMEOUT_MS = 2_000
@@ -21,6 +27,9 @@ export type PosthogEventProps = Record<
 export interface WorkspacePrivacy {
 	shareUsage: boolean
 	anonymize: boolean
+	// Whether the workspace has an active paid plan. Read in the same row as the
+	// privacy settings, so it costs no extra query.
+	paying: boolean
 }
 
 // How long a workspace's privacy read is reused. Short enough that flipping the
@@ -73,6 +82,7 @@ export function configurePosthogPrivacy(db: Database): void {
 		return {
 			shareUsage: privacy?.share_usage !== false,
 			anonymize: privacy?.anonymize_workspace === true,
+			paying: isPayingWorkspace(row.settings),
 		}
 	}
 	actorTypeCache.clear()
@@ -209,6 +219,13 @@ export function warnIfPosthogKeyUnset(): void {
 	logger.warn('POSTHOG_API_KEY is unset in production — all backend analytics events are dropped')
 }
 
+export interface CaptureOptions {
+	/** Where the action happened, for events the server sends on a client's behalf. Default 'backend'. */
+	surface?: 'backend' | 'iphone'
+	/** When the action happened, if not now (a client that queued the event offline). */
+	timestamp?: Date
+}
+
 /**
  * Best-effort PostHog capture from the backend.
  *
@@ -229,7 +246,10 @@ export function warnIfPosthogKeyUnset(): void {
  *
  * Shared properties: every event carries `surface: 'backend'`, an `actor_type`
  * (human, agent, trigger or system) and `is_team` (a plain boolean, true only for
- * a human member of our own workspace, see `team-member.ts`). Events whose actor
+ * a human member of our own workspace, see `team-member.ts`). It also carries two
+ * plain booleans about the workspace: `internal` (the workspace is one of ours) and
+ * `paying` (it has an active paid plan). An event with no `workspace_id`, or whose
+ * workspace cannot be read, is sent with both false. Events whose actor
  * is not a human are sent with the person-profile flag off, so only people get a
  * profile. An event with a `workspace_id` is attached to that workspace's `workspace`
  * group, and one that belongs to a product area (see `featureAreaForEvent`) carries
@@ -244,6 +264,7 @@ export async function capturePosthogEvent(
 	event: string,
 	distinctId: string,
 	properties: PosthogEventProps,
+	options: CaptureOptions = {},
 ): Promise<void> {
 	const apiKey = process.env.POSTHOG_API_KEY?.trim()
 	if (!apiKey) {
@@ -265,6 +286,7 @@ export async function capturePosthogEvent(
 	const host = process.env.POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST
 
 	let outId = distinctId
+	let paying = false
 	let outProps: PosthogEventProps = admission.sampleRate
 		? { ...properties, sample_rate: admission.sampleRate }
 		: properties
@@ -276,6 +298,7 @@ export async function capturePosthogEvent(
 				logger.debug('PostHog capture skipped — workspace share-usage is off', { event })
 				return
 			}
+			paying = privacy.paying
 			if (privacy.anonymize) {
 				outId = hashDistinctId(distinctId)
 				outProps = stripIdentifiers(outProps)
@@ -294,9 +317,13 @@ export async function capturePosthogEvent(
 	const actorType = await resolveActorType(event, distinctId, properties)
 	outProps = {
 		...outProps,
-		surface: 'backend',
+		surface: options.surface ?? 'backend',
 		actor_type: actorType,
 		is_team: await isTeamActor(distinctId, actorType),
+		internal: isInternalWorkspace(
+			typeof properties.workspace_id === 'string' ? properties.workspace_id : null,
+		),
+		paying,
 		...sharedAccountProperties(event, properties),
 		...(actorType === 'human' ? {} : { $process_person_profile: false }),
 	}
@@ -306,7 +333,7 @@ export async function capturePosthogEvent(
 		event,
 		distinct_id: outId,
 		properties: outProps,
-		timestamp: new Date().toISOString(),
+		timestamp: (options.timestamp ?? new Date()).toISOString(),
 	}
 
 	try {

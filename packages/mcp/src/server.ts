@@ -60,7 +60,7 @@ import {
 	statusFilterParam,
 } from './list-contract.js'
 import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
-import { buildListPayload, listText } from './list-response.js'
+import { buildListPayload, listPageText, listText } from './list-response.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -3477,7 +3477,13 @@ async function listObjectsPage(
 		content: [
 			{
 				type: 'text' as const,
-				text: buildListContentText(rows),
+				text: listPageText({
+					key: 'objects',
+					rows,
+					limit: pagination.limit,
+					nextCursor,
+					total,
+				}),
 			},
 		],
 		structuredContent: {
@@ -3516,9 +3522,17 @@ async function listObjectsPage(
 }
 
 // Tools whose schema rejects a top-level argument name it does not know instead
-// of stripping it. Only tools where a dropped list reads as a finished write;
-// other tools keep stripping, since agents often send harmless extra keys.
-const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+// of stripping it, each with the closing sentence of the refusal. Only tools where a
+// dropped key reads as a finished call: a dropped list on a write, or a dropped filter
+// on query_data that returns a plausible but wrong total. Other tools keep stripping,
+// since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
+	['update_objects', 'Nothing was written.'],
+	[
+		'query_data',
+		'It takes no SQL. Example: query_data({ type: "task", filters: { status: "done" }, group_by: "created_at.day" }).',
+	],
+])
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
@@ -3609,6 +3623,7 @@ export function createMcpServer(config: McpConfig) {
 							},
 							{
 								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
+								unknownKeysSuffix: REJECT_UNKNOWN_KEYS_TOOLS.get(name),
 								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
 							},
 						),
@@ -4796,7 +4811,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'relationships',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6165,7 +6186,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'files',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6292,6 +6319,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'transcribe_file',
+		{
+			description: tools.transcribe_file.description,
+			inputSchema: tools.transcribe_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/transcriptions/files/${args.id}`,
+				args.language !== undefined ? { language: args.language } : {},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('transcribe_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_file',
 		{
 			description: tools.update_file.description,
@@ -6392,7 +6443,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'events',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					events: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6427,7 +6489,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'comments',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					comments: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6630,7 +6703,18 @@ export function createMcpServer(config: McpConfig) {
 					: null
 			return {
 				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'chats',
+							rows: chats,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					chats,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -10593,6 +10677,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_save_file',
+		{
+			description: tools.desktop_save_file.description,
+			inputSchema: tools.desktop_save_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/save-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_save_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

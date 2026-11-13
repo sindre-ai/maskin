@@ -22,6 +22,11 @@ export interface PresignDownloadOptions {
 export interface StorageProvider {
 	put(key: string, data: Buffer | Uint8Array | Readable, options?: PutOptions): Promise<void>
 	get(key: string): Promise<Buffer>
+	/**
+	 * The object as a stream, for bytes too large to hold in memory (video sent
+	 * through ffmpeg). The caller must consume or destroy it.
+	 */
+	getStream(key: string): Promise<Readable>
 	list(prefix: string): Promise<string[]>
 	listWithMetadata(prefix: string): Promise<{ key: string; size: number }[]>
 	delete(key: string): Promise<void>
@@ -47,4 +52,9 @@ export interface StorageProvider {
 	/** Size of the stored object, or null when it does not exist. */
 	headObject(key: string): Promise<{ size: number } | null>
 	presignDownload(key: string, options: PresignDownloadOptions): Promise<string>
+	/**
+	 * URL a machine PUTs a whole object to in one request (no multipart). Signs the key only:
+	 * the PUT may carry any content type, so the caller checks the stored size afterwards.
+	 */
+	presignUpload(key: string, expiresInSeconds: number): Promise<string>
 }

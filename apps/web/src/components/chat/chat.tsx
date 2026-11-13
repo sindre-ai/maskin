@@ -159,6 +159,8 @@ export interface ComposerProps {
 	conversationParticipantIds?: string[]
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
+	/** Sit at the left edge of the column instead of centred in it. */
+	alignStart?: boolean
 	/** Optional controlled draft. Supply both to let a caller prefill the
 	 *  composer (the chats zero-state suggestion rows); omit both to keep the
 	 *  composer's own internal state. */
@@ -328,6 +330,7 @@ export function Composer({
 	hint,
 	conversationParticipantIds,
 	textareaLabel,
+	alignStart,
 	value: controlledValue,
 	onValueChange,
 	draftKey,
@@ -1172,7 +1175,8 @@ export function Composer({
 	return (
 		<div
 			className={cn(
-				'relative mx-auto flex w-full max-w-[860px] flex-col gap-2',
+				'relative flex w-full max-w-[860px] flex-col gap-2',
+				!alignStart && 'mx-auto',
 				// The secret and vault cards keep a box of their own; the bar is the box otherwise.
 				(secretFlow || vaultFlow) &&
 					'rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
