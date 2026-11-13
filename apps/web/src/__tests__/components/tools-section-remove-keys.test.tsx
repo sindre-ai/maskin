@@ -30,12 +30,12 @@ vi.mock('@/components/integrations/tool-server-access', () => ({
 	ToolServerAccess: () => null,
 }))
 
-// The server row is a collapsed card: its buttons only render once the header is opened.
+// The server row is collapsed until its header is pressed; the bin button is inside it.
 const renderOpenRow = async () => {
 	render(<ToolsSection workspaceId="ws-1" />, {
 		wrapper: createWorkspaceWrapper({ role: 'owner' }),
 	})
-	await userEvent.click(screen.getByRole('button', { name: 'Docs server', expanded: false }))
+	await userEvent.click(screen.getByRole('button', { name: 'Docs server' }))
 }
 
 describe('removing a custom MCP server from the keyboard', () => {
