@@ -15,6 +15,7 @@ vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', ty
 vi.mock('@/lib/api', () => ({
 	api: {
 		conversations: { list: vi.fn(), replyThreads: vi.fn(), messages: vi.fn(), updateMe: vi.fn() },
+		search: { query: vi.fn() },
 	},
 }))
 
@@ -23,6 +24,16 @@ vi.mock('sonner', () => ({ toast: { error: toastError, success: vi.fn() } }))
 
 import { ConversationList } from '@/components/chat/conversation-list'
 import { api } from '@/lib/api'
+
+const { trackOpened, trackSearch } = vi.hoisted(() => ({
+	trackOpened: vi.fn(),
+	trackSearch: vi.fn(),
+}))
+vi.mock('@/lib/analytics', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/lib/analytics')>()),
+	trackChatOpenedFromList: trackOpened,
+	trackChatListSearchUsed: trackSearch,
+}))
 
 function buildConversation(
 	overrides: Partial<ConversationListItemResponse> = {},
@@ -114,6 +125,28 @@ describe('ConversationList', () => {
 		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
 		expect(calls).toContainEqual(expect.objectContaining({ scope: 'recent', limit: '20' }))
 		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', offset: '100' }))
+	})
+
+	it('asks the server to leave out empty agent DMs, retired agents and quiet topic chats', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a' })] })
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await screen.findByText('Earlier')
+
+		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', hide_quiet: 'true' }))
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'recent', hide_quiet: 'true' }))
+	})
+
+	it('does not apply the listing rules to the Archived filter', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a' })],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" filter="archived" />, { wrapper: TestWrapper })
+		await screen.findByText('Archived')
+
+		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
+		expect(calls.every((q) => q?.hide_quiet === undefined)).toBe(true)
 	})
 
 	it('hides the end-of-history line while more pages remain', async () => {
@@ -437,5 +470,164 @@ describe('ConversationList collapse', () => {
 		await userEvent.click(header)
 		expect(screen.queryAllByRole('link')).toHaveLength(0)
 		vi.unstubAllGlobals()
+	})
+	describe('tracking', () => {
+		beforeEach(() => {
+			trackOpened.mockClear()
+			trackSearch.mockClear()
+		})
+
+		it('reports the section and place of a row opened from the list', async () => {
+			mockScopedList({
+				priority: [
+					buildConversation({ id: 'p', title: 'Pinned one', pinned: true }),
+					buildConversation({ id: 'u', title: 'Unread one', unread_count: 2 }),
+				],
+				recent: [buildConversation({ id: 'r', title: 'Recent one' })],
+			})
+			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Unread one'))
+			await userEvent.click(screen.getByText('Recent one'))
+
+			expect(trackOpened).toHaveBeenNthCalledWith(1, {
+				source: 'list',
+				section: 'unread',
+				position: 2,
+			})
+			expect(trackOpened).toHaveBeenNthCalledWith(2, {
+				source: 'list',
+				section: 'recent',
+				position: 3,
+			})
+		})
+	})
+})
+
+describe('ConversationList search', () => {
+	beforeEach(() => {
+		vi.mocked(api.conversations.list).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
+		vi.mocked(api.search.query).mockReset()
+	})
+
+	function searchRow(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'old-1',
+			group: 'chats',
+			type: 'chat',
+			title: 'Invoice export',
+			sub: 'Developer, Me',
+			snippet: 'the csv export times out',
+			status: 'archived',
+			statusGroup: 'archived',
+			updatedAt: '2026-09-01T10:00:00.000Z',
+			...overrides,
+		}
+	}
+
+	function answer(results: unknown[]) {
+		vi.mocked(api.search.query).mockResolvedValue({
+			results,
+			total: results.length,
+			capped: false,
+			facets: { types: {}, statuses: {} },
+			relaxed: { withoutFilters: 0, withoutStatuses: 0 },
+			partial: [],
+		} as never)
+	}
+
+	it('asks the server for chats and shows an archived hit that the list never loaded', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a', title: 'Billing retries' })] })
+		answer([searchRow()])
+		render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
+		expect(api.search.query).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({
+				q: 'csv',
+				types: 'chat',
+				statuses: 'needs_you,in_progress,new,done,archived',
+			}),
+			expect.anything(),
+		)
+		expect(screen.getByText('Archived')).toBeInTheDocument()
+		expect(screen.getByText('csv', { selector: 'mark' })).toBeInTheDocument()
+		// The grouped list steps aside while words are typed.
+		expect(screen.queryByText('Billing retries')).not.toBeInTheDocument()
+	})
+
+	it('leaves the chip off a chat that is not archived and is in the list', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'old-1', title: 'Invoice export' })] })
+		answer([searchRow({ status: 'read', statusGroup: 'done' })])
+		render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
+		expect(screen.queryByText('Archived')).not.toBeInTheDocument()
+	})
+
+	it('says so when no chat matches', async () => {
+		mockScopedList({ recent: [] })
+		answer([])
+		render(<ConversationList workspaceId="ws-1" query="zzz" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('No chats found')).toBeInTheDocument()
+	})
+
+	describe('tracking', () => {
+		beforeEach(() => {
+			trackOpened.mockClear()
+			trackSearch.mockClear()
+		})
+
+		it('reports a hit opened from search at its place among the hits, loaded or not', async () => {
+			mockScopedList({ recent: [buildConversation({ id: 'b', title: 'Dictation notes' })] })
+			answer([
+				searchRow({ id: 'a', title: 'Invoice export' }),
+				searchRow({ id: 'b', title: 'Dictation notes', status: 'read', statusGroup: 'done' }),
+			])
+			render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Dictation notes'))
+			await userEvent.click(screen.getByText('Invoice export'))
+
+			expect(trackOpened).toHaveBeenNthCalledWith(1, {
+				source: 'search',
+				section: 'search',
+				position: 2,
+			})
+			expect(trackOpened).toHaveBeenNthCalledWith(2, {
+				source: 'search',
+				section: 'search',
+				position: 1,
+			})
+		})
+
+		it('reports a settled search once, with the number of hits the server found', async () => {
+			mockScopedList({ recent: [buildConversation({ id: 'a', title: 'Billing retries' })] })
+			answer([
+				searchRow({ id: 'x', title: 'Invoice export' }),
+				searchRow({ id: 'y', title: 'Invoice review' }),
+				searchRow({ id: 'z', title: 'Invoice notes' }),
+			])
+			vi.useFakeTimers({ shouldAdvanceTime: true })
+			try {
+				render(<ConversationList workspaceId="ws-1" query="invoice" />, { wrapper: TestWrapper })
+				// The typed word is highlighted, which splits each title, so wait on the rows themselves.
+				await waitFor(() => expect(screen.getAllByRole('link')).toHaveLength(3))
+				expect(trackSearch).not.toHaveBeenCalled()
+
+				await act(async () => {
+					vi.advanceTimersByTime(1100)
+				})
+				expect(trackSearch).toHaveBeenCalledTimes(1)
+				// The loaded list holds one chat; the count is the hits, not that list.
+				expect(trackSearch).toHaveBeenCalledWith({ result_count: 3 })
+			} finally {
+				vi.useRealTimers()
+			}
+		})
 	})
 })
