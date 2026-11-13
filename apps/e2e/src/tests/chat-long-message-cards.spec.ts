@@ -35,7 +35,9 @@ const CASES: Expected[] = [
 	// All six links sit in a sentence or a bullet: the first bet gets a text card under the message
 	// and its link stays a chip too (only a draft's link goes plain), so all six are chips.
 	{ message: LONG_AGENT_MESSAGES[0], cards: 1, chips: 6 },
-	{ message: LONG_AGENT_MESSAGES[1], cards: 1, chips: 6 },
+	// The first task in the table gets the text card under the message, and the bet alone on its
+	// line is a card in place: two cards. Every link but the bet stays a chip, the task's included.
+	{ message: LONG_AGENT_MESSAGES[1], cards: 2, chips: 6 },
 	{ message: LONG_AGENT_MESSAGES[2], cards: 3, chips: 7 },
 	{ message: PROTOTYPE_LONG_MESSAGE, cards: 3, chips: 4 },
 ]
