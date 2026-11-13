@@ -39,7 +39,9 @@ function ResetPasswordPage() {
 	const [loading, setLoading] = useState(false)
 
 	useEffect(() => {
-		if (urlToken) void navigate({ to: '/reset-password', search: {}, replace: true })
+		if (urlToken) {
+			void navigate({ to: '/reset-password', search: { token: undefined }, replace: true })
+		}
 	}, [urlToken, navigate])
 
 	const handleSubmit = async (e: React.FormEvent) => {
