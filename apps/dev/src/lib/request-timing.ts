@@ -25,6 +25,14 @@ import type { RouteTimingSink } from './route-timing-store'
  * fixed list (`resolveClientSourceLabel`): ui (web), ios, mcp (agents), other, none (no header).
  * The raw header is never stored or logged.
  *
+ * Each bucket is also split by the app build that sent the request (`X-Client-Build`, the iOS
+ * build number). Only 1 to 12 digits are kept; anything else, and every request without the
+ * header (web, agents), counts under an empty build. The raw header is never stored or logged.
+ *
+ * And by the app release that sent it (`X-Client-Version`, the iOS marketing version such as 1.2).
+ * Only digits and dots, 1 to 12 characters, are kept; anything else counts under an empty version.
+ * The raw header is never stored or logged.
+ *
  * Open streams are counted next to that (`api_open_streams`): one line when a stream connects and
  * one when it disconnects, each with the number open afterwards, plus one `window` line per route
  * per minute with the open count at the flush and the peak seen during that minute. Counts only,
@@ -38,6 +46,8 @@ const FLUSH_INTERVAL_MS = 60_000
 const SLOW_REQUEST_MS = 1_000
 const SLOW_DB_MS = 500
 const SKIPPED_PATHS = new Set(['/api/health', '/api/health/db'])
+const CLIENT_BUILD_PATTERN = /^\d{1,12}$/
+const CLIENT_VERSION_PATTERN = /^[0-9.]{1,12}$/
 
 /** Who sent a request, as kept in the counts. `none` is a request with no `X-Client-Source`. */
 export type ClientSourceLabel = 'ui' | 'ios' | 'mcp' | 'other' | 'none'
@@ -83,7 +93,14 @@ interface StreamGauge {
 const requestStore = new AsyncLocalStorage<RequestTiming>()
 const buckets = new Map<
 	string,
-	Bucket & { method: string; route: string; stream: boolean; clientSource: ClientSourceLabel }
+	Bucket & {
+		method: string
+		route: string
+		stream: boolean
+		clientSource: ClientSourceLabel
+		clientBuild: string
+		clientVersion: string
+	}
 >()
 const streamGauges = new Map<string, StreamGauge>()
 let flushTimer: ReturnType<typeof setInterval> | undefined
@@ -92,6 +109,16 @@ let sink: RouteTimingSink | undefined
 /** Called once with the flushed buckets of each minute. Pass undefined to stop. */
 export function setRouteTimingSink(next: RouteTimingSink | undefined): void {
 	sink = next
+}
+
+/** The iOS build number from `X-Client-Build`, or '' when absent or not 1 to 12 digits. */
+export function parseClientBuild(header: string | undefined | null): string {
+	return header && CLIENT_BUILD_PATTERN.test(header) ? header : ''
+}
+
+/** The app release from `X-Client-Version`, or '' when absent or not 1 to 12 digits and dots. */
+export function parseClientVersion(header: string | undefined | null): string {
+	return header && CLIENT_VERSION_PATTERN.test(header) ? header : ''
 }
 
 /** Passed to `createDb` as `onQuery`. A no-op for queries outside a request. */
@@ -116,10 +143,12 @@ function record(
 	status: number,
 	stream: boolean,
 	clientSource: ClientSourceLabel,
+	clientBuild: string,
+	clientVersion: string,
 	totalMs: number,
 	timing: RequestTiming,
 ) {
-	const key = `${method} ${route} ${stream} ${clientSource}`
+	const key = `${method} ${route} ${stream} ${clientSource} ${clientBuild} ${clientVersion}`
 	let bucket = buckets.get(key)
 	if (!bucket) {
 		bucket = {
@@ -127,6 +156,8 @@ function record(
 			route,
 			stream,
 			clientSource,
+			clientBuild,
+			clientVersion,
 			requests: 0,
 			errors5xx: 0,
 			totalMs: 0,
@@ -215,6 +246,8 @@ export function flushRouteTiming(): void {
 					route: b.route,
 					stream: b.stream,
 					clientSource: b.clientSource,
+					clientBuild: b.clientBuild,
+					clientVersion: b.clientVersion,
 					requests: b.requests,
 					slowRequests: b.slow,
 					errors5xx: b.errors5xx,
@@ -261,6 +294,8 @@ export function requestTiming(): MiddlewareHandler {
 
 		const timing: RequestTiming = { dbMs: 0, dbQueries: 0 }
 		const clientSource = resolveClientSourceLabel(c.req.header('x-client-source'))
+		const clientBuild = parseClientBuild(c.req.header('x-client-build'))
+		const clientVersion = parseClientVersion(c.req.header('x-client-version'))
 		const start = performance.now()
 		await requestStore.run(timing, next)
 
@@ -271,13 +306,33 @@ export function requestTiming(): MiddlewareHandler {
 		const status = c.res.status
 		const stream = c.res.headers.get('content-type')?.startsWith('text/event-stream') ?? false
 		if (!stream) {
-			record(method, route, status, false, clientSource, performance.now() - start, timing)
+			record(
+				method,
+				route,
+				status,
+				false,
+				clientSource,
+				clientBuild,
+				clientVersion,
+				performance.now() - start,
+				timing,
+			)
 			return
 		}
 
 		const signal = c.req.raw.signal
 		const finish = () =>
-			record(method, route, status, true, clientSource, performance.now() - start, timing)
+			record(
+				method,
+				route,
+				status,
+				true,
+				clientSource,
+				clientBuild,
+				clientVersion,
+				performance.now() - start,
+				timing,
+			)
 		if (signal.aborted) {
 			finish()
 			return

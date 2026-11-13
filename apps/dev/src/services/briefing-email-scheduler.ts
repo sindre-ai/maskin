@@ -41,7 +41,8 @@
  * not. The week is claimed together with the mail and released with it.
  *
  * Production without a Resend key, APP_URL or stop-link secret: log and skip, nothing is claimed.
- * Killswitch env FEATURE_BRIEFING_EMAIL=0 skips the tick. The push is not affected.
+ * Killswitch env FEATURE_BRIEFING_EMAIL skips the tick: in production unless it is exactly 1,
+ * elsewhere when it is 0. The push is not affected.
  */
 import type { Database } from '@maskin/db'
 import { actors, objects, workspaceMembers } from '@maskin/db/schema'
@@ -61,6 +62,14 @@ import { loadMarketplacePick, pickWeekOpen } from './marketplace-pick'
 
 const TICK_MS = 60_000
 export const EMAIL_KILLSWITCH_ENV_VAR = 'FEATURE_BRIEFING_EMAIL'
+/**
+ * True when the email switch stops sending. In production only an exact "1" sends, so an unset or
+ * empty value sends nothing; elsewhere only an exact "0" stops it, so tests and local runs send.
+ */
+export function emailSwitchedOff(env: NodeJS.ProcessEnv): boolean {
+	if (env.NODE_ENV === 'production') return env[EMAIL_KILLSWITCH_ENV_VAR] !== '1'
+	return env[EMAIL_KILLSWITCH_ENV_VAR] === '0'
+}
 /** How long after the send time a late tick may still send the "morning" mail. */
 export const EMAIL_CATCH_UP_WINDOW_MINUTES = 180
 /** Send time for a person with no stored timezone: 08:00 UTC. */
@@ -281,7 +290,7 @@ export class BriefingEmailScheduler {
 	/** Public for test injection; returns how many emails this tick sent. */
 	async tick(now: Date = new Date()): Promise<number> {
 		if (this.running) return 0
-		if (this.env[EMAIL_KILLSWITCH_ENV_VAR] === '0') return 0
+		if (emailSwitchedOff(this.env)) return 0
 		if (this.env.NODE_ENV === 'production' && !this.productionReady(now)) return 0
 		this.running = true
 		let sent = 0

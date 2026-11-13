@@ -2275,6 +2275,8 @@ export interface UpdateObjectInput {
 	driver?: string | null
 	/** A status change made from a chat card: the server tells the agent behind it. */
 	chat?: ChatCardRef
+	/** Apply only if the object is still in this status; if it moved on, nothing is written and the answer is a 409. */
+	expected_status?: string
 }
 
 /** The chat a card sits in and the agent whose message holds it. */

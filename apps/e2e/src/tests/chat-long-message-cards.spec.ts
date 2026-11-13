@@ -32,8 +32,12 @@ interface Expected {
 }
 
 const CASES: Expected[] = [
-	{ message: LONG_AGENT_MESSAGES[0], cards: 0, chips: 6 },
-	{ message: LONG_AGENT_MESSAGES[1], cards: 1, chips: 6 },
+	// All six links sit in a sentence or a bullet: the first bet gets a text card under the message
+	// and its link stays a chip too (only a draft's link goes plain), so all six are chips.
+	{ message: LONG_AGENT_MESSAGES[0], cards: 1, chips: 6 },
+	// The first task in the table gets the text card under the message, and the bet alone on its
+	// line is a card in place: two cards. Every link but the bet stays a chip, the task's included.
+	{ message: LONG_AGENT_MESSAGES[1], cards: 2, chips: 6 },
 	{ message: LONG_AGENT_MESSAGES[2], cards: 3, chips: 7 },
 	{ message: PROTOTYPE_LONG_MESSAGE, cards: 3, chips: 4 },
 ]
@@ -189,12 +193,14 @@ test.describe('Chat — a long agent message with many links stays readable', ()
 			await expect(list.locator('[data-linked-card]')).toHaveCount(10, { timeout: 15_000 })
 			const inDrawer = list.locator('[data-linked-card]', { hasText: 'North pier signup flow' })
 			await expect(inDrawer).toHaveCount(1)
-			// Same type, status, title and text (the "Updated" time may read differently).
+			// Same type, status and title (the "Updated" time may read differently).
 			// The type eyebrow is drawn in capitals ("BET"), so compare without case.
 			for (const part of ['Bet', 'active', 'North pier signup flow']) {
 				expect(threadText.toLowerCase()).toContain(part.toLowerCase())
 				await expect(inDrawer).toContainText(new RegExp(part, 'i'))
 			}
+			// A bet's text card starts contracted; its text shows once the top of the card is opened.
+			await inDrawer.getByText('North pier signup flow').click()
 			await expect(inDrawer).toContainText('New people reach their first chat in under two minutes')
 			expect(await innerScrollers(page, '[data-linked-id] [data-linked-card]')).toEqual([])
 			await expectNoSidewaysScroll(page, `drawer @ ${vp.width}`, DRAWER_LIST)

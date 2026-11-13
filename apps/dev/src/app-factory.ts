@@ -77,6 +77,7 @@ import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
+import integrationsMicrosoftMcpRoutes from './routes/integrations-microsoft-mcp'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
@@ -128,6 +129,8 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		/** The session a session key was minted for; null for any other key. Set by auth. */
+		apiKeySessionId?: string | null
 		/**
 		 * The originating session's id, when the request carried a well-formed
 		 * `X-Maskin-Session-Id` header (S2 writer hook). Undefined for human
@@ -569,6 +572,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
+	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)

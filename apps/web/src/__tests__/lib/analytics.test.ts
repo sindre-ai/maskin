@@ -36,6 +36,7 @@ import {
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackKnowledgePageViewed,
+	trackLoopViewCardAction,
 	trackLoopViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
@@ -593,6 +594,28 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
+	it('trackLoopViewCardAction sends the surface, the actor type, the action and ids only', () => {
+		const capture = captureSpy()
+
+		trackLoopViewCardAction({
+			entity_id: 'o-1',
+			object_type: 'bet',
+			loop_id: 'l-1',
+			action: 'status_change',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_view_card_action', {
+			entity_id: 'o-1',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			surface: 'loop_view',
+			actor_type: 'human',
+			action: 'status_change',
+			object_type: 'bet',
+			loop_id: 'l-1',
+		})
+	})
 	it('loop_viewed and agent_opened carry their feature area', () => {
 		const capture = captureSpy()
 

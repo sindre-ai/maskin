@@ -431,12 +431,15 @@ function ChatConversationList({
 
 	// Scroll-near-the-bottom auto-loads the next page (mockup 545–547) instead
 	// of the old manual "Load older" button.
-	const sentinelRef = useRef<HTMLDivElement | null>(null)
+	// The sentinel only exists once the skeleton is gone, so it is held in state: the effect
+	// then re-runs when the marker mounts, whatever else did or did not change in that render.
+	const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null)
+	const scrollRef = useRef<HTMLDivElement | null>(null)
 	const loadNextPage = useCallback(() => {
 		fetchNextPage()
 	}, [fetchNextPage])
 	useEffect(() => {
-		const el = sentinelRef.current
+		const el = sentinel
 		// Stand down after a failed page: the sentinel is still on screen, so
 		// re-observing would refire the same request in a tight loop. The manual
 		// "Try again" below is the only way back in.
@@ -449,15 +452,16 @@ function ChatConversationList({
 			(entries) => {
 				if (entries.some((e) => e.isIntersecting)) loadNextPage()
 			},
-			{ rootMargin: '200px' },
+			// Measure against the list's own scroll box, not the page, so the 200px lead-in is real.
+			{ root: scrollRef.current, rootMargin: '200px' },
 		)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage, allCollapsed])
+	}, [sentinel, hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage, allCollapsed])
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
-			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
+			<div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
 				<div className={cn('w-full', expanded && 'mx-auto max-w-[900px]')}>
 					{needle ? (
 						<ConversationSearchResults
@@ -592,7 +596,7 @@ function ChatConversationList({
 								// The sentinel is the loader; its label only claims to be
 								// loading while a page is actually in flight (mockup 545–549).
 								<div
-									ref={sentinelRef}
+									ref={setSentinel}
 									className="flex items-center justify-center gap-2 px-3 pt-4 pb-2.5 text-[11px] text-muted-foreground"
 								>
 									{isFetchingNextPage ? (
