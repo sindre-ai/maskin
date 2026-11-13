@@ -119,7 +119,7 @@ describe('useWorkspaceAnalytics', () => {
 
 	it('starts the question when the flag arrives late, without sending identify again', async () => {
 		const { rerender } = renderHook((props) => useWorkspaceAnalytics(props), {
-			initialProps: base,
+			initialProps: { ...base, npsSurveyDue: false },
 		})
 		await vi.waitFor(() => expect(mocks.trackAppActive).toHaveBeenCalledTimes(1))
 		rerender({ ...base, npsSurveyDue: true })
