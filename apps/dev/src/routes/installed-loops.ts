@@ -37,6 +37,7 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { loopSettingsForInstall, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -237,9 +238,9 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 // in packages/db/src/schema.ts. `metadata.trigger_ids` is seeded with every
 // trigger this install provisions so `GET /api/loops` picks up the right
 // agents (it derives `agentIds` from each trigger's `targetActorId`).
-// `entry_condition` / `close_condition` are deliberately left unset — a
-// marketplace install has no authored pipeline definition, only the running
-// process.
+// The loop object also gets the entry condition, close condition, tags and
+// starter targets the marketplace loop ships (`loop_settings`), so the loop page
+// matches the publisher's. A loop that ships none leaves them unset.
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
@@ -554,6 +555,7 @@ app.openapi(installLoopRoute, async (c) => {
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,
 						trigger_ids: provisionedTriggerIds,
+						...loopSettingsForInstall(readLoopSettings(loop.loopSettings)),
 					},
 				})
 				.returning()
