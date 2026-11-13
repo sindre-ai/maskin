@@ -4,6 +4,7 @@ import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { recordReading } from '../../lib/readings'
 import {
 	ensureWorkspaceMember,
 	insertActor,
@@ -296,6 +297,243 @@ describe('Loops read API integration', () => {
 		expect(row.targets?.[0]?.label).toBe('Posts published')
 		expect(row.targets?.[0]?.ownerActorId).toBe(ownerActorId)
 		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
+	})
+
+	describe('flow targets from target objects', () => {
+		type TargetsBody = {
+			loops: Array<{
+				id: string
+				targets: Array<{
+					label: string
+					source: string
+					actual: number
+					target: number
+					ownerActorId?: string
+					pace_policy?: string
+				}> | null
+			}>
+		}
+
+		async function targetOf(loopId: string, overrides: Record<string, unknown>) {
+			const target = await insertObject(db, workspaceId, actorId, {
+				type: 'target',
+				status: 'open',
+				...overrides,
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: target.id,
+				targetType: 'object',
+				targetId: loopId,
+				type: 'target_of',
+			})
+			return target
+		}
+
+		async function listTargets(loopId: string) {
+			const res = await makeApp(actorId).request(
+				jsonGet(`/api/loops?id=${loopId}`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			return ((await res.json()) as TargetsBody).loops[0]?.targets
+		}
+
+		it('returns the same fields as an old row, taken from the linked target objects', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+			await targetOf(loop.id, {
+				title: 'Posts published',
+				driver: actorId,
+				metadata: { source: 'metric:posts.published', actual: 6, target: 8 },
+			})
+
+			expect(await listTargets(loop.id)).toEqual([
+				{
+					label: 'Posts published',
+					source: 'metric:posts.published',
+					actual: 6,
+					target: 8,
+					ownerActorId: actorId,
+				},
+			])
+		})
+
+		it('prefers target objects over old rows, and hides dropped targets', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'Flow',
+				metadata: {
+					targets: [{ label: 'Old row', source: 'old', actual: 1, target: 2 }],
+				},
+			})
+			await targetOf(loop.id, {
+				title: 'Kept',
+				metadata: { source: 'kept', actual: 3, target: 4 },
+			})
+			await targetOf(loop.id, {
+				title: 'Dropped',
+				status: 'dropped',
+				metadata: { source: 'dropped', actual: 5, target: 6 },
+			})
+
+			const targets = await listTargets(loop.id)
+			expect(targets?.map((t) => t.label)).toEqual(['Kept'])
+		})
+
+		it('keeps the hand-set actual of the old row when the object has none', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'Flow',
+				metadata: {
+					targets: [
+						{
+							label: 'Replies sent',
+							source: 'replies',
+							actual: 7,
+							target: 10,
+							pace_policy: 'strict',
+						},
+					],
+				},
+			})
+			await targetOf(loop.id, {
+				title: 'Replies sent',
+				metadata: { source: 'replies', target: 12 },
+			})
+
+			const [row] = (await listTargets(loop.id)) ?? []
+			expect(row).toMatchObject({ actual: 7, target: 12, pace_policy: 'strict' })
+		})
+
+		it('falls back to the old rows for a flow with no target objects, per flow', async () => {
+			const withObjects = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'With objects',
+			})
+			const withRows = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'With rows',
+				metadata: { targets: [{ label: 'Row', source: 'row', actual: 1, target: 2 }] },
+			})
+			await targetOf(withObjects.id, {
+				title: 'Object',
+				metadata: { source: 'object', actual: 3, target: 4 },
+			})
+
+			const res = await makeApp(actorId).request(
+				jsonGet('/api/loops', { 'x-workspace-id': workspaceId }),
+			)
+			const byId = new Map(((await res.json()) as TargetsBody).loops.map((l) => [l.id, l.targets]))
+			expect(byId.get(withObjects.id)?.map((t) => t.label)).toEqual(['Object'])
+			expect(byId.get(withRows.id)).toEqual([{ label: 'Row', source: 'row', actual: 1, target: 2 }])
+		})
+
+		it('ignores target objects with a missing number, and returns null with nothing left', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+			await targetOf(loop.id, { title: 'No numbers', metadata: { source: 'x' } })
+
+			expect(await listTargets(loop.id)).toBeNull()
+		})
+
+		describe('metric: targets and readings', () => {
+			type ReadTarget = {
+				label: string
+				actual: number
+				reading?: { readAt: string; source: string; expected: number | null }
+			}
+
+			const read = (subjectId: string, value: number, readAt: string, sourceRef: string) =>
+				recordReading(db, {
+					workspaceId,
+					subjectId,
+					measure: 'luma.registrations',
+					value,
+					readAt: new Date(readAt),
+					source: 'luma-api',
+					sourceRef,
+				})
+
+			async function metricTarget(
+				loopId: string,
+				metadata: Record<string, unknown>,
+				overrides: Record<string, unknown> = {},
+			) {
+				return targetOf(loopId, {
+					title: 'Registrations',
+					metadata: { source: 'metric:luma.registrations', actual: 2, target: 100, ...metadata },
+					...overrides,
+				})
+			}
+
+			it('shows the newest reading and its read time instead of the written actual', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await read(target.id, 10, '2026-11-01T08:00:00Z', 'slot-1')
+				await read(target.id, 42, '2026-11-02T08:00:00Z', 'slot-2')
+				await read(target.id, 30, '2026-11-01T20:00:00Z', 'slot-late-arrival')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(42)
+				expect(row.reading).toMatchObject({
+					readAt: '2026-11-02T08:00:00.000Z',
+					source: 'luma-api',
+					expected: null,
+				})
+			})
+
+			it('finds a reading recorded on the flow itself, and takes the newer of the two', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await read(target.id, 5, '2026-11-01T08:00:00Z', 'a')
+				await read(loop.id, 9, '2026-11-03T08:00:00Z', 'b')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(9)
+				expect(row.reading?.readAt).toBe('2026-11-03T08:00:00.000Z')
+			})
+
+			it('keeps the written actual and adds no reading when none exists', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				await metricTarget(loop.id, {})
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(2)
+				expect(row.reading).toBeUndefined()
+			})
+
+			it('does not use a reading of another measure', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await recordReading(db, {
+					workspaceId,
+					subjectId: target.id,
+					measure: 'stripe.paid',
+					value: 999,
+					readAt: new Date('2026-11-02T08:00:00Z'),
+					source: 'stripe',
+					sourceRef: 'inv-1',
+				})
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(2)
+				expect(row.reading).toBeUndefined()
+			})
+
+			it('computes where the number should be today on read, as a straight line to the deadline', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const day = 86_400_000
+				const start = new Date(Date.now() - 10 * day)
+				const deadline = new Date(Date.now() + 10 * day)
+				const target = await metricTarget(
+					loop.id,
+					{ deadline: deadline.toISOString() },
+					{ createdAt: start },
+				)
+				await read(target.id, 40, new Date().toISOString(), 'now')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.reading?.expected).toBeCloseTo(50, 0)
+			})
+		})
 	})
 
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {

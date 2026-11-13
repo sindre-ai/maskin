@@ -4,6 +4,7 @@ import {
 	agentStateSchema,
 	messagePlanSchema,
 	messageProposedEditSchema,
+	nextStepResponseSchema,
 	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
@@ -93,6 +94,10 @@ export const objectResponseSchema = z.object({
 	// Present only on the detail endpoint, and only for an object whose
 	// `metadata.kind` an integration declares as deliverable (see lib/object-preview.ts).
 	preview: objectPreviewSchema.nullable().optional(),
+	// Detail endpoint only (list responses omit it): the object's open or blocked next step,
+	// null when it has none. Written through POST/PATCH /objects/{id}/next-step, never a field
+	// of the object itself.
+	next_step: nextStepResponseSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({

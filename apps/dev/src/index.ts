@@ -62,6 +62,7 @@ import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { DriverWaker } from './services/driver-wake'
 import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -71,6 +72,7 @@ import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
+import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
@@ -303,6 +305,16 @@ triggerRunner
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
+
+// Wakes the driver when its child tasks close, a blocker clears, its object is moved by someone
+// else or a decision card expires. Does nothing unless the workspace has the driver-wake flag.
+const driverWaker = new DriverWaker(db, notifyBridge)
+driverWaker.start()
+
+// Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
+// workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
+const nextStepSweep = new NextStepSweep(db)
+nextStepSweep.start()
 
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
@@ -618,6 +630,8 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	driverWaker.stop()
+	nextStepSweep.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	oauthSweeper.stop()

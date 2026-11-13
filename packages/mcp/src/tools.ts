@@ -16,7 +16,10 @@ import {
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
+	scheduleNextStepSchema,
+	setNextStepSchema,
 	skillNameSchema,
+	updateNextStepSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
 
@@ -516,6 +519,33 @@ export const tools = {
 				)
 				.default([])
 				.describe('Relationships to create between existing objects'),
+		}),
+	},
+	set_next_step: {
+		description:
+			'Give an object you drive its next step: what happens next, who does it and by when. An object has at most one open or blocked next step, so a second one is refused (409) unless you pass replace: true, which closes the old one as skipped. Pass the action (one short sentence), due_at (an ISO time with a timezone) and optionally owner_id (an agent or person in the workspace; defaults to you). To say the step waits on something, pass exactly one of blocked_on_object_id, blocked_on_actor_id (then blocked_reason holds the question) or blocked_on_decision_comment_id: prose alone is not enough for a blocked step. This stores the step; it does not wake anyone. The step shows at the top of the object page for people. Use update_next_step to change it or close it.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...setNextStepSchema.shape,
+		}),
+	},
+	update_next_step: {
+		description:
+			'Change or close the next step on an object (its open or blocked step). Pass only what changes: action, due_at, owner_id, or status. status done or skipped closes the step and needs evidence (a link or result for done, the reason for skipped). status blocked needs exactly one of blocked_on_object_id, blocked_on_actor_id (with blocked_reason holding the question) or blocked_on_decision_comment_id; status open clears what it waited on. 404 when the object has no open or blocked step: use set_next_step to create one. To close it and plan the following step, call this with status done and then set_next_step.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...updateNextStepSchema.shape,
+		}),
+	},
+	schedule_next_step: {
+		description:
+			'End a turn with a next step that is backed by something. Use this instead of saying you will check back later with nothing behind it. Pass object_id, action (one short sentence) and due_at (an ISO time with a timezone, at least 5 minutes away). By default you are the owner: the step is stored and you are woken at due_at on that object, with the object and the step in the prompt. Pass owner_id for another agent and a task is created with that agent as driver; the step then waits on that task and no timer is set. A person as owner is stored and nobody is woken. Closing or replacing the step (update_next_step, or replace: true here) cancels the wake-up. Refused (409) while the object has an open or blocked step unless replace is true. Refused (429) when a run that started on its own already has its limit of wake-ups waiting; a run a person started is not limited. A wake-up that starts more than 1 hour late does nothing and leaves the step open. Use set_next_step instead when nobody should be woken.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...scheduleNextStepSchema.shape,
 		}),
 	},
 	delete_object: {

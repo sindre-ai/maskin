@@ -406,6 +406,18 @@
 			"updated_after",
 			"workspace_id"
 		],
+		"set_next_step": [
+			"action",
+			"blocked_on_actor_id",
+			"blocked_on_decision_comment_id",
+			"blocked_on_object_id",
+			"blocked_reason",
+			"due_at",
+			"object_id",
+			"owner_id",
+			"replace",
+			"workspace_id"
+		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
 		"transcribe_file": ["id", "language", "workspace_id"],
@@ -489,6 +501,19 @@
 			"remove_trigger_ids",
 			"status",
 			"tags",
+			"workspace_id"
+		],
+		"update_next_step": [
+			"action",
+			"blocked_on_actor_id",
+			"blocked_on_decision_comment_id",
+			"blocked_on_object_id",
+			"blocked_reason",
+			"due_at",
+			"evidence",
+			"object_id",
+			"owner_id",
+			"status",
 			"workspace_id"
 		],
 		"update_notification": [

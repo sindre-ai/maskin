@@ -38,6 +38,7 @@ import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import { alertOwnersOncePerDay } from './run-death-alerts'
+import { admitSessionStart } from './self-start-limits'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -227,10 +228,25 @@ export async function startSession(
 
 	const createdBy = input.createdBy ?? input.actorId
 
+	// The gate on work agents start for themselves: labels why the session started and refuses a
+	// self-started one over a cap, in back-off or over the agent's daily budget (throws
+	// SessionNotAdmittedError before any row exists). A session a person started always passes.
+	const admission = await admitSessionStart(db, {
+		workspaceId: input.workspaceId,
+		actorId: input.actorId,
+		callerKind: input.callerKind,
+		config: input.config,
+		triggerType: input.triggerType,
+		retryOf: input.retryOf,
+		hasChat: belongsToChat(input),
+		createdBy,
+		initiatedFromObjectId: input.initiatedFromObjectId,
+	})
+
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: withBackgroundDefaults(input),
+		config: withStartReason(withBackgroundDefaults(input), admission.reason, belongsToChat(input)),
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
@@ -256,6 +272,8 @@ export async function startSession(
 		triggerId: input.triggerId ?? null,
 		callerKind: input.callerKind,
 		humanFacing: isHumanFacing(input),
+		startReason: admission.reason,
+		selfStarted: admission.selfStarted,
 	})
 
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
@@ -315,6 +333,24 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+function belongsToChat(input: StartSessionInput): boolean {
+	const config = input.config as { conversation?: unknown } | undefined
+	return !!input.conversationId || !!config?.conversation
+}
+
+/**
+ * Stamps why the session started. A session that belongs to a chat keeps its config as given: it is
+ * person-started by definition, and the chat responder owns that config.
+ */
+function withStartReason(
+	config: SessionConfig | undefined,
+	reason: string,
+	hasChat: boolean,
+): SessionConfig | undefined {
+	if (hasChat) return config
+	return { ...config, start_reason: reason }
 }
 
 /** Human-facing work: a chat turn, or anything that belongs to a conversation. */

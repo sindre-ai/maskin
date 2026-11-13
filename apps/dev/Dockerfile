@@ -20,6 +20,7 @@ COPY packages/email/package.json packages/email/package.json
 COPY extensions/crm/package.json extensions/crm/package.json
 COPY extensions/knowledge/package.json extensions/knowledge/package.json
 COPY extensions/notetaker/package.json extensions/notetaker/package.json
+COPY extensions/targets/package.json extensions/targets/package.json
 COPY extensions/work/package.json extensions/work/package.json
 COPY apps/dev/package.json apps/dev/package.json
 COPY apps/web/package.json apps/web/package.json

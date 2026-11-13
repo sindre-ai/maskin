@@ -106,6 +106,46 @@ export const FLAGS = {
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
 	/**
+	 * Gates the Next step block at the top of the object page (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 2). Frontend only: read once, in the object detail shell. Off means the page is drawn
+	 * exactly as before. The table, route and MCP tools behind it are additive and safe with the
+	 * flag off. Retire once the block is on for everyone.
+	 */
+	NEXT_STEP_BLOCK: 'next-step-block',
+	/**
+	 * Gates the "Jobs you are handed" block in chat prompts (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Link every job to its flow target](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/08e1e494-86ad-4a98-b085-c88c8a64c2b4)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace when a chat session
+	 * launches. Off means chat prompts are built exactly as before. Switch on only once the cap on
+	 * self-started work is live in production, because the block tells the agent to start follow-up
+	 * steps on its own. Retire once it is on for everyone.
+	 */
+	JOB_TARGET_IN_CHAT: 'job-target-in-chat',
+	/**
+	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
+	 * else, or a decision card it posted expires. Backend only, workspace-scoped: read with
+	 * isFlagEnabledForWorkspace in services/driver-wake.ts. Off means no wake is started and
+	 * nothing is recorded. Turn on only after the self-start limits (cap, back-off and daily
+	 * budget) are live, because they are the only brake on a wake. Retire once the wake is on for
+	 * everyone.
+	 */
+	DRIVER_WAKE: 'driver-wake',
+	/**
+	 * Gates the sweep for overdue or missing next steps and the heartbeat pre-check (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4, fallback half). Backend only, workspace-scoped: read with isFlagEnabledForWorkspace
+	 * in services/next-step-sweep.ts. On means the sweep runs in RECORD-ONLY mode: it writes what
+	 * it would have woken and starts nothing, and the heartbeat pre-check logs what it would have
+	 * skipped and changes no run. Nothing here starts a run until NEXT_STEP_SWEEP_WAKE is on too.
+	 */
+	NEXT_STEP_SWEEP: 'next-step-sweep',
+	/**
+	 * Lets the sweep start runs. Needs NEXT_STEP_SWEEP on for the workspace, and the sweep must
+	 * have been recording for at least 3 days (the first-run flood guard). Turn on only after the
+	 * would-wake list was compared with what is really stuck and the self-start limits are live.
+	 */
+	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
+	/**
 	 * Gates the item card beside a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
 	 * when a view asks to open an item, the loop page shows its card in a side panel, where the
 	 * person can change its status or approve it, instead of going to the object's page. Frontend
