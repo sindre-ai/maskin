@@ -111,16 +111,6 @@ struct ForYouStoreTests {
 		#expect(store.isEmpty)
 	}
 
-	@Test func onboardingCoachThreadShowsInTheFeed() async {
-		let (store, source, _, _) = make()
-		var coach = threadCard("coach")
-		coach.objectType = "onboarding_session"
-		source.feed = .success([coach])
-		await store.load()
-		#expect(store.entries.map(\.id) == ["coach"])
-		#expect(!store.isEmpty)
-	}
-
 	@Test func failedFirstLoadShowsErrorAndRetryRecovers() async {
 		let (store, source, _, _) = make()
 		source.feed = .failure(ForYouLoadError("Couldn't load your feed."))

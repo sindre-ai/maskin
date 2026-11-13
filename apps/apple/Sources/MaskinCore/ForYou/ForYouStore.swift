@@ -323,7 +323,7 @@ public final class ForYouStore {
 	}
 
 	private func isOpenCandidate(_ card: ForYouCard) -> Bool {
-		card.unreadCount > 0
+		card.unreadCount > 0 && card.objectType != "onboarding_session"
 	}
 
 	private func fetch(workspace ws: String, revealingNew: Bool = true) async {
