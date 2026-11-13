@@ -83,6 +83,17 @@ export default defineConfig(async () => ({
 		// uploader will consume and delete them — otherwise a build would drop
 		// readable maps into a publicly served directory for nothing.
 		sourcemap: uploadConfigured ? 'hidden' : false,
+		rollupOptions: {
+			output: {
+				// The chat box and the document editor both lazy-load @tiptap/suggestion. Left alone,
+				// rollup hoists it into a shared chunk named after its entry file, "index-<hash>.js",
+				// which assert-editor-chunk reads as the main entry. A name of its own keeps the
+				// guard meaningful. Both users stay behind import(), so the entry chunk is unchanged.
+				manualChunks(id: string) {
+					if (id.includes('/@tiptap/suggestion/')) return 'tiptap-suggestion'
+				},
+			},
+		},
 	},
 	resolve: {
 		alias: {

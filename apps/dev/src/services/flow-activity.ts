@@ -20,7 +20,8 @@
  * A run that finishes inside the hour waits: an in-process timer fires when the hour is up and
  * sends one email with every run since the last one. The timer is not persisted. After a restart
  * a waiting run is not lost, it is listed in the next email for that flow, which asks for runs
- * since the last email. FEATURE_BRIEFING_EMAIL=0 stops these emails too.
+ * since the last email. In production these emails
+ * go out only when FEATURE_BRIEFING_EMAIL=1; elsewhere FEATURE_BRIEFING_EMAIL=0 stops them.
  */
 import type { Database } from '@maskin/db'
 import {
@@ -39,7 +40,7 @@ import { isEmailStopConfigured } from '../lib/email-stop-token'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import { loadFlowLookup } from '../lib/session-flow'
-import { EMAIL_KILLSWITCH_ENV_VAR } from './briefing-email-scheduler'
+import { emailSwitchedOff } from './briefing-email-scheduler'
 import { PUSH_ONLY_METADATA_KEY } from './chat-notifications'
 import { buildFlowActivityEmail } from './flow-activity-text'
 import { channelsWanted } from './push-policy'
@@ -222,7 +223,7 @@ export class FlowActivityNotifier {
 
 	private async notifyEmail(run: RunRow, flow: FlowRef, person: Recipient): Promise<void> {
 		if (!person.emailEnabled || !person.email) return
-		if (this.env[EMAIL_KILLSWITCH_ENV_VAR] === '0') return
+		if (emailSwitchedOff(this.env)) return
 		if (this.env.NODE_ENV === 'production' && !this.productionReady()) return
 		await this.sendOrHold(run.workspaceId, flow, person.actorId, person.email, run.id)
 	}
