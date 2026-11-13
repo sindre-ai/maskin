@@ -290,7 +290,7 @@ export function Header() {
 					'flex flex-wrap items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+13px)] pb-[13px] md:flex-nowrap md:px-8 md:pt-5 md:pb-3 lg:px-7',
 				)}
 			>
-				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
+				<SidebarTrigger className="touch-hit relative md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
 				<Link
 					to={crumb.parentTo}
 					params={crumb.parentParams}
@@ -353,12 +353,12 @@ export function Header() {
 				gutter === 'wide' ? 'lg:px-12' : 'lg:px-7',
 			)}
 		>
-			<SidebarTrigger className="md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
+			<SidebarTrigger className="touch-hit relative md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
 			{isDetail && (
 				<Button
 					variant="ghost"
 					size="icon"
-					className="-ml-1 h-[30px] w-[30px] shrink-0"
+					className="touch-hit relative -ml-1 h-[30px] w-[30px] shrink-0"
 					onClick={() => router.history.back()}
 				>
 					<ArrowLeft />
