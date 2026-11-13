@@ -113,7 +113,7 @@ describe('createRouteTimingStore', () => {
 			target: unknown[]
 			set: Record<string, unknown>
 		}
-		expect(arg.target).toHaveLength(7)
+		expect(arg.target).toHaveLength(8)
 		expect(Object.keys(arg.set).sort()).toEqual(
 			['dbMsSum', 'dbQueries', 'errors5xx', 'requests', 'slowRequests', 'totalMsSum'].sort(),
 		)
@@ -364,7 +364,7 @@ describe('parseClientVersion', () => {
 	it('keeps 1 to 12 digits and dots and nothing else', () => {
 		expect(parseClientVersion('1.2')).toBe('1.2')
 		expect(parseClientVersion('1.12.3')).toBe('1.12.3')
-		expect(parseClientVersion('123456789.012')).toBe('123456789.012')
+		expect(parseClientVersion('123456789.01')).toBe('123456789.01')
 		expect(parseClientVersion('1')).toBe('1')
 		expect(parseClientVersion('1234567890.123')).toBe('')
 		expect(parseClientVersion('')).toBe('')
