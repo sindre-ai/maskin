@@ -51,8 +51,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				// "false" as true and returns the ARCHIVED list. Omit it for the default (active) list.
 				query: .init(
 					pinned: pinnedOnly ? true : nil, archived: archived ? true : nil,
-					unread_only: unreadOnly ? true : nil, hide_quiet: hideQuiet ? true : nil,
-					subject_type: subjectType, subject_id: flowID,
+					unread_only: unreadOnly ? true : nil, subject_type: subjectType, subject_id: flowID,
+					hide_quiet: hideQuiet ? true : nil,
 					limit: min(limit, ChatLimits.maxConversationsPage), offset: offset),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		switch output {
