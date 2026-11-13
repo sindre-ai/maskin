@@ -698,12 +698,14 @@ function SavedKey({
 	onClear,
 	disabled,
 	testId,
+	replaceRef,
 }: {
 	hint: string | null | undefined
 	onReplace: () => void
 	onClear: () => void
 	disabled?: boolean
 	testId: string
+	replaceRef?: React.Ref<HTMLButtonElement>
 }) {
 	const canWrite = useCanWrite()
 	return (
@@ -714,6 +716,8 @@ function SavedKey({
 			</span>
 			<ViewerTooltip>
 				<Button
+					ref={replaceRef}
+					type="button"
 					variant="outline"
 					size="sm"
 					className="rounded-full font-semibold"
@@ -725,6 +729,7 @@ function SavedKey({
 			</ViewerTooltip>
 			<ViewerTooltip>
 				<Button
+					type="button"
 					variant="outline"
 					size="sm"
 					className="rounded-full font-semibold"
@@ -754,6 +759,9 @@ function LLMKeysEditor({
 	const [keys, setKeys] = useState<Record<string, string>>({ anthropic: '', openai: '' })
 	const [replacing, setReplacing] = useState<Record<string, boolean>>({})
 	const [visible, setVisible] = useState<Record<string, boolean>>({})
+	// Esc leaves replace mode and hands focus back to that provider's Replace button,
+	// which only exists once the saved-key row has rendered again.
+	const focusReplaceFor = useRef<string | null>(null)
 
 	const finish = (provider: string) => {
 		setKeys((prev) => ({ ...prev, [provider]: '' }))
@@ -793,7 +801,20 @@ function LLMKeysEditor({
 						<div key={provider.key}>
 							<Label className="mb-1 text-xs text-muted-foreground">{provider.label}</Label>
 							{showInput ? (
-								<div className="flex gap-2">
+								<form
+									className="flex gap-2"
+									onSubmit={(e) => {
+										e.preventDefault()
+										if (updateWorkspace.isPending) return
+										handleSave(provider.key)
+									}}
+									onKeyDown={(e) => {
+										if (e.key !== 'Escape' || !saved) return
+										e.preventDefault()
+										focusReplaceFor.current = provider.key
+										finish(provider.key)
+									}}
+								>
 									<div className="relative flex-1">
 										<Input
 											type={visible[provider.key] ? 'text' : 'password'}
@@ -823,7 +844,7 @@ function LLMKeysEditor({
 									</div>
 									<ViewerTooltip>
 										<Button
-											onClick={() => handleSave(provider.key)}
+											type="submit"
 											disabled={
 												!keys[provider.key]?.trim() || updateWorkspace.isPending || !canWrite
 											}
@@ -832,13 +853,19 @@ function LLMKeysEditor({
 										</Button>
 									</ViewerTooltip>
 									{saved && (
-										<Button variant="ghost" onClick={() => finish(provider.key)}>
+										<Button type="button" variant="ghost" onClick={() => finish(provider.key)}>
 											Cancel
 										</Button>
 									)}
-								</div>
+								</form>
 							) : (
 								<SavedKey
+									replaceRef={(el) => {
+										if (el && focusReplaceFor.current === provider.key) {
+											focusReplaceFor.current = null
+											el.focus()
+										}
+									}}
 									testId={`llm-key-saved-${provider.key}`}
 									hint={workspace.llm_key_hints?.[provider.key]}
 									disabled={updateWorkspace.isPending}
@@ -884,9 +911,18 @@ function CustomLlmEditor({
 	const [keyMode, setKeyMode] = useState<'keep' | 'replace' | 'clear'>('keep')
 	const [apiKey, setApiKey] = useState('')
 	const [keyVisible, setKeyVisible] = useState(false)
+	// Esc leaves replace mode and hands focus back to Replace, which only exists
+	// once the saved-key row has rendered again.
+	const focusReplace = useRef(false)
 
 	const showKeyInput = !keySaved || keyMode === 'replace'
 	const typedKey = apiKey.trim()
+
+	const cancelReplace = () => {
+		setKeyMode('keep')
+		setApiKey('')
+		setKeyVisible(false)
+	}
 
 	const handleSave = () => {
 		if (!canWrite) return
@@ -933,7 +969,20 @@ function CustomLlmEditor({
 				<code className="font-mono text-xs">https://openrouter.ai/api</code> (no <code>/v1</code>).
 			</p>
 
-			<div className="space-y-3">
+			<form
+				className="space-y-3"
+				onSubmit={(e) => {
+					e.preventDefault()
+					if (!isDirty || updateWorkspace.isPending) return
+					handleSave()
+				}}
+				onKeyDown={(e) => {
+					if (e.key !== 'Escape' || !keySaved || keyMode !== 'replace') return
+					e.preventDefault()
+					focusReplace.current = true
+					cancelReplace()
+				}}
+			>
 				<div className="flex items-center gap-2">
 					<ViewerTooltip>
 						<Switch
@@ -980,14 +1029,7 @@ function CustomLlmEditor({
 								</button>
 							</div>
 							{keySaved && (
-								<Button
-									variant="ghost"
-									onClick={() => {
-										setKeyMode('keep')
-										setApiKey('')
-										setKeyVisible(false)
-									}}
-								>
+								<Button type="button" variant="ghost" onClick={cancelReplace}>
 									Cancel
 								</Button>
 							)}
@@ -998,6 +1040,7 @@ function CustomLlmEditor({
 								The key is removed when you save.
 							</span>
 							<Button
+								type="button"
 								variant="ghost"
 								size="sm"
 								className="rounded-full font-semibold"
@@ -1008,6 +1051,12 @@ function CustomLlmEditor({
 						</div>
 					) : (
 						<SavedKey
+							replaceRef={(el) => {
+								if (el && focusReplace.current) {
+									focusReplace.current = false
+									el.focus()
+								}
+							}}
 							testId="custom-llm-key-saved"
 							hint={workspace.llm_key_hints?.custom_llm}
 							onReplace={() => setKeyMode('replace')}
@@ -1040,14 +1089,11 @@ function CustomLlmEditor({
 				</div>
 
 				<ViewerTooltip>
-					<Button
-						onClick={handleSave}
-						disabled={!isDirty || updateWorkspace.isPending || !canWrite}
-					>
+					<Button type="submit" disabled={!isDirty || updateWorkspace.isPending || !canWrite}>
 						Save
 					</Button>
 				</ViewerTooltip>
-			</div>
+			</form>
 		</div>
 	)
 }
