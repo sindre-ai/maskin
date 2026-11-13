@@ -395,6 +395,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - /api/health, /api/openapi.json: public discovery endpoints
 	//   - POST /api/actors: signup bootstrap, mints the first API key
 	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - POST /api/auth/forgot-password and /reset-password: signed out by nature. Both are rate
+	//     limited per IP inside the handler; the emailed one-time token is the credential.
 	//   - POST /api/device-auth/start and /token: a keyboard-less device (Apple TV) asking to be
 	//     signed in. Both are rate limited per IP inside the handler; the sign-in itself only
 	//     completes after a signed-in person approves the code (/preview, /approve, /deny, which
@@ -431,6 +433,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
 		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
+		if (
+			method === 'POST' &&
+			(path === '/api/auth/forgot-password' || path === '/api/auth/reset-password')
+		) {
+			return next()
+		}
 		if (
 			method === 'POST' &&
 			(path === '/api/device-auth/start' || path === '/api/device-auth/token')
