@@ -904,6 +904,7 @@ function LoopDetailRoute() {
 						<LoopViewTab
 							key={activeView.value}
 							workspaceId={workspaceId}
+							loopId={loopId}
 							fileId={activeView.fileId}
 							name={activeView.name}
 							onRename={
