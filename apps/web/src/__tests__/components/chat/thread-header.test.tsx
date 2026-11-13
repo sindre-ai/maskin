@@ -1,7 +1,7 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ConversationDetailResponse, MessageResponse, MessagesListResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import React from 'react'
@@ -13,6 +13,8 @@ const {
 	mockToastError,
 	mockTrackNav,
 	mockUpdateMe,
+	mockUpdateConversation,
+	mockMakeFlow,
 	mockUseConversation,
 	mockUseConversationMessages,
 	mockUseLoop,
@@ -23,6 +25,8 @@ const {
 	mockToastError: vi.fn(),
 	mockTrackNav: vi.fn(),
 	mockUpdateMe: vi.fn(),
+	mockUpdateConversation: vi.fn(),
+	mockMakeFlow: vi.fn(),
 	mockUseConversation: vi.fn(),
 	mockUseConversationMessages: vi.fn(),
 	mockUseLoop: vi.fn(),
@@ -55,7 +59,8 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/hooks/use-conversations', () => ({
 	useUpdateConversationMe: () => ({ mutate: mockUpdateMe }),
-	useUpdateConversation: () => ({ mutate: vi.fn() }),
+	useUpdateConversation: () => ({ mutate: mockUpdateConversation }),
+	useMakeConversationAFlow: () => ({ mutate: mockMakeFlow }),
 }))
 
 vi.mock('@/hooks/use-conversation', async () => {
@@ -179,6 +184,8 @@ describe('ThreadHeader — v4 actions', () => {
 		mockToastError.mockReset()
 		mockTrackNav.mockReset()
 		mockUpdateMe.mockReset()
+		mockUpdateConversation.mockReset()
+		mockMakeFlow.mockReset()
 		mockUseConversation.mockReset()
 		mockUseConversationMessages.mockReset()
 		mockUseLoop.mockReset()
@@ -288,6 +295,85 @@ describe('ThreadHeader — v4 actions', () => {
 			const [, options] = mockUpdateMe.mock.calls[0] as [unknown, { onSuccess: () => void }]
 			options.onSuccess()
 			expect(mockToastSuccess).toHaveBeenCalledWith('Marked as unread')
+		})
+	})
+
+	describe('Rooms', () => {
+		const open = async () => {
+			renderHeader()
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+		}
+
+		it('offers "Make this a room" on an ordinary chat and sets the room flag', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			await open()
+			expect(screen.queryByRole('menuitem', { name: 'Make this a flow' })).not.toBeInTheDocument()
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Make this a room' }))
+			expect(mockUpdateConversation).toHaveBeenCalledWith({
+				id: 'conv-1',
+				data: { room: true },
+			})
+		})
+
+		it('offers "Make this a flow" and "Turn back into a chat" in a room', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation({ roomKind: 'free' }) })
+			await open()
+			expect(screen.queryByRole('menuitem', { name: 'Make this a room' })).not.toBeInTheDocument()
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Make this a flow' }))
+			expect(mockMakeFlow).toHaveBeenCalledWith({ id: 'conv-1', title: 'Billing retries' })
+		})
+
+		it('turns a room back into a chat', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation({ roomKind: 'free' }) })
+			await open()
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Turn back into a chat' }))
+			expect(mockUpdateConversation).toHaveBeenCalledWith({
+				id: 'conv-1',
+				data: { room: false },
+			})
+		})
+
+		it('offers no room action on a flow room or a direct message', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation({ roomKind: 'flow' }) })
+			await open()
+			for (const name of ['Make this a room', 'Make this a flow', 'Turn back into a chat']) {
+				expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
+			}
+		})
+
+		it('offers no room action on a direct message', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation({ directPairKey: 'a:me' }) })
+			await open()
+			expect(await screen.findByRole('menuitem', { name: 'Mark as unread' })).toBeInTheDocument()
+			expect(screen.queryByRole('menuitem', { name: 'Make this a room' })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('Rename conversation', () => {
+		async function startRename() {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			renderHeader()
+			await userEvent.click(screen.getByRole('button', { name: /^Rename conversation:/ }))
+			return screen.getByRole('textbox', { name: 'Conversation title' })
+		}
+
+		it('returns focus to the title button on Enter', async () => {
+			const input = await startRename()
+			await userEvent.type(input, ' two{Enter}')
+			expect(screen.queryByRole('textbox', { name: 'Conversation title' })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /^Rename conversation:/ })).toHaveFocus()
+		})
+
+		it('returns focus to the title button on Escape', async () => {
+			const input = await startRename()
+			await userEvent.type(input, 'x{Escape}')
+			expect(screen.getByRole('button', { name: /^Rename conversation:/ })).toHaveFocus()
+		})
+
+		it('keeps editing on the Enter that confirms an IME candidate', async () => {
+			const input = await startRename()
+			fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+			expect(screen.getByRole('textbox', { name: 'Conversation title' })).toBeInTheDocument()
 		})
 	})
 

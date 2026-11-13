@@ -299,7 +299,7 @@ public final class ConversationsStore {
 				let limit = ServerLimits.refreshLimit(minimum: pageSize, loaded: conversations.count)
 				let page = try await api.list(
 					archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
-					limit: limit, offset: 0)
+					hideQuiet: hidesQuiet, limit: limit, offset: 0)
 				guard mine == generation else { continue }
 				// Re-read what's on screen (capped by the server) so paged-in rows survive an event.
 				let keptTail = conversations.count > limit
@@ -318,6 +318,10 @@ public final class ConversationsStore {
 		} while refreshQueued
 	}
 
+	/// Only the default list leaves out empty agent DMs, retired agents and quiet topic chats; the
+	/// Unread, Pinned and Archived lists show what they filter on.
+	private var hidesQuiet: Bool { scope == .active && filter == .all }
+
 	public func loadMore() async {
 		guard hasMore, !isLoadingMore, phase == .loaded else { return }
 		isLoadingMore = true
@@ -325,7 +329,7 @@ public final class ConversationsStore {
 		do {
 			let page = try await api.list(
 				archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
-				limit: pageSize, offset: conversations.count)
+				hideQuiet: hidesQuiet, limit: pageSize, offset: conversations.count)
 			let known = Set(conversations.map(\.id))
 			conversations += page.conversations.filter { !known.contains($0.id) && !locallyDeleted.contains($0.id) }
 			hasMore = page.hasMore
@@ -405,6 +409,51 @@ public final class ConversationsStore {
 			conversations.insert(created, at: 0)
 		}
 		return created
+	}
+
+	/// A new room: a named chat that stays in the list's Rooms group. Throws like `create`.
+	@discardableResult
+	public func createRoom(
+		title: String, participantIDs: [String], firstMessage: String?,
+		firstMessageMetadata: ChatSendMetadata? = nil
+	) async throws -> ConversationSummary {
+		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+		let hasMessage = !(message?.isEmpty ?? true)
+		let created = try await api.createRoom(
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
+		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
+			conversations.insert(created, at: 0)
+		}
+		return created
+	}
+
+	/// "Make this a room" and "Turn back into a chat". The row changes at once and goes back if
+	/// the server refuses.
+	@discardableResult
+	public func setRoom(_ id: String, _ isRoom: Bool) async -> Bool {
+		await mutate(id, apply: { $0.roomKind = isRoom ? .free : nil }) {
+			try await self.api.setRoom(conversationID: id, isRoom: isRoom)
+		}
+	}
+
+	/// "Make this a flow" on a room: a new paused flow takes the room's chat as its own.
+	@discardableResult
+	public func makeFlow(_ id: String) async -> Bool {
+		guard let row = conversation(id: id) else { return false }
+		do {
+			let flowID = try await api.makeFlow(
+				conversationID: id, title: row.title, idempotencyKey: IdempotencyKey.make())
+			update(id) {
+				$0.roomKind = .flow
+				$0.flowID = flowID
+			}
+			return true
+		} catch {
+			notice = Self.message(error)
+			return false
+		}
 	}
 
 	/// The person's one direct message with `participantID`, created the first time. Throws like

@@ -6,6 +6,13 @@ public protocol ConversationsAPI: Sendable {
 	/// a boolean query (even "false") as true.
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int)
 		async throws -> ConversationPage
+	/// The default list. With `hideQuiet` the server leaves out empty direct messages with agents,
+	/// chats with retired agents and topic chats quiet for about 14 days, unless pinned or unread.
+	/// Nothing is archived: they stay in search and return when a new message arrives. Sent only
+	/// when true, like the other flags.
+	func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage
 	/// `POST /api/conversations`. Returns the created conversation.
 	func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
@@ -23,6 +30,16 @@ public protocol ConversationsAPI: Sendable {
 		conversationID: String, pinned: Bool?, archived: Bool?, lastReadMessageID: Int?,
 		markUnread: Bool
 	) async throws
+	/// `POST /api/conversations` with `room: true`: a new named room, always created.
+	func createRoom(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary
+	/// `PATCH /api/conversations/:id` with `room`: make a chat a room, or turn a room back into a chat.
+	func setRoom(conversationID: String, isRoom: Bool) async throws
+	/// Makes a room's chat the chat of a new flow that starts paused, so history, members and name
+	/// stay. Returns the new flow's id.
+	func makeFlow(conversationID: String, title: String, idempotencyKey: String) async throws -> String
 	/// Workspace actors for the participant picker.
 	func actors() async throws -> [ChatActor]
 	/// The newest message in a conversation, which "read" is recorded against. The list rows
@@ -67,6 +84,32 @@ extension ConversationsAPI {
 		initialMetadata: ChatSendMetadata?, idempotencyKey: String
 	) async throws -> ConversationSummary {
 		throw ChatsError("Flow rooms aren't available here.")
+	}
+
+	/// Sources without rooms (test doubles) start a plain chat and refuse the room changes.
+	public func createRoom(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		try await create(
+			title: title, participantIDs: participantIDs, initialMessage: initialMessage,
+			initialMetadata: initialMetadata, idempotencyKey: idempotencyKey)
+	}
+	public func setRoom(conversationID: String, isRoom: Bool) async throws {
+		throw ChatsError("Rooms aren't available here.")
+	}
+	public func makeFlow(conversationID: String, title: String, idempotencyKey: String) async throws
+		-> String
+	{
+		throw ChatsError("Rooms aren't available here.")
+	}
+
+	/// Sources that cannot filter on the server (test doubles) return the whole list.
+	public func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, limit: limit, offset: offset)
 	}
 
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {

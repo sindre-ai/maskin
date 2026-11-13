@@ -403,6 +403,9 @@ export const conversationListItemResponseSchema = z.object({
 	// Null for every topical chat. The chat list tells a DM from a topical chat by this alone,
 	// never by title or participant count.
 	directPairKey: z.string().nullable(),
+	// 'free' for a room a person made, 'flow' for the chat about a flow, null for every other
+	// chat. The chat list's Rooms group is every chat with a value here.
+	roomKind: z.enum(['free', 'flow']).nullable(),
 	lastMessageAt: z.string().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -433,7 +436,6 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
-		directPairKey: true,
 	})
 	.extend({
 		last_read_message_id: z.number().nullable(),

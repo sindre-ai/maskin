@@ -27,6 +27,8 @@ struct ConversationListView: View {
 	var onSuggestion: (String) -> Void = { _ in }
 	/// Opens the Threads screen; nil hides its chip (previews and snapshots).
 	var onThreads: (() -> Void)?
+	/// The list search's server side. Nil keeps the on-screen filter (previews and snapshots).
+	var chatSearch: ChatListSearchModel?
 	/// Where the filter chips sit; the bottom placements draw them outside this list.
 	var pillPlacement: TeamPillPlacement = .top
 	/// The shell's bottom pill, told how many are unread and when row selection is running.
@@ -58,13 +60,16 @@ struct ConversationListView: View {
 					if let id, !id.hasPrefix(TeamLayout.flowPinKey("")) { picking.toggle(id) }
 				} else {
 					selection = id
+					trackOpened(id, layout: layout)
 				}
 			})
 		List(selection: rowSelection) {
 			if !isLive {
 				OfflineBanner(message: "Live updates paused. Reconnecting…").plainRow()
 			}
-			if store.showsArchivedList {
+			if let serverSearch, isSearching {
+				searchResults(serverSearch)
+			} else if store.showsArchivedList {
 				archivedSection
 			} else {
 				activeContent(layout: layout, now: now)
@@ -89,6 +94,24 @@ struct ConversationListView: View {
 		// A search looks through every archived chat, so the pages past the first are fetched.
 		.task(id: !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
 			if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await store.loadMoreArchived() }
+		}
+		// Words in the search go to the server, which looks through every chat: titles, people and
+		// message text, archived ones included. The answer replaces the list while words are typed.
+		.task(id: search) { await chatSearch?.update(search) }
+		// One event per search that has settled, with how many chats it found: the server's hits
+		// when they replace the list, else the chats the on-screen filter shows.
+		.task(id: "\(search.trimmingCharacters(in: .whitespacesAndNewlines))|\(serverSearch?.phase == .loaded)") {
+			let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !query.isEmpty, (try? await Task.sleep(for: .seconds(1))) != nil else { return }
+			if let serverSearch {
+				guard serverSearch.phase == .loaded else { return }
+				Analytics.shared.chatListSearchUsed(resultCount: serverSearch.hits.count)
+				return
+			}
+			// Read again after the wait, so pages that arrived meanwhile are counted.
+			let settled = store.layout(
+				query: query, currentActorID: currentActorID, expandedSectionIDs: expandedSections, now: Date())
+			Analytics.shared.chatListSearchUsed(resultCount: settled.shownChatCount)
 		}
 		.task(id: store.showsArchivedList) {
 			if store.showsArchivedList {
@@ -122,6 +145,46 @@ struct ConversationListView: View {
 			}
 		} message: { _ in
 			Text("It disappears from your chats. This can't be undone.")
+		}
+	}
+
+	// MARK: Search
+
+	private var isSearching: Bool { !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+	/// The list search model when it can ask the server; nil keeps the on-screen filter.
+	private var serverSearch: ChatListSearchModel? { chatSearch.flatMap { $0.isAvailable ? $0 : nil } }
+
+	/// The server's hits for the typed words. A hit the default list leaves out (archived, or quiet
+	/// for a long while) is marked Archived; tapping any hit opens it, loaded or not.
+	@ViewBuilder
+	private func searchResults(_ model: ChatListSearchModel) -> some View {
+		let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+		let loaded = Dictionary(store.conversations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+		let oldest = store.conversations.compactMap { $0.lastMessageAt ?? $0.createdAt }.min()
+		let hasMore = store.hasMore || store.phase != .loaded
+		if model.phase == .failed, model.hits.isEmpty {
+			Text("Couldn't search chats. Check your connection and try again.")
+				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				.plainRow(insets: EdgeInsets(top: MaskinSpace.s9, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+		} else if model.phase == .loaded, model.hits.isEmpty {
+			EmptyState(
+				symbol: "magnifyingglass", title: "No chats found",
+				message: "No chat has that in its title, its people or its messages.")
+				.plainRow()
+		} else {
+			Section {
+				ForEach(model.hits) { hit in
+					ChatSearchRow(
+						hit: hit, query: query,
+						participants: loaded[hit.id].map { $0.others(excluding: currentActorID) } ?? [],
+						isArchived: ChatSearchRules.isArchived(
+							hit, loadedIDs: Set(loaded.keys), hasMore: hasMore, oldestActivity: oldest))
+						.tag(hit.id)
+						.rowChrome()
+				}
+			}
+			.opacity(model.phase == .loading ? 0.6 : 1)
 		}
 	}
 
@@ -181,6 +244,19 @@ struct ConversationListView: View {
 			// Selecting a flow row shows the flow in the detail column (`flow:<id>`).
 			base.tag(f.pinKey)
 		}
+	}
+
+	/// A person's tap opened a chat from the list. Flow rows are not chats and send nothing.
+	private func trackOpened(_ id: String?, layout: TeamLayout) {
+		guard let id, !id.hasPrefix(TeamLayout.flowPinKey("")) else { return }
+		let searching = isSearching
+		// A hit of the server search sits among the hits, not in the grouped list.
+		let place =
+			searching && serverSearch != nil
+			? ChatListTracking.searchPlace(of: id, among: serverSearch?.hits ?? [])
+			: layout.chatListPlace(of: id, searching: searching)
+		guard let place else { return }
+		Analytics.shared.chatOpenedFromList(place)
 	}
 
 	private func selectionID(of row: TeamLayout.Row) -> String? {
@@ -255,7 +331,26 @@ struct ConversationListView: View {
 			archive: { archive([c.id]) },
 			delete: { deleteTarget = DeleteTarget(id: c.id, title: TeamLayout.title(of: c, me: currentActorID), conversationIDs: [c.id]) },
 			more: { menuTarget = TeamRowMenuTarget(id: c.id, title: TeamLayout.title(of: c, me: currentActorID), actions: actions(for: c)) },
-			select: { picking.enter(selecting: c.id) })
+			select: { picking.enter(selecting: c.id) },
+			roomActions: roomActions(for: c))
+	}
+
+	/// "Make this a room" on an ordinary chat; "Make this a flow" and "Turn back into a chat" on a
+	/// room a person made. A direct message and a flow's own room have none.
+	private func roomActions(for c: ConversationSummary) -> [TeamRowActions.RoomAction] {
+		guard !c.isDirect else { return [] }
+		if c.roomKind == nil {
+			return [
+				.init(title: "Make this a room", symbol: "number") { Task { await store.setRoom(c.id, true) } }
+			]
+		}
+		guard c.roomKind == .free else { return [] }
+		return [
+			.init(title: "Make this a flow", symbol: "arrow.triangle.2.circlepath") {
+				Task { await store.makeFlow(c.id) }
+			},
+			.init(title: "Turn back into a chat", symbol: "number") { Task { await store.setRoom(c.id, false) } },
+		]
 	}
 
 	private func actions(for p: TeamPerson) -> TeamRowActions {
@@ -416,7 +511,14 @@ struct ConversationListView: View {
 							}
 						}
 					},
-					onOpen: { item in selection = item.id })
+					onOpen: { item in
+						selection = item.id
+						// The archive is a flat list, so a row's place is its place in that list.
+						if let index = store.archivedConversations.firstIndex(where: { $0.id == item.id }) {
+							Analytics.shared.chatOpenedFromList(
+								.init(source: .list, section: .recent, position: index + 1))
+						}
+					})
 				.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
 			}
 		} header: {

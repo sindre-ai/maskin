@@ -219,6 +219,13 @@ export function warnIfPosthogKeyUnset(): void {
 	logger.warn('POSTHOG_API_KEY is unset in production — all backend analytics events are dropped')
 }
 
+export interface CaptureOptions {
+	/** Where the action happened, for events the server sends on a client's behalf. Default 'backend'. */
+	surface?: 'backend' | 'iphone'
+	/** When the action happened, if not now (a client that queued the event offline). */
+	timestamp?: Date
+}
+
 /**
  * Best-effort PostHog capture from the backend.
  *
@@ -257,6 +264,7 @@ export async function capturePosthogEvent(
 	event: string,
 	distinctId: string,
 	properties: PosthogEventProps,
+	options: CaptureOptions = {},
 ): Promise<void> {
 	const apiKey = process.env.POSTHOG_API_KEY?.trim()
 	if (!apiKey) {
@@ -309,7 +317,7 @@ export async function capturePosthogEvent(
 	const actorType = await resolveActorType(event, distinctId, properties)
 	outProps = {
 		...outProps,
-		surface: 'backend',
+		surface: options.surface ?? 'backend',
 		actor_type: actorType,
 		is_team: await isTeamActor(distinctId, actorType),
 		internal: isInternalWorkspace(
@@ -325,7 +333,7 @@ export async function capturePosthogEvent(
 		event,
 		distinct_id: outId,
 		properties: outProps,
-		timestamp: new Date().toISOString(),
+		timestamp: (options.timestamp ?? new Date()).toISOString(),
 	}
 
 	try {

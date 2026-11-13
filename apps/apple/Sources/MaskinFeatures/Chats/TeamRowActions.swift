@@ -22,6 +22,16 @@ struct TeamRowActions {
 	/// Reorder within PINNED; set only for a pinned tile that has a neighbour on that side.
 	var moveEarlier: (() -> Void)? = nil
 	var moveLater: (() -> Void)? = nil
+	/// Room changes: "Make this a room" on an ordinary chat; "Make this a flow" and "Turn back into
+	/// a chat" on a room. Empty for direct messages, people, flows and a flow's own room.
+	var roomActions: [RoomAction] = []
+
+	struct RoomAction: Identifiable {
+		var title: String
+		var symbol: String
+		var run: () -> Void
+		var id: String { title }
+	}
 
 	var pinLabel: String { isPinned ? "Unpin" : "Pin" }
 	/// The row menu says what Pin does; the swipe button has no room for it.
@@ -105,6 +115,9 @@ struct TeamRowMenuItems: View {
 		}
 		if let later = actions.moveLater {
 			Button("Move later", systemImage: "arrow.down", action: later)
+		}
+		ForEach(actions.roomActions) { room in
+			Button(room.title, systemImage: room.symbol, action: room.run)
 		}
 		if actions.canArchive {
 			Button("Archive", systemImage: "archivebox", action: actions.archive)

@@ -27,6 +27,8 @@ export interface ConversationListFilters {
 	unread_only?: boolean
 	/** `priority`: direct messages, pinned and unread chats. `recent`: all other chats. */
 	scope?: 'priority' | 'recent'
+	/** The default list's listing rules: no empty agent DMs, retired agents or quiet topic chats. */
+	hide_quiet?: boolean
 }
 
 export function useConversationsInfinite(
@@ -59,6 +61,7 @@ export function useConversationsInfinite(
 			if (filters?.pinned) params.pinned = 'true'
 			if (filters?.archived) params.archived = 'true'
 			if (filters?.unread_only) params.unread_only = 'true'
+			if (filters?.hide_quiet) params.hide_quiet = 'true'
 			return api.conversations.list(workspaceId, params)
 		},
 		initialPageParam: 0,
@@ -90,11 +93,46 @@ export function useUpdateConversation(workspaceId: string) {
 			queryClient.setQueryData(queryKeys.conversations.detail(data.id), data)
 		},
 		onError: () => {
-			toast.error('Failed to rename conversation')
+			toast.error('Failed to update conversation')
 		},
 		onSettled: (_data, _err, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) })
+		},
+	})
+}
+
+/**
+ * "Make this a flow" on a room: one new flow, paused so nothing runs until someone starts it,
+ * with the room's chat set as the flow's chat. The room keeps its history, members and name.
+ * Two calls, so a failure on the second one removes the flow it just made.
+ */
+export function useMakeConversationAFlow(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: async ({ id, title }: { id: string; title: string }) => {
+			const flow = await api.objects.create(workspaceId, { type: 'loop', title, status: 'paused' })
+			try {
+				return await api.conversations.update(id, workspaceId, {
+					subject: { type: 'object', id: flow.id },
+				})
+			} catch (err) {
+				await api.objects.delete(flow.id).catch(() => {})
+				throw err
+			}
+		},
+		onSuccess: (data) => {
+			queryClient.setQueryData(queryKeys.conversations.detail(data.id), data)
+			toast.success('Made a flow. It starts paused.')
+		},
+		onError: () => {
+			toast.error("Couldn't make this a flow")
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
 		},
 	})
 }

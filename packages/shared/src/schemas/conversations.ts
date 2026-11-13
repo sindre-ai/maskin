@@ -627,6 +627,9 @@ export const createConversationSchema = z
 		// topical chat: the pair's existing DM is returned (200), or created once (201,
 		// titled with `title`). Leave it out for a new topical chat, which is always created.
 		direct: z.boolean().optional(),
+		// Make the new chat a room: a named, long-lived chat shown in the list's Rooms group.
+		// Not with direct, and not with a subject (a chat about a flow is a room already).
+		room: z.boolean().optional(),
 		initial_message: z.string().max(MESSAGE_MAX_LENGTH).optional(),
 		// Structured context (objects/notifications picked via the composer) for the
 		// initial message — mirrors postMessageSchema's metadata so a brand-new
@@ -649,10 +652,19 @@ export const updateConversationSchema = z
 		title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH).optional(),
 		// Labels for grouping chats, for example a team name. Replaces the whole list.
 		tags: tagListSchema.optional(),
+		// Make this chat a room, or turn a room back into a plain chat.
+		room: z.boolean().optional(),
+		// Make the chat about a flow that already exists. Only a chat with no subject yet.
+		subject: conversationSubjectSchema.optional(),
 	})
-	.refine((v) => v.title !== undefined || v.tags !== undefined, {
-		message: 'Send a title, tags, or both',
-	})
+	.refine(
+		(v) =>
+			v.title !== undefined ||
+			v.tags !== undefined ||
+			v.room !== undefined ||
+			v.subject !== undefined,
+		{ message: 'Send a title, tags, room, subject, or a mix' },
+	)
 
 export const addConversationParticipantsSchema = z.object({
 	actor_ids: z.array(z.string().uuid()).min(1).max(MAX_CONVERSATION_PARTICIPANTS),
@@ -676,6 +688,10 @@ export const conversationListQuerySchema = z.object({
 	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
 	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
 	scope: z.enum(['priority', 'recent']).optional(),
+	// The default list's listing rules: leave out empty direct messages with agents, chats with
+	// retired agents and topic chats quiet for about 14 days, unless pinned or unread. Nothing is
+	// archived; the chats stay in search and return when a new message arrives.
+	hide_quiet: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
