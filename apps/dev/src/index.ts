@@ -66,6 +66,7 @@ import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
@@ -303,6 +304,11 @@ commentDispatcher.start()
 // else or a decision card expires. Does nothing unless the workspace has the driver-wake flag.
 const driverWaker = new DriverWaker(db, notifyBridge)
 driverWaker.start()
+
+// Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
+// workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
+const nextStepSweep = new NextStepSweep(db)
+nextStepSweep.start()
 
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
@@ -615,6 +621,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	driverWaker.stop()
+	nextStepSweep.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	oauthSweeper.stop()
