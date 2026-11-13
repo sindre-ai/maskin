@@ -9,6 +9,7 @@ import type { EditorState } from '@tiptap/pm/state'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { MarkdownEditor } from './editor'
+import { EmojiSuggestion, type EmojiSuggestionOptions, isEmojiMenuOpen } from './emoji-suggestion'
 
 export interface ComposerTag {
 	id: string
@@ -80,6 +81,12 @@ export interface MarkdownComposerProps {
 	 * while the picker is open.
 	 */
 	onKeyDown: (event: KeyboardEvent) => boolean
+	/**
+	 * Draws the emoji list that opens when ":" and two letters are typed at the start of a word.
+	 * Read once: without it the box has no emoji list. While the list is open it takes Enter, Tab
+	 * and the arrows before `onKeyDown` sees them.
+	 */
+	createEmojiView?: EmojiSuggestionOptions['createView']
 }
 
 const MENTION_NODE = 'composerMention'
@@ -338,6 +345,9 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 	}
 	const extensions = [
 		createMentionNode((id) => handlers.current.props.chipClass(id)),
+		...(handlers.current.props.createEmojiView
+			? [EmojiSuggestion.configure({ createView: handlers.current.props.createEmojiView })]
+			: []),
 		Extension.create({
 			name: 'composerBehaviour',
 			onBeforeCreate() {
@@ -376,6 +386,9 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 							},
 							transformPastedHTML: shapeTablesForMarkdown,
 							handleKeyDown: (view, event) => {
+								// The emoji list is open: its own plugin takes the key, Enter picks instead of sends.
+								const open = handlers.current.editor
+								if (open && isEmojiMenuOpen(open)) return false
 								const enter = event.key === 'Enter' && !event.shiftKey
 								const withMod = event.metaKey || event.ctrlKey
 								if (enter && !withMod && !triggerOpen && inListOrCode(view.state)) return false

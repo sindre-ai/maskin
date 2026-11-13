@@ -140,6 +140,48 @@ describe('DailyBudgetSection', () => {
 		expect(screen.getByRole('radio', { name: 'Tokens' })).toHaveAttribute('aria-checked', 'true')
 	})
 
+	it('makes each pill group one Tab stop and moves selection with the arrow keys', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.dailyBudget).mockResolvedValue({
+			daily_budget: saved,
+			dollar_unit: available,
+		})
+		renderSection()
+
+		await screen.findByLabelText('Target per day')
+		const tokens = screen.getByRole('radio', { name: 'Tokens' })
+		const dollars = screen.getByRole('radio', { name: 'Dollars' })
+		expect(tokens).toHaveAttribute('tabindex', '0')
+		expect(dollars).toHaveAttribute('tabindex', '-1')
+
+		tokens.focus()
+		await user.keyboard('{ArrowRight}')
+		expect(dollars).toHaveAttribute('aria-checked', 'true')
+		expect(dollars).toHaveFocus()
+		expect(dollars).toHaveAttribute('tabindex', '0')
+		expect(tokens).toHaveAttribute('tabindex', '-1')
+
+		await user.keyboard('{ArrowUp}')
+		expect(tokens).toHaveAttribute('aria-checked', 'true')
+		expect(tokens).toHaveFocus()
+	})
+
+	it('skips the locked Dollars pill when arrowing', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.dailyBudget).mockResolvedValue({
+			daily_budget: saved,
+			dollar_unit: { available: false, reason: LOCKED_REASON, days: [] },
+		})
+		renderSection()
+
+		await screen.findByLabelText('Target per day')
+		const tokens = screen.getByRole('radio', { name: 'Tokens' })
+		tokens.focus()
+		await user.keyboard('{ArrowRight}')
+		expect(tokens).toHaveAttribute('aria-checked', 'true')
+		expect(tokens).toHaveFocus()
+	})
+
 	it('saves null when the switch is turned off', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.dailyBudget).mockResolvedValue({

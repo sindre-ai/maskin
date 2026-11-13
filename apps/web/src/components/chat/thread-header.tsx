@@ -45,7 +45,7 @@ import {
 	Repeat,
 	X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -102,6 +102,16 @@ export function ThreadHeader({
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
+	const renameButtonRef = useRef<HTMLButtonElement>(null)
+	// Set by Enter and Esc only, so a blur-commit never pulls focus back.
+	const returnFocusToTitle = useRef(false)
+
+	// The title button only mounts once the input is gone, so focus moves after the render.
+	useEffect(() => {
+		if (isEditingTitle || !returnFocusToTitle.current) return
+		returnFocusToTitle.current = false
+		renameButtonRef.current?.focus()
+	}, [isEditingTitle])
 
 	const handleClose = () => {
 		navigate({ to: '/$workspaceId/chats', params: { workspaceId }, search: (prev) => prev })
@@ -237,11 +247,15 @@ export function ThreadHeader({
 						onChange={(e) => setTitleDraft(e.target.value)}
 						onBlur={commitTitle}
 						onKeyDown={(e) => {
+							// An Enter that confirms an IME candidate is not a rename.
+							if (e.nativeEvent.isComposing || e.key === 'Process') return
 							if (e.key === 'Enter') {
 								e.preventDefault()
+								returnFocusToTitle.current = true
 								commitTitle()
 							} else if (e.key === 'Escape') {
 								e.preventDefault()
+								returnFocusToTitle.current = true
 								setIsEditingTitle(false)
 							}
 						}}
@@ -253,6 +267,7 @@ export function ThreadHeader({
 					<h2 className="truncate text-base font-semibold leading-tight">
 						{/* Click the title to rename it in place; the agent's page opens from its avatar. */}
 						<button
+							ref={renameButtonRef}
 							type="button"
 							onClick={startEditingTitle}
 							title="Click to rename"

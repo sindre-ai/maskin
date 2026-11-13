@@ -186,7 +186,10 @@ export function NewMenu({
 									ariaLabel="More ways to start"
 									title="More ways to start"
 									disabled={isDisabled}
-									className="absolute right-0 size-px overflow-hidden p-0 opacity-0"
+									// Hidden at rest so the two halves read as one pill, but a
+									// keyboard user tabbing in must see where focus is: on
+									// focus-visible it grows to its normal 28px and shows the ring.
+									className="absolute right-0 size-px overflow-hidden p-0 opacity-0 focus-visible:z-10 focus-visible:h-8 focus-visible:w-7 focus-visible:opacity-100"
 								/>
 							) : (
 								<Button

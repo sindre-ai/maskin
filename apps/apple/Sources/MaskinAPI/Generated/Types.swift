@@ -266,6 +266,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/triggers`.
     /// - Remark: Generated from `#/paths//api/triggers/post`.
     func post_sol_api_sol_triggers(_ input: Operations.post_sol_api_sol_triggers.Input) async throws -> Operations.post_sol_api_sol_triggers.Output
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    func get_sol_api_sol_triggers_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -1375,6 +1380,19 @@ extension APIProtocol {
         try await post_sol_api_sol_triggers(Operations.post_sol_api_sol_triggers.Input(
             headers: headers,
             body: body
+        ))
+    }
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    public func get_sol_api_sol_triggers_sol__lcub_id_rcub_(
+        path: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output {
+        try await get_sol_api_sol_triggers_sol__lcub_id_rcub_(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers
         ))
     }
     /// Update a trigger

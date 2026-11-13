@@ -3017,6 +3017,27 @@ export const tools = {
 				),
 		}),
 	},
+	desktop_save_file: {
+		description:
+			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file, and get its file id back. Do this the moment a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost, but a saved file is safe in the workspace. After a reset, bring a saved file back with desktop_put_file. The computer uploads the file straight to storage: its content never passes through you, so videos and large files are fine. Returns file_id, name, size_bytes, sha256 and a url a person can open. Every call makes a new file, it never overwrites an earlier one. Limits: only a regular file under your home folder (for example ~/Downloads or ~/renders), not inside a hidden folder (a name starting with a dot, where the browser keeps its logins); up to 100 MB (a bigger file is refused and nothing is uploaded, so cut it down or split it; raw footage over the limit stays re-fetchable from where it came from, such as Drive); an empty file is refused; at most 20 saves per hour from your computer, so zip several small files into one. If the call fails nothing is saved, and you can call it again. A file over 50 MB is not returned inline by get_file: you get a download link, which is expected. Only your own computer is reachable.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			path: z
+				.string()
+				.min(1)
+				.max(1024)
+				.describe(
+					'Path of the file on your computer, absolute or starting with ~/. Must be under your home folder.',
+				),
+			name: z
+				.string()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe('Name for the new workspace file. Defaults to the name of the file on disk.'),
+		}),
+	},
 	desktop_expose_port: {
 		description:
 			'Make a dev server running in YOUR session sandbox (for example Vite on 5173) openable in your computer\'s browser. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003 to open in Chromium on your computer (desktop_key ["ctrl+l"], desktop_type the URL, desktop_key ["Return"]). Your computer is a separate machine, so localhost there is NOT your sandbox: always use the returned URL. Idempotent: asking again for the same port returns the same URL. You have a small fixed number of ports at once; close one with desktop_close_port to free a slot. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',

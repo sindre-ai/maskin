@@ -58,9 +58,19 @@ interface CommentInputProps {
 	// page pins to the bottom of its document (mockup 1358–1366) — no avatar, no
 	// hint, controls inline with the field.
 	variant?: 'stacked' | 'bar'
+	// Bar only: sits first inside the bar, before the field (the item page's
+	// Comment / Message chip). The + menu then follows the field.
+	leading?: React.ReactNode
 	// Overrides the composer's own placeholder. The bar reads
 	// "Comment — / commands, @ mentions" on object detail.
 	placeholder?: string
+	// Puts the caret in the box on mount, for a composer opened by an action
+	// (the Reply button) rather than one that is part of the page.
+	autoFocus?: boolean
+	// Esc, when no mention list is open, hands control back to the caller (the
+	// inline reply box closes). The tag input swallows the Esc that closes its
+	// own picker, so this only sees an Esc meant for the box.
+	onCancel?: () => void
 }
 
 function randomDraftId(): string {
@@ -103,7 +113,10 @@ function CommentInputForm({
 	focusRef,
 	hint,
 	variant = 'stacked',
+	leading,
 	placeholder,
+	autoFocus,
+	onCancel,
 }: CommentInputProps) {
 	const isBar = variant === 'bar'
 	const actor = getStoredActor()
@@ -314,9 +327,15 @@ function CommentInputForm({
 	useEffect(() => () => discardRef.current(), [])
 
 	// The tag input handles the picker's keys, Shift+Enter and chips itself; this
-	// is what is left: Enter sends.
+	// is what is left: Enter sends, Esc cancels when the caller listens for it.
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLDivElement>) => {
+			if (e.key === 'Escape' && onCancel) {
+				e.preventDefault()
+				e.stopPropagation()
+				onCancel()
+				return
+			}
 			if (e.key === 'Enter' && !e.shiftKey) {
 				// On touch-primary devices (iOS, mobile), let Enter insert a newline —
 				// the soft keyboard's Enter is the source of accidental submits. The
@@ -328,7 +347,7 @@ function CommentInputForm({
 				handleSubmit()
 			}
 		},
-		[handleSubmit],
+		[handleSubmit, onCancel],
 	)
 
 	if (!actor) return null
@@ -508,7 +527,11 @@ function CommentInputForm({
 						className={cn(
 							'border transition-colors',
 							isBar ? 'rounded-2xl bg-background shadow-sm' : 'rounded-md',
-							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
+							overLimit
+								? 'border-error'
+								: isBar
+									? 'border-input focus-within:border-border-strong'
+									: 'border-border',
 						)}
 					>
 						{!isBar && referenceChips}
@@ -540,8 +563,9 @@ function CommentInputForm({
 								))}
 							</ul>
 						)}
-						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5')}>
-							{isBar && controlsLeft}
+						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5 max-sm:gap-1')}>
+							{isBar && leading}
+							{isBar && !leading && controlsLeft}
 							<TagInput
 								workspaceId={workspaceId}
 								selfActorId={actor.id}
@@ -554,13 +578,19 @@ function CommentInputForm({
 								}
 								className={cn(
 									'min-h-7 max-h-[50vh] px-2 py-1 text-base',
-									isBar && 'min-w-0 flex-1',
+									// The placeholder stays on one line, ends in an ellipsis when the bar is narrow and
+									// centres on the bar's middle line, level with the chip.
+									isBar &&
+										'min-w-0 flex-1 [&>span]:top-1/2 [&>span]:bottom-auto [&>span]:-translate-y-1/2',
 									overLimit && 'text-error',
 								)}
+								placeholderClassName={isBar ? 'truncate' : undefined}
 								invalid={overLimit}
+								autoFocus={autoFocus}
 								onChange={setValue}
 								onKeyDown={handleKeyDown}
 							/>
+							{isBar && leading && controlsLeft}
 							{isBar && controlsRight}
 						</div>
 						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). The
