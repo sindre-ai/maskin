@@ -24,6 +24,7 @@ import {
 	buildReadSettingsCommand,
 	parseKeyValueLines,
 } from '../lib/desktop-settings'
+import {
 	EMPTY_EXIT_CODE,
 	NOT_ALLOWED_EXIT_CODE,
 	NOT_FOUND_EXIT_CODE,
