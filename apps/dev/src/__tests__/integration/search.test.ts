@@ -368,13 +368,64 @@ describe('GET /api/search against real Postgres', () => {
 			expect(res.results.map((r) => r.id)).toEqual([unread.id, read.id])
 		})
 
+		it('puts the best match first whatever its kind, above chats that hold the letters inside a word', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			const direct = await seedChat('', [actorId, cpo.id])
+			await say(direct.id, actorId, 'morning')
+			const inWord = await seedChat('Ascpo review', [actorId, otherUserId])
+			await say(inWord.id, otherUserId, 'nothing here')
+			await tick()
+			// The in-word chat is the newest one, and the chats group comes before agents.
+			await say(inWord.id, otherUserId, 'still nothing')
+
+			const res = await search({ q: 'cpo' })
+
+			expect(res.results.map((r) => r.id)).toEqual([cpo.id, direct.id, inWord.id])
+		})
+
+		it('ranks the start of a word above the same letters inside a word, across groups', async () => {
+			const cco = await insertActor(db, { name: 'CCO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cco.id)
+			const accounting = await seedChat('Accounting', [actorId])
+			await say(accounting.id, actorId, 'books')
+			await seedObjects('task', 'todo', 1, () => 'Accounting cleanup')
+			const ccoPlan = await seedChat('CCO plan', [actorId])
+			await say(ccoPlan.id, actorId, 'plan')
+			await tick()
+			// The in-word chat is the newest one.
+			await say(accounting.id, actorId, 'more books')
+
+			const res = await search({ q: 'cco' })
+
+			expect(res.results.map((r) => r.title)).toEqual([
+				'CCO',
+				'CCO plan',
+				'Accounting',
+				'Accounting cleanup',
+			])
+		})
+
+		it('ranks a word start above letters inside a word within one group', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Reaccounting of fees and other long titles')
+			await seedObjects('task', 'todo', 1, () => 'Account review of fees and other long titles')
+
+			const res = await search({ q: 'acc' })
+
+			expect(res.results.map((r) => r.title)).toEqual([
+				'Account review of fees and other long titles',
+				'Reaccounting of fees and other long titles',
+			])
+		})
+
 		it('shares the rows across groups with per_group, and fills the room when a group is short', async () => {
 			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
 			await ensureWorkspaceMember(db, workspaceId, cpo.id)
 			for (let i = 0; i < 4; i++) await seedChat(`Chat ${i}`, [actorId, cpo.id])
 
 			const shared = await search({ q: 'cpo', limit: 4, per_group: 3 })
-			expect(shared.results.map((r) => r.group)).toEqual(['chats', 'chats', 'chats', 'agents'])
+			// The agent named CPO is the best match, so it leads; the chats are capped at three.
+			expect(shared.results.map((r) => r.group)).toEqual(['agents', 'chats', 'chats', 'chats'])
 
 			const filled = await search({ q: 'cpo', types: ['chat'], limit: 4, per_group: 3 })
 			expect(filled.results).toHaveLength(4)
@@ -827,8 +878,8 @@ describe('GET /api/search against real Postgres', () => {
 			expect(onlyPeople.total).toBe(1)
 		})
 
-		it('lists people before objects under relevance sort', async () => {
-			await seedObjects('task', 'todo', 1, () => 'Magnus task')
+		it('lists a person before an object that only has the name inside a longer title', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Magnus Nodegard follow-up task')
 			const res = await search({ q: 'magnus' })
 			expect(res.results.map((r) => r.group)).toEqual(['people', 'objects'])
 		})
