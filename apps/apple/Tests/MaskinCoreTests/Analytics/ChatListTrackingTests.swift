@@ -59,6 +59,15 @@ struct ChatListTrackingTests {
 		#expect(place.map { [1, 2].contains($0.position) } == true)
 	}
 
+	@Test("a hit of the server search is a search open at its place among the hits, loaded or not")
+	func serverSearchHit() {
+		let hits = [ChatSearchHit(id: "old", title: "Old"), ChatSearchHit(id: "new", title: "New", archived: true)]
+		#expect(
+			ChatListTracking.searchPlace(of: "new", among: hits)
+				== ChatListTracking.Place(source: .search, section: .search, position: 2))
+		#expect(ChatListTracking.searchPlace(of: "gone", among: hits) == nil)
+	}
+
 	@Test("positions and result counts fall into buckets at their edges")
 	func buckets() {
 		#expect([1, 2, 3, 4, 10, 11, 25, 26].map(ChatListTracking.positionBucket) == [

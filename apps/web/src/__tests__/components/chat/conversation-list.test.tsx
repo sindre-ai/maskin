@@ -15,6 +15,7 @@ vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', ty
 vi.mock('@/lib/api', () => ({
 	api: {
 		conversations: { list: vi.fn(), replyThreads: vi.fn(), messages: vi.fn(), updateMe: vi.fn() },
+		search: { query: vi.fn() },
 	},
 }))
 
@@ -500,47 +501,130 @@ describe('ConversationList collapse', () => {
 				position: 3,
 			})
 		})
+	})
+})
 
-		it('reports a row opened from search results as a search open', async () => {
-			mockScopedList({
-				recent: [
-					buildConversation({ id: 'a', title: 'Billing retries' }),
-					buildConversation({ id: 'b', title: 'Dictation notes' }),
-				],
-			})
-			render(<ConversationList workspaceId="ws-1" query="dictation" />, { wrapper: TestWrapper })
+describe('ConversationList search', () => {
+	beforeEach(() => {
+		vi.mocked(api.conversations.list).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
+		vi.mocked(api.search.query).mockReset()
+	})
 
-			await userEvent.click(await screen.findByText('Dictation notes'))
+	function searchRow(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'old-1',
+			group: 'chats',
+			type: 'chat',
+			title: 'Invoice export',
+			sub: 'Developer, Me',
+			snippet: 'the csv export times out',
+			status: 'archived',
+			statusGroup: 'archived',
+			updatedAt: '2026-09-01T10:00:00.000Z',
+			...overrides,
+		}
+	}
 
-			expect(trackOpened).toHaveBeenCalledWith({ source: 'search', section: 'search', position: 1 })
+	function answer(results: unknown[]) {
+		vi.mocked(api.search.query).mockResolvedValue({
+			results,
+			total: results.length,
+			capped: false,
+			facets: { types: {}, statuses: {} },
+			relaxed: { withoutFilters: 0, withoutStatuses: 0 },
+			partial: [],
+		} as never)
+	}
+
+	it('asks the server for chats and shows an archived hit that the list never loaded', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a', title: 'Billing retries' })] })
+		answer([searchRow()])
+		render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
+		expect(api.search.query).toHaveBeenCalledWith(
+			'ws-1',
+			expect.objectContaining({
+				q: 'csv',
+				types: 'chat',
+				statuses: 'needs_you,in_progress,new,done,archived',
+			}),
+			expect.anything(),
+		)
+		expect(screen.getByText('Archived')).toBeInTheDocument()
+		expect(screen.getByText('csv', { selector: 'mark' })).toBeInTheDocument()
+		// The grouped list steps aside while words are typed.
+		expect(screen.queryByText('Billing retries')).not.toBeInTheDocument()
+	})
+
+	it('leaves the chip off a chat that is not archived and is in the list', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'old-1', title: 'Invoice export' })] })
+		answer([searchRow({ status: 'read', statusGroup: 'done' })])
+		render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Invoice export')).toBeInTheDocument()
+		expect(screen.queryByText('Archived')).not.toBeInTheDocument()
+	})
+
+	it('says so when no chat matches', async () => {
+		mockScopedList({ recent: [] })
+		answer([])
+		render(<ConversationList workspaceId="ws-1" query="zzz" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('No chats found')).toBeInTheDocument()
+	})
+
+	describe('tracking', () => {
+		beforeEach(() => {
+			trackOpened.mockClear()
+			trackSearch.mockClear()
 		})
 
-		it('reports a settled search once, with its result count and not before it settles', async () => {
-			mockScopedList({
-				recent: [
-					buildConversation({ id: 'a', title: 'Billing retries' }),
-					buildConversation({ id: 'b', title: 'Billing review' }),
-					buildConversation({ id: 'c', title: 'Dictation notes' }),
-				],
+		it('reports a hit opened from search at its place among the hits, loaded or not', async () => {
+			mockScopedList({ recent: [buildConversation({ id: 'b', title: 'Dictation notes' })] })
+			answer([
+				searchRow({ id: 'a', title: 'Invoice export' }),
+				searchRow({ id: 'b', title: 'Dictation notes', status: 'read', statusGroup: 'done' }),
+			])
+			render(<ConversationList workspaceId="ws-1" query="csv" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Dictation notes'))
+			await userEvent.click(screen.getByText('Invoice export'))
+
+			expect(trackOpened).toHaveBeenNthCalledWith(1, {
+				source: 'search',
+				section: 'search',
+				position: 2,
 			})
+			expect(trackOpened).toHaveBeenNthCalledWith(2, {
+				source: 'search',
+				section: 'search',
+				position: 1,
+			})
+		})
+
+		it('reports a settled search once, with the number of hits the server found', async () => {
+			mockScopedList({ recent: [buildConversation({ id: 'a', title: 'Billing retries' })] })
+			answer([
+				searchRow({ id: 'x', title: 'Invoice export' }),
+				searchRow({ id: 'y', title: 'Invoice review' }),
+				searchRow({ id: 'z', title: 'Invoice notes' }),
+			])
 			vi.useFakeTimers({ shouldAdvanceTime: true })
 			try {
-				const view = render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
-				await screen.findByText('Dictation notes')
-				expect(trackSearch).not.toHaveBeenCalled()
-
-				view.rerender(<ConversationList workspaceId="ws-1" query="bill" />)
-				view.rerender(<ConversationList workspaceId="ws-1" query="billing" />)
-				await act(async () => {
-					vi.advanceTimersByTime(500)
-				})
+				render(<ConversationList workspaceId="ws-1" query="invoice" />, { wrapper: TestWrapper })
+				// The typed word is highlighted, which splits each title, so wait on the rows themselves.
+				await waitFor(() => expect(screen.getAllByRole('link')).toHaveLength(3))
 				expect(trackSearch).not.toHaveBeenCalled()
 
 				await act(async () => {
-					vi.advanceTimersByTime(600)
+					vi.advanceTimersByTime(1100)
 				})
 				expect(trackSearch).toHaveBeenCalledTimes(1)
-				expect(trackSearch).toHaveBeenCalledWith({ result_count: 2 })
+				// The loaded list holds one chat; the count is the hits, not that list.
+				expect(trackSearch).toHaveBeenCalledWith({ result_count: 3 })
 			} finally {
 				vi.useRealTimers()
 			}
