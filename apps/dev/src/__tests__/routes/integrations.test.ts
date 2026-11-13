@@ -166,6 +166,7 @@ describe('Integrations Routes', () => {
 				'google-search-console',
 				'linear',
 				'linkedin-unipile',
+				'microsoft',
 				'miro',
 				'mixpanel',
 				'notion',
