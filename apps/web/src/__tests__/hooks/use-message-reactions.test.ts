@@ -219,7 +219,9 @@ describe('useToggleReaction', () => {
 		act(() => result.current.toggle(1, '👍'))
 
 		await waitFor(() =>
-			expect(toast.error).toHaveBeenCalledWith(VIEWER_READ_ONLY_MESSAGE, { id: 'viewer-read-only' }),
+			expect(toast.error).toHaveBeenCalledWith(VIEWER_READ_ONLY_MESSAGE, {
+				id: 'viewer-read-only',
+			}),
 		)
 		expect(toast.error).toHaveBeenCalledTimes(1)
 		appQueryClient.clear()
