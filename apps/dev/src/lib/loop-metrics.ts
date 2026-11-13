@@ -6,7 +6,6 @@ import { logger } from './logger'
 
 /** Call days (today, this week, last 30 days) start at midnight in this zone. */
 const CALL_DAY_TIME_ZONE = 'Europe/Copenhagen'
-const METRIC_PREFIX = 'metric:'
 
 /** Same membership edge the flows list counts: source is the flow, target the member. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
