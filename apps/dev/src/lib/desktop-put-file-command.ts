@@ -18,12 +18,12 @@ export const NO_ROOM_EXIT_CODE = 42
 /** What the computer keeps of the files put there: one "<epoch seconds> <path>" line per file. */
 const RECORD_FILE = '.maskin-fetched'
 
-const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+export const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
 
 /**
  * A path for `sh`, with a leading ~/ turned into $HOME so quoting cannot stop it expanding.
  */
-function shellPath(path: string): string {
+export function shellPath(path: string): string {
 	return path.startsWith('~/') ? `"$HOME"/${shellQuote(path.slice(2))}` : shellQuote(path)
 }
 

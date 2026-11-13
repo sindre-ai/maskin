@@ -55,7 +55,7 @@ describe('LoopFlow', () => {
 			},
 		)
 
-		expect(await screen.findByRole('heading', { name: 'Pipeline' })).toBeInTheDocument()
+		expect(await screen.findByRole('heading', { name: 'How it runs' })).toBeInTheDocument()
 		expect(screen.queryByText('The flow, right now')).not.toBeInTheDocument()
 		expect(screen.queryByText(/triggers on/)).not.toBeInTheDocument()
 	})
