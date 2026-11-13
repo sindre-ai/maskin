@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { hashPassword, issueApiKey, validateApiKey } from '@maskin/auth'
+import { hashApiKey, hashPassword, issueApiKey, validateApiKey } from '@maskin/auth'
 import { passwordResetTokens } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +16,20 @@ vi.mock('@maskin/email', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@maskin/email')>()),
 	sendPasswordResetEmail: sendPasswordResetEmailMock,
 }))
+
+// The in-transaction eviction happens inside @maskin/auth and is not seen here, so this records
+// only the evictions the route makes itself, which it does after the transaction has committed.
+const { routeEvictions } = vi.hoisted(() => ({ routeEvictions: [] as string[] }))
+vi.mock('@maskin/auth', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@maskin/auth')>()
+	return {
+		...actual,
+		evictApiKeyHash: (keyHash: string) => {
+			routeEvictions.push(keyHash)
+			actual.evictApiKeyHash(keyHash)
+		},
+	}
+})
 
 const { default: authRoutes, _resetPasswordResetLimiters } = await import('../../routes/auth')
 const { createPasswordResetToken, PASSWORD_RESET_TTL_MS } = await import('../../lib/password-reset')
@@ -78,6 +92,24 @@ describe('Forgot password (real Postgres)', () => {
 		expect((await login(email, NEW_PASSWORD)).status).toBe(200)
 		expect(await validateApiKey(db, oldLogin)).toBeNull()
 		expect(await validateApiKey(db, personalKey)).not.toBeNull()
+	})
+
+	it('evicts each ended key from the auth cache after the reset commits', async () => {
+		const p = await person()
+		const email = p.email as string
+		const oldLogin = ((await (await login(email, OLD_PASSWORD)).json()) as { api_key: string })
+			.api_key
+		const { key: personalKey } = await issueApiKey(db, { actorId: p.id, kind: 'personal' })
+		await post('/forgot-password', { email })
+		const token = await tokenSentTo(email)
+		routeEvictions.length = 0
+
+		const reset = await post('/reset-password', { token, password: NEW_PASSWORD })
+		expect(reset.status).toBe(200)
+
+		expect(routeEvictions).toContain(hashApiKey(oldLogin))
+		expect(routeEvictions).not.toContain(hashApiKey(personalKey))
+		expect(await validateApiKey(db, oldLogin)).toBeNull()
 	})
 
 	it('stores only a hash of the token', async () => {
