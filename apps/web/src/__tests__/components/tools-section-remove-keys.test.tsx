@@ -30,20 +30,23 @@ vi.mock('@/components/integrations/tool-server-access', () => ({
 	ToolServerAccess: () => null,
 }))
 
-const renderSection = () =>
+// The server row is a collapsed card: its buttons only render once the header is opened.
+const renderOpenRow = async () => {
 	render(<ToolsSection workspaceId="ws-1" />, {
 		wrapper: createWorkspaceWrapper({ role: 'owner' }),
 	})
+	await userEvent.click(screen.getByRole('button', { name: 'Docs server', expanded: false }))
+}
 
 describe('removing a custom MCP server from the keyboard', () => {
 	it('puts focus on Cancel when the bin button is pressed', async () => {
-		renderSection()
+		await renderOpenRow()
 		await userEvent.click(screen.getByRole('button', { name: 'Remove Docs server' }))
 		expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
 	})
 
 	it('cancels on Esc and puts focus back on the bin button', async () => {
-		renderSection()
+		await renderOpenRow()
 		await userEvent.click(screen.getByRole('button', { name: 'Remove Docs server' }))
 		await userEvent.keyboard('{Escape}')
 		expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
@@ -51,7 +54,7 @@ describe('removing a custom MCP server from the keyboard', () => {
 	})
 
 	it('puts focus back on the bin button when Cancel is pressed', async () => {
-		renderSection()
+		await renderOpenRow()
 		await userEvent.click(screen.getByRole('button', { name: 'Remove Docs server' }))
 		await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 		expect(screen.getByRole('button', { name: 'Remove Docs server' })).toHaveFocus()
