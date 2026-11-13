@@ -64,6 +64,13 @@ interface CommentInputProps {
 	// Bar only: sits first inside the bar, before the field (the item page's
 	// Comment / Message chip). The + menu then follows the field.
 	leading?: React.ReactNode
+	// Puts the caret in the box on mount, for a composer opened by an action
+	// (the Reply button) rather than one that is part of the page.
+	autoFocus?: boolean
+	// Esc, when no mention list is open, hands control back to the caller (the
+	// inline reply box closes). The tag input swallows the Esc that closes its
+	// own picker, so this only sees an Esc meant for the box.
+	onCancel?: () => void
 }
 
 function randomDraftId(): string {
@@ -108,6 +115,8 @@ function CommentInputForm({
 	variant = 'stacked',
 	placeholder,
 	leading,
+	autoFocus,
+	onCancel,
 }: CommentInputProps) {
 	const isBar = variant === 'bar'
 	const actor = getStoredActor()
@@ -318,9 +327,15 @@ function CommentInputForm({
 	useEffect(() => () => discardRef.current(), [])
 
 	// The tag input handles the picker's keys, Shift+Enter and chips itself; this
-	// is what is left: Enter sends.
+	// is what is left: Enter sends, Esc cancels when the caller listens for it.
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLDivElement>) => {
+			if (e.key === 'Escape' && onCancel) {
+				e.preventDefault()
+				e.stopPropagation()
+				onCancel()
+				return
+			}
 			if (e.key === 'Enter' && !e.shiftKey) {
 				// On touch-primary devices (iOS, mobile), let Enter insert a newline —
 				// the soft keyboard's Enter is the source of accidental submits. The
@@ -332,7 +347,7 @@ function CommentInputForm({
 				handleSubmit()
 			}
 		},
-		[handleSubmit],
+		[handleSubmit, onCancel],
 	)
 
 	if (!actor) return null
@@ -570,6 +585,7 @@ function CommentInputForm({
 									overLimit && 'text-error',
 								)}
 								invalid={overLimit}
+								autoFocus={autoFocus}
 								onChange={setValue}
 								onKeyDown={handleKeyDown}
 							/>
