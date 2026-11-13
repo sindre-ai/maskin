@@ -1,3 +1,4 @@
+import { LoopBriefingStage, isDeckView } from '@/components/loops/loop-briefing-stage'
 import { LoopCustomView } from '@/components/loops/loop-custom-view'
 import { LoopViewChangePrompt } from '@/components/loops/loop-view-change-prompt'
 import { LoopViewItemPanel } from '@/components/loops/loop-view-item-panel'
@@ -11,11 +12,12 @@ import {
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ProposedChange } from '@/lib/loop-view-bridge'
 import { MAX_LOOP_VIEW_NAME_LENGTH } from '@maskin/shared'
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 /**
  * One custom view as the body of its own tab, under a row with its name and a
@@ -24,6 +26,10 @@ import { useState } from 'react'
  *
  * `onRename` / `onRemove` are omitted for a view the flow does not own (the
  * Briefings view), which then shows no menu.
+ *
+ * A view that is a deck or briefing page shows in the same tall, fitted and paged viewer as the
+ * Briefings tab, not the self-sizing frame, which shrinks a deck to a strip. Lists and dashboards
+ * keep the frame.
  *
  * When a view asks to open an item, its card shows beside the view (a sheet on a phone), where
  * the person can change its status or approve it. With the flag off, Open goes to the object's
@@ -62,6 +68,9 @@ export function LoopViewTab({
 	const [renaming, setRenaming] = useState(false)
 	const [draft, setDraft] = useState(name ?? '')
 	const hasMenu = Boolean(onRename || onRemove)
+	// Shares the file's cache entry with the frame below, so this costs no second load.
+	const { data: file } = useFile(workspaceId, fileId)
+	const isDeck = useMemo(() => (file ? isDeckView(file) : false), [file])
 	const trimmed = draft.trim()
 
 	const header =
@@ -130,6 +139,14 @@ export function LoopViewTab({
 			</div>
 		) : null
 
+	if (isDeck) {
+		return (
+			<>
+				{header}
+				<LoopBriefingStage workspaceId={workspaceId} fileId={fileId} hideTitle />
+			</>
+		)
+	}
 	// A failed view is unmounted, not just annotated, so its frame is gone from the page.
 	if (failure) {
 		return (
