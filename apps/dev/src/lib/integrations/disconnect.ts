@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import { eq } from 'drizzle-orm'
+import { trackIntegrationDisconnected } from '../analytics/integration-events'
 import { decrypt } from '../crypto'
 import { recordEvent } from '../events/record-event'
 import { LINKEDIN_IDENTITY_PROVIDER } from '../linkedin-addon'
@@ -13,6 +14,8 @@ import { getProvider } from './registry'
 import type { StoredCredentials } from './types'
 
 type IntegrationRow = typeof integrations.$inferSelect
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
  * Disconnect one integration row: provider preDisconnect (revoke), flip the row
@@ -68,6 +71,19 @@ export async function disconnectIntegrationRow(
 			data: { status: 'revoked', reason: 'user_disconnected' },
 		})
 	})
+
+	// Only a live connection counts as a disconnect: switching off a pending or already
+	// revoked row says nothing about whether people keep a tool connected.
+	if (existing.status === 'active') {
+		void trackIntegrationDisconnected({
+			provider: existing.provider,
+			workspaceId: existing.workspaceId,
+			actorId,
+			daysConnected: existing.createdAt
+				? Math.max(0, Math.floor((Date.now() - existing.createdAt.getTime()) / DAY_MS))
+				: 0,
+		})
+	}
 
 	// Drop the disconnected identity off the $49 add-on. Runs after the status
 	// flip commits, because the sync recomputes quantity from the count of

@@ -19,8 +19,10 @@ export const FLOW_STEPS = {
 		'first_run_completed',
 		'result_opened',
 	],
-	// Key capture cards inside chat have no route of their own. Built-in sign-in
-	// providers use the integration_* server events instead (row 7).
+	// Connecting a provider by signing in on its own page (row 7). One flow_id is sealed
+	// into the OAuth state, so it survives the trip through the outside sign-in page.
+	integration_connect: ['connect_started', 'redirected_out', 'returned', 'connected'],
+	// Key capture cards inside chat have no route of their own.
 	integration_key_capture: ['card_shown', 'key_submitted', 'connected'],
 	// Agent computer view and take-over, on mode changes only (row 12).
 	agent_computer: ['view_opened', 'take_over_started', 'take_over_ended', 'view_closed'],
@@ -72,6 +74,8 @@ export type FlowStepProps = {
 	surface: FlowSurface
 	/** Milliseconds since the previous step of the same flow_id; null on the first step. */
 	duration_ms: number | null
+	/** Only on flows about one provider (the integration ones): a catalog key, never free text. */
+	provider?: string
 }
 
 export type FlowErrorProps = {
@@ -80,6 +84,8 @@ export type FlowErrorProps = {
 	flow_id: string
 	surface: FlowSurface
 	error_category: FlowErrorCategory
+	/** Only on flows about one provider (the integration ones): a catalog key, never free text. */
+	provider?: string
 }
 
 export function isFlowStep(flow: string, step: string): boolean {
@@ -108,6 +114,7 @@ export function buildFlowStepProps(p: {
 	flowId: string
 	surface: FlowSurface
 	durationMs: number | null
+	provider?: string
 }): FlowStepProps | null {
 	if (!p.flowId || !isFlowStep(p.flow, p.step)) return null
 	return {
@@ -116,6 +123,7 @@ export function buildFlowStepProps(p: {
 		flow_id: p.flowId,
 		surface: p.surface,
 		duration_ms: p.durationMs,
+		...(p.provider ? { provider: p.provider } : {}),
 	}
 }
 
@@ -126,6 +134,7 @@ export function buildFlowErrorProps(p: {
 	flowId: string
 	surface: FlowSurface
 	errorCategory: string
+	provider?: string
 }): FlowErrorProps | null {
 	if (!p.flowId || !isFlowStep(p.flow, p.step)) return null
 	return {
@@ -134,6 +143,7 @@ export function buildFlowErrorProps(p: {
 		flow_id: p.flowId,
 		surface: p.surface,
 		error_category: toErrorCategory(p.errorCategory),
+		...(p.provider ? { provider: p.provider } : {}),
 	}
 }
 

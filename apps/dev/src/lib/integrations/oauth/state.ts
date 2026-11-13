@@ -26,6 +26,11 @@ export interface OAuthStatePayload {
 	 * resolves, a cancel on the consent screen redirects back to that page.
 	 */
 	origin?: string
+	/**
+	 * Id of the connect journey in analytics (flow_step, flow_error), minted with the
+	 * state so the callback reports on the same flow after the provider's sign-in page.
+	 */
+	flowId?: string
 }
 
 /**

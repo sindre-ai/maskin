@@ -11,6 +11,7 @@ export const INTEGRATION_CONNECTED = 'integration_connected'
 export const INTEGRATION_SYNC_COMPLETED = 'integration_sync_completed'
 export const INTEGRATION_TOOL_CALLED = 'integration_tool_called'
 export const INTEGRATION_CONNECT_STARTED = 'integration_connect_started'
+export const INTEGRATION_DISCONNECTED = 'integration_disconnected'
 // Success event of the Teams transcripts bet. Properties are provider and ok only: never transcript
 // text, meeting titles or names.
 export const MEETING_TRANSCRIPT_LANDED = 'meeting_transcript_landed'
@@ -137,6 +138,28 @@ export async function trackIntegrationConnectStarted(
 		workspace_id: p.workspaceId,
 		actor_id: p.actorId,
 		auth_type: 'oauth',
+	})
+}
+
+interface IntegrationDisconnectedProps {
+	provider: string
+	workspaceId: string
+	actorId: string
+	daysConnected: number
+}
+
+/**
+ * Fire `integration_disconnected` when a live integration is switched off. `days_connected` is
+ * whole days since the row was created, so "disconnected within 7 days" is a filter on it. For a
+ * sign-in provider the row is created when the connect starts, minutes before the token lands.
+ * Provider, a number and ids only. Not sampled (see event-budget).
+ */
+export async function trackIntegrationDisconnected(p: IntegrationDisconnectedProps): Promise<void> {
+	await capturePosthogEvent(INTEGRATION_DISCONNECTED, p.actorId, {
+		provider: p.provider,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		days_connected: p.daysConnected,
 	})
 }
 
