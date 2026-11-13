@@ -78,7 +78,7 @@ describe('start-trial page promo code', () => {
 
 	it('folds the card form away for a valid code and starts the trial with no card', async () => {
 		const user = userEvent.setup()
-		trial.checkPromo.mockResolvedValue({ valid: true })
+		trial.checkPromo.mockResolvedValue({ valid: true, trial_days: 14 })
 		trial.startWithPromo.mockResolvedValue({ trial_state: 'started', trial_ends_at: 1 })
 		renderPage()
 		await screen.findByTestId('card-fields')
@@ -87,14 +87,44 @@ describe('start-trial page promo code', () => {
 
 		expect(await screen.findByText('Promo code applied, no card needed.')).toBeTruthy()
 		expect(screen.queryByTestId('card-fields')).toBeNull()
-		await user.click(screen.getByRole('button', { name: 'Start 7-day trial' }))
+		await user.click(screen.getByRole('button', { name: 'Start 14-day trial' }))
 		await waitFor(() => expect(trial.startWithPromo).toHaveBeenCalledWith('ws-1', 'friends-2026'))
 		expect(trial.start).not.toHaveBeenCalled()
 	})
 
+	it('says 7 days on the card form and 14 days once a valid code is applied, then 7 again', async () => {
+		const user = userEvent.setup()
+		trial.checkPromo.mockResolvedValue({ valid: true, trial_days: 14 })
+		renderPage()
+		await screen.findByTestId('card-fields')
+		expect(screen.getByRole('heading', { name: 'Start your 7-day trial' })).toBeTruthy()
+		expect(screen.getByRole('button', { name: 'Start 7-day trial' })).toBeTruthy()
+
+		await apply(user, 'friends-2026')
+
+		expect(await screen.findByText('Your trial lasts 14 days.')).toBeTruthy()
+		expect(screen.getByRole('button', { name: 'Start 14-day trial' })).toBeTruthy()
+		expect(screen.queryByRole('button', { name: 'Start 7-day trial' })).toBeNull()
+
+		await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+		expect(await screen.findByRole('button', { name: 'Start 7-day trial' })).toBeTruthy()
+		expect(screen.queryByText('Your trial lasts 14 days.')).toBeNull()
+	})
+
+	it('says how long the started trial is from the clock the server set', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			trial_state: 'started',
+			period_resets_in_ms: 14 * 24 * 60 * 60 * 1000,
+		} as never)
+		renderPage()
+
+		expect(await screen.findByText(/You have 14 days\./)).toBeTruthy()
+	})
+
 	it('keeps the card form and says so for an invalid, expired or used up code', async () => {
 		const user = userEvent.setup()
-		trial.checkPromo.mockResolvedValue({ valid: false })
+		trial.checkPromo.mockResolvedValue({ valid: false, trial_days: null })
 		renderPage()
 		await screen.findByTestId('card-fields')
 
@@ -107,7 +137,7 @@ describe('start-trial page promo code', () => {
 
 	it('opens the card form again when the code is removed', async () => {
 		const user = userEvent.setup()
-		trial.checkPromo.mockResolvedValue({ valid: true })
+		trial.checkPromo.mockResolvedValue({ valid: true, trial_days: 14 })
 		renderPage()
 		await screen.findByTestId('card-fields')
 		await apply(user, 'friends-2026')
@@ -122,14 +152,14 @@ describe('start-trial page promo code', () => {
 
 	it('brings the card form back when the server finds the code no longer valid at start', async () => {
 		const user = userEvent.setup()
-		trial.checkPromo.mockResolvedValue({ valid: true })
+		trial.checkPromo.mockResolvedValue({ valid: true, trial_days: 14 })
 		const err = new ApiError(400, 'This promo code is not valid, or it has been used up.')
 		err.code = 'TRIAL_PROMO_CODE_INVALID'
 		trial.startWithPromo.mockRejectedValue(err)
 		renderPage()
 		await screen.findByTestId('card-fields')
 		await apply(user, 'friends-2026')
-		await user.click(await screen.findByRole('button', { name: 'Start 7-day trial' }))
+		await user.click(await screen.findByRole('button', { name: 'Start 14-day trial' }))
 
 		expect(await screen.findByText(/no longer valid/)).toBeTruthy()
 		expect(await screen.findByTestId('card-fields')).toBeTruthy()

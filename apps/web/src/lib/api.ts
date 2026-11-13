@@ -2055,6 +2055,8 @@ export interface TrialSetupResponse {
 
 export interface TrialPromoCheckResponse {
 	valid: boolean
+	// Days the trial lasts with this code; null when it is not valid.
+	trial_days: number | null
 }
 
 export interface TrialStartResponse {

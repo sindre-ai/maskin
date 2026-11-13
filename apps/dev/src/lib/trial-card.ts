@@ -16,7 +16,10 @@ import { ownedWorkspacePlans } from './workspace-capacity'
 // somewhere else is refused; a wallet card (Apple Pay, Google Pay) is let through, because its
 // fingerprint comes from a device number and cannot recognise the card.
 
-export const TRIAL_LENGTH_SECONDS = 7 * 24 * 60 * 60
+export const DAY_SECONDS = 24 * 60 * 60
+
+/** The trial a card starts. A promo code can carry its own length (trial_promo_codes.trial_days). */
+export const TRIAL_LENGTH_SECONDS = 7 * DAY_SECONDS
 
 export type TrialWallet = 'apple_pay' | 'google_pay' | 'other' | 'none'
 

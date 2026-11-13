@@ -5,19 +5,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: vi.fn() }))
 
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
-import { TRIAL_LENGTH_SECONDS, TrialCardError } from '../../lib/trial-card'
+import { DAY_SECONDS, TRIAL_LENGTH_SECONDS, TrialCardError } from '../../lib/trial-card'
 import {
 	TrialPromoCodeInvalidError,
-	isPromoCodeValid,
 	normalizePromoCode,
+	promoCodeTrialDays,
 	recordPromoTrialStart,
 	startTrialWithPromo,
 } from '../../lib/trial-promo'
 import { insertActor, insertWorkspace } from '../factories'
 import { db } from './global-setup'
 
-// Promo codes at the start-trial page: a valid code starts the 7-day trial with no card, the server
-// re-checks it when the trial starts, and the last use goes to exactly one caller.
+// Promo codes at the start-trial page: a valid code starts the trial with no card for the code's
+// own trial_days (14 for a new code, 7 for a card), the server re-checks it when the trial starts, and the last use goes to exactly one caller.
 
 const NOW = 1_800_000_000
 let seq = 0
@@ -28,6 +28,7 @@ async function insertCode(
 		code: string
 		maxRedemptions: number
 		redemptions: number
+		trialDays: number
 		expiresAt: Date | null
 		active: boolean
 	}> = {},
@@ -75,35 +76,40 @@ describe('normalizePromoCode', () => {
 	})
 })
 
-describe('isPromoCodeValid', () => {
-	it('accepts a live code in any letter case, and does not use it up', async () => {
+describe('promoCodeTrialDays', () => {
+	it('gives 14 days for a new code, in any letter case, and does not use it up', async () => {
 		const row = await insertCode()
-		expect(await isPromoCodeValid(db, row.code.toLowerCase())).toBe(true)
+		expect(await promoCodeTrialDays(db, row.code.toLowerCase())).toBe(14)
 		expect(await redemptionsOf(row.id)).toBe(0)
 	})
 
+	it("gives the code's own length", async () => {
+		const row = await insertCode({ trialDays: 7 })
+		expect(await promoCodeTrialDays(db, row.code)).toBe(7)
+	})
+
 	it('refuses an unknown code', async () => {
-		expect(await isPromoCodeValid(db, 'NOPE-NOT-A-CODE')).toBe(false)
+		expect(await promoCodeTrialDays(db, 'NOPE-NOT-A-CODE')).toBeNull()
 	})
 
 	it('refuses an expired code', async () => {
 		const row = await insertCode({ expiresAt: new Date(Date.now() - 60_000) })
-		expect(await isPromoCodeValid(db, row.code)).toBe(false)
+		expect(await promoCodeTrialDays(db, row.code)).toBeNull()
 	})
 
 	it('refuses a code that is switched off', async () => {
 		const row = await insertCode({ active: false })
-		expect(await isPromoCodeValid(db, row.code)).toBe(false)
+		expect(await promoCodeTrialDays(db, row.code)).toBeNull()
 	})
 
 	it('refuses a code that is used up', async () => {
 		const row = await insertCode({ maxRedemptions: 2, redemptions: 2 })
-		expect(await isPromoCodeValid(db, row.code)).toBe(false)
+		expect(await promoCodeTrialDays(db, row.code)).toBeNull()
 	})
 })
 
 describe('recordPromoTrialStart', () => {
-	it('starts a 7 day trial with no card and uses up one redemption', async () => {
+	it('starts a 14 day trial with no card and uses up one redemption', async () => {
 		const row = await insertCode()
 		const { ws } = await waitingWorkspace()
 
@@ -114,14 +120,14 @@ describe('recordPromoTrialStart', () => {
 			nowSec: NOW,
 		})
 
-		expect(result).toEqual({ outcome: 'started', periodEnd: NOW + TRIAL_LENGTH_SECONDS })
+		expect(result).toEqual({ outcome: 'started', periodEnd: NOW + 14 * DAY_SECONDS })
 		const billing = await billingOf(ws.id)
 		expect(billing).toMatchObject({
 			plan: 'trial',
 			trial_state: 'started',
 			trial_promo_code_id: row.id,
 			period_start: NOW,
-			period_end: NOW + TRIAL_LENGTH_SECONDS,
+			period_end: NOW + 14 * DAY_SECONDS,
 		})
 		// No card: no wallet, no Stripe customer, nothing in the fingerprint table.
 		expect(billing).not.toHaveProperty('trial_wallet')
@@ -131,6 +137,16 @@ describe('recordPromoTrialStart', () => {
 			await db.select().from(trialCards).where(eq(trialCards.workspaceId, ws.id)),
 		).toHaveLength(0)
 		expect(await redemptionsOf(row.id)).toBe(1)
+	})
+
+	it('keeps a 7 day trial for a code that carries 7 days, and a card trial is still 7', async () => {
+		const row = await insertCode({ trialDays: 7 })
+		const { ws } = await waitingWorkspace()
+
+		expect(
+			await recordPromoTrialStart({ db, workspaceId: ws.id, code: row.code, nowSec: NOW }),
+		).toEqual({ outcome: 'started', periodEnd: NOW + TRIAL_LENGTH_SECONDS })
+		expect(TRIAL_LENGTH_SECONDS).toBe(7 * DAY_SECONDS)
 	})
 
 	it('refuses a wrong code and leaves the workspace waiting', async () => {
@@ -213,7 +229,7 @@ describe('recordPromoTrialStart', () => {
 		await recordPromoTrialStart({ ...args, nowSec: NOW })
 		expect(await recordPromoTrialStart({ ...args, nowSec: NOW + 500 })).toEqual({
 			outcome: 'already_started',
-			periodEnd: NOW + TRIAL_LENGTH_SECONDS,
+			periodEnd: NOW + 14 * DAY_SECONDS,
 		})
 		expect(await redemptionsOf(row.id)).toBe(1)
 	})
@@ -234,7 +250,7 @@ describe('startTrialWithPromo', () => {
 			onStarted,
 		})
 
-		expect(result).toEqual({ trialEndsAt: NOW + TRIAL_LENGTH_SECONDS })
+		expect(result).toEqual({ trialEndsAt: NOW + 14 * DAY_SECONDS })
 		expect(onStarted).toHaveBeenCalledTimes(1)
 		expect(capturePosthogEvent).toHaveBeenCalledWith('trial_started', actor.id, {
 			workspace_id: ws.id,

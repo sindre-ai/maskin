@@ -13,13 +13,13 @@ vi.mock('../../lib/trial-card', async () => {
 vi.mock('../../lib/trial-promo', async () => {
 	const actual =
 		await vi.importActual<typeof import('../../lib/trial-promo')>('../../lib/trial-promo')
-	return { ...actual, isPromoCodeValid: vi.fn(), startTrialWithPromo: vi.fn() }
+	return { ...actual, promoCodeTrialDays: vi.fn(), startTrialWithPromo: vi.fn() }
 })
 
 import { startTrial } from '../../lib/trial-card'
 import {
 	TrialPromoCodeInvalidError,
-	isPromoCodeValid,
+	promoCodeTrialDays,
 	resetPromoRateLimitForTests,
 	startTrialWithPromo,
 } from '../../lib/trial-promo'
@@ -44,24 +44,24 @@ function setup(row: Record<string, unknown> = WAITING) {
 
 beforeEach(() => {
 	resetPromoRateLimitForTests()
-	vi.mocked(isPromoCodeValid).mockReset()
+	vi.mocked(promoCodeTrialDays).mockReset()
 	vi.mocked(startTrialWithPromo).mockReset()
 	vi.mocked(startTrial).mockReset()
 })
 
 describe('POST /api/billing/trial/promo/check', () => {
 	it('says valid for a good code', async () => {
-		vi.mocked(isPromoCodeValid).mockResolvedValue(true)
+		vi.mocked(promoCodeTrialDays).mockResolvedValue(14)
 		const res = await setup().post('/trial/promo/check', { code: 'FRIENDS-2026' })
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ valid: true })
+		expect(await res.json()).toEqual({ valid: true, trial_days: 14 })
 	})
 
 	it('says not valid for a wrong, expired or used up code, with the same answer', async () => {
-		vi.mocked(isPromoCodeValid).mockResolvedValue(false)
+		vi.mocked(promoCodeTrialDays).mockResolvedValue(null)
 		const res = await setup().post('/trial/promo/check', { code: 'NOPE-1234' })
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ valid: false })
+		expect(await res.json()).toEqual({ valid: false, trial_days: null })
 	})
 
 	it('does not look at the code for a workspace that is not waiting for a card', async () => {
@@ -69,11 +69,11 @@ describe('POST /api/billing/trial/promo/check', () => {
 			code: 'FRIENDS-2026',
 		})
 		expect(res.status).toBe(409)
-		expect(isPromoCodeValid).not.toHaveBeenCalled()
+		expect(promoCodeTrialDays).not.toHaveBeenCalled()
 	})
 
 	it('answers 429 with Retry-After after 10 tries in a minute', async () => {
-		vi.mocked(isPromoCodeValid).mockResolvedValue(false)
+		vi.mocked(promoCodeTrialDays).mockResolvedValue(null)
 		const { post } = setup()
 		for (let i = 0; i < 10; i++) {
 			expect((await post('/trial/promo/check', { code: `GUESS-${i}00` })).status).toBe(200)
@@ -81,7 +81,7 @@ describe('POST /api/billing/trial/promo/check', () => {
 		const res = await post('/trial/promo/check', { code: 'GUESS-1100' })
 		expect(res.status).toBe(429)
 		expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0)
-		expect(isPromoCodeValid).toHaveBeenCalledTimes(10)
+		expect(promoCodeTrialDays).toHaveBeenCalledTimes(10)
 	})
 })
 

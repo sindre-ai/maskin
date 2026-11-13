@@ -36,7 +36,11 @@ type Step =
 
 // A promo code the server said is valid. The page never decides that: starting the trial sends the
 // code again and the server checks it again.
-type Promo = { kind: 'none' } | { kind: 'applied'; code: string }
+type Promo = { kind: 'none' } | { kind: 'applied'; code: string; trialDays: number }
+
+// A card starts the 7 day trial; a promo code starts the length the server said it carries.
+const CARD_TRIAL_DAYS = 7
+const DAY_MS = 24 * 60 * 60 * 1000
 
 function StartTrialPage() {
 	const { workspaceId } = Route.useParams()
@@ -77,6 +81,12 @@ function StartTrialPage() {
 	}
 
 	const started = step.kind === 'done' || usage?.trial_state === 'started'
+	const trialDays = promo.kind === 'applied' ? promo.trialDays : CARD_TRIAL_DAYS
+	// Once started, the days come from the clock the server set, so a code trial says 14.
+	const startedDays =
+		usage?.trial_state === 'started' && usage.period_resets_in_ms
+			? Math.ceil(usage.period_resets_in_ms / DAY_MS)
+			: trialDays
 
 	return (
 		<div className="flex min-h-screen items-center justify-center px-4">
@@ -86,8 +96,8 @@ function StartTrialPage() {
 						<div>
 							<h1 className="text-2xl font-semibold tracking-tight">Your trial has started</h1>
 							<p className="mt-1 text-sm text-muted-foreground">
-								You have 7 days. We show how much of your plan you have used, so you can pick a plan
-								before it runs out.
+								You have {startedDays} days. We show how much of your plan you have used, so you can
+								pick a plan before it runs out.
 							</p>
 						</div>
 						<Button className="w-full" onClick={openMaskin}>
@@ -97,7 +107,9 @@ function StartTrialPage() {
 				) : (
 					<>
 						<div className="text-center">
-							<h1 className="text-2xl font-semibold tracking-tight">Start your 7-day trial</h1>
+							<h1 className="text-2xl font-semibold tracking-tight">
+								Start your {trialDays}-day trial
+							</h1>
 							<p className="mt-1 text-sm text-muted-foreground">
 								Add a card to begin. Nothing is charged today. When the trial ends, you pick a plan
 								or stop.
@@ -208,8 +220,8 @@ function PromoCodeBox({
 		setChecking(true)
 		setMessage(null)
 		try {
-			const { valid } = await api.billing.trial.checkPromo(workspaceId, code)
-			if (valid) onPromo({ kind: 'applied', code })
+			const { valid, trial_days } = await api.billing.trial.checkPromo(workspaceId, code)
+			if (valid && trial_days) onPromo({ kind: 'applied', code, trialDays: trial_days })
 			else setMessage('This promo code is not valid, or it has been used up.')
 		} catch (err) {
 			setMessage(messageFor(err))
@@ -248,7 +260,10 @@ function PromoCodeBox({
 		return (
 			<div className="space-y-4">
 				<div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3.5 py-3 text-[12.5px] leading-[1.55]">
-					<p>Promo code applied, no card needed.</p>
+					<div>
+						<p>Promo code applied, no card needed.</p>
+						<p className="text-muted-foreground">Your trial lasts {promo.trialDays} days.</p>
+					</div>
 					<Button size="sm" variant="ghost" onClick={remove} disabled={starting}>
 						Remove
 					</Button>
@@ -259,7 +274,7 @@ function PromoCodeBox({
 					</p>
 				)}
 				<Button className="w-full" onClick={start} disabled={starting}>
-					{starting ? 'Starting trial...' : 'Start 7-day trial'}
+					{starting ? 'Starting trial...' : `Start ${promo.trialDays}-day trial`}
 				</Button>
 			</div>
 		)
