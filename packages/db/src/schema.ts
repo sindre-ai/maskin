@@ -3102,6 +3102,27 @@ export const trialCards = pgTable(
 
 export type TrialCard = typeof trialCards.$inferSelect
 
+// ── Trial promo codes (bet "A card to start a 7-day trial", task "Promo code on the start-trial page") ──
+//
+// A code starts the 7-day trial with no card. Stored upper case. `redemptions` is raised by one
+// conditional UPDATE inside the transaction that starts the trial, so `max_redemptions` holds even
+// when two requests race. No code is created by the app; a person adds rows by hand.
+export const trialPromoCodes = pgTable(
+	'trial_promo_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		code: text('code').notNull(),
+		maxRedemptions: integer('max_redemptions').notNull(),
+		redemptions: integer('redemptions').notNull().default(0),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		active: boolean('active').notNull().default(true),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_promo_codes_code_uniq').on(t.code)],
+)
+
+export type TrialPromoCode = typeof trialPromoCodes.$inferSelect
+
 export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 

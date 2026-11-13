@@ -210,6 +210,9 @@ export const workspaceSettingsSchema = z.object({
 			// period_end hold the window). `trial_wallet` records how the card was entered.
 			trial_state: z.enum(['awaiting_card', 'started']).optional(),
 			trial_wallet: z.enum(['apple_pay', 'google_pay', 'other', 'none']).optional(),
+			// Set when the trial started with a promo code instead of a card: the id of the row in
+			// trial_promo_codes (never the code text). Such a workspace has no card, so no trial_wallet.
+			trial_promo_code_id: z.string().uuid().optional(),
 			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
 			// Prepaid usage-credits balance, in USD cents. Depletes as
 			// `maskin_plan` usage crosses the plan's included cap

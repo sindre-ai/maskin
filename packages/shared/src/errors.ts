@@ -13,6 +13,8 @@ export const ApiErrorCode = {
 	TRIAL_NOT_STARTED: 'TRIAL_NOT_STARTED',
 	// The card is a plain card that already started a free trial. 409.
 	TRIAL_CARD_ALREADY_USED: 'TRIAL_CARD_ALREADY_USED',
+	// The promo code is not valid at the moment the trial starts (wrong, expired or used up). 400.
+	TRIAL_PROMO_CODE_INVALID: 'TRIAL_PROMO_CODE_INVALID',
 	AUTH_REVOKED: 'AUTH_REVOKED',
 	// Workspace-membership entitlement gates (distinct from PLAN_CAP_EXCEEDED,
 	// which is token-usage-specific and returns 402). These are
