@@ -17,6 +17,7 @@ import {
 	notificationActionSchema,
 	notificationOptionSchema,
 	skillNameSchema,
+	starterPromptListSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
 
@@ -849,7 +850,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing agent that was created in this workspace to a workspace (a person or an agent created elsewhere is refused with 403; people join by accepting an email invitation) — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), starter_prompts (agents only), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing agent that was created in this workspace to a workspace (a person or an agent created elsewhere is refused with 403; people join by accepting an email invitation) — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional().describe('New name for the actor.'),
@@ -875,6 +876,11 @@ export const tools = {
 				.optional()
 				.describe(
 					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. REPLACES the whole map — read the actor first and merge, or you will silently drop its existing servers. To add the tools of a connected integration, copy the `mcp.server` of that provider from list_integration_providers in under the provider name. `type` is required on each entry ("stdio" or "http").',
+				),
+			starter_prompts: starterPromptListSchema
+				.optional()
+				.describe(
+					"One-tap openers shown as chips in a new chat with this agent (agents only). Each entry is both the chip label and the exact text put in the message box, so write it as the person would say it. Up to 4 entries, 1-60 characters each, no line breaks, no repeats ignoring capitals. REPLACES the whole list; pass [] to clear. An agent may set its own; setting another actor's needs owner or admin.",
 				),
 			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
