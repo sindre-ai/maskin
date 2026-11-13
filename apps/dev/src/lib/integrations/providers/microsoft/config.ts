@@ -24,8 +24,13 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  *  - User.Read: the account's email, used as the integration's external id.
  *  - offline_access: a refresh token, so the connection survives past an hour.
  *
- * No webhook and no MCP server: transcripts are pulled by the poll job. The
- * Outlook calendar tool for agents is a separate task.
+ * No webhook: transcripts are pulled by the poll job.
+ *
+ * MCP is Maskin-hosted, like Deepdots: three read-only Outlook calendar tools served at
+ * `${MASKIN_API_URL}/api/integrations/microsoft/mcp` (./mcp-server.ts). The spec references only
+ * MASKIN_API_KEY, so the Microsoft token is never injected into a session; the route resolves it
+ * server-side. `autoInject: false` so each agent opts in (or gets it through an access grant).
+ * Calendars.Read, already in the scopes above, is all the tools need.
  */
 export const config: ProviderConfig = {
 	name: MICROSOFT_PROVIDER,
@@ -52,6 +57,19 @@ export const config: ProviderConfig = {
 	},
 
 	externalIdDisplay: 'email',
+
+	mcp: {
+		envKey: 'MICROSOFT_TOKEN',
+		autoInject: false,
+		server: {
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/microsoft/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
+		},
+	},
 }
 
 /**
