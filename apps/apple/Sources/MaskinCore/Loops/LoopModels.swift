@@ -39,10 +39,13 @@ public struct LoopTarget: Equatable, Sendable, Codable {
 	public var ownerID: String?
 	/// `strict` counts anything under target as behind; otherwise 90% still reads as on target.
 	public var isStrict: Bool
+	/// True when the number was typed in by hand, not counted live. Optional so older cached
+	/// snapshots and older servers still decode.
+	public var isManual: Bool?
 
 	public init(
 		label: String, source: String? = nil, actual: Double, target: Double, ownerID: String? = nil,
-		isStrict: Bool = false
+		isStrict: Bool = false, isManual: Bool? = nil
 	) {
 		self.label = label
 		self.source = source
@@ -50,6 +53,7 @@ public struct LoopTarget: Equatable, Sendable, Codable {
 		self.target = target
 		self.ownerID = ownerID
 		self.isStrict = isStrict
+		self.isManual = isManual
 	}
 
 	/// Share of the goal reached, 0...1 (for a bar).

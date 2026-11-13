@@ -387,8 +387,13 @@ describe('Loops read API integration', () => {
 		)
 		expect(res.status).toBe(200)
 		const body = (await res.json()) as {
-			loops: Array<{ targets: Array<{ label: string; actual: number }> }>
+			loops: Array<{ targets: Array<{ label: string; actual: number; manual: boolean }> }>
 		}
+		// Only the hand-typed row and the unknown metric key are manual; live rows are not.
+		expect((body.loops[0]?.targets ?? []).filter((t) => t.manual).map((t) => t.label)).toEqual([
+			'Typed by hand',
+			'Unknown metric',
+		])
 		const actualByLabel = Object.fromEntries(
 			(body.loops[0]?.targets ?? []).map((t) => [t.label, t.actual]),
 		)
