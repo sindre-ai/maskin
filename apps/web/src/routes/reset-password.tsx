@@ -5,29 +5,42 @@ import { ApiError, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export const Route = createFileRoute('/reset-password')({
 	validateSearch: (search: Record<string, unknown>) => ({
-		token: typeof search.token === 'string' ? search.token : '',
+		// Left out when absent, so clearing it from the address leaves no empty "?token=" behind.
+		token: typeof search.token === 'string' && search.token ? search.token : undefined,
 	}),
-	head: () => ({ meta: [{ title: 'Choose a new password — Maskin' }] }),
+	head: () => ({
+		meta: [
+			{ title: 'Choose a new password — Maskin' },
+			// Nothing on this page should hand the URL, and so the token, to another site.
+			{ name: 'referrer', content: 'no-referrer' },
+		],
+	}),
 	component: ResetPasswordPage,
 })
 
 // The reset email links to /reset-password?token=…; the token is the only credential on the page,
-// so it is never rendered or logged, only sent to the one reset call below.
+// so it is never rendered or logged, only sent to the one reset call below. The page keeps it in
+// state and drops it from the address bar right after load, so it does not linger in the URL.
 
 // Same floor as signup.
 const MIN_PASSWORD_LENGTH = 8
 
 function ResetPasswordPage() {
-	const { token } = Route.useSearch()
+	const { token: urlToken } = Route.useSearch()
+	const [token] = useState(urlToken ?? '')
 	const navigate = useNavigate()
 	const [password, setPassword] = useState('')
 	const [confirm, setConfirm] = useState('')
 	const [error, setError] = useState('')
 	const [loading, setLoading] = useState(false)
+
+	useEffect(() => {
+		if (urlToken) void navigate({ to: '/reset-password', search: {}, replace: true })
+	}, [urlToken, navigate])
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
