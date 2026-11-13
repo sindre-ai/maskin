@@ -18,13 +18,6 @@ import {
 	formatBytes,
 } from '../lib/desktop-put-file-command'
 import {
-	DESKTOP_SETTINGS_VERSION,
-	KEYFILE_NEEDS_CHROMIUM_RESTART,
-	buildApplySettingsCommand,
-	buildReadSettingsCommand,
-	parseKeyValueLines,
-} from '../lib/desktop-settings'
-import {
 	EMPTY_EXIT_CODE,
 	NOT_ALLOWED_EXIT_CODE,
 	NOT_FOUND_EXIT_CODE,
@@ -34,6 +27,13 @@ import {
 	buildSaveFileCommand,
 	mimeTypeForFileName,
 } from '../lib/desktop-save-file-command'
+import {
+	DESKTOP_SETTINGS_VERSION,
+	KEYFILE_NEEDS_CHROMIUM_RESTART,
+	buildApplySettingsCommand,
+	buildReadSettingsCommand,
+	parseKeyValueLines,
+} from '../lib/desktop-settings'
 import { signDesktopTicket } from '../lib/desktop-ticket'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
