@@ -22,9 +22,10 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { useToggleReaction } from '@/hooks/use-message-reactions'
 import type { MessageResponse, MessagesListResponse } from '@/lib/api'
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import { queryClient as appQueryClient } from '@/lib/query'
 import { queryKeys } from '@/lib/query-keys'
+import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { toast } from 'sonner'
 
 const conversationId = 'conv-1'
@@ -203,6 +204,23 @@ describe('useToggleReaction', () => {
 		act(() => result.current.toggle(1, '👍'))
 
 		await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to react'))
+		expect(toast.error).toHaveBeenCalledTimes(1)
+		appQueryClient.clear()
+	})
+
+	it('shows the viewer message once when the server refuses a viewer', async () => {
+		vi.mocked(api.conversations.reactToMessage).mockRejectedValue(
+			new ApiError(403, 'Viewers have read-only access to this workspace'),
+		)
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client: appQueryClient }, children)
+		const { result } = renderHook(() => useToggleReaction(conversationId, workspaceId), { wrapper })
+
+		act(() => result.current.toggle(1, '👍'))
+
+		await waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith(VIEWER_READ_ONLY_MESSAGE, { id: 'viewer-read-only' }),
+		)
 		expect(toast.error).toHaveBeenCalledTimes(1)
 		appQueryClient.clear()
 	})
