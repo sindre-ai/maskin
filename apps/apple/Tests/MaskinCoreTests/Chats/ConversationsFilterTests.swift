@@ -59,6 +59,23 @@ struct ConversationsFilterTests {
 		#expect(await eventually { await api.listFilters.last == "pinned=false unread=false" })
 	}
 
+	@Test("only the default list asks the server to leave out quiet chats")
+	func defaultListHidesQuiet() async {
+		let api = FakeListAPI([chatConvo("a")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		#expect(await api.hideQuietFlags.last == true)
+		store.filter = .unread
+		#expect(await eventually { await api.listFilters.last == "pinned=false unread=true" })
+		#expect(await api.hideQuietFlags.last == false)
+		store.filter = .pinned
+		#expect(await eventually { await api.listFilters.last == "pinned=true unread=false" })
+		#expect(await api.hideQuietFlags.last == false)
+		store.filter = .all
+		#expect(await eventually { await api.listFilters.last == "pinned=false unread=false" })
+		#expect(await api.hideQuietFlags.last == true)
+	}
+
 	@Test("a list response computed before a thread was read can't bring its unread badge back")
 	func staleListDoesNotResurrectUnread() async {
 		let api = GatedListAPI([chatConvo("a", unread: 2)])

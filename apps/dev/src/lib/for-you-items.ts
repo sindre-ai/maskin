@@ -163,20 +163,20 @@ export async function buildForYouItems(
 			),
 		),
 	]
-	const stampedObjects = stampedIds.length
-		? await db
-				.select({ id: objects.id, status: objects.status })
-				.from(objects)
-				.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, stampedIds)))
-		: []
+	const [stampedObjects, finishedDraftCards] = await Promise.all([
+		stampedIds.length
+			? db
+					.select({ id: objects.id, status: objects.status })
+					.from(objects)
+					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, stampedIds)))
+			: [],
+		findFinishedDraftCards(db, workspaceId, [...latestDecisionByEntity.values()]),
+	])
 	const stampedStatusById = new Map([
 		...decisionObjects.map((o) => [o.id, o.status] as const),
 		...stampedObjects.map((o) => [o.id, o.status] as const),
 	])
 
-	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, [
-		...latestDecisionByEntity.values(),
-	])
 	const liveDecisions = [...latestDecisionByEntity.values()].filter((event) => {
 		// Withdrawn by its writer or the Chief of Staff. Dropped after the newest decision per
 		// object is picked, so an older decision on the same object does not take its place.

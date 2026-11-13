@@ -676,6 +676,10 @@ export const conversationListQuerySchema = z.object({
 	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
 	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
 	scope: z.enum(['priority', 'recent']).optional(),
+	// The default list's listing rules: leave out empty direct messages with agents, chats with
+	// retired agents and topic chats quiet for about 14 days, unless pinned or unread. Nothing is
+	// archived; the chats stay in search and return when a new message arrives.
+	hide_quiet: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })

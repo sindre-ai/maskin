@@ -4,7 +4,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // T1 shell gate — renders the full object-detail shell at each ship-gate
 // viewport (375 / 768 / 1024) against a seeded object carrying the fixture
 // metadata contract (_ask, _evidence_*, _fold_*): ask banner renders the
-// agent's open question, "Answer it ↓" moves focus to the answer control,
+// agent's open question, "Answer" moves focus to the answer control,
 // kv rows come from public metadata, the evidence block sits behind its own
 // fold, and the document fold expands to its markdown. No horizontal scroll.
 // The evidence row is inline (no "Evidence" fold) since the v2 port.
@@ -67,9 +67,9 @@ test.describe('Object detail shell — document sections', () => {
 			await expect(page.getByText(new RegExp(EVIDENCE_SOURCE))).toBeVisible()
 			await expect(page.getByText(new RegExp(EVIDENCE_DATE))).toBeVisible()
 
-			// "Answer it ↓" opens the Activity tab (the composer lives there) and
+			// "Answer" opens the Activity tab (the composer lives there) and
 			// moves focus to the answer control.
-			await page.getByRole('button', { name: /answer it/i }).click()
+			await page.getByRole('button', { name: 'Answer', exact: true }).click()
 			await expect(page.getByRole('tab', { name: /^Activity/ })).toHaveAttribute(
 				'aria-selected',
 				'true',
