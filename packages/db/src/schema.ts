@@ -3259,10 +3259,11 @@ export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
 export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert
 
 // ── API route timing counts ─────────────────────────────────────────────────
-// One row per minute, per route, per server build, per sender, per app build: how many requests the API
+// One row per minute, per route, per server build, per sender, per app build, per app release: how many requests the API
 // answered and how long they took. Counts and sums only. No actor, workspace, URL or free text is stored;
 // the route is the pattern (`/api/objects/:id`) and client_build is the iOS build number from
-// X-Client-Build (1 to 12 digits) or '' for web, agents and anything else. Written by the once-a-minute
+// X-Client-Build (1 to 12 digits) and client_version is the release from X-Client-Version (digits and dots,
+// 1 to 12), each '' for web, agents and anything else. Written by the once-a-minute
 // timing flush
 // (apps/dev/src/lib/route-timing-store.ts) and deleted after 30 days, so the load per route can be
 // read over a week. `minute` is the minute the flush ran in; two replicas (or two flushes in one
@@ -3280,6 +3281,8 @@ export const apiRouteTimingMinutes = pgTable(
 		clientSource: text('client_source').notNull().default(''),
 		// iOS build number from X-Client-Build (1 to 12 digits); '' for web, agents and anything else.
 		clientBuild: text('client_build').notNull().default(''),
+		// iOS release from X-Client-Version (digits and dots, 1 to 12); '' for web, agents and anything else.
+		clientVersion: text('client_version').notNull().default(''),
 		requests: integer('requests').notNull(),
 		slowRequests: integer('slow_requests').notNull(),
 		errors5xx: integer('errors_5xx').notNull(),
@@ -3289,7 +3292,16 @@ export const apiRouteTimingMinutes = pgTable(
 	},
 	(t) => [
 		primaryKey({
-			columns: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource, t.clientBuild],
+			columns: [
+				t.minute,
+				t.build,
+				t.method,
+				t.route,
+				t.stream,
+				t.clientSource,
+				t.clientBuild,
+				t.clientVersion,
+			],
 		}),
 	],
 )
