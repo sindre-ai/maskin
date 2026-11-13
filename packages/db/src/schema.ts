@@ -3114,7 +3114,7 @@ export const trialPromoCodes = pgTable(
 		code: text('code').notNull(),
 		maxRedemptions: integer('max_redemptions').notNull(),
 		redemptions: integer('redemptions').notNull().default(0),
-		// How long the trial lasts for a person who starts it with this code. New codes get 14.
+		// How long the trial lasts for a person who starts it with this code. A code gives 14 unless set otherwise.
 		trialDays: integer('trial_days').notNull().default(14),
 		expiresAt: timestamp('expires_at', { withTimezone: true }),
 		active: boolean('active').notNull().default(true),

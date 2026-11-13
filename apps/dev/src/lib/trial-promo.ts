@@ -9,7 +9,7 @@ import { DAY_SECONDS, TrialCardError } from './trial-card'
 
 // Promo codes at the start-trial page (bet "A card to start a 7-day trial", task "Promo code on the
 // start-trial page"). A valid code starts the trial with no card, and it lasts the code's own
-// trial_days (14 for new codes; a card trial is 7). Codes live in our own table
+// trial_days (14 by default; a card trial is 7). Codes live in our own table
 // (trial_promo_codes), not in Stripe: Stripe counts a promotion code as used only when it is applied
 // to a checkout or subscription, and a trial with no card has neither, so Stripe could neither say
 // "this code skips the card" nor count the use for us.
