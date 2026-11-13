@@ -23,6 +23,7 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
+import { trackOnboardingStep } from '../lib/analytics/onboarding-funnel'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { recordEvent } from '../lib/events/record-event'
@@ -887,6 +888,11 @@ export async function provisionWorkspace(params: {
 		agent_id: chiefOfStaffId,
 		source: 'onboarding',
 	})
+	void trackOnboardingStep({
+		workspaceId: workspace.id,
+		humanId: ownerActorId,
+		step: 'first_agent',
+	})
 
 	// The actor + member rows are already committed above, so this call is a
 	// no-op for actors (its name check hits every one) and only writes
@@ -907,6 +913,13 @@ export async function provisionWorkspace(params: {
 			workspaceId: workspace.id,
 		})
 	}
+
+	// Skills, triggers and the default loops are in place: the workspace is ready to use.
+	void trackOnboardingStep({
+		workspaceId: workspace.id,
+		humanId: ownerActorId,
+		step: 'workspace_ready',
+	})
 
 	// Chief of Staff was seeded synchronously above, so bootstrapDefaultAgents
 	// only ever sees it as pre-existing (chiefIsNew === false) and skips its own

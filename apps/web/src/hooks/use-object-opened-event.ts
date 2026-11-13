@@ -1,4 +1,4 @@
-import { trackLoopResultOpened, trackObjectOpened } from '@/lib/analytics'
+import { trackFirstResultOpened, trackLoopResultOpened, trackObjectOpened } from '@/lib/analytics'
 import type { ActorResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { findFlowId } from '@/lib/object-detail-meta'
 import { useEffect, useRef } from 'react'
@@ -43,6 +43,7 @@ export function useObjectOpenedEvent(
 			source_session_id: sourceSessionId,
 			created_by_actor_type: createdByActorType,
 		})
+		if (sourceSessionId && createdByActorType === 'agent') trackFirstResultOpened()
 		const loopId = findFlowId(relationships, id)
 		if (loopId && (sourceSessionId || createdByActorType !== 'human')) {
 			trackLoopResultOpened({

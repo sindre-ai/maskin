@@ -1271,3 +1271,23 @@ export function trackFlowError<F extends FlowName>(p: {
 	})
 	if (props) trackEvent('flow_error', props)
 }
+
+// The last step of the sign-up to first result flow: a person opened something a run made. Sent
+// once per person per browser, on the person's own id as the flow_id, which is also the id the
+// server uses for the earlier steps. With no usable storage it is sent once per page load.
+const FIRST_RESULT_OPENED_KEY = 'maskin-first-result-opened'
+const firstResultOpenedFor = new Set<string>()
+
+export function trackFirstResultOpened(): boolean {
+	const actorId = getStoredActor()?.id
+	if (!actorId || firstResultOpenedFor.has(actorId)) return false
+	firstResultOpenedFor.add(actorId)
+	try {
+		if (localStorage.getItem(`${FIRST_RESULT_OPENED_KEY}:${actorId}`)) return false
+		localStorage.setItem(`${FIRST_RESULT_OPENED_KEY}:${actorId}`, '1')
+	} catch {
+		// No storage: the in-memory record above still stops repeats this page load.
+	}
+	trackFlowStep({ flow: 'signup_to_first_result', step: 'result_opened', flowId: actorId })
+	return true
+}

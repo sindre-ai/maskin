@@ -74,6 +74,7 @@ import {
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
+import { trackFirstRunStarted } from '../lib/analytics/onboarding-funnel'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
@@ -924,6 +925,8 @@ export class SessionManager extends EventEmitter {
 		if (!session) {
 			throw new Error('Failed to create session')
 		}
+
+		void trackFirstRunStarted(this.db, session)
 
 		await recordEvent(this.db, {
 			workspaceId,

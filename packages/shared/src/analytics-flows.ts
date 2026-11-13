@@ -60,6 +60,8 @@ export const FLOW_ERROR_CATEGORIES = [
 	'provider_error',
 	'validation',
 	'connection_lost',
+	// The workspace has no working model key, so a run could not start (sign-up flow).
+	'missing_model_key',
 	'unknown',
 ] as const
 
@@ -76,6 +78,17 @@ export type FlowStepProps = {
 	duration_ms: number | null
 	/** Only on flows about one provider (the integration ones): a catalog key, never free text. */
 	provider?: string
+} & FlowStepDetail
+
+/**
+ * Optional extras for a step whose meaning depends on how the person got there: a category
+ * and a position, never text. Today only `intro_clicked` sends them.
+ */
+export type FlowStepDetail = {
+	/** An intro step tapped as a button, or the person typed their own reply. */
+	via?: 'button' | 'typed'
+	/** Position of the tapped intro step in the list, from 0. */
+	step_index?: number
 }
 
 export type FlowErrorProps = {
@@ -115,6 +128,7 @@ export function buildFlowStepProps(p: {
 	surface: FlowSurface
 	durationMs: number | null
 	provider?: string
+	detail?: FlowStepDetail
 }): FlowStepProps | null {
 	if (!p.flowId || !isFlowStep(p.flow, p.step)) return null
 	return {
@@ -124,6 +138,8 @@ export function buildFlowStepProps(p: {
 		surface: p.surface,
 		duration_ms: p.durationMs,
 		...(p.provider ? { provider: p.provider } : {}),
+		...(p.detail?.via !== undefined ? { via: p.detail.via } : {}),
+		...(p.detail?.step_index !== undefined ? { step_index: p.detail.step_index } : {}),
 	}
 }
 
