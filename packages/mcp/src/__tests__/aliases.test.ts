@@ -29,6 +29,33 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 const U1 = '11111111-1111-4111-8111-111111111111'
 const U2 = '22222222-2222-4222-8222-222222222222'
 
+describe('normaliseArgs: list sent as text', () => {
+	const row = { id: U1, title: 'T' }
+
+	it('parses a JSON array string under objects, after the rename', () => {
+		const result = normaliseArgs('update_objects', { objects: JSON.stringify([row]) })
+		expect(result.args).toEqual({ updates: [row] })
+		expect(result.renames).toEqual([{ old: 'objects', new: 'updates' }])
+	})
+
+	it('parses a JSON array string under the canonical name too', () => {
+		expect(normaliseArgs('create_objects', { nodes: JSON.stringify([row]) }).args).toEqual({
+			nodes: [row],
+		})
+	})
+
+	it('leaves a string that is not a JSON array for the schema to reject', () => {
+		for (const text of ['not json', '{"a":1}', '[broken']) {
+			expect(normaliseArgs('update_objects', { updates: text }).args).toEqual({ updates: text })
+		}
+	})
+
+	it('does not touch other tools', () => {
+		const args = { updates: JSON.stringify([row]) }
+		expect(normaliseArgs('update_actor', args).args).toBe(args)
+	})
+})
+
 describe('normaliseArgs', () => {
 	it('renames a top-level key and reports it', () => {
 		const result = normaliseArgs('list_objects', { driver_id: U1 })
@@ -309,8 +336,10 @@ describe('through the real SDK path', () => {
 	})
 
 	it('unknown keys are still stripped, not rejected', async () => {
-		const withJunk = await harness.call('get_objects', { ids: [U1], nonsense: true })
-		const clean = await harness.call('get_objects', { ids: [U1] })
+		// get_objects now rejects unknown names (reject-unknown-params.test.ts), so this
+		// check uses a tool that has not been moved to strict checking yet.
+		const withJunk = await harness.call('get_comments', { entity_id: U1, nonsense: true })
+		const clean = await harness.call('get_comments', { entity_id: U1 })
 		expect(withJunk).toEqual(clean)
 	})
 

@@ -67,7 +67,9 @@ export function scrubAuthorizeUrls<
 // Every web event says where it came from and who acted. The web is only ever
 // used by a signed-in or signing-up person, so an event with no actor_type yet
 // (pageviews before the workspace mounts, sign-up events) is a human's. The
-// workspace mount registers the real actor_type, which wins.
+// workspace mount registers the real actor_type, which wins. The same goes for
+// internal (the workspace is one of ours) and paying (it has an active paid
+// plan): plain booleans that read false until the workspace mount registers them.
 //
 // An event that belongs to a product area also carries feature_area (the shared
 // list in @maskin/shared, the same one the server and the iPhone app use). A value
@@ -82,6 +84,8 @@ export function withSharedProperties<
 		...event,
 		properties: {
 			actor_type: 'human',
+			internal: false,
+			paying: false,
 			...(area ? { feature_area: area } : {}),
 			...properties,
 			surface: 'web',
@@ -109,10 +113,15 @@ export function initPosthog(): void {
 			api_host: import.meta.env.VITE_POSTHOG_HOST ?? DEFAULT_HOST,
 			person_profiles: 'identified_only',
 			capture_pageview: true,
-			// Leave and web-vitals events were a share of the browser volume with
-			// no question behind them.
+			// Page-leave events were a share of the browser volume with no question
+			// behind them. Web vitals (LCP and INP only) are back on purpose for the
+			// app redesign speed check; network timing stays off.
 			capture_pageleave: false,
-			capture_performance: false,
+			capture_performance: {
+				network_timing: false,
+				web_vitals: true,
+				web_vitals_allowed_metrics: ['LCP', 'INP'],
+			},
 			autocapture: false,
 			before_send: beforeSend,
 		})
@@ -158,6 +167,9 @@ export interface WorkspaceSuperProperties {
 	actor_type: string
 	// True when the person is on our own team. A plain boolean, never a name or email.
 	is_team: boolean
+	// True when the workspace is one of ours, and when it has an active paid plan.
+	internal: boolean
+	paying: boolean
 }
 
 // Pins the Synthesizer's join keys onto every subsequent capture call —

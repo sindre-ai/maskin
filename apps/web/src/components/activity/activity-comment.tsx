@@ -1,4 +1,5 @@
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
+import type { TagInputHandle } from '@/components/chat/tag-input'
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
@@ -10,7 +11,7 @@ import { cn } from '@/lib/cn'
 import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Reply } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
@@ -74,7 +75,7 @@ interface CommentRowProps {
 	event: EventResponse
 	actors: ActorListItem[]
 	workspaceId: string
-	onReply?: (authorName: string) => void
+	onReply?: (authorName: string, trigger: HTMLElement) => void
 	isUnread?: boolean
 	isDecisionPoint?: boolean
 	variant?: CommentVariant
@@ -308,7 +309,7 @@ function CommentRow({
 					<ViewerTooltip className="inline-flex self-end shrink-0">
 						<button
 							type="button"
-							onClick={() => onReply(actor?.name ?? 'this message')}
+							onClick={(e) => onReply(actor?.name ?? 'this message', e.currentTarget)}
 							aria-label="Reply"
 							disabled={!canWrite}
 							/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
@@ -349,6 +350,9 @@ export function ActivityComment({
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
+	// The Reply button that opened the box, so closing it can hand focus back there.
+	const replyTriggerRef = useRef<HTMLElement | null>(null)
+	const replyInputRef = useRef<TagInputHandle>(null)
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
 	const isDecisionPoint = hasDecision(event)
@@ -362,12 +366,21 @@ export function ActivityComment({
 	const lastReplyAuthor = actorList.find((a) => a.id === lastReply?.actorId)?.name
 	const threadNote = lastReplyAuthor ? `last from ${lastReplyAuthor}` : null
 
-	const handleReply = (authorName: string) => {
+	const handleReply = (authorName: string, trigger?: HTMLElement) => {
 		if (onReplyTo) {
 			onReplyTo(event, authorName)
 			return
 		}
-		setShowReplyInput(true)
+		replyTriggerRef.current = trigger ?? null
+		// Already open: the box does not remount, so move the caret into it directly.
+		if (showReplyInput) replyInputRef.current?.focus()
+		else setShowReplyInput(true)
+	}
+
+	const closeReplyInput = () => {
+		setShowReplyInput(false)
+		const trigger = replyTriggerRef.current
+		if (trigger?.isConnected) trigger.focus()
 	}
 
 	const isBubble = variant === 'bubble'
@@ -464,7 +477,14 @@ export function ActivityComment({
 
 			{showReplyInput && (
 				<div className="ml-7 mt-2">
-					<CommentInput workspaceId={workspaceId} objectId={objectId} parentEventId={event.id} />
+					<CommentInput
+						workspaceId={workspaceId}
+						objectId={objectId}
+						parentEventId={event.id}
+						focusRef={replyInputRef}
+						autoFocus
+						onCancel={closeReplyInput}
+					/>
 				</div>
 			)}
 		</div>

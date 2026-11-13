@@ -3,6 +3,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatFigure } from '@/lib/format-number'
 import { Link } from '@tanstack/react-router'
 import { LOOP_PILL_STYLES, NO_CREDITS_PILL, isLiveLoopPill } from './loop-pill'
 import { paceVerdict } from './target-card'
@@ -44,7 +45,7 @@ export function loopProgress(loop: LoopSummary): {
 	if (!target || !(target.target > 0)) return null
 	const percent = Math.max(0, Math.min(100, (target.actual / target.target) * 100))
 	return {
-		text: `${target.actual} of ${target.target} ${target.label}`.trim(),
+		text: `${formatFigure(target.actual)} of ${formatFigure(target.target)} ${target.label}`.trim(),
 		percent,
 		missed: paceVerdict(target).label === 'Missed',
 	}

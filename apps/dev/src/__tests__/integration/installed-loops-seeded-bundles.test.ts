@@ -110,7 +110,11 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 	// dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS). Naming the slug in the test
 	// title (not just the DB row) means a CI failure names the exact bundle
 	// that broke rather than a generic "install failed" line.
-	const BUNDLE_SLUGS = ['market-competitor-watch-loop', 'product-discovery-loop'] as const
+	const BUNDLE_SLUGS = [
+		'market-competitor-watch-loop',
+		'product-discovery-loop',
+		'meeting-loop',
+	] as const
 
 	for (const slug of BUNDLE_SLUGS) {
 		it(`installs the ${slug} bundle into a fresh workspace`, async () => {

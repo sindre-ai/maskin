@@ -55,7 +55,7 @@ describe('Interactive turn finalizer — spawn-anchor backfill (Integration)', (
 	}
 
 	/**
-	 * Spawn a sub-agent row directly (mirrors create_session's write shape).
+	 * Spawn a sub-agent row directly (mirrors create_sub_chat's write shape).
 	 * `source_session_id` is set, `spawned_by_message_id` is NULL.
 	 */
 	async function spawnSubAgent(primarySessionId: string): Promise<{
@@ -136,7 +136,7 @@ describe('Interactive turn finalizer — spawn-anchor backfill (Integration)', (
 		expect(await readSpawnAnchor(subB.id)).toBe(assistantMessage.id)
 	})
 
-	it('anchors a sub-agent that only carries spawned_by_session_id (REST create_session)', async () => {
+	it('anchors a sub-agent that only carries spawned_by_session_id (REST create_sub_chat)', async () => {
 		const primary = await insertSession(db, workspaceId, agentId, humanId, {
 			interactive: true,
 			conversationId,
@@ -150,7 +150,7 @@ describe('Interactive turn finalizer — spawn-anchor backfill (Integration)', (
 `,
 		)
 
-		// REST create_session sets spawned_by_session_id from the header and
+		// REST create_sub_chat sets spawned_by_session_id from the header and
 		// leaves source_session_id null unless the agent passes it.
 		const sub = await insertSession(db, workspaceId, agentId, humanId, {
 			interactive: false,

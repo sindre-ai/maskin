@@ -235,6 +235,12 @@ export function HumanDetailDialog({
 							type="text"
 							value={descriptionDraft}
 							onChange={(e) => setDescriptionDraft(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' && !e.nativeEvent.isComposing && !updateActor.isPending) {
+									e.preventDefault()
+									handleSave()
+								}
+							}}
 							placeholder={canWrite ? 'Short one-liner (max 80 chars)' : VIEWER_READ_ONLY_MESSAGE}
 							maxLength={80}
 							disabled={!canWrite}

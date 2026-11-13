@@ -107,8 +107,15 @@ vi.mock('@/hooks/use-relationships', () => ({
 // The Message composer is the shared Composer behind AgentComposer (own suite); a stub keeps
 // this one on the shell's wiring.
 vi.mock('@/components/agents/agent-composer', () => ({
-	AgentComposer: ({ agent }: { agent: { name: string } }) => (
-		<textarea aria-label={`Message ${agent.name}`} placeholder={`Message ${agent.name}…`} />
+	AgentComposer: ({
+		agent,
+		leading,
+		placeholder,
+	}: { agent: { name: string }; leading?: React.ReactNode; placeholder?: string }) => (
+		<>
+			{leading}
+			<textarea aria-label={`Message ${agent.name}`} placeholder={placeholder} />
+		</>
 	),
 }))
 
@@ -142,7 +149,7 @@ describe('ObjectDetailShell', () => {
 		expect(screen.getByText(/Should we ship this\?/)).toBeInTheDocument()
 	})
 
-	it('Answer it opens the Activity tab and moves focus to the answer control', async () => {
+	it('Answer opens the Activity tab and moves focus to the answer control', async () => {
 		const object = buildObjectResponse({
 			type: 'bet',
 			metadata: { _ask: 'Should we ship this?' },
@@ -153,7 +160,7 @@ describe('ObjectDetailShell', () => {
 
 		// The composer is pinned under every tab, so it is already there on Overview.
 		const answerBox = screen.getByRole('textbox', { name: 'Comment' })
-		fireEvent.click(screen.getByRole('button', { name: /answer it/i }))
+		fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
 		await waitFor(() => expect(document.activeElement).toBe(answerBox))
 		expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
 	})
@@ -226,7 +233,7 @@ describe('ObjectDetailShell', () => {
 		})
 		// The object page's composer is the single-row bar (mockup 1358–1366).
 		expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument()
-		expect(screen.getByText(/commands, @ mentions/i)).toBeInTheDocument()
+		expect(screen.getByText('Type / for commands or @ to mention')).toBeInTheDocument()
 	})
 
 	// v16: one column with three tabs; the old Timeline / Related segmented control is gone.
@@ -241,12 +248,12 @@ describe('ObjectDetailShell', () => {
 		expect(screen.queryByRole('tab', { name: /^Timeline$/ })).toBeNull()
 	})
 
-	it('shows no Message switch when the item has no agent to message', () => {
+	it('shows no mode chip when the item has no agent to message', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} tab="activity" />, {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		expect(screen.queryByRole('tab', { name: /^Message/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: 'Switch between comment and message' })).toBeNull()
 	})
 
 	it('swaps to the one Message composer when the owner is an agent', () => {
@@ -256,11 +263,15 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument()
-		const messageTab = screen.getByRole('tab', { name: 'Message Bob' })
-		fireEvent.mouseDown(messageTab)
-		fireEvent.click(messageTab)
+		const chip = screen.getByRole('button', { name: 'Switch between comment and message' })
+		expect(chip).toHaveTextContent('Comment')
+		fireEvent.click(chip)
 		expect(screen.queryByRole('textbox', { name: 'Comment' })).toBeNull()
-		expect(screen.getByPlaceholderText('Message Bob…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Message Bob')).toBeInTheDocument()
+		// The same chip stays in the bar and now reads the agent, so it can switch back.
+		expect(
+			screen.getByRole('button', { name: 'Switch between comment and message' }),
+		).toHaveTextContent('Message Bob')
 	})
 
 	it('mounts the properties drawer behind the header toggle', () => {

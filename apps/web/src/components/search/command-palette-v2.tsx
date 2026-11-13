@@ -85,6 +85,8 @@ import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 // results come. Enter on the Search row, or ⌘↵, hands the words and the pills to /search.
 
 const MAX_JUMP_ROWS = 6
+// Most rows one group (chats, agents, people) takes of those six, so a name finds all three.
+const MAX_JUMP_ROWS_PER_GROUP = 3
 
 const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
 	objects: 'ITEM',
@@ -436,6 +438,7 @@ function LauncherPanel({
 		updated: '',
 		sort: 'rel',
 		limit: MAX_JUMP_ROWS,
+		perGroup: MAX_JUMP_ROWS_PER_GROUP,
 	}
 	const search = useSearchQuery(workspaceId, input)
 	const { data, isError, isFetching, isPlaceholderData, refetch } = search
@@ -818,7 +821,11 @@ function LauncherPanel({
 				role="dialog"
 				aria-modal="true"
 				aria-label="Command palette"
+				tabIndex={-1}
 				onKeyDown={onPanelKeyDown}
+				// A click on a heading, the footer or a button that goes away would leave focus on the
+				// page, where Esc and the arrows are not heard. Give it back to the field.
+				onClick={() => inputRef.current?.focus()}
 				className="relative mx-auto flex max-h-140 w-full max-w-150 flex-col overflow-hidden bg-popover text-popover-foreground shadow-2xl ring-1 ring-border max-sm:max-h-[92dvh] max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
 			>
 				<div className="flex items-center border-b border-border">

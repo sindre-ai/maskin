@@ -7,10 +7,18 @@ vi.mock('@/lib/api', () => ({
 			list: vi.fn(),
 			activity: vi.fn(),
 		},
+		relationships: { list: vi.fn() },
+		objects: { list: vi.fn() },
 	},
 }))
 
-import { useLoop, useLoopActivity, useLoops } from '@/hooks/use-loops'
+import {
+	useLoop,
+	useLoopActivity,
+	useLoopMembership,
+	useLoops,
+	useObjectsByIds,
+} from '@/hooks/use-loops'
 import { type EventResponse, type LoopSummary, api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
@@ -124,5 +132,65 @@ describe('useLoopActivity', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(events)
 		expect(api.loops.activity).toHaveBeenCalledWith('loop-1', workspaceId)
+	})
+})
+
+describe('useLoopMembership', () => {
+	const edge = (i: number, targetType = 'object') => ({
+		id: `edge-${i}`,
+		sourceType: 'object',
+		sourceId: 'loop-1',
+		targetType,
+		targetId: `target-${i}`,
+		type: 'in_loop',
+	})
+
+	it('reads every page of links, not just the first 100', async () => {
+		const first = Array.from({ length: 100 }, (_, i) => edge(i))
+		const second = Array.from({ length: 43 }, (_, i) => edge(100 + i))
+		vi.mocked(api.relationships.list).mockResolvedValueOnce(first as never)
+		vi.mocked(api.relationships.list).mockResolvedValueOnce(second as never)
+
+		const { result } = renderHook(() => useLoopMembership(workspaceId, 'loop-1'), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		expect(result.current.data?.itemIds).toHaveLength(143)
+		expect(api.relationships.list).toHaveBeenCalledTimes(2)
+		expect(vi.mocked(api.relationships.list).mock.calls[1]?.[1]).toMatchObject({
+			source_id: 'loop-1',
+			type: 'in_loop',
+			offset: '100',
+		})
+	})
+
+	it('keeps attached files apart from items', async () => {
+		vi.mocked(api.relationships.list).mockResolvedValueOnce([edge(1), edge(2, 'file')] as never)
+
+		const { result } = renderHook(() => useLoopMembership(workspaceId, 'loop-1'), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		expect(result.current.data).toEqual({ itemIds: ['target-1'], fileIds: ['target-2'] })
+	})
+})
+
+describe('useObjectsByIds', () => {
+	it('fetches ids in pages of 100 and joins them', async () => {
+		const ids = Array.from({ length: 230 }, (_, i) => `id-${i}`)
+		vi.mocked(api.objects.list).mockImplementation(((
+			_ws: string,
+			params?: Record<string, string>,
+		) => Promise.resolve((params?.ids ?? '').split(',').map((id) => ({ id })))) as never)
+
+		const { result } = renderHook(() => useObjectsByIds(workspaceId, ids), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+		expect(api.objects.list).toHaveBeenCalledTimes(3)
+		expect(result.current.data).toHaveLength(230)
 	})
 })

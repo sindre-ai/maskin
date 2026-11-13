@@ -31,6 +31,8 @@ const base = {
 	workspaceId: 'ws-1',
 	resolved: true,
 	isTeam: false,
+	internal: false,
+	paying: false,
 	createdAt: '2026-10-01T00:00:00.000Z',
 	shareUsage: true,
 	anonymizeWorkspace: false,
@@ -82,6 +84,25 @@ describe('useWorkspaceAnalytics', () => {
 		rerender({ ...base, shareUsage: false, anonymizeWorkspace: true })
 		expect(mocks.identifyForWorkspace).toHaveBeenLastCalledWith('actor-1', true, expect.any(Object))
 		expect(mocks.setWorkspaceGroup).toHaveBeenCalledTimes(3)
+	})
+
+	it('registers internal and paying with the other workspace properties', () => {
+		renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: { ...base, internal: true, paying: true },
+		})
+		expect(mocks.registerWorkspaceProperties).toHaveBeenCalledWith(
+			expect.objectContaining({ workspace_id: 'ws-1', internal: true, paying: true }),
+		)
+	})
+
+	it('registers again when the workspace becomes paying', () => {
+		const { rerender } = renderHook((props) => useWorkspaceAnalytics(props), {
+			initialProps: base,
+		})
+		rerender({ ...base, paying: true })
+		expect(mocks.registerWorkspaceProperties).toHaveBeenLastCalledWith(
+			expect.objectContaining({ internal: false, paying: true }),
+		)
 	})
 
 	it('sends nothing until the workspace has resolved', () => {

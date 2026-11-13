@@ -1,4 +1,9 @@
-import { NO_TEAM, buildAgentFilterPills, buildTeamChips } from '@/lib/agents-index-filters'
+import {
+	NO_TEAM,
+	buildAgentFilterPills,
+	buildTeamByAgentId,
+	buildTeamChips,
+} from '@/lib/agents-index-filters'
 import { describe, expect, it } from 'vitest'
 
 describe('buildTeamChips', () => {
@@ -38,5 +43,32 @@ describe('buildAgentFilterPills', () => {
 			{ id: 'status', label: 'Status', value: 'WORKING, IDLE' },
 			{ id: 'team', label: 'Team', value: 'Zeta flow' },
 		])
+	})
+})
+
+describe('buildTeamByAgentId', () => {
+	it('takes the first tag, trimmed, else the catch-all', () => {
+		const teams = buildTeamByAgentId([
+			{ id: 'a', tags: [' writer ', 'Marketing'] },
+			{ id: 'b', tags: [] },
+			{ id: 'c' },
+		])
+		expect(teams.get('a')).toBe('Marketing')
+		expect(teams.get('b')).toBe(NO_TEAM)
+		expect(teams.get('c')).toBe(NO_TEAM)
+	})
+
+	it('treats tags that differ only in case as one team, in the spelling that sorts first', () => {
+		const teams = buildTeamByAgentId([
+			{ id: 'a', tags: ['alpha'] },
+			{ id: 'b', tags: ['Alpha'] },
+		])
+		expect(teams.get('a')).toBe('Alpha')
+		expect(teams.get('b')).toBe('Alpha')
+	})
+
+	it('orders digits by value', () => {
+		const teams = buildTeamByAgentId([{ id: 'a', tags: ['Team 10', 'Team 2'] }])
+		expect(teams.get('a')).toBe('Team 2')
 	})
 })

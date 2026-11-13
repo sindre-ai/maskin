@@ -128,6 +128,7 @@ export function statusLabel(status: string): string {
 
 export type StatusStage =
 	| 'todo'
+	| 'define'
 	| 'progress'
 	| 'review'
 	| 'done'
@@ -136,11 +137,12 @@ export type StatusStage =
 	| 'unknown'
 
 const STAGE_STATUSES: Record<Exclude<StatusStage, 'unknown'>, readonly string[]> = {
-	done: ['done', 'completed', 'complete', 'validated', 'closed', 'shipped', 'merged'],
-	review: ['in_review', 'review', 'reviewing', 'ready_for_review'],
+	done: ['done', 'completed', 'complete', 'validated', 'succeeded', 'closed', 'shipped', 'merged'],
+	review: ['in_review', 'review', 'reviewing', 'ready_for_review', 'live'],
 	progress: ['in_progress', 'active', 'processing', 'running', 'working', 'testing'],
 	cancelled: ['cancelled', 'canceled', 'discarded', 'failed', 'rejected', 'abandoned'],
 	blocked: ['blocked', 'paused', 'parked', 'on_hold', 'at_risk', 'stalled'],
+	define: ['define'],
 	todo: [
 		'backlog',
 		'todo',
@@ -149,7 +151,6 @@ const STAGE_STATUSES: Record<Exclude<StatusStage, 'unknown'>, readonly string[]>
 		'draft',
 		'proposed',
 		'opportunity',
-		'define',
 		'open',
 		'queued',
 		'pending',
@@ -161,7 +162,7 @@ const STAGE_STATUSES: Record<Exclude<StatusStage, 'unknown'>, readonly string[]>
 }
 
 // The v3 status ring has a stage per kind of status: a dashed ring (not
-// started), a third filled (in progress), three quarters filled (in review), a
+// started), a quarter filled (define), half filled (in progress), three quarters filled (in review), a
 // solid tick (done), a cross (cancelled) and a pause mark in the warning colour
 // (blocked). Workspace statuses are free text, so anything unrecognised is
 // `unknown` — its row shows the word beside a neutral ring rather than passing
