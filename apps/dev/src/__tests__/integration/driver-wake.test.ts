@@ -427,6 +427,8 @@ describe('DriverWaker', () => {
 	})
 
 	describe('decision cards', () => {
+		// A card the schema accepts: a summary, and 2 to 3 consequences on every option. A card
+		// without them does not parse, so the scan would skip it.
 		const card = (objectId: string, expiresAt: Date, actorId = driverId) =>
 			recordEventReturning(db, {
 				workspaceId,
@@ -437,8 +439,12 @@ describe('DriverWaker', () => {
 				data: {
 					content: 'Which way?',
 					decision: {
-						title: 'Pick one',
-						options: [{ label: 'A' }, { label: 'B' }],
+						title: 'Which way should we go?',
+						summary: 'Two ways forward are open.',
+						options: [
+							{ label: 'A', recommended: true, consequences: ['Ships today', 'Costs a day'] },
+							{ label: 'B', consequences: ['Ships Friday', 'Costs nothing'] },
+						],
 						expires_at: expiresAt.toISOString(),
 					},
 				},
