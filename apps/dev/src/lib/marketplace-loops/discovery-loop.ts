@@ -32,7 +32,7 @@ export const DISCOVERY_ACTOR_STRATEGIST = '02f60f27-615a-4cdd-9af0-23f402f067e4'
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Loop',
-	version: '1.2.0',
+	version: '1.3.0',
 	useCase: 'Discovery',
 	description:
 		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, two living pages (what we understand about customers, and what it means for each bet) are kept current and graded each week, a plain-words weekly briefing says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
