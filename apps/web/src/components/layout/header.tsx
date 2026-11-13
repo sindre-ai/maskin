@@ -127,7 +127,7 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  * The bar floats over the page instead of sitting above it: it has no background at all, and
  * clicks pass through it except on its own controls.
  */
-const FLOATING_BAR = `pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 ${FLOATING_CONTROLS}`
+const FLOATING_BAR = `pointer-events-none absolute inset-x-0 top-[var(--app-banner-h,0px)] z-20 bg-background ${FLOATING_CONTROLS}`
 
 /**
  * The shared top nav — mockup lines 155–279.
@@ -196,11 +196,16 @@ export function ScrollingPageTitle() {
 	if (!scrollsAway || hideBar) return null
 	return (
 		// -mt-3 undoes 12px of the scroll area's 32px top padding so the row lines up with the
-		// floating buttons at 20px; min-h keeps the row when the page draws its own title.
-		<div className="hidden min-h-10 flex-none items-baseline gap-2 md:-mt-3 md:mb-4 md:flex">
+		// floating buttons at 20px; min-h keeps the row when the page draws its own title. The
+		// row sits at the bar's height, and the bar has a solid background, so it needs its own
+		// layer above the bar (z-30 over z-20) or the title is painted over. The row lets clicks
+		// through to the bar's buttons under it; only the heading itself takes them.
+		<div className="pointer-events-none relative z-30 hidden min-h-10 flex-none items-baseline gap-2 md:-mt-3 md:mb-4 md:flex">
 			{!hideTitle && headingText && (
 				<>
-					<h1 className="page-title min-w-0 truncate md:py-0.5">{headingText}</h1>
+					<h1 className="page-title pointer-events-auto min-w-0 truncate md:py-0.5">
+						{headingText}
+					</h1>
 					{subtitle && (
 						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}

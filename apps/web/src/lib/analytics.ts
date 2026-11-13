@@ -1,3 +1,11 @@
+import {
+	type FlowErrorCategory,
+	type FlowName,
+	type FlowStepName,
+	buildFlowErrorProps,
+	buildFlowStepProps,
+	createFlowClock,
+} from '@maskin/shared'
 import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import type { CardKind } from './foryou-card-kind'
@@ -91,10 +99,6 @@ export function trackObjectCreated(
 
 export function trackAgentCreated(p: BaseProps & { entity_type: 'agent' }): void {
 	trackEvent('agent_created', fillBase(p))
-}
-
-export function trackTriggerCreated(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_created', fillBase(p))
 }
 
 // Success metric for the standalone-trigger detail bet: counts completed
@@ -450,6 +454,28 @@ export function trackLoopViewed(p: { entity_id: string }): void {
 	})
 }
 
+// A person (or an agent acting through the page) opened an item from a loop view, or changed
+// or approved one from its card beside the view (bet Act on items inside loop views). Sent on
+// the click, before the change is saved, so every saved change has a click to match. `surface`
+// is loop_view here, not the app-wide web; ids and action categories only, never titles or text.
+export type LoopViewCardAction = 'open' | 'status_change' | 'approve' | 'date_change'
+
+export function trackLoopViewCardAction(p: {
+	entity_id: string
+	object_type: string
+	loop_id: string
+	action: LoopViewCardAction
+}): void {
+	trackEvent('loop_view_card_action', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'object' }),
+		surface: 'loop_view',
+		actor_type: getStoredActor()?.type ?? 'human',
+		action: p.action,
+		object_type: p.object_type,
+		loop_id: p.loop_id,
+	})
+}
+
 export function trackAgentOpened(p: { entity_id: string }): void {
 	trackEvent('agent_opened', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'agent' }),
@@ -462,10 +488,39 @@ export function trackAgentOpened(p: { entity_id: string }): void {
 export function trackChatFirstReplyReceived(p: {
 	entity_id: string
 	latency_ms: number | null
+	session_id?: string | null
 }): void {
 	trackEvent('chat_first_reply_received', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
 		latency_ms: p.latency_ms,
+		session_id: p.session_id ?? null,
+		feature_area: 'chats',
+	})
+}
+
+// The person pressed Stop on a reply that was still being written. `session_id` is the run
+// they stopped and `seconds_running` how long it had been going (null when its start is unknown).
+export function trackChatStopClicked(p: {
+	session_id: string
+	seconds_running: number | null
+}): void {
+	trackEvent('chat_stop_clicked', {
+		...fillBase({ entity_id: p.session_id, entity_type: 'session' }),
+		session_id: p.session_id,
+		seconds_running: p.seconds_running,
+		feature_area: 'chats',
+	})
+}
+
+// The person wrote again in a chat within 60 seconds of their last message, before any agent
+// answered. Derived on the page from the messages it already holds, not sent by the server.
+export function trackChatMessageResent(p: {
+	entity_id: string
+	seconds_since_previous: number
+}): void {
+	trackEvent('chat_message_resent', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		seconds_since_previous: p.seconds_since_previous,
 		feature_area: 'chats',
 	})
 }
@@ -479,6 +534,53 @@ export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }
 	trackEvent('chat_left', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
 		outcome: p.outcome,
+		feature_area: 'chats',
+	})
+}
+
+// How the chat list is used, for the Chat list rework bet. Two events, categories only: never a chat
+// title, the search text or a chat id. `source` is `list` for a row opened from the list as it stands
+// and `search` for a row opened from the list search's results (then `section` is `search` too).
+// `section` is the list section the row sat in. The values agent and room are set by the rows that
+// add them; until then direct messages and every dated group read as `recent`.
+export type ChatListSection = 'pinned' | 'unread' | 'agent' | 'recent' | 'room' | 'search'
+export type ChatListOpenSource = 'list' | 'search'
+
+/** 1-based place of a row among the rows on screen, as a bucket so no chat can be told apart. */
+export function chatListPositionBucket(position: number): string {
+	if (position <= 1) return '1'
+	if (position <= 3) return '2_3'
+	if (position <= 10) return '4_10'
+	if (position <= 25) return '11_25'
+	return '26_plus'
+}
+
+export function chatListResultCountBucket(count: number): string {
+	if (count <= 0) return '0'
+	if (count === 1) return '1'
+	if (count <= 5) return '2_5'
+	if (count <= 20) return '6_20'
+	return '21_plus'
+}
+
+export function trackChatOpenedFromList(p: {
+	source: ChatListOpenSource
+	section: ChatListSection
+	position: number
+}): void {
+	trackEvent('chat_opened_from_list', {
+		source: p.source,
+		section: p.section,
+		position_bucket: chatListPositionBucket(p.position),
+		feature_area: 'chats',
+	})
+}
+
+// A search typed into the chat list's own box and left alone long enough to settle. Not the global
+// search, which has its own events.
+export function trackChatListSearchUsed(p: { result_count: number }): void {
+	trackEvent('chat_list_search_used', {
+		result_count_bucket: chatListResultCountBucket(p.result_count),
 		feature_area: 'chats',
 	})
 }
@@ -745,16 +847,35 @@ export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }
 	})
 }
 
+// Whole seconds from when a card was raised (the ask's `created_at`) to now. `null` when
+// the card has no usable time, so the property is missing rather than a made-up number.
+export function secondsSince(
+	iso: string | null | undefined,
+	now: number = Date.now(),
+): number | null {
+	if (!iso) return null
+	const at = Date.parse(iso)
+	if (Number.isNaN(at)) return null
+	return Math.max(0, Math.round((now - at) / 1000))
+}
+
+// `seconds_to_action` runs from the card's creation to the tap, and `session_id` is the
+// run that wrote the ask (null for a card a person raised). Both are read off the card, so
+// neither needs a lookup.
 export function trackForyouCardAction(p: {
 	card_kind: CardKind
 	card_id: string
 	action_id: string
+	seconds_to_action?: number | null
+	session_id?: string | null
 }): void {
 	trackEmailReturn('foryou_card_action')
 	trackEvent('foryou_card_action', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 		action_id: p.action_id,
+		seconds_to_action: p.seconds_to_action ?? null,
+		session_id: p.session_id ?? null,
 	})
 }
 
@@ -1088,4 +1209,42 @@ export function trackMarkReadClicked(p: { loop_id: string; unread_count: number 
 		entity_type: 'loop',
 		source: 'web',
 	})
+}
+
+// The two generic events for journeys with no screen of their own (see
+// `@maskin/shared` analytics-flows for the flow and step names). An unknown flow or
+// step fails the type check; `flow_error` takes a category from a fixed list, never
+// message text. `duration_ms` is the time since the previous step with the same
+// flow_id in this page load.
+const flowClock = createFlowClock()
+
+export function trackFlowStep<F extends FlowName>(p: {
+	flow: F
+	step: FlowStepName<F>
+	flowId: string
+}): void {
+	const props = buildFlowStepProps({
+		flow: p.flow,
+		step: p.step,
+		flowId: p.flowId,
+		surface: 'web',
+		durationMs: flowClock.tick(p.flowId),
+	})
+	if (props) trackEvent('flow_step', props)
+}
+
+export function trackFlowError<F extends FlowName>(p: {
+	flow: F
+	step: FlowStepName<F>
+	flowId: string
+	errorCategory: FlowErrorCategory
+}): void {
+	const props = buildFlowErrorProps({
+		flow: p.flow,
+		step: p.step,
+		flowId: p.flowId,
+		surface: 'web',
+		errorCategory: p.errorCategory,
+	})
+	if (props) trackEvent('flow_error', props)
 }

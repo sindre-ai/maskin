@@ -12,13 +12,23 @@ let qualifying = new Set<string>()
 const renderCard = (
 	target: { kind: string; id: string },
 	fallback: ReactNode,
-	context: { label?: string; inList?: boolean; after?: boolean; updated?: boolean },
+	context: {
+		label?: string
+		inList?: boolean
+		after?: boolean
+		updated?: boolean
+		first?: boolean
+	},
 ) => {
 	if (qualifying.has(target.id)) {
 		return (
 			<>
 				{context.label && context.inList ? <p>{context.label}</p> : null}
-				<div data-testid="card" data-updated={context.updated ? '' : undefined}>
+				<div
+					data-testid="card"
+					data-updated={context.updated ? '' : undefined}
+					data-first={context.first ? '' : undefined}
+				>
 					{`${target.kind}:${target.id}`}
 				</div>
 			</>
@@ -486,6 +496,15 @@ describe('MarkdownContent linkedCards', () => {
 		expect(card.compareDocumentPosition(screen.getByText('After.'))).toBe(
 			Node.DOCUMENT_POSITION_FOLLOWING,
 		)
+	})
+
+	it('marks only the first object linked in the message as the one that may be a text card', () => {
+		qualifying = new Set([A, B])
+		renderMessage(`One [a](${objectUrl(A)}).\n\nTwo [b](${objectUrl(B)}).`)
+		const cards = screen.getAllByTestId('card')
+		expect(cards).toHaveLength(2)
+		expect(cards[0]).toHaveAttribute('data-first')
+		expect(cards[1]).not.toHaveAttribute('data-first')
 	})
 
 	it('puts each card after its own paragraph, files included', () => {

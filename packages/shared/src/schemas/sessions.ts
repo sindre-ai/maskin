@@ -171,6 +171,9 @@ export const createSessionSchema = z.object({
 	// started it when this one ends. Stored in config only when the spawn link
 	// is accepted; unset keeps the return exactly as it is without the flag.
 	notify_on_complete: z.boolean().optional(),
+	// Workspace files handed to the session. Listed by name and id after the action prompt,
+	// so a helper started from a chat gets the files its sender was working with.
+	file_ids: z.array(z.string().uuid()).max(20).optional(),
 })
 
 export const sessionQuerySchema = z.object({
@@ -545,6 +548,10 @@ export const failureReasonCodeSchema = z.enum([
 	// time, resolved route if any) so the stall is at least diagnosable from
 	// the session itself instead of only from server logs.
 	'startup_stalled',
+	// The run exited non-zero and nothing in its output matched a known cause. Written
+	// by the two completion paths so such a death is never saved bare; it is not retried
+	// and the workspace owner gets a card (services/run-death-alerts.ts).
+	'unclassified',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

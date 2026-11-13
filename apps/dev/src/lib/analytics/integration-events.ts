@@ -11,6 +11,9 @@ export const INTEGRATION_CONNECTED = 'integration_connected'
 export const INTEGRATION_SYNC_COMPLETED = 'integration_sync_completed'
 export const INTEGRATION_TOOL_CALLED = 'integration_tool_called'
 export const INTEGRATION_CONNECT_STARTED = 'integration_connect_started'
+// Success event of the Teams transcripts bet. Properties are provider and ok only: never transcript
+// text, meeting titles or names.
+export const MEETING_TRANSCRIPT_LANDED = 'meeting_transcript_landed'
 
 // Auth path that produced the connect event. `oauth` covers both standard
 // oauth2 providers (the callback route) and `oauth2_custom` (GitHub App),
@@ -134,5 +137,16 @@ export async function trackIntegrationConnectStarted(
 		workspace_id: p.workspaceId,
 		actor_id: p.actorId,
 		auth_type: 'oauth',
+	})
+}
+
+export async function trackMeetingTranscriptLanded(p: {
+	provider: string
+	actorId: string
+	ok: boolean
+}): Promise<void> {
+	await capturePosthogEvent(MEETING_TRANSCRIPT_LANDED, p.actorId, {
+		provider: p.provider,
+		ok: p.ok,
 	})
 }

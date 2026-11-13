@@ -1,5 +1,5 @@
 import { MarketplaceBreadcrumb } from '@/components/marketplace/marketplace-breadcrumb'
-import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
+import { getActorInitials, getActorPlateStyle } from '@/components/shared/actor-avatar'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -375,12 +375,11 @@ function LoopBringsRow({
 		>
 			<span
 				aria-hidden="true"
+				style={item.item_type === 'actor' ? getActorPlateStyle(name) : undefined}
 				className={cn(
-					'grid size-7 shrink-0 place-items-center rounded-lg font-bold',
+					'grid size-7 shrink-0 place-items-center font-bold',
 					initials.length === 3 ? 'text-[8.5px]' : 'text-[11px]',
-					item.item_type === 'actor'
-						? getActorAvatarPaletteClass(name)
-						: 'bg-muted text-muted-foreground',
+					item.item_type !== 'actor' && 'rounded-lg bg-muted text-muted-foreground',
 				)}
 			>
 				{initials}

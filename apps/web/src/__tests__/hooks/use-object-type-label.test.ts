@@ -15,6 +15,8 @@ function createWrapper(settings: Record<string, unknown>) {
 			role: 'owner',
 			isDefault: false,
 			isTeam: false,
+			internal: false,
+			paying: false,
 			memberCount: 1,
 			createdBy: 'actor-1',
 			createdAt: null,

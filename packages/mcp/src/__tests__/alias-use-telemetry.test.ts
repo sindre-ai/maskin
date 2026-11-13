@@ -57,17 +57,17 @@ describe('recordAliasUse', () => {
 		const { events, sink } = capture()
 
 		recordAliasUse(sink, target, {
-			tool_name: 'run_agent',
+			tool_name: 'search_objects',
 			dropped_keys: ['config', 'timeout_seconds'],
-			tool_alias: { old: 'run_agent', new: 'create_session' },
+			tool_alias: { old: 'search_objects', new: 'list_objects' },
 		})
 
 		expect(events[0].event).toMatchObject({
-			tool_name: 'run_agent',
+			tool_name: 'search_objects',
 			renames: [],
 			both_sent: false,
 			dropped_keys: ['config', 'timeout_seconds'],
-			tool_alias: { old: 'run_agent', new: 'create_session' },
+			tool_alias: { old: 'search_objects', new: 'list_objects' },
 		})
 	})
 

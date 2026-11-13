@@ -119,7 +119,17 @@ export function ToolServerForm({
 	}
 
 	return (
-		<div className="space-y-3 rounded-xl border border-border bg-card p-4">
+		<form
+			className="space-y-3 rounded-xl border border-border bg-card p-4"
+			onSubmit={(e) => {
+				e.preventDefault()
+				handleSave()
+			}}
+			onKeyDown={(e) => {
+				// Only a text field: an Esc meant for an open dropdown must not cancel the form.
+				if (e.key === 'Escape' && e.target instanceof HTMLInputElement && !saving) onCancel()
+			}}
+		>
 			<div className="flex flex-wrap gap-2">
 				<div className="min-w-0 flex-1 basis-40">
 					<Label htmlFor="tool-server-name">Name</Label>
@@ -197,6 +207,7 @@ export function ToolServerForm({
 
 			<div className="flex justify-end gap-2 pt-1">
 				<Button
+					type="button"
 					size="sm"
 					variant="ghost"
 					className={PILL_BUTTON}
@@ -206,17 +217,12 @@ export function ToolServerForm({
 					Cancel
 				</Button>
 				<ViewerTooltip>
-					<Button
-						size="sm"
-						className={PILL_BUTTON}
-						onClick={handleSave}
-						disabled={!canSave || saving}
-					>
+					<Button type="submit" size="sm" className={PILL_BUTTON} disabled={!canSave || saving}>
 						Save
 					</Button>
 				</ViewerTooltip>
 			</div>
-		</div>
+		</form>
 	)
 }
 
@@ -242,6 +248,7 @@ function PairEditor({
 			<div className="mb-1 flex items-center justify-between">
 				<Label>{label}</Label>
 				<Button
+					type="button"
 					size="sm"
 					variant="ghost"
 					onClick={() => onChange([...pairs, { id: nextId, key: '', value: '' }])}
@@ -291,6 +298,7 @@ function PairEditor({
 						</Select>
 					)}
 					<Button
+						type="button"
 						size="icon"
 						variant="ghost"
 						className="shrink-0 text-muted-foreground hover:text-error"

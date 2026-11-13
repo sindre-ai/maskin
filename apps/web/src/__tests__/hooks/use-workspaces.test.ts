@@ -38,6 +38,8 @@ function buildWorkspace(
 		memberCount: 1,
 		isDefault: false,
 		isTeam: false,
+		internal: false,
+		paying: false,
 		settings: {},
 		enterprise: false,
 		billingOwnerId: null,

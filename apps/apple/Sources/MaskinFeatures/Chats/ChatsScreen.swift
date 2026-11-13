@@ -50,6 +50,7 @@ public struct ChatsScreen: View {
 private struct ChatsContainer: View {
 	let environment: AppEnvironment
 	@State private var store: ConversationsStore
+	@State private var chatSearch: ChatListSearchModel
 	@State private var showDisplay = false
 	@State private var selection: String?
 	@State private var search = ""
@@ -73,6 +74,11 @@ private struct ChatsContainer: View {
 	) {
 		self.environment = environment
 		_requestedConversationId = requestedConversationId
+		_chatSearch = State(
+			initialValue: ChatListSearchModel(
+				source: APIChatSearch(
+					baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider)))
 		_store = State(
 			initialValue: ConversationsStore(
 				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
@@ -93,6 +99,7 @@ private struct ChatsContainer: View {
 				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
 				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } },
 				onThreads: { showThreads = true },
+				chatSearch: chatSearch,
 				pillPlacement: TeamPillPlacement.resolve(
 					compactWidth: horizontalSizeClass == .compact, regularHeight: verticalSizeClass == .regular),
 				pill: runtime?.teamPill
@@ -382,6 +389,8 @@ private struct ChatThreadHost: View {
 	@State private var showParticipants = false
 	/// Opens the People sheet straight on its picker ("Invite people").
 	@State private var inviting = false
+	/// The archived bar's Unarchive worked: the bar goes even if the chat is in neither list.
+	@State private var unarchived = false
 
 	init(
 		environment: AppEnvironment, conversations: ConversationsStore, conversationID: String,
@@ -443,6 +452,19 @@ private struct ChatThreadHost: View {
 				inviting = true
 				showParticipants = true
 			})
+			// A chat opened from search can be archived: say so, and offer the way back.
+			.safeAreaInset(edge: .top, spacing: 0) {
+				if !unarchived, (conversations.conversation(id: conversationID)?.archived ?? chat.detail?.archived) == true {
+					ArchivedChatBar {
+						Task {
+							if await conversations.setArchived(conversationID, false) {
+								unarchived = true
+								await conversations.refresh()
+							}
+						}
+					}
+				}
+			}
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
 				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting, onLeft: onLeft)
 				.presentationDetents([.medium, .large])

@@ -28,6 +28,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'DELETE /api/integrations/x', // disconnect_integration: third-party credentials
 	'GET /api/actors/x/access', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/conversations/x/files', // list_files with conversation_id: newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/data/query', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/activity', // newer MCP tool, route not yet checked for the token's workspace pin
@@ -56,6 +57,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/sessions/x/keychain-access-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/keychain-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/mcp-server-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/transcriptions/files/x', // transcribe_file: spends plan usage, route not yet checked for the token's workspace pin
 	'POST /api/workspaces', // create_workspace
 	'POST /api/workspaces/x/members', // add_member: changes who is in a workspace
 	'PUT /api/integrations/x/default-access', // newer MCP tool, route not yet checked for the token's workspace pin

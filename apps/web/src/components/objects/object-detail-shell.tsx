@@ -3,7 +3,7 @@ import { AgentComposer } from '@/components/agents/agent-composer'
 import type { TagInputHandle } from '@/components/chat/tag-input'
 import { PageHeader } from '@/components/layout/page-header'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
-import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -29,20 +29,16 @@ import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
-import { Pencil } from 'lucide-react'
+import { ChevronsUpDown, Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
-import {
-	ObjectDetailBarActions,
-	ObjectDetailIdentity,
-	ObjectDetailPills,
-} from './object-detail-header'
+import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
 import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
-import { Origin } from './origin'
+import { Origin, OriginPanel } from './origin'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
 import { resolveRelatedRows } from './related-tab-utils'
@@ -57,10 +53,11 @@ function TabCount({ count }: { count: number }) {
 }
 
 /**
- * v16: one composer at a time. `Comment` is the item's own comment input
+ * One composer at a time, in one bar. `Comment` is the item's own comment input
  * (/ commands, @ mentions); `Message <agent>` is the shared Composer through the
- * agent's chat. The switch only appears when the item has an agent to message:
- * its owner when that is an agent, else the agent working on it right now.
+ * agent's chat. The chip inside the bar switches between them, and only appears
+ * when the item has an agent to message: its owner when that is an agent, else
+ * the agent working on it right now.
  */
 function ItemComposer({
 	object,
@@ -74,7 +71,7 @@ function ItemComposer({
 	object: ObjectResponse
 	workspaceId: string
 	focusRef: React.RefObject<TagInputHandle | null>
-	/** Set by "Answer it" from another tab: the tab content mounts a render later, so the
+	/** Set by "Answer" from another tab: the tab content mounts a render later, so the
 	 *  comment input is focused here, once it exists. */
 	focusOnMountRef: React.MutableRefObject<boolean>
 	mode: 'comment' | 'message'
@@ -89,7 +86,6 @@ function ItemComposer({
 	const workingAgent = actors?.find((a) => a.id === session?.actorId && a.type === 'agent')
 	const agentId = (ownerAgent ?? workingAgent)?.id ?? ''
 	const { data: agent } = useActor(agentId)
-	const canMessage = Boolean(agent)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs on mount and on a mode swap, which is when the comment input is (re)created.
 	useEffect(() => {
@@ -98,31 +94,50 @@ function ItemComposer({
 		focusRef.current?.focus()
 	}, [mode])
 
-	return (
-		<div className="flex flex-col gap-2">
-			{canMessage && agent && (
-				<Tabs value={mode} onValueChange={(v) => onModeChange(v as 'comment' | 'message')}>
-					<TabsList variant="segmented" aria-label="Composer">
-						<TabsTrigger value="comment">Comment</TabsTrigger>
-						<TabsTrigger value="message">Message {agent.name}</TabsTrigger>
-					</TabsList>
-				</Tabs>
-			)}
-			{canMessage && agent && mode === 'message' ? (
-				<AgentComposer agent={agent} />
-			) : (
-				<CommentInput
-					workspaceId={workspaceId}
-					objectId={object.id}
-					focusRef={focusRef}
-					onSubmitted={onPosted}
-					variant="bar"
-					// The full prompt wraps to three lines in a 375px bar, so the
-					// phone gets the short form.
-					placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}
-				/>
-			)}
-		</div>
+	const modeChip = agent ? (
+		<Button
+			type="button"
+			variant="secondary"
+			size="sm"
+			aria-label="Switch between comment and message"
+			onClick={() => onModeChange(mode === 'comment' ? 'message' : 'comment')}
+			className="h-8 min-w-0 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12.5px] font-semibold"
+		>
+			{/* A phone bar has no room for the name beside the box, so there the chip reads
+			    "Message" and the line under the bar still names the agent. */}
+			<span className="max-w-[9rem] truncate">
+				{mode === 'message' ? (
+					<>
+						Message<span className="max-sm:hidden"> {agent.name}</span>
+					</>
+				) : (
+					'Comment'
+				)}
+			</span>
+			<ChevronsUpDown aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+		</Button>
+	) : undefined
+
+	return agent && mode === 'message' ? (
+		<AgentComposer
+			agent={agent}
+			leading={modeChip}
+			// The chip already names the agent, and a phone bar has no room for both.
+			placeholder={isMobile ? 'Message' : `Message ${agent.name}`}
+			attachAtEnd
+		/>
+	) : (
+		<CommentInput
+			workspaceId={workspaceId}
+			objectId={object.id}
+			focusRef={focusRef}
+			onSubmitted={onPosted}
+			variant="bar"
+			leading={modeChip}
+			// The full prompt wraps to three lines in a 375px bar, so the
+			// phone gets the short form.
+			placeholder={isMobile ? 'Type / or @' : 'Type / for commands or @ to mention'}
+		/>
 	)
 }
 
@@ -157,6 +172,7 @@ export function ObjectDetailShell({
 		if (focusCommentId != null) changeTab('activity')
 	}, [focusCommentId])
 	const [composerMode, setComposerMode] = useState<'comment' | 'message'>('comment')
+	const [originOpen, setOriginOpen] = useState(false)
 	const flow = useObjectFlow(workspaceId, object.id)
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
@@ -273,7 +289,7 @@ export function ObjectDetailShell({
 	const confirmedDeleteRef = useRef(false)
 
 	// D4: focus the composer at the oldest pending ask on the timeline —
-	// mirrors the ObjectAskBanner's Answer-it button, so both entry points
+	// mirrors the ObjectAskBanner's Answer button, so both entry points
 	// commit to the same answer surface. Kept off `pendingAsks` (not
 	// `liveAsk`) so the reference is stable across renders that don't change
 	// the pick.
@@ -557,9 +573,11 @@ export function ObjectDetailShell({
 				>
 					{/* `min-h-full` + the spacer below put the composer on the bottom of
 					    the viewport while the document is short, without giving up the
-					    sticky behaviour once it grows past one screen. One column, left
-					    aligned to the 48px page inset from lg. */}
-					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[680px] flex-col lg:mx-0 lg:max-w-none">
+					    sticky behaviour once it grows past one screen. One 720px column,
+					    centred in the space the properties drawer leaves. */}
+					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[720px] flex-col">
+						{/* Title first, then one meta line: star, type, status, owner and the
+						    quiet Origin text. The Origin panel opens under that line. */}
 						<ObjectDetailIdentity
 							object={object}
 							statuses={statuses}
@@ -569,52 +587,51 @@ export function ObjectDetailShell({
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
 							onTitleChange={handleUpdateTitle}
-							showPills={false}
+							// System-written lineage — renders NOTHING when the object has no
+							// produced_by ancestor (absence contract). Needs the graph query above.
+							metaEnd={
+								<Origin
+									object={object}
+									relationships={graph?.relationships ?? []}
+									workspaceId={workspaceId}
+									variant="text"
+									expanded={originOpen}
+									onToggle={() => setOriginOpen((open) => !open)}
+								/>
+							}
 						/>
 
-						{/* System-written lineage — renders NOTHING when the object has no
-						    produced_by ancestor (absence contract). Placed between identity
-						    and the ask banner per CPO 2026-09-22 (top-of-page, not
-						    right-rail). Depends on the graph query already firing above. */}
-						<Origin
+						<OriginPanel
 							object={object}
 							relationships={graph?.relationships ?? []}
 							workspaceId={workspaceId}
+							expanded={originOpen}
+							onToggle={() => setOriginOpen((open) => !open)}
 						/>
 
-						{/* v16: status and owner as the shared pills, under the Origin row. */}
-						<div className="mt-3 flex flex-wrap items-center gap-2">
-							<ObjectDetailPills
-								object={object}
-								statuses={statuses}
-								members={members ?? []}
-								workspaceId={workspaceId}
-								creditsState={credits_state}
-								onStatusChange={handleUpdateStatus}
-								onDriverChange={handleUpdateDriver}
-							/>
-						</div>
-
-						{/* A working agent shows in the banner, above the tabs; an item
-						    nobody is working on has none. */}
+						{/* A working agent and an open question each get one slim line under
+						    the meta row; an item with neither draws nothing. */}
 						{object.activeSessionId && (
-							<div className="mt-4">
+							<div className="mt-3">
 								<AgentWorkingBadge
 									sessionId={object.activeSessionId}
 									workspaceId={workspaceId}
-									variant="banner"
+									variant="inline"
 								/>
 							</div>
 						)}
 
 						{askText && (
-							<ObjectAskBanner
-								question={askText}
-								onAnswerClick={handleAnswerLatestAsk}
-								actorName={askActor?.name}
-								actorId={askActor?.id}
-								actorType={askActor?.type}
-							/>
+							<div className="mt-3">
+								<ObjectAskBanner
+									question={askText}
+									onAnswerClick={handleAnswerLatestAsk}
+									actorName={askActor?.name}
+									actorId={askActor?.id}
+									actorType={askActor?.type}
+									variant="line"
+								/>
+							</div>
 						)}
 
 						{/* v16: one column, three tabs. Link / Upload live in Related. */}
@@ -657,13 +674,12 @@ export function ObjectDetailShell({
 
 							<div aria-hidden="true" className="min-h-6 flex-1" />
 
-							{/* v3: the composer is pinned under every tab, not only Activity.
-							    The mockup's composer is a single bar — `+`, the field, one
-							    action button on one row, with no hint line under it. One
-							    composer at a time, switched Comment / Message <agent>. */}
+							{/* The composer is pinned under every tab, in one bar with the mode
+							    chip inside it. The solid backing and the short fade above it keep
+							    body text from showing behind the bar. */}
 							<div
 								ref={composerRef}
-								className={`pointer-events-none sticky bottom-0 z-[6] mt-1.5 pb-4 pt-[22px] ${FLOATING_CONTROLS}`}
+								className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-t from-background from-70% to-transparent pb-4 pt-6"
 							>
 								<ItemComposer
 									object={object}

@@ -40,6 +40,7 @@ import {
 	type ViewerVariantOverride,
 	resolveViewerVariant,
 } from '@/lib/viewer-detect'
+import { useNavigate } from '@tanstack/react-router'
 import {
 	AlertTriangle,
 	ChevronLeft,
@@ -251,6 +252,7 @@ function HtmlViewerStage({
 	pins?: StagePin[]
 	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
 }) {
+	const navigate = useNavigate()
 	const html = useMemo(() => fileText(file), [file])
 	// Variant resolution (viewer-detect.ts) decides which render path applies:
 	// `deck` gets a paging controller; `mockup` renders in a preset-sized frame
@@ -425,6 +427,11 @@ function HtmlViewerStage({
 					listSources: () => declaredLists,
 					run: (spec) => api.data.query(file.workspaceId, spec),
 					listAnswer: (name, source) => answerList(name, source),
+					onOpen: (objectId) =>
+						navigate({
+							to: '/$workspaceId/objects/$objectId',
+							params: { workspaceId: file.workspaceId, objectId },
+						}),
 					post: (message) => viewWindow()?.postMessage(message, '*'),
 					// The stage sizes itself from the doc-size message in its own listener above.
 					onDocHeight: () => {},
@@ -435,7 +442,7 @@ function HtmlViewerStage({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [bridged, viewSources, file.workspaceId, answerList])
+	}, [bridged, viewSources, file.workspaceId, answerList, navigate])
 
 	// Iframe-blocked timeout. Starts on mount / srcDoc change; cancelled the
 	// moment the first doc-size message lands (which is proof the reporter ran).

@@ -73,6 +73,7 @@ describe('PageSearchInput', () => {
 		expect(screen.getAllByRole('searchbox')).toHaveLength(2)
 		await user.click(screen.getByRole('button', { name: 'Close search' }))
 		expect(screen.getAllByRole('searchbox')).toHaveLength(1)
+		expect(screen.getByRole('button', { name: 'Search items' })).toHaveFocus()
 	})
 
 	it('closes the inline field with Escape', async () => {
@@ -83,6 +84,7 @@ describe('PageSearchInput', () => {
 		expect(inline).toHaveFocus()
 		await user.keyboard('{Escape}')
 		expect(screen.getAllByRole('searchbox')).toHaveLength(1)
+		expect(screen.getByRole('button', { name: 'Search items' })).toHaveFocus()
 	})
 
 	describe('Cmd/Ctrl+F', () => {
