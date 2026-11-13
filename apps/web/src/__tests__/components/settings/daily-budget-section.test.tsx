@@ -151,46 +151,27 @@ describe('DailyBudgetSection', () => {
 		).toBeInTheDocument()
 	})
 
-	it('makes each pill group one Tab stop and moves selection with the arrow keys', async () => {
+	it('makes the stop-share pills one Tab stop and moves selection with the arrow keys', async () => {
 		const user = userEvent.setup()
-		vi.mocked(api.billing.dailyBudget).mockResolvedValue({
-			daily_budget: saved,
-			dollar_unit: available,
-		})
+		vi.mocked(api.billing.dailyBudget).mockResolvedValue(on)
 		renderSection()
 
 		await screen.findByLabelText('Target per day')
-		const tokens = screen.getByRole('radio', { name: 'Tokens' })
-		const dollars = screen.getByRole('radio', { name: 'Dollars' })
-		expect(tokens).toHaveAttribute('tabindex', '0')
-		expect(dollars).toHaveAttribute('tabindex', '-1')
+		const ninety = screen.getByRole('radio', { name: '90%' })
+		const hundred = screen.getByRole('radio', { name: '100%' })
+		expect(ninety).toHaveAttribute('tabindex', '0')
+		expect(hundred).toHaveAttribute('tabindex', '-1')
 
-		tokens.focus()
+		ninety.focus()
 		await user.keyboard('{ArrowRight}')
-		expect(dollars).toHaveAttribute('aria-checked', 'true')
-		expect(dollars).toHaveFocus()
-		expect(dollars).toHaveAttribute('tabindex', '0')
-		expect(tokens).toHaveAttribute('tabindex', '-1')
+		expect(hundred).toHaveAttribute('aria-checked', 'true')
+		expect(hundred).toHaveFocus()
+		expect(hundred).toHaveAttribute('tabindex', '0')
+		expect(ninety).toHaveAttribute('tabindex', '-1')
 
 		await user.keyboard('{ArrowUp}')
-		expect(tokens).toHaveAttribute('aria-checked', 'true')
-		expect(tokens).toHaveFocus()
-	})
-
-	it('skips the locked Dollars pill when arrowing', async () => {
-		const user = userEvent.setup()
-		vi.mocked(api.billing.dailyBudget).mockResolvedValue({
-			daily_budget: saved,
-			dollar_unit: { available: false, reason: LOCKED_REASON, days: [] },
-		})
-		renderSection()
-
-		await screen.findByLabelText('Target per day')
-		const tokens = screen.getByRole('radio', { name: 'Tokens' })
-		tokens.focus()
-		await user.keyboard('{ArrowRight}')
-		expect(tokens).toHaveAttribute('aria-checked', 'true')
-		expect(tokens).toHaveFocus()
+		expect(ninety).toHaveAttribute('aria-checked', 'true')
+		expect(ninety).toHaveFocus()
 	})
 
 	it('saves null when the switch is turned off', async () => {
