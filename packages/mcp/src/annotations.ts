@@ -225,6 +225,7 @@ const ROWS: Record<string, Row> = {
 	desktop_put_file: row('Desktop put file'),
 	desktop_apply_settings: row('Desktop apply settings'),
 	desktop_settings: row('Desktop settings'),
+	desktop_save_file: row('Desktop save file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),

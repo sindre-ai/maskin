@@ -347,6 +347,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/desktop/input',
 	'POST /api/desktop/ports',
 	'POST /api/desktop/put-file',
+	'POST /api/desktop/save-file',
 	'POST /api/desktop/screenshot',
 	'POST /api/device-auth/approve',
 	'POST /api/device-auth/deny',

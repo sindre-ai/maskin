@@ -343,8 +343,15 @@ function SlotCard({
 	}, [info.nickname])
 
 	const nicknameInputRef = useRef<HTMLInputElement>(null)
+	// Set by Esc so the blur that follows leaves the field without saving.
+	const cancelNicknameEdit = useRef(false)
 
 	const handleNicknameBlur = () => {
+		if (cancelNicknameEdit.current) {
+			cancelNicknameEdit.current = false
+			editingNickname.current = false
+			return
+		}
 		const trimmed = nicknameDraft.trim()
 		if (trimmed === (info.nickname ?? '')) {
 			editingNickname.current = false
@@ -404,7 +411,14 @@ function SlotCard({
 								if (renameMutation.isError) renameMutation.reset()
 							}}
 							onBlur={handleNicknameBlur}
-							onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter') e.currentTarget.blur()
+								if (e.key === 'Escape') {
+									cancelNicknameEdit.current = true
+									setNicknameDraft(info.nickname ?? '')
+									e.currentTarget.blur()
+								}
+							}}
 							placeholder={NICKNAME_PLACEHOLDER}
 							onFocus={() => {
 								editingNickname.current = true

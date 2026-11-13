@@ -51,6 +51,7 @@ const EXACT: Record<string, FeatureArea> = {
 	workspace_skill_attached: 'agents',
 	workspace_skill_uploaded: 'agents',
 	file_saved: 'files_briefings',
+	desktop_file_moved: 'files_briefings',
 	editor_saved: 'files_briefings',
 	mini_app_file_viewed: 'files_briefings',
 	view_refreshed: 'files_briefings',
