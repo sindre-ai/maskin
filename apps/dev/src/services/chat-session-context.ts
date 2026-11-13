@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
-import { actors, messages, sessions } from '@maskin/db/schema'
-import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
+import { actors, files, messages, sessions } from '@maskin/db/schema'
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 
 /**
@@ -79,6 +79,127 @@ export async function loadThreadSeed(
 	}))
 	const chars = history.reduce((sum, m) => sum + m.actorName.length + m.content.length + 2, 0)
 	return { history, approxTokens: Math.ceil(chars / 4) }
+}
+
+/** Files a session's "Files in this chat" list holds. Never more. */
+export const CHAT_FILES_LIST_MAX = 50
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Message attachments as the composer stores them in messages.metadata. */
+const attachmentsOf = sql`CASE WHEN jsonb_typeof(${messages.metadata} -> 'attachments') = 'array' THEN ${messages.metadata} -> 'attachments' ELSE '[]'::jsonb END`
+
+export interface ChatFilesList {
+	/** The block for the seed prompt; '' when the chat has no files. */
+	note: string
+	/** Files named in the note. Plain number for analytics, never names. */
+	listedCount: number
+}
+
+function formatFileSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`
+	const units = ['KB', 'MB', 'GB', 'TB']
+	let value = bytes / 1024
+	let unit = 0
+	while (value >= 1024 && unit < units.length - 1) {
+		value /= 1024
+		unit++
+	}
+	return `${value >= 100 ? Math.round(value) : Math.round(value * 10) / 10} ${units[unit]}`
+}
+
+/**
+ * The files people attached in this chat, newest first, as a block for a session's seed prompt.
+ * Read straight from the attachments on the chat's messages (main chat and threads), so it covers
+ * every old chat with no data change, and rebuilt on each session start so a new session, a thread
+ * session or a sub-chat sees it too. At most CHAT_FILES_LIST_MAX files; when more exist, the last
+ * line says how many older ones are left out. A file whose row is gone is left out. Best effort:
+ * a failed lookup gives an empty list rather than delay the session.
+ */
+export async function loadChatFilesList(
+	db: Database,
+	opts: { conversationId: string; workspaceId: string },
+): Promise<ChatFilesList> {
+	const none: ChatFilesList = { note: '', listedCount: 0 }
+	try {
+		const { conversationId, workspaceId } = opts
+		const live = and(
+			eq(messages.conversationId, conversationId),
+			eq(messages.kind, 'message'),
+			isNull(messages.deletedAt),
+			sql`jsonb_array_length(${attachmentsOf}) > 0`,
+		)
+		// Every message with attachments holds at least one file, so the newest CHAT_FILES_LIST_MAX
+		// messages hold at least that many files when the chat has them.
+		const rows = await db
+			.select({
+				attachments: attachmentsOf.mapWith(
+					(v) => v as Array<{ file_id?: unknown; name?: unknown; mime_type?: unknown }>,
+				),
+				createdAt: messages.createdAt,
+				uploader: actors.name,
+			})
+			.from(messages)
+			.innerJoin(actors, eq(actors.id, messages.actorId))
+			.where(live)
+			.orderBy(desc(messages.id))
+			.limit(CHAT_FILES_LIST_MAX)
+		if (rows.length === 0) return none
+		const [total] = await db
+			.select({ value: sql<number>`coalesce(sum(jsonb_array_length(${attachmentsOf})), 0)::int` })
+			.from(messages)
+			.where(live)
+
+		const refs: Array<{ fileId: string; uploader: string; createdAt: Date }> = []
+		for (const r of rows) {
+			// Newest attachment first within a message, to match the newest-first order of messages.
+			for (const a of [...r.attachments].reverse()) {
+				if (typeof a.file_id !== 'string' || !UUID_RE.test(a.file_id)) continue
+				refs.push({ fileId: a.file_id, uploader: r.uploader, createdAt: r.createdAt })
+			}
+		}
+		const picked = refs.slice(0, CHAT_FILES_LIST_MAX)
+		if (picked.length === 0) return none
+		const fileRows = await db
+			.select({
+				id: files.id,
+				name: files.name,
+				mimeType: files.mimeType,
+				sizeBytes: files.sizeBytes,
+			})
+			.from(files)
+			.where(
+				and(
+					eq(files.workspaceId, workspaceId),
+					inArray(files.id, [...new Set(picked.map((p) => p.fileId))]),
+				),
+			)
+		const byId = new Map(fileRows.map((f) => [f.id, f]))
+		const lines: string[] = []
+		for (const p of picked) {
+			const f = byId.get(p.fileId)
+			if (!f) continue
+			const day = p.createdAt.toISOString().slice(0, 10)
+			lines.push(
+				`- ${f.name} (${f.mimeType}, ${formatFileSize(f.sizeBytes)}) — file id: ${f.id} — uploaded by ${p.uploader} on ${day}`,
+			)
+		}
+		if (lines.length === 0) return none
+		const older = (total?.value ?? 0) - picked.length
+		return {
+			note: [
+				'Files in this chat (newest first). Fetch any of them with the get_file MCP tool and its file id; do not ask anyone to upload a file that is listed here again:',
+				...lines,
+				...(older > 0 ? [`${older} older files not shown, use the chat files lookup`] : []),
+			].join('\n'),
+			listedCount: lines.length,
+		}
+	} catch (err) {
+		logger.warn('Could not load the chat files list for a session', {
+			conversation_id: opts.conversationId,
+			error: String(err),
+		})
+		return none
+	}
 }
 
 /** How a session's place reads in a note: the main chat, or the thread under a message. */

@@ -366,7 +366,7 @@ export const recordMcpErrorSchema = z.object({
 // Key NAMES only, never values — the same bar as `arg_keys`. `renames` pairs
 // the old and new dotted path; array indexes are dropped, so `edges.source_id`,
 // never `edges[0].source_id`. `tool_alias` is present only when the tool NAME
-// was the old one (run_agent) and absent for key renames. The actor is
+// was the old one and absent for key renames. The actor is
 // deliberately NOT a field: the ingest route takes it from the authenticated
 // request, so a payload cannot claim to be someone else.
 export const MAX_ALIAS_RENAMES = 64
@@ -392,7 +392,7 @@ export const recordMcpAliasUseSchema = z.object({
 	// Both the old and the new spelling were sent. The new one wins; no value
 	// comparison is made or logged.
 	both_sent: z.boolean().default(false),
-	// Key names removed with no replacement (the run_agent alias only).
+	// Key names removed with no replacement (only the removed run_agent alias used it).
 	dropped_keys: z.array(keyPathSchema).max(MAX_ALIAS_DROPPED_KEYS).optional(),
 	tool_alias: z.object({ old: toolNameSchema, new: toolNameSchema }).optional(),
 })

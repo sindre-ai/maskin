@@ -152,6 +152,8 @@ const unreadItemSchema = z.object({
 			// Present only when the agent asked for a structured decision. The
 			// card renders its options as the buttons the reader taps.
 			decision: feedDecisionSchema.nullable(),
+			// The run that wrote the comment; null when a person wrote it. Analytics only.
+			session_id: z.string().uuid().nullable().optional(),
 		})
 		.optional(),
 })
@@ -181,6 +183,7 @@ export function toLatestMention(event: typeof events.$inferSelect): LatestMentio
 		content: rawContent,
 		attention: Number.isFinite(attention) ? attention : null,
 		decision,
+		session_id: typeof data.authorSessionId === 'string' ? data.authorSessionId : null,
 	}
 }
 

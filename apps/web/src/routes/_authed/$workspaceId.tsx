@@ -77,6 +77,8 @@ function WorkspaceLayout() {
 		workspaceId,
 		resolved: hasWorkspace,
 		isTeam: workspace?.isTeam ?? false,
+		internal: workspace?.internal ?? false,
+		paying: workspace?.paying ?? false,
 		createdAt: workspace?.createdAt ?? undefined,
 		shareUsage: privacy?.share_usage ?? true,
 		anonymizeWorkspace: privacy?.anonymize_workspace ?? false,

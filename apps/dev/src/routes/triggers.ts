@@ -4,6 +4,8 @@ import { objects, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
+import { CLIENT_SOURCE_HEADER, resolveCreatedVia } from '../lib/analytics/knowledge-events'
+import { trackTriggerCreated } from '../lib/analytics/trigger-created-event'
 import {
 	detectSuspiciousFilterEntries,
 	trackTriggerConfigSuspicious,
@@ -243,6 +245,14 @@ app.openapi(createTriggerRoute, async (c) => {
 	// Emit `trigger_config_suspicious` for any filter entry whose value is a
 	// non-array object or `null` — matcher will never resolve those.
 	warnOnSuspiciousFilter(actorId, created)
+	void trackTriggerCreated({
+		workspaceId,
+		actorId,
+		actorType: c.get('actorType'),
+		triggerId: created.id,
+		triggerType: created.type,
+		createdVia: resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), c.get('actorType')),
+	})
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })

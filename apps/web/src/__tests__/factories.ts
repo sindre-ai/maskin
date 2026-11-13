@@ -144,6 +144,8 @@ export function buildWorkspaceWithRole(
 		memberCount: 3,
 		isDefault: false,
 		isTeam: false,
+		internal: false,
+		paying: false,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,

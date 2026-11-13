@@ -4,6 +4,7 @@ import { FEATURE_AREAS, featureAreaForEvent } from '../analytics-feature-area'
 describe('featureAreaForEvent', () => {
 	it.each([
 		['chat_session_started', 'chats'],
+		['chat_session_seeded', 'chats'],
 		['chat_reply_posted', 'chats'],
 		['turn_sent_back', 'chats'],
 		['turn_check_cap_hit', 'chats'],
@@ -19,6 +20,7 @@ describe('featureAreaForEvent', () => {
 		['agent_session_started', 'agents'],
 		['workspace_skill_uploaded', 'agents'],
 		['file_saved', 'files_briefings'],
+		['desktop_file_moved', 'files_briefings'],
 		['file_viewer_page_navigated', 'files_briefings'],
 		['integration_connected', 'integrations'],
 		['keychain_credential_created', 'integrations'],

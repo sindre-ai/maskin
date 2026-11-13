@@ -51,6 +51,7 @@ import {
 	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useId,
@@ -158,6 +159,8 @@ export interface ComposerProps {
 	conversationParticipantIds?: string[]
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
+	/** Sit at the left edge of the column instead of centred in it. */
+	alignStart?: boolean
 	/** Optional controlled draft. Supply both to let a caller prefill the
 	 *  composer (the chats zero-state suggestion rows); omit both to keep the
 	 *  composer's own internal state. */
@@ -192,6 +195,10 @@ export interface ComposerProps {
 	/** When set, a Call button for this agent sits beside the mic. Callers pass it
 	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
 	callAgent?: VoiceCallAgent | null
+	/** Sits first inside the bar, before the + menu (the item page's Comment / Message chip). */
+	leading?: ReactNode
+	/** Draws the + menu after the box instead of before it, so Tab reaches the box first. */
+	attachAtEnd?: boolean
 	/**
 	 * Asks the composer to replace its draft with `text` (when given), then focus
 	 * with the caret at the end. With `append` the text goes after the draft instead
@@ -213,6 +220,11 @@ export interface ComposerProps {
 	 * draft and the sent text are markdown. Off by default; the chat callers pass the flag.
 	 */
 	richText?: boolean
+	/**
+	 * Called when the up arrow is pressed in an empty box. The caller opens its latest message
+	 * for editing. Without it the arrow keeps its normal job in the box.
+	 */
+	onEditLast?: () => void
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -318,6 +330,7 @@ export function Composer({
 	hint,
 	conversationParticipantIds,
 	textareaLabel,
+	alignStart,
 	value: controlledValue,
 	onValueChange,
 	draftKey,
@@ -325,9 +338,12 @@ export function Composer({
 	secretRestarting,
 	vaultModeBlocked,
 	callAgent,
+	leading,
+	attachAtEnd = false,
 	fillRequest,
 	inlineTags: inlineTagsProp = false,
 	richText = false,
+	onEditLast,
 }: ComposerProps) {
 	const inlineTags = inlineTagsProp || richText
 	// Every send from a composer is a write, so a viewer gets the box switched off.
@@ -820,6 +836,21 @@ export function Composer({
 					return
 				}
 			}
+			if (
+				e.key === 'ArrowUp' &&
+				onEditLast &&
+				valueRef.current === '' &&
+				tagIdsRef.current.length === 0 &&
+				!e.shiftKey &&
+				!e.altKey &&
+				!e.ctrlKey &&
+				!e.metaKey &&
+				!e.nativeEvent.isComposing
+			) {
+				e.preventDefault()
+				onEditLast()
+				return
+			}
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
@@ -830,7 +861,15 @@ export function Composer({
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[handleSubmit, isMobile, mentionTrigger, mentionFlatRows, mentionHighlightIndex, commitMention],
+		[
+			handleSubmit,
+			isMobile,
+			mentionTrigger,
+			mentionFlatRows,
+			mentionHighlightIndex,
+			commitMention,
+			onEditLast,
+		],
 	)
 
 	const handleChange = useCallback(
@@ -893,6 +932,9 @@ export function Composer({
 			handleKeyDown({
 				key: e.key,
 				shiftKey: e.shiftKey,
+				altKey: e.altKey,
+				ctrlKey: e.ctrlKey,
+				metaKey: e.metaKey,
 				nativeEvent: e,
 				preventDefault: () => e.preventDefault(),
 			} as unknown as KeyboardEvent<HTMLDivElement>)
@@ -1089,10 +1131,52 @@ export function Composer({
 		[inlineTags, selection, tagIds],
 	)
 
+	// + opens the attach menu. It keeps a 44 px target on touch widths.
+	const attachMenu = (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button
+					type="button"
+					size="icon"
+					variant="ghost"
+					className="shrink-0 rounded-full text-muted-foreground max-md:size-11"
+					disabled={disabled}
+					aria-label="Attach file"
+				>
+					<Plus size={20} aria-hidden />
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent
+				align="start"
+				side="top"
+				onCloseAutoFocus={(e) => {
+					e.preventDefault()
+					focusInput()
+				}}
+			>
+				<DropdownMenuItem onSelect={() => photoInputRef.current?.click()}>
+					<Image aria-hidden /> Photo
+				</DropdownMenuItem>
+				<DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+					<FileText aria-hidden /> File
+				</DropdownMenuItem>
+				<DropdownMenuItem onSelect={startMention}>
+					<AtSign aria-hidden /> Person or agent
+				</DropdownMenuItem>
+				{richText ? (
+					<DropdownMenuItem onSelect={() => setShowFormatting(!showFormatting)}>
+						<Type aria-hidden /> {showFormatting ? 'Hide formatting' : 'Show formatting'}
+					</DropdownMenuItem>
+				) : null}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+
 	return (
 		<div
 			className={cn(
-				'relative mx-auto flex w-full max-w-[860px] flex-col gap-2',
+				'relative flex w-full max-w-[860px] flex-col gap-2',
+				!alignStart && 'mx-auto',
 				// The secret and vault cards keep a box of their own; the bar is the box otherwise.
 				(secretFlow || vaultFlow) &&
 					'rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
@@ -1265,48 +1349,12 @@ export function Composer({
 						onDrop={handleDrop}
 						className={cn(
 							// shadow-md: the bar floats over the page, so it lifts off the content behind it.
-							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 shadow-md inset-ring inset-ring-input max-md:p-1',
+							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 shadow-md inset-ring inset-ring-input focus-within:inset-ring-border-strong max-md:p-1',
 							dropTargeted && 'outline-2 outline-dashed outline-ring',
 						)}
 					>
-						{/* + opens the attach menu. It keeps a 44 px target on touch widths. */}
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<Button
-									type="button"
-									size="icon"
-									variant="ghost"
-									className="shrink-0 rounded-full text-muted-foreground max-md:size-11"
-									disabled={disabled}
-									aria-label="Attach file"
-								>
-									<Plus size={20} aria-hidden />
-								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent
-								align="start"
-								side="top"
-								onCloseAutoFocus={(e) => {
-									e.preventDefault()
-									focusInput()
-								}}
-							>
-								<DropdownMenuItem onSelect={() => photoInputRef.current?.click()}>
-									<Image aria-hidden /> Photo
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
-									<FileText aria-hidden /> File
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={startMention}>
-									<AtSign aria-hidden /> Person or agent
-								</DropdownMenuItem>
-								{richText ? (
-									<DropdownMenuItem onSelect={() => setShowFormatting(!showFormatting)}>
-										<Type aria-hidden /> {showFormatting ? 'Hide formatting' : 'Show formatting'}
-									</DropdownMenuItem>
-								) : null}
-							</DropdownMenuContent>
-						</DropdownMenu>
+						{leading}
+						{!attachAtEnd && attachMenu}
 						{richText ? (
 							// Paste is caught on the wrapper first: a secret or a file must not reach the editor.
 							<div
@@ -1397,6 +1445,7 @@ export function Composer({
 								aria-expanded={mentionTrigger !== null || undefined}
 							/>
 						)}
+						{attachAtEnd && attachMenu}
 						{callAgent ? (
 							<span className="inline-flex shrink-0 self-center">
 								<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />

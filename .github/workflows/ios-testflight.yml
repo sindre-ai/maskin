@@ -32,6 +32,18 @@ name: iOS TestFlight
 # Internal testers get the build automatically once App Store Connect finishes processing it,
 # if the internal TestFlight group has "Automatic distribution" switched on.
 #
+# App Review: a merge that changes MARKETING_VERSION in apps/apple/project.yml also sends that
+# version to App Review, once the upload is processed (job app-review, .github/scripts/
+# asc-submit-review.mjs). Any other merge only uploads, as before. The what's-new text comes from
+# apps/apple/release-notes.md ("# <version>" on the first line). The release type is manual: after
+# Apple approves, a person releases the version in App Store Connect.
+#
+# Started by hand (Actions, Run workflow) the workflow does not archive. It reads App Store Connect:
+# "dry run" prints what a submission would do and creates nothing; "submit_version" submits that
+# version (it also retries a submission that failed, because a later merge with the same version
+# never counts as a change). The submit job is separate from the upload job, so a failed
+# submission leaves the TestFlight build in place.
+#
 # One macOS runner for roughly 20-30 minutes per merge (10x the per-minute cost of Linux).
 
 on:
@@ -44,6 +56,15 @@ on:
       - '!apps/apple/**/*.md'
       - '.github/workflows/ios-testflight.yml'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: read App Store Connect and print what would happen, create nothing'
+        type: boolean
+        default: true
+      submit_version:
+        description: 'Version to send to App Review, for example 1.2 (empty = the version in project.yml, dry run only)'
+        type: string
+        default: ''
 
 # Never cancel an upload half way; queue back-to-back merges instead.
 concurrency:
@@ -52,8 +73,12 @@ concurrency:
 
 jobs:
   testflight:
+    # A manual run does not archive; see the app-review job.
+    if: github.event_name == 'push'
     runs-on: macos-26
     timeout-minutes: 90
+    outputs:
+      build_number: ${{ steps.archive.outputs.build_number }}
     env:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -104,7 +129,7 @@ jobs:
           chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
 
       # The certificate clean-up script needs Node; the Mac image does not guarantee it.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.gate.outputs.enabled == 'true'
         with:
           node-version: 20
@@ -118,12 +143,14 @@ jobs:
             node .github/scripts/asc-dev-certs.mjs snapshot "$RUNNER_TEMP/dev-certs-before.json"
 
       - name: Archive
+        id: archive
         if: steps.gate.outputs.enabled == 'true'
         working-directory: apps/apple
         run: |
           set -euo pipefail
           build_number=$(date -u +%y%m%d%H%M)
           echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
           xcodebuild archive \
             -project Maskin.xcodeproj -scheme Maskin \
             -destination 'generic/platform=iOS' \
@@ -205,3 +232,111 @@ jobs:
             ${{ runner.temp }}/export.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # Sends the version to App Review when it was changed on purpose. A Linux job on purpose: it only
+  # talks to the App Store Connect API, so a manual dry run needs no Mac, and a failure here never
+  # touches the TestFlight upload above. Runs after a push upload, or alone on a manual run.
+  app-review:
+    needs: testflight
+    if: always() && (needs.testflight.result == 'success' || needs.testflight.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - name: Check signing secrets
+        id: gate
+        run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::notice::App Review submission skipped: App Store Connect secrets are not set yet."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 1
+
+      # Decides whether to submit and which version. On a push: only when MARKETING_VERSION differs
+      # from the commit before the push. No previous commit (first push, force push that dropped
+      # it) means no comparison is possible, so nothing is submitted and the log says how to do it
+      # by hand. It never fails on that.
+      - name: Decide what to submit
+        id: plan
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          INPUT_VERSION: ${{ inputs.submit_version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          UPLOADED_BUILD: ${{ needs.testflight.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          version_of() {
+            sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"?([0-9][^"[:space:]]*)"?.*$/\1/p' | head -n 1
+          }
+          current=$(version_of < apps/apple/project.yml)
+          if [ -z "$current" ]; then
+            echo "::error::Could not read MARKETING_VERSION from apps/apple/project.yml."
+            exit 1
+          fi
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            version="$INPUT_VERSION"
+            if [ -z "$version" ]; then
+              if [ "$INPUT_DRY_RUN" != "true" ]; then
+                echo "::error::Fill in submit_version (the version to send to App Review), or tick dry run."
+                exit 1
+              fi
+              version="$current"
+            fi
+            { echo "submit=true"; echo "version=$version"; echo "build_number="; echo "dry_run=$INPUT_DRY_RUN"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "submit=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$UPLOADED_BUILD" ]; then
+            echo "::notice::No build was uploaded in this run, so there is nothing to submit."
+            exit 0
+          fi
+          if [ -z "$BEFORE_SHA" ] || [ "${BEFORE_SHA#*[!0]}" = "$BEFORE_SHA" ] || ! git fetch --no-tags --depth=1 origin "$BEFORE_SHA"; then
+            echo "::notice::No previous commit to compare with (first push or force push). Nothing submitted. To send $current to App Review, run this workflow by hand with submit_version $current."
+            exit 0
+          fi
+          previous=$(git show FETCH_HEAD:apps/apple/project.yml 2>/dev/null | version_of || true)
+          if [ "$previous" = "$current" ]; then
+            echo "MARKETING_VERSION is still $current, so no App Review submission."
+            exit 0
+          fi
+          echo "MARKETING_VERSION changed from '${previous:-none}' to '$current'."
+          { echo "submit=true"; echo "version=$current"; echo "build_number=$UPLOADED_BUILD"; echo "dry_run=false"; } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        if: steps.plan.outputs.submit == 'true'
+        with:
+          node-version: 20
+
+      - name: Write the App Store Connect key
+        if: steps.plan.outputs.submit == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Submit to App Review
+        if: steps.plan.outputs.submit == 'true'
+        env:
+          SUBMIT_VERSION: ${{ steps.plan.outputs.version }}
+          BUILD_NUMBER: ${{ steps.plan.outputs.build_number }}
+          DRY_RUN: ${{ steps.plan.outputs.dry_run }}
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-submit-review.mjs
+
+      - name: Remove the key
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: rm -rf "$RUNNER_TEMP/asc"

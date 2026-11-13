@@ -326,6 +326,35 @@ struct LinkedItemStoreTests {
 		#expect(store.isCard(other))
 	}
 
+	// MARK: Live updates
+
+	@Test("an event for a held object re-reads it, so the card follows an agent's edit")
+	func eventRefreshesHeldObject() async {
+		let (store, objects, target) = await resolvedDraft()
+		objects.set(.success(draft(one, preview: preview(hash: "h2"), content: "Join the event: linkedin.com/events/1")), for: one)
+		await store.handle(.event(WorkspaceEvent(id: "1", action: "updated", entityType: "linkedin_post", entityId: one)))
+		guard case .draft(let object, let shown)? = store.item(for: target) else {
+			Issue.record("card gone")
+			return
+		}
+		#expect(shown.contentHash == "h2")
+		#expect(object.content == "Join the event: linkedin.com/events/1")
+	}
+
+	@Test("an event for an object nobody linked reads nothing")
+	func eventForOtherObjectIsIgnored() async {
+		let (store, objects, _) = await resolvedDraft()
+		await store.handle(.event(WorkspaceEvent(id: "1", action: "updated", entityType: "task", entityId: two)))
+		#expect(objects.detailCalls == [one])
+	}
+
+	@Test("after a reconnect every held object is read again")
+	func reconnectRefreshesHeldObjects() async {
+		let (store, objects, _) = await resolvedDraft()
+		await store.handle(.reconnected)
+		#expect(objects.detailCalls == [one, one])
+	}
+
 	// MARK: Approving
 
 	private func resolvedDraft() async -> (LinkedItemStore, FakeDraftsRemote, LinkedTarget) {

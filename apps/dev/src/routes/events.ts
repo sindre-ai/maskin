@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects, workspaceMembers } from '@maskin/db/schema'
+import { events, actors, files, objects, sessions, workspaceMembers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
@@ -31,6 +31,7 @@ import {
 } from '../lib/openapi-schemas'
 import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
+import { canReadSession } from '../lib/session-access'
 import { applyStatusTap, prepareStatusActions, resolveStatusTap } from '../lib/status-actions'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import {
@@ -94,11 +95,20 @@ app.get('/', async (c) => {
 
 	return streamSSE(c, async (stream) => {
 		const callerId = c.get('actorId')
+		const workspaceRole = c.get('workspaceRole')
+
+		// Session events follow the same read rule as the session pages and logs.
+		// Fails closed: a session that is gone, or in another workspace, is skipped.
+		const callerCanReadSession = async (sessionId: string): Promise<boolean> => {
+			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			if (!session || session.workspaceId !== workspaceId) return false
+			return canReadSession(db, session, callerId, workspaceRole)
+		}
 
 		// Every frame goes through this serialized chain. It exists for the
-		// `session.state_changed` frame below: resolving it needs a DB read, but
-		// the live bridge callback is synchronous, so a fire-and-forget await
-		// there would let two events' frames interleave and land out of order.
+		// session gate and the `session.state_changed` frame below: both need a DB
+		// read, but the live bridge callback is synchronous, so a fire-and-forget
+		// await there would let two events' frames interleave and land out of order.
 		// Chaining also guarantees the generic frame is on the wire before the
 		// delegation-strip frame for the same event.
 		let chain: Promise<void> = Promise.resolve()
@@ -110,6 +120,9 @@ app.get('/', async (c) => {
 		): Promise<void> => {
 			chain = chain
 				.then(async () => {
+					// Nothing about a session the caller cannot read goes on the wire,
+					// neither the generic frame nor the delegation-strip frame.
+					if (sessionEntityId && !(await callerCanReadSession(sessionEntityId))) return
 					await stream.writeSSE({ id, event: action, data: JSON.stringify(payload) })
 					if (!sessionEntityId) return
 					// Entitlement gate on the emission path: `loadSessionStateChangeFrame`

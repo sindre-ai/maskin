@@ -69,6 +69,19 @@ describe('file tags in the MCP file tools', () => {
 		expect(lastCall().body).not.toHaveProperty('tags')
 	})
 
+	it('sends the chat and work item on create_file and leaves them out when not given', async () => {
+		const create = handlers.get('create_file') as Handler
+		const file = { workspace_id: wsId, name: 'a.mov', mime_type: 'video/quicktime', content: 'x' }
+		const chatId = '22222222-2222-2222-2222-222222222222'
+
+		await create({ ...file, conversation_id: chatId, object_id: fileId })
+		expect(lastCall().body).toMatchObject({ conversation_id: chatId, object_id: fileId })
+
+		await create(file)
+		expect(lastCall().body).not.toHaveProperty('conversation_id')
+		expect(lastCall().body).not.toHaveProperty('object_id')
+	})
+
 	it('sends tags on update_file, including [] to clear them', async () => {
 		const update = handlers.get('update_file') as Handler
 
@@ -97,7 +110,7 @@ describe('file tags in the MCP file tools', () => {
 		expect(url.pathname).toBe('/api/files')
 		expect(url.searchParams.get('tags')).toBe('raw,b-roll')
 		expect(url.searchParams.get('tags_match')).toBe('any')
-		expect(JSON.parse(result.content[0]?.text ?? '[]')[0].tags).toEqual(['raw', 'b-roll'])
+		expect(JSON.parse(result.content[0]?.text ?? '{}').files[0].tags).toEqual(['raw', 'b-roll'])
 	})
 
 	it('sends no tag filter when none is asked for', async () => {

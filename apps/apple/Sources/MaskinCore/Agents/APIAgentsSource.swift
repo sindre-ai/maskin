@@ -30,7 +30,7 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 				AgentSummary(
 					id: row.id, name: row.name, description: row.description, isSystem: row.isSystem,
 					storedState: Self.state(row.agentState.rawValue),
-					createdAt: ChatDates.parse(row.createdAt))
+					createdAt: ChatDates.parse(row.createdAt), tags: row.tags ?? [])
 			}
 			if rows.count < pageSize { break }
 			offset += pageSize

@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import {
+	secondsSince,
 	trackForyouCardAction,
 	trackForyouCardMarkedRead,
 	trackForyouCardShown,
@@ -119,13 +120,35 @@ export function FeedCard({
 	)
 	const who = sender?.name ?? 'the agent'
 
-	// Dedup lives in module scope (see `foryou-impressions.ts`), not a per-mount
-	// ref: a per-mount guard re-fires on every navigation back to the feed, which
-	// is exactly what inflated impressions/card 5-8x since Aug 25.
+	// A card counts as shown once it is at least half on screen, not when it renders:
+	// the feed mounts every card, including the ones far below the fold. Dedup lives
+	// in module scope (see `foryou-impressions.ts`), not a per-mount ref: a per-mount
+	// guard re-fires on every navigation back to the feed, which is exactly what
+	// inflated impressions/card 5-8x since Aug 25. The effect re-runs when the card
+	// swaps shells (open, decided) because the observed node changes with it.
+	const shellRef = useRef<HTMLDivElement>(null)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: expanded and decided swap the shell node the observer watches
 	useEffect(() => {
-		if (!markImpressed(objectId)) return
-		trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
-	}, [cardKind, objectId])
+		const node = shellRef.current
+		if (!node) return
+		const observer = new IntersectionObserver(
+			(entries) => {
+				const inView = entries.some(
+					(entry) =>
+						entry.isIntersecting &&
+						(entry.intersectionRatio >= 0.5 ||
+							entry.intersectionRect.height >= window.innerHeight / 2),
+				)
+				if (!inView) return
+				observer.disconnect()
+				if (!markImpressed(objectId)) return
+				trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
+			},
+			{ threshold: [0, 0.5] },
+		)
+		observer.observe(node)
+		return () => observer.disconnect()
+	}, [cardKind, objectId, expanded, decided])
 
 	// Options are the ones the agent authored on the comment, recommendation
 	// last so it lands under the filled bar. A plain mention has nothing to
@@ -163,7 +186,13 @@ export function FeedCard({
 	const chooseOption = useCallback(
 		(option: CardAction) => {
 			if (pendingId) return
-			trackForyouCardAction({ card_kind: cardKind, card_id: objectId, action_id: option.id })
+			trackForyouCardAction({
+				card_kind: cardKind,
+				card_id: objectId,
+				action_id: option.id,
+				seconds_to_action: secondsSince(item.latest_mention?.created_at ?? item.latest_activity_at),
+				session_id: item.latest_mention?.session_id ?? item.curated?.session_id ?? null,
+			})
 			// A decision implies a read — emit alongside the action so the paired
 			// funnel (shown → marked_read) can't miss the decision path.
 			trackForyouCardMarkedRead({ card_kind: cardKind, card_id: objectId })
@@ -176,12 +205,12 @@ export function FeedCard({
 				onDecide({ id: option.id, label: option.label })
 			}, 260)
 		},
-		[cardKind, objectId, onDecide, pendingId],
+		[cardKind, objectId, onDecide, pendingId, item],
 	)
 
 	if (decided) {
 		return (
-			<CardShell expanded={false}>
+			<CardShell expanded={false} shellRef={shellRef}>
 				<DecisionReceipt decided={decided} who={sender?.name} />
 			</CardShell>
 		)
@@ -189,7 +218,7 @@ export function FeedCard({
 
 	if (!expanded) {
 		return (
-			<CardShell expanded={false}>
+			<CardShell expanded={false} shellRef={shellRef}>
 				<div className="group/card flex items-center gap-3 px-4 py-[13px] transition-colors duration-150 hover:bg-muted/40">
 					<button
 						type="button"
@@ -225,7 +254,7 @@ export function FeedCard({
 	}
 
 	return (
-		<CardShell expanded>
+		<CardShell expanded shellRef={shellRef}>
 			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 					<ActorAvatar
@@ -361,9 +390,18 @@ export function FeedCard({
 
 // The card's frame: its own border and radius, lifted a little more once it
 // is open (mockup's `border` / `radius` / `shadow` switch).
-function CardShell({ expanded, children }: { expanded: boolean; children: React.ReactNode }) {
+function CardShell({
+	expanded,
+	shellRef,
+	children,
+}: {
+	expanded: boolean
+	shellRef: React.Ref<HTMLDivElement>
+	children: React.ReactNode
+}) {
 	return (
 		<div
+			ref={shellRef}
 			data-testid="foryou-feed-card"
 			className={cn(
 				'overflow-hidden rounded-[20px] border border-border bg-card',

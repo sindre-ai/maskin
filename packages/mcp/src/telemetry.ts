@@ -579,7 +579,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	resend_send_email: 'resend_email_send',
 	update_integration_access: 'integration_access_update',
 	// Sessions
-	create_session: 'session_create',
 	create_sub_chat: 'session_create',
 	// For You
 	withdraw_decision_card: 'for_you_withdraw',
@@ -588,7 +587,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	add_chat_participant: 'chat_participant_add',
 	remove_chat_participant: 'chat_participant_remove',
 	stop_chat_agent: 'chat_agent_stop',
-	run_agent: 'session_run',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
 	ask_user_question: 'session_ask_user',

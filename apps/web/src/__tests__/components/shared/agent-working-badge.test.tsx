@@ -38,6 +38,16 @@ describe('AgentWorkingBadge', () => {
 		expect(screen.getByText('Scout Agent')).toBeInTheDocument()
 	})
 
+	it('renders the inline variant as one line with the time and a Watch button', () => {
+		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="inline" />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('Scout Agent')).toBeInTheDocument()
+		expect(screen.getByText(/is thinking/)).toBeInTheDocument()
+		expect(screen.getByText(/3m 15s/)).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Watch' })).toBeInTheDocument()
+	})
+
 	it('shows agent name from actor data', () => {
 		render(<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(screen.getByText(/Scout Agent/)).toBeInTheDocument()

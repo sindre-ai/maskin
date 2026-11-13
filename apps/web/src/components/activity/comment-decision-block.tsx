@@ -1,6 +1,6 @@
 import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { useCreateComment } from '@/hooks/use-events'
-import { trackForyouCardAction } from '@/lib/analytics'
+import { secondsSince, trackForyouCardAction } from '@/lib/analytics'
 import type { EventResponse } from '@/lib/api'
 import { decisionOfEvent, defaultOnSilenceLine } from '@/lib/comment-decision'
 import { actionIdFromLabel } from '@/lib/foryou-card-kind'
@@ -64,7 +64,14 @@ export function CommentDecisionBlock({
 	const choose = useCallback(
 		(option: { id: string; label: string }) => {
 			if (pendingId) return
-			trackForyouCardAction({ card_kind: 'decision', card_id: objectId, action_id: option.id })
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: objectId,
+				action_id: option.id,
+				seconds_to_action: secondsSince(event.createdAt),
+				session_id:
+					typeof event.data?.authorSessionId === 'string' ? event.data.authorSessionId : null,
+			})
 			setPendingId(option.id)
 			createComment.mutate(
 				{
@@ -79,7 +86,7 @@ export function CommentDecisionBlock({
 				{ onSettled: () => setPendingId(null) },
 			)
 		},
-		[createComment, event.id, objectId, pendingId],
+		[createComment, event, objectId, pendingId],
 	)
 
 	if (!decision || options.length === 0) return null

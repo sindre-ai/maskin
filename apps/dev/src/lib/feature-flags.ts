@@ -146,6 +146,29 @@ export const FLAGS = {
 	 */
 	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
 	/**
+	 * Gates the item card beside a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
+	 * when a view asks to open an item, the loop page shows its card in a side panel, where the
+	 * person can change its status or approve it, instead of going to the object's page. Frontend
+	 * only: read once, in `LoopViewTab`. Off means Open goes to the object's page as before. Retire
+	 * once it is on for everyone.
+	 */
+	LOOP_VIEW_ITEM_PANEL: 'loop-view-item-panel',
+	/**
+	 * Gates date and time changes from a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
+	 * when a view proposes a new day or post time for an item, the loop page asks the person
+	 * "Move to 14 Nov?" and saves only after they confirm. Frontend only: read once, in
+	 * `LoopViewTab`. Off means a view's proposal is ignored and nothing can be changed from a view.
+	 * Retire once it is on for everyone.
+	 */
+	LOOP_VIEW_DATE_CHANGE: 'loop-view-date-change',
+	/**
+	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
+	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
+	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for
+	 * everyone.
+	 */
+	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
+	/**
 	 * Gates the default on silence for decision cards (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * task [Let decision cards carry a default on silence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/bcfed848-7a51-418e-a5d0-172999385c9c)).
 	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in routes/events.ts

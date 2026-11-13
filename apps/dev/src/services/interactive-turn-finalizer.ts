@@ -1471,7 +1471,7 @@ export class InteractiveTurnFinalizer {
 				.set({ spawnedByMessageId: messageId })
 				.where(
 					and(
-						// REST `create_session` records the spawner as
+						// REST `create_sub_chat` records the spawner as
 						// `spawned_by_session_id` (from the X-Maskin-Session-Id header);
 						// `source_session_id` is only set when the agent passes it.
 						or(

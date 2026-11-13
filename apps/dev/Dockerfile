@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM node:20-alpine
+# ffmpeg (with ffprobe) extracts the audio track the transcribe_file MCP tool
+# sends to the speech model: services/file-transcription.ts shells out to both.
+RUN apk add --no-cache ffmpeg && ffmpeg -version | head -1 && ffprobe -version | head -1
 RUN corepack enable
 
 WORKDIR /app
