@@ -70,6 +70,40 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_file_tags',
 ])
 
+/**
+ * Tools whose full definition Claude Code loads at session start instead of
+ * deferring it behind tool search (`_meta["anthropic/alwaysLoad"]`, set by the
+ * registerAppTool wrapper in server.ts).
+ *
+ * Claude Code defers every MCP tool by default: the agent starts with tool names
+ * only and has to search to see a schema. In practice agents often skip the
+ * search and call a tool by name with guessed arguments (`object_id` on
+ * get_comments, `query` on search_objects), which is where many schema errors
+ * come from. Loading the daily tools up front puts the real schema in front of
+ * the agent; everything else stays reachable through tool search.
+ *
+ * Keep this short. Every entry is paid for in every session's context window,
+ * and surface-pin.test.ts caps the list. The ten here are the most-called tools
+ * over 29 Oct to 12 Nov 2026 (about 70% of calls), plus create_objects for its
+ * error rate. search_objects is left out: it is a listed alias of list_objects.
+ * See docs/reference/mcp-tools.md, "Always-loaded tools".
+ */
+export const ALWAYS_LOADED_TOOLS: ReadonlySet<string> = new Set([
+	'get_objects',
+	'list_objects',
+	'create_objects',
+	'update_objects',
+	'get_comments',
+	'create_comment',
+	'list_relationships',
+	'update_notification',
+	'list_sessions',
+	'list_actors',
+])
+
+/** The `_meta` key Claude Code reads to load a tool's definition up front. */
+export const ALWAYS_LOAD_META_KEY = 'anthropic/alwaysLoad'
+
 interface Row {
 	title: string
 	destructive: boolean
