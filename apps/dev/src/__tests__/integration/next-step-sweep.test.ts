@@ -41,6 +41,16 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 	startSession: startSessionMock,
 }))
 
+// A card the shared parser accepts. One that does not parse is not a card, so it would not hold the sweep back.
+const LIVE_CARD = {
+	title: 'Which way should we go?',
+	summary: 'Both routes are drafted and the call is open.',
+	options: [
+		{ label: 'Route A', recommended: true, consequences: ['Ships this week', 'Costs one more day'] },
+		{ label: 'Route B', consequences: ['Ships next week', 'Costs nothing extra'] },
+	],
+}
+
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
 
@@ -328,7 +338,7 @@ describe('NextStepSweep', () => {
 				entityId: bet.id,
 				data: {
 					content: 'Which way?',
-					decision: { title: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] },
+					decision: LIVE_CARD,
 				},
 			})
 			await sweep().sweepWorkspace(workspaceId)
@@ -345,7 +355,7 @@ describe('NextStepSweep', () => {
 				entityId: bet.id,
 				data: {
 					content: 'Which way?',
-					decision: { title: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] },
+					decision: LIVE_CARD,
 				},
 			})
 			await recordEventReturning(db, {
