@@ -58,6 +58,11 @@ describe('gatewayServerSpec', () => {
 		expect(spec.headers.Authorization).toBe('Bearer ${MASKIN_API_KEY}')
 		expect(JSON.stringify(spec)).not.toContain('LINEAR_TOKEN')
 	})
+
+	it('names the calling session so an Allow in this chat can be found', () => {
+		const spec = gatewayServerSpec('google-calendar') as { headers: Record<string, string> }
+		expect(spec.headers['X-Maskin-Session-Id']).toBe('${SESSION_ID}')
+	})
 })
 
 describe('rewriteMcpServersForGateway', () => {

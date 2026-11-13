@@ -50,3 +50,22 @@ export function dropAlreadyConfigured(
 	}
 	return { servers, dropped }
 }
+
+/**
+ * Adds the session header to a connected integration's own server entry when it is one Maskin
+ * hosts (an `${MASKIN_API_URL}/api/integrations/...` address, such as Google Meet), so the route
+ * can tell which chat a call comes from. An entry that already names the header, or that points
+ * anywhere else, is returned as it is.
+ */
+export function withSessionHeader<T extends object>(server: T): T {
+	const entry = server as Record<string, unknown>
+	const url = typeof entry.url === 'string' ? entry.url.trim() : ''
+	if (!url.startsWith('${MASKIN_API_URL}/api/integrations/')) return server
+	const headers = entry.headers ?? {}
+	if (typeof headers !== 'object' || headers === null || Array.isArray(headers)) return server
+	if (MASKIN_SESSION_HEADER in headers) return server
+	return {
+		...server,
+		headers: { ...headers, [MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE },
+	}
+}

@@ -928,10 +928,11 @@ export const api = {
 			workspaceId: string,
 			sessionId: string,
 			level: 'read' | 'read_write',
+			scope: 'chat' | 'always' = 'always',
 		) =>
 			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
 				`/integrations/${id}/allow-access`,
-				{ method: 'POST', body: { sessionId, level }, workspaceId },
+				{ method: 'POST', body: { sessionId, level, scope }, workspaceId },
 			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
@@ -3098,6 +3099,8 @@ export interface MessageIntegrationAccessRequest {
 	display_name: string
 	level: 'read' | 'read_write'
 	reason?: string
+	/** Set by the server: the card can also allow write for a few hours in this chat only. */
+	chat_lift?: { hours: number; text: string; tool?: string }
 }
 
 /** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */

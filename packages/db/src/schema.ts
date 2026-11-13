@@ -648,6 +648,8 @@ export const agentChatGrants = pgTable(
 			.notNull(),
 		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		/** Null: lasts until the chat or the credential is removed (Keychain). Set: an Allow in this chat that stops counting at this time. */
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
 	},
 	(t) => [
 		unique('agent_chat_grants_uniq').on(t.integrationId, t.actorId, t.conversationId),

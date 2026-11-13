@@ -13,6 +13,7 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { canRead, canWrite, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { resolveCallerChat } from '../lib/integrations/chat-lift'
 import { IntegrationAuthRevokedError, ScopeDeniedError } from '../lib/integrations/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
@@ -588,7 +589,16 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 	const integrationId = credential.id
-	const access = (await resolveAgentAccess(db, workspaceId, integrationId, actorId)) ?? 'none'
+	// An Allow for just this chat counts for the access level only: the approval that follows is
+	// the same for everyone. Gmail is not on the chat-lift list yet, so no such grant exists today.
+	const chat = await resolveCallerChat(db, c.req.header('x-maskin-session-id'), {
+		workspaceId,
+		actorId,
+	})
+	const access =
+		(await resolveAgentAccess(db, workspaceId, integrationId, actorId, {
+			conversationId: chat?.conversationId ?? null,
+		})) ?? 'none'
 	if (!canWrite(access)) {
 		const f = fail(
 			403,

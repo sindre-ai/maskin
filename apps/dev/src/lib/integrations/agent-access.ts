@@ -9,7 +9,7 @@ import {
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import { isGatedRow } from './custom-mcp'
 
 /**
@@ -85,7 +85,12 @@ export async function resolveAgentAccess(
 	// A saved key or login needs an explicit grant for anyone. Other integrations let people through.
 	if (row.actorType !== 'agent' && !isKeychainMode(row.providerMode)) return 'read_write'
 	const access = effectiveAccess(row, row.grant)
-	if (access === 'none' && isKeychainMode(row.providerMode) && opts.conversationId) {
+	const keychain = isKeychainMode(row.providerMode)
+	// An Allow for just this chat lifts the agent to read_write for that conversation. A saved
+	// key or login (on or off) is lifted from 'none' and its grant never ends on its own; a
+	// connected integration is lifted from anything below read_write and only while the grant
+	// has an expiry that has not passed.
+	if (opts.conversationId && (keychain ? access === 'none' : access !== 'read_write')) {
 		const [chat] = await db
 			.select({ id: agentChatGrants.id })
 			.from(agentChatGrants)
@@ -94,6 +99,7 @@ export async function resolveAgentAccess(
 					eq(agentChatGrants.integrationId, integrationId),
 					eq(agentChatGrants.actorId, actorId),
 					eq(agentChatGrants.conversationId, opts.conversationId),
+					chatGrantLive(keychain),
 				),
 			)
 			.limit(1)
@@ -101,6 +107,12 @@ export async function resolveAgentAccess(
 	}
 	return access
 }
+
+/** A chat grant that still counts. Keychain grants have no end; every other grant needs a future expiry (fail closed). */
+const chatGrantLive = (keychain: boolean) =>
+	keychain
+		? or(isNull(agentChatGrants.expiresAt), gt(agentChatGrants.expiresAt, sql`now()`))
+		: gt(agentChatGrants.expiresAt, sql`now()`)
 
 export interface ActorIntegrationAccess {
 	integrationId: string
@@ -162,12 +174,14 @@ export async function listAgentAccess(
 		.select({
 			integrationId: agentChatGrants.integrationId,
 			conversationId: agentChatGrants.conversationId,
+			expiresAt: agentChatGrants.expiresAt,
 		})
 		.from(agentChatGrants)
 		.where(and(eq(agentChatGrants.workspaceId, workspaceId), eq(agentChatGrants.actorId, actorId)))
-	const chatsBy = new Map<string, string[]>()
+	const now = Date.now()
+	const chatsBy = new Map<string, Array<{ conversationId: string; expiresAt: Date | null }>>()
 	for (const g of chatRows) {
-		chatsBy.set(g.integrationId, [...(chatsBy.get(g.integrationId) ?? []), g.conversationId])
+		chatsBy.set(g.integrationId, [...(chatsBy.get(g.integrationId) ?? []), g])
 	}
 	const rows = await db
 		.select({
@@ -194,16 +208,23 @@ export async function listAgentAccess(
 		)
 		.orderBy(asc(integrations.createdAt))
 	return rows.map((r) => {
-		const chats = chatsBy.get(r.integrationId) ?? []
 		const keychain = isKeychainMode(r.providerMode)
-		const viaChat =
-			keychain && !r.grant && !!opts.conversationId && chats.includes(opts.conversationId)
+		// Same rule as resolveAgentAccess: a Keychain grant has no end, any other needs a future expiry.
+		const chats = (chatsBy.get(r.integrationId) ?? []).filter((g) =>
+			keychain
+				? g.expiresAt === null || g.expiresAt.getTime() > now
+				: (g.expiresAt?.getTime() ?? 0) > now,
+		)
+		const base = effectiveAccess(r, r.grant)
+		const inThisChat =
+			!!opts.conversationId && chats.some((g) => g.conversationId === opts.conversationId)
+		const viaChat = inThisChat && (keychain ? !r.grant : base !== 'read_write')
 		return {
 			integrationId: r.integrationId,
 			provider: r.provider,
 			providerMode: r.providerMode,
 			displayName: r.displayName,
-			access: viaChat ? ('read_write' as const) : effectiveAccess(r, r.grant),
+			access: viaChat ? ('read_write' as const) : base,
 			source: viaChat ? ('chat' as const) : r.grant ? ('grant' as const) : ('default' as const),
 			chatCount: keychain ? chats.length : 0,
 			defaultAgentAccess: r.defaultAgentAccess,

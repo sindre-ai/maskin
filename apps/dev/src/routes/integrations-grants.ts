@@ -16,6 +16,7 @@ import {
 	replaceAgentGrants,
 	upsertAgentGrant,
 } from '../lib/integrations/agent-grants'
+import { chatLiftExpiry, isChatLiftable } from '../lib/integrations/chat-lift'
 import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { isGatedRow } from '../lib/integrations/custom-mcp'
 import { logger } from '../lib/logger'
@@ -191,6 +192,14 @@ function failure(reason: string): {
 					'A saved key or login is on or off for an agent: use read_write or none',
 				),
 				status: 400,
+			}
+		case 'not_liftable':
+			return {
+				error: createApiError(
+					'FORBIDDEN',
+					'This integration cannot be allowed for just one chat. Change its access under Settings → Integrations.',
+				),
+				status: 403,
 			}
 		case 'keychain_default':
 			return {
@@ -747,6 +756,9 @@ const allowAccessRoute = createRoute({
 						.object({
 							sessionId: z.string().uuid(),
 							level: z.enum(['read', 'read_write']),
+							// 'chat': read_write for 8 hours in the conversation that asked, for the
+							// providers in chat-lift.ts only. 'always': a standing level, as in Settings.
+							scope: z.enum(['chat', 'always']).default('always'),
 						})
 						.strict(),
 				},
@@ -778,7 +790,7 @@ app.openapi(allowAccessRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const { id } = c.req.valid('param')
-	const { sessionId, level } = c.req.valid('json')
+	const { sessionId, level, scope } = c.req.valid('json')
 
 	if (c.get('actorType') !== 'human') {
 		return c.json(createApiError('FORBIDDEN', 'Only a person can change agent access'), 403)
@@ -786,11 +798,20 @@ app.openapi(allowAccessRoute, (async (c) => {
 
 	// The agent is the one whose session asked: the card cannot name anyone else.
 	const [session] = await db
-		.select({ actorId: sessions.actorId })
+		.select({ actorId: sessions.actorId, conversationId: sessions.conversationId })
 		.from(sessions)
 		.where(and(eq(sessions.id, sessionId), eq(sessions.workspaceId, workspaceId)))
 		.limit(1)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+	if (scope === 'chat' && (!session.conversationId || level !== 'read_write')) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'Allow in this chat gives read and write for one chat, so it needs a chat session and the read_write level',
+			),
+			400,
+		)
+	}
 
 	const outcome = await db.transaction(async (tx) => {
 		const target = await loadEditable(db, tx, { id, workspaceId, callerId })
@@ -799,12 +820,60 @@ app.openapi(allowAccessRoute, (async (c) => {
 		if (isKeychainMode(target.providerMode as never)) return 'not_standard' as const
 		const bad = levelNotAllowed(target, level)
 		if (bad) return bad
+		// The list is code, not config: any other provider is refused here, whatever the card said.
+		if (scope === 'chat' && !isChatLiftable(target.provider)) return 'not_liftable' as const
 		if (!(await actorsAreWorkspaceAgents(tx, workspaceId, [session.actorId]))) {
 			return 'outside' as const
 		}
 		// Never narrows: an agent that already has this much (a grant or the default) keeps it.
 		const current = await resolveAgentAccess(tx, workspaceId, id, session.actorId)
 		if (current && accessCovers(current, level)) return 'unchanged' as const
+		// One row per card, matched by session and conversation: the Allow rate is these over the shown rows.
+		const cardFields = {
+			session_id: sessionId,
+			...(session.conversationId ? { conversation_id: session.conversationId } : {}),
+			outcome: 'allowed',
+		}
+		if (scope === 'chat' && session.conversationId) {
+			const expiresAt = chatLiftExpiry()
+			await tx
+				.insert(agentChatGrants)
+				.values({
+					workspaceId,
+					integrationId: id,
+					actorId: session.actorId,
+					conversationId: session.conversationId,
+					createdBy: callerId,
+					expiresAt,
+				})
+				.onConflictDoUpdate({
+					target: [
+						agentChatGrants.integrationId,
+						agentChatGrants.actorId,
+						agentChatGrants.conversationId,
+					],
+					set: { expiresAt, createdBy: callerId },
+				})
+			await recordEvent(tx, {
+				workspaceId,
+				actorId: callerId,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: id,
+				data: {
+					change: 'agent_grant',
+					provider: target.provider,
+					agent_id: session.actorId,
+					access_before: current,
+					access_after: level,
+					via: 'chat_card',
+					scope: 'chat',
+					expires_at: expiresAt.toISOString(),
+					...cardFields,
+				},
+			})
+			return 'saved' as const
+		}
 		const previous = await upsertAgentGrant(tx, {
 			workspaceId,
 			integrationId: id,
@@ -826,6 +895,7 @@ app.openapi(allowAccessRoute, (async (c) => {
 				access_after: level,
 				via: 'chat_card',
 				scope: 'always',
+				...cardFields,
 			},
 		})
 		return 'saved' as const

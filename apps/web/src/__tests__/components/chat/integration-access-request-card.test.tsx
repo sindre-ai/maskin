@@ -250,4 +250,79 @@ describe('IntegrationAccessRequestCard', () => {
 		await waitFor(() => expect(inputMutate).toHaveBeenCalledTimes(1))
 		expect(continueMutate).not.toHaveBeenCalled()
 	})
+
+	describe('Allow in this chat', () => {
+		const lifted: MessageIntegrationAccessRequest = {
+			...request,
+			provider: 'google-calendar',
+			display_name: 'Google Calendar',
+			chat_lift: { hours: 8, text: 'Lets this agent change your calendar.', tool: 'create_event' },
+		}
+
+		it('shows the fixed text, the tool and the agent’s words apart, with the chat button first', () => {
+			renderCard(lifted)
+			expect(screen.getByText('Lets this agent change your calendar.')).toBeInTheDocument()
+			expect(screen.getByText('create_event')).toBeInTheDocument()
+			expect(screen.getByText('The agent says')).toBeInTheDocument()
+			expect(screen.getByText('To post the summary.')).toBeInTheDocument()
+			const names = screen.getAllByRole('button').map((b) => b.textContent)
+			expect(names).toEqual(['Allow in this chat for 8 hours', 'Always allow', 'Not now'])
+		})
+
+		it('allows for this chat only, tells the agent, and reads as answered after a reload', async () => {
+			const user = userEvent.setup()
+			const { unmount } = renderCard(lifted)
+			await user.click(screen.getByRole('button', { name: 'Allow in this chat for 8 hours' }))
+
+			await waitFor(() =>
+				expect(mockAllow).toHaveBeenCalledWith(
+					INTEGRATION_ID,
+					'ws-1',
+					SESSION_ID,
+					'read_write',
+					'chat',
+				),
+			)
+			const { content, metadata } = sendMutate.mock.calls[0][0] as {
+				content: string
+				metadata: { card_answer: { message_id: number; outcome: string } }
+			}
+			expect(content).toContain('for the next 8 hours, in this chat only')
+			expect(metadata.card_answer).toEqual({ message_id: 7, outcome: 'done' })
+			expect(await screen.findByText(/in this chat for\s+8 hours\./)).toBeInTheDocument()
+
+			unmount()
+			cardAnswer = 'done'
+			renderCard(lifted)
+			expect(screen.getByText(/in this chat for\s+8 hours\./)).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Always allow' })).not.toBeInTheDocument()
+		})
+
+		it('Always allow still sets the standing level', async () => {
+			const user = userEvent.setup()
+			renderCard(lifted)
+			await user.click(screen.getByRole('button', { name: 'Always allow' }))
+			await waitFor(() =>
+				expect(mockAllow).toHaveBeenCalledWith(INTEGRATION_ID, 'ws-1', SESSION_ID, 'read_write'),
+			)
+		})
+
+		it('offers no chat button once the level is lowered to Read, or when the server sent no offer', async () => {
+			const user = userEvent.setup()
+			renderCard(lifted)
+			await user.click(screen.getByRole('radio', { name: 'Read' }))
+			expect(
+				screen.queryByRole('button', { name: 'Allow in this chat for 8 hours' }),
+			).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Always allow' })).toBeEnabled()
+		})
+
+		it('has no chat button on a card without chat_lift', () => {
+			renderCard()
+			expect(
+				screen.queryByRole('button', { name: 'Allow in this chat for 8 hours' }),
+			).not.toBeInTheDocument()
+			expect(screen.queryByText('The agent says')).not.toBeInTheDocument()
+		})
+	})
 })
