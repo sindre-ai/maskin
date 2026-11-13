@@ -98,7 +98,12 @@ export function ComputerRequestCard({
 			</div>
 
 			{phase === 'open' ? (
-				<ExpandableDesktop workspaceId={workspaceId} agentId={agentId} agentName={agentName} />
+				<ExpandableDesktop
+					workspaceId={workspaceId}
+					agentId={agentId}
+					agentName={agentName}
+					from="chat_request_card"
+				/>
 			) : null}
 
 			<div className="flex flex-wrap items-center gap-2">
