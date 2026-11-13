@@ -7,6 +7,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
@@ -33,6 +34,10 @@ type Step =
 	| { kind: 'failed'; message: string }
 	| { kind: 'done' }
 
+// A promo code the server said is valid. The page never decides that: starting the trial sends the
+// code again and the server checks it again.
+type Promo = { kind: 'none' } | { kind: 'applied'; code: string }
+
 function StartTrialPage() {
 	const { workspaceId } = Route.useParams()
 	const queryClient = useQueryClient()
@@ -42,6 +47,7 @@ function StartTrialPage() {
 	// needs a fresh one.
 	const [attempt, setAttempt] = useState(0)
 	const [pickerOpen, setPickerOpen] = useState(false)
+	const [promo, setPromo] = useState<Promo>({ kind: 'none' })
 
 	const waiting = usage?.trial_state === 'awaiting_card'
 	const setup = useQuery({
@@ -111,7 +117,21 @@ function StartTrialPage() {
 							</div>
 						)}
 
-						{!waiting || setup.isPending ? (
+						{waiting && (
+							<PromoCodeBox
+								workspaceId={workspaceId}
+								promo={promo}
+								onPromo={setPromo}
+								onDone={() => {
+									setStep({ kind: 'done' })
+									void queryClient.invalidateQueries({
+										queryKey: queryKeys.billing.usage(workspaceId),
+									})
+								}}
+							/>
+						)}
+
+						{promo.kind === 'applied' ? null : !waiting || setup.isPending ? (
 							<div className="flex justify-center py-6" aria-busy="true">
 								{usagePending || waiting ? <Spinner /> : null}
 							</div>
@@ -143,14 +163,133 @@ function StartTrialPage() {
 							</Elements>
 						)}
 
-						<p className="text-center text-xs text-muted-foreground">
-							We allow one free trial per card.
-						</p>
+						{promo.kind === 'none' && (
+							<p className="text-center text-xs text-muted-foreground">
+								We allow one free trial per card.
+							</p>
+						)}
 					</>
 				)}
 			</div>
 			<ChoosePlanDialog workspaceId={workspaceId} open={pickerOpen} onOpenChange={setPickerOpen} />
 		</div>
+	)
+}
+
+// The Promo code field above the card form. Apply asks the server; a valid code folds the card form
+// away (the page hides it) and shows the Start button that needs no card. Remove opens it again.
+function PromoCodeBox({
+	workspaceId,
+	promo,
+	onPromo,
+	onDone,
+}: {
+	workspaceId: string
+	promo: Promo
+	onPromo: (promo: Promo) => void
+	onDone: () => void
+}) {
+	const [value, setValue] = useState('')
+	const [checking, setChecking] = useState(false)
+	const [starting, setStarting] = useState(false)
+	const [message, setMessage] = useState<string | null>(null)
+
+	const messageFor = (err: unknown) => {
+		if (err instanceof ApiError && err.status === 429) {
+			return 'Too many tries. Wait a minute and try again.'
+		}
+		return err instanceof Error ? err.message : 'Something went wrong.'
+	}
+
+	const apply = async (e: React.FormEvent) => {
+		e.preventDefault()
+		const code = value.trim()
+		if (!code || checking) return
+		setChecking(true)
+		setMessage(null)
+		try {
+			const { valid } = await api.billing.trial.checkPromo(workspaceId, code)
+			if (valid) onPromo({ kind: 'applied', code })
+			else setMessage('This promo code is not valid, or it has been used up.')
+		} catch (err) {
+			setMessage(messageFor(err))
+		} finally {
+			setChecking(false)
+		}
+	}
+
+	const remove = () => {
+		onPromo({ kind: 'none' })
+		setValue('')
+		setMessage(null)
+	}
+
+	const start = async () => {
+		if (promo.kind !== 'applied' || starting) return
+		setStarting(true)
+		setMessage(null)
+		try {
+			await api.billing.trial.startWithPromo(workspaceId, promo.code)
+			onDone()
+		} catch (err) {
+			if (err instanceof ApiError && err.code === 'TRIAL_PROMO_CODE_INVALID') {
+				// The code was used up or expired between Apply and Start: the card form comes back.
+				onPromo({ kind: 'none' })
+				setMessage('This promo code is no longer valid. Add a card to start your trial.')
+			} else {
+				setMessage(messageFor(err))
+			}
+		} finally {
+			setStarting(false)
+		}
+	}
+
+	if (promo.kind === 'applied') {
+		return (
+			<div className="space-y-4">
+				<div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3.5 py-3 text-[12.5px] leading-[1.55]">
+					<p>Promo code applied, no card needed.</p>
+					<Button size="sm" variant="ghost" onClick={remove} disabled={starting}>
+						Remove
+					</Button>
+				</div>
+				{message && (
+					<p role="alert" className="text-xs text-error">
+						{message}
+					</p>
+				)}
+				<Button className="w-full" onClick={start} disabled={starting}>
+					{starting ? 'Starting trial...' : 'Start 7-day trial'}
+				</Button>
+			</div>
+		)
+	}
+
+	return (
+		<form onSubmit={apply} className="space-y-1.5">
+			<Label htmlFor="promo-code" className="text-muted-foreground">
+				Promo code
+			</Label>
+			<div className="flex gap-2">
+				<Input
+					id="promo-code"
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					autoComplete="off"
+					autoCapitalize="characters"
+					spellCheck={false}
+					maxLength={100}
+				/>
+				<Button type="submit" variant="outline" disabled={!value.trim() || checking}>
+					{checking ? 'Checking...' : 'Apply'}
+				</Button>
+			</div>
+			{message && (
+				<p role="alert" className="text-xs text-error">
+					{message}
+				</p>
+			)}
+		</form>
 	)
 }
 

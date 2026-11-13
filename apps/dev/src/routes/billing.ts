@@ -50,6 +50,13 @@ import {
 	createTrialSetup,
 	startTrial,
 } from '../lib/trial-card'
+import {
+	TrialPromoCodeInvalidError,
+	hitPromoRateLimit,
+	isPromoCodeValid,
+	startTrialWithPromo,
+} from '../lib/trial-promo'
+import { extractClientIp } from '../lib/trusted-proxy'
 import type { WorkspaceSettings } from '../lib/types'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 import { startChiefOfStaffWelcome } from '../services/workspace-bootstrap'
@@ -606,8 +613,20 @@ const trialSetupResponseSchema = z.object({
 	publishable_key: z.string(),
 })
 
+// Exactly one of the two: a finished card setup, or a promo code. The handler checks that, so the
+// schema stays a plain object.
 const trialStartBodySchema = z.object({
-	setup_intent_id: z.string().min(1).max(255),
+	setup_intent_id: z.string().min(1).max(255).optional(),
+	promo_code: z.string().min(1).max(100).optional(),
+})
+
+const trialPromoCheckBodySchema = z.object({
+	code: z.string().min(1).max(100),
+})
+
+const trialPromoCheckResponseSchema = z.object({
+	// One answer for a wrong, expired, switched-off or used-up code, so a guess learns nothing.
+	valid: z.boolean(),
 })
 
 const trialStartResponseSchema = z.object({
@@ -657,7 +676,7 @@ const trialStartRoute = createRoute({
 	path: '/trial/start',
 	'x-viewer-policy': 'writer',
 	tags: ['billing'],
-	summary: 'Start the 7-day trial from a finished card setup',
+	summary: 'Start the 7-day trial from a finished card setup, or from a promo code with no card',
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: trialStartBodySchema } }, required: true },
@@ -684,8 +703,45 @@ const trialStartRoute = createRoute({
 				'The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		429: {
+			description: 'Too many promo code tries',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Stripe is not configured or failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const trialPromoCheckRoute = createRoute({
+	method: 'post',
+	path: '/trial/promo/check',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary: 'Check a promo code for the 7-day trial. Looks only; nothing is used up.',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: trialPromoCheckBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Whether the code could start a trial with no card right now',
+			content: { 'application/json': { schema: trialPromoCheckResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The workspace is not waiting for a card',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: {
+			description: 'Too many promo code tries',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -706,6 +762,18 @@ function trialFailure(err: unknown) {
 					code: ApiErrorCode.TRIAL_CARD_ALREADY_USED,
 					message: err.message,
 					suggestion: 'Choose a plan to keep going, or add a different card.',
+				},
+			},
+		}
+	}
+	if (err instanceof TrialPromoCodeInvalidError) {
+		return {
+			status: 400 as const,
+			body: {
+				error: {
+					code: ApiErrorCode.TRIAL_PROMO_CODE_INVALID,
+					message: err.message,
+					suggestion: 'Check the code, or remove it and add a card instead.',
 				},
 			},
 		}
@@ -754,23 +822,86 @@ app.openapi(trialSetupRoute, async (c) => {
 	}
 })
 
-app.openapi(trialStartRoute, async (c) => {
+function promoCallerIp(c: { req: { raw: Request; header(name: string): string | undefined } }) {
+	const socketIp = (c.req.raw as unknown as { remoteAddress?: string }).remoteAddress
+	return extractClientIp(socketIp, c.req.header('X-Forwarded-For'))
+}
+
+function promoRateLimited(retryAfterMs: number) {
+	return {
+		retryAfter: String(Math.ceil(retryAfterMs / 1000)),
+		body: createApiError('RATE_LIMITED', 'Too many promo code tries. Wait a minute and try again.'),
+	}
+}
+
+app.openapi(trialPromoCheckRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { setup_intent_id } = c.req.valid('json')
+	const { code } = c.req.valid('json')
 	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
 	}
+	const limit = hitPromoRateLimit(c.get('actorId'), promoCallerIp(c))
+	if (!limit.allowed) {
+		const limited = promoRateLimited(limit.retryAfterMs)
+		c.header('Retry-After', limited.retryAfter)
+		return c.json(limited.body, 429)
+	}
+	// Only a workspace that is waiting for its card has a use for a code, so any other state is
+	// refused before the code is looked at.
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const billing = workspaceSettingsSchema.partial().safeParse(row?.settings ?? {})
+	if (!row || !billing.success || billing.data.billing?.trial_state !== 'awaiting_card') {
+		return c.json(createApiError('CONFLICT', 'This workspace is not waiting for a card'), 409)
+	}
+	return c.json({ valid: await isPromoCodeValid(db, code) }, 200)
+})
+
+app.openapi(trialStartRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { setup_intent_id, promo_code } = c.req.valid('json')
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
+	}
+	// A code is the only way past the card step, so the request must bring a card setup or a code.
+	if (Boolean(setup_intent_id) === Boolean(promo_code)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Send either a finished card setup or a promo code'),
+			400,
+		)
+	}
+	if (promo_code) {
+		const limit = hitPromoRateLimit(c.get('actorId'), promoCallerIp(c))
+		if (!limit.allowed) {
+			const limited = promoRateLimited(limit.retryAfterMs)
+			c.header('Retry-After', limited.retryAfter)
+			return c.json(limited.body, 429)
+		}
+	}
 	try {
-		const { trialEndsAt } = await startTrial({
-			db,
-			stripe: getStripeClient(),
-			workspaceId,
-			actorId: c.get('actorId'),
-			setupIntentId: setup_intent_id,
-			// The welcome was held back at sign-up so no session started before the card.
-			onStarted: () => startWelcomeAfterTrial(db, workspaceId, c.get('actorId')),
-		})
+		const onStarted = () => startWelcomeAfterTrial(db, workspaceId, c.get('actorId'))
+		const { trialEndsAt } = promo_code
+			? await startTrialWithPromo({
+					db,
+					workspaceId,
+					actorId: c.get('actorId'),
+					code: promo_code,
+					onStarted,
+				})
+			: await startTrial({
+					db,
+					stripe: getStripeClient(),
+					workspaceId,
+					actorId: c.get('actorId'),
+					setupIntentId: setup_intent_id as string,
+					// The welcome was held back at sign-up so no session started before the card.
+					onStarted,
+				})
 		return c.json({ trial_state: 'started' as const, trial_ends_at: trialEndsAt }, 200)
 	} catch (err) {
 		const failure = trialFailure(err)

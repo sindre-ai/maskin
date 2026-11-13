@@ -1309,6 +1309,19 @@ export const api = {
 					body: { setup_intent_id: setupIntentId },
 					workspaceId,
 				}),
+			// Looks only; nothing is used up until startWithPromo.
+			checkPromo: (workspaceId: string, code: string) =>
+				request<TrialPromoCheckResponse>('/billing/trial/promo/check', {
+					method: 'POST',
+					body: { code },
+					workspaceId,
+				}),
+			startWithPromo: (workspaceId: string, code: string) =>
+				request<TrialStartResponse>('/billing/trial/start', {
+					method: 'POST',
+					body: { promo_code: code },
+					workspaceId,
+				}),
 		},
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
@@ -2038,6 +2051,10 @@ export interface LinkedInIdentityAddonLine {
 export interface TrialSetupResponse {
 	client_secret: string
 	publishable_key: string
+}
+
+export interface TrialPromoCheckResponse {
+	valid: boolean
 }
 
 export interface TrialStartResponse {

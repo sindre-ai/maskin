@@ -317,6 +317,7 @@ export async function startTrial(params: {
 		plan: 'trial',
 		card_present: true,
 		wallet_type: wallet,
+		promo: false,
 	})
 	if (params.onStarted) {
 		await params
