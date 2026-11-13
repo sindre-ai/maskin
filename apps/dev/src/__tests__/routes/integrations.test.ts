@@ -712,6 +712,54 @@ describe('Integrations Routes', () => {
 				}
 			}
 		})
+
+		it('returns 200 with install_url for microsoft when the app is configured, no flag needed', async () => {
+			const originalClientId = process.env.MICROSOFT_CLIENT_ID
+			process.env.MICROSOFT_CLIENT_ID = 'test-microsoft-client-id'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/microsoft/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.install_url).toContain('login.microsoftonline.com')
+			} finally {
+				if (originalClientId === undefined) {
+					Reflect.deleteProperty(process.env, 'MICROSOFT_CLIENT_ID')
+				} else {
+					process.env.MICROSOFT_CLIENT_ID = originalClientId
+				}
+			}
+		})
+
+		it('returns a clear 500 when the microsoft app settings are missing on the server', async () => {
+			const originalClientId = process.env.MICROSOFT_CLIENT_ID
+			Reflect.deleteProperty(process.env, 'MICROSOFT_CLIENT_ID')
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/microsoft/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(500)
+				const body = await res.json()
+				expect(body.error.message).toContain('Microsoft')
+				expect(body.error.message).toContain('misconfiguration')
+				expect(body.error.message).not.toContain('MICROSOFT_CLIENT_ID')
+			} finally {
+				if (originalClientId !== undefined) {
+					process.env.MICROSOFT_CLIENT_ID = originalClientId
+				}
+			}
+		})
 	})
 
 	describe('GET /api/integrations/:provider/callback', () => {

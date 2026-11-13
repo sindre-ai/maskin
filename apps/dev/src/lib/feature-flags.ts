@@ -27,14 +27,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Gates connecting Microsoft in Integrations (bet Microsoft Teams meeting transcripts and
-	 * Outlook calendar, task Land Teams transcripts as meetings). The provider is left out of
-	 * GET /api/integrations/providers and the connect route answers 404 when it is off for the
-	 * caller, so web and iOS both hide the tile. Actor-scoped (FF_TESTER_ACTOR_IDS). Retire once
-	 * Microsoft is on for everyone.
-	 */
-	MICROSOFT_TEAMS: 'microsoft-teams',
-	/**
 	 * Gates connecting Deepdots in Integrations (bet [Connect Deepdots so agents can read the
 	 * latest customer feedback](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f24572b9-f500-496c-ba7d-4eee3af6ed7a)).
 	 * The connect route answers 404 when it is off for the caller, and the web app hides the
