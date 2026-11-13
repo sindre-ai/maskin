@@ -201,7 +201,14 @@ actor FakeChatAPI: ChatAPI {
 		readCalls.append(lastMessageID)
 	}
 
-	func addParticipants(conversationID: String, actorIDs: [String]) async throws {}
+	private var addDecodeFails = false
+	/// The server adds the people, then the reply cannot be read (the bug behind "Key 'pinned' not found").
+	func setAddDecodeFails(_ v: Bool) { addDecodeFails = v }
+	func addParticipants(conversationID: String, actorIDs: [String]) async throws {
+		guard addDecodeFails else { return }
+		detailValue.participants += [chatSam].filter { actorIDs.contains($0.id) }
+		throw ChatsError("Couldn't add people.")
+	}
 	func actors() async throws -> [ChatActor] { actorList }
 }
 

@@ -11,8 +11,11 @@ import {
 } from '@/lib/loop-view-cache'
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
+import { useTheme } from '@/lib/theme'
 import type { ListSourceEntry } from '@/lib/view-lists'
+import { applyAppTheme } from '@/lib/view-theme'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
+import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -83,6 +86,7 @@ function ViewFrame({
 	onFailure: (reason: string) => void
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
+	const navigate = useNavigate()
 	const [height, setHeight] = useState(MIN_HEIGHT)
 	// Width the view needs when it is wider than the box it sits in. The frame takes that width
 	// and the box scrolls sideways; null means "fit the box". Reset whenever the box changes
@@ -114,7 +118,12 @@ function ViewFrame({
 	const blockedRef = useRef(false)
 	// The last answer given to the frame per source (by its query), to tell whether a change matters.
 	const lastResultsRef = useRef(new Map<string, string>())
-	const srcDoc = useMemo(() => prepareIsolatedViewHtml(html), [html])
+	// The view's light and dark styles follow the app's theme, not the browser's.
+	const { resolvedTheme } = useTheme()
+	const srcDoc = useMemo(
+		() => prepareIsolatedViewHtml(applyAppTheme(html, resolvedTheme)),
+		[html, resolvedTheme],
+	)
 
 	// The handler is installed once per workspace; it reads the latest sources
 	// and failure callback through refs so a re-render never drops a message.
@@ -222,6 +231,8 @@ function ViewFrame({
 					sources: () => sourcesRef.current,
 					allowLists: false,
 					listSources: () => listsRef.current,
+					onOpen: (objectId) =>
+						navigate({ to: '/$workspaceId/objects/$objectId', params: { workspaceId, objectId } }),
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
 						const given = (result: DataQueryResult) => {
@@ -279,7 +290,7 @@ function ViewFrame({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [workspaceId, queryAndStore, syncUpdatedAt])
+	}, [workspaceId, queryAndStore, syncUpdatedAt, navigate])
 
 	// Keeps the view live without it having to cooperate, and only while it is open (this
 	// component is mounted). A page cannot be told to re-render from outside, so when an

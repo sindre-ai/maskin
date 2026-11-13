@@ -1,11 +1,10 @@
 import { ACTORS_STALE_MS } from '@/lib/actors-stale'
-import { type PictogramShape, getAgentPictogram } from '@/lib/agent-pictogram'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { QueryClientContext, useQuery } from '@tanstack/react-query'
-import { useContext, useState } from 'react'
+import { type CSSProperties, useContext, useState } from 'react'
 
 const AVATAR_PALETTE = [
 	'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
@@ -20,31 +19,11 @@ const AVATAR_PALETTE = [
 	'bg-[var(--st-proposed-bg)] text-[var(--st-proposed-text)]',
 ] as const
 
-// The same ten identities as solid plates: the status *text* token becomes the
-// fill and its tint becomes the glyph. v2 draws an agent's avatar this way
-// wherever the avatar is the row's anchor (mockup 2329's `avStrong` + reversed
-// foreground), and the pairing inverts correctly in dark mode because both
-// halves are tokens.
-const AVATAR_PALETTE_STRONG = [
-	'bg-[var(--st-in_progress-text)] text-[var(--st-in_progress-bg)]',
-	'bg-[var(--st-active-text)] text-[var(--st-active-bg)]',
-	'bg-[var(--st-opportunity-text)] text-[var(--st-opportunity-bg)]',
-	'bg-[var(--st-clustered-text)] text-[var(--st-clustered-bg)]',
-	'bg-[var(--st-in_review-text)] text-[var(--st-in_review-bg)]',
-	'bg-[var(--st-validated-text)] text-[var(--st-validated-bg)]',
-	'bg-[var(--st-qualified-text)] text-[var(--st-qualified-bg)]',
-	'bg-[var(--st-scored-text)] text-[var(--st-scored-bg)]',
-	'bg-[var(--st-processing-text)] text-[var(--st-processing-bg)]',
-	'bg-[var(--st-proposed-text)] text-[var(--st-proposed-bg)]',
-] as const
-
-/** Tint plate (the default everywhere) vs the solid plate v2 uses for a row anchor. */
-export type ActorAvatarTone = 'subtle' | 'strong'
-
 /** Strip everything that is not a letter or digit so a bracketed qualifier
  *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. A single
- *  all-caps word of 3 letters (CTO, CPO, PMM) keeps all three; every other
- *  name stays at two. */
+ *  all-caps word of 3 letters (CTO, CPO, PMM) keeps all three; names of three
+ *  or more words use the first letter of the first three words (Chief of Staff
+ *  is COS); every other name stays at two. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
@@ -54,9 +33,11 @@ export function getActorInitials(name: string): string {
 		.filter(Boolean)
 	if (words.length === 0) return '?'
 	if (words.length >= 2) {
-		const first = words[0]?.[0] ?? ''
-		const second = words[1]?.[0] ?? ''
-		const combined = (first + second).toUpperCase()
+		const combined = words
+			.slice(0, 3)
+			.map((word) => word[0] ?? '')
+			.join('')
+			.toUpperCase()
 		return combined || '?'
 	}
 	const word = words[0] ?? ''
@@ -74,14 +55,33 @@ function hashString(input: string): number {
 	return hash >>> 0
 }
 
-export function getActorAvatarPaletteClass(
-	seed: string | undefined,
-	tone: ActorAvatarTone = 'subtle',
-): string {
+export function getActorAvatarPaletteClass(seed: string | undefined): string {
 	const key = seed && seed.length > 0 ? seed : '?'
-	const palette = tone === 'strong' ? AVATAR_PALETTE_STRONG : AVATAR_PALETTE
-	const idx = hashString(key) % palette.length
-	return palette[idx] ?? palette[0]
+	const idx = hashString(key) % AVATAR_PALETTE.length
+	return AVATAR_PALETTE[idx] ?? AVATAR_PALETTE[0]
+}
+
+/** The actor's hue, 0..359, folded over every character of the seed (the id, else the
+ *  name). Same fold as the app's ActorIdentity.hue, so an actor has one colour on every client. */
+export function getActorHue(seed: string | undefined): number {
+	let hue = 0
+	const key = seed && seed.length > 0 ? seed : '?'
+	for (let i = 0; i < key.length; i++) {
+		hue = (hue * 31 + key.charCodeAt(i)) % 360
+	}
+	return hue
+}
+
+/** The app's avatar plate: a 135 degree gradient from one hue to the same hue plus 38 degrees,
+ *  with a soft white highlight over the upper half. The same in light and dark. White letters
+ *  go on it. The radius is a percentage of the plate, so it follows whatever size the caller sets. */
+export function getActorPlateStyle(seed: string | undefined): CSSProperties {
+	const hue = getActorHue(seed)
+	return {
+		backgroundImage: `linear-gradient(to bottom, rgba(255,255,255,0.18), rgba(255,255,255,0) 50%), linear-gradient(135deg, hsl(${hue} 52% 44%), hsl(${(hue + 38) % 360} 58% 32%))`,
+		borderRadius: '30%',
+		color: '#fff',
+	}
 }
 
 // The workspace the avatar sits in, or undefined outside one (isolated renders, stories).
@@ -103,8 +103,6 @@ type ActorAvatarProps = {
 	onClick?: () => void
 	id?: string
 	imageUrl?: string
-	/** `strong` fills the plate with the identity colour and reverses the glyph. */
-	tone?: ActorAvatarTone
 	/** Composes a violet conic-gradient ring around the avatar, animating
 	 *  clockwise ~1.6s/rev; `prefers-reduced-motion: reduce` renders a static
 	 *  300° arc. Wired on the Objects list row to `object.active_session_state
@@ -112,8 +110,7 @@ type ActorAvatarProps = {
 	 *  the container "Agent working on this item" so screen readers announce
 	 *  the state; the avatar itself keeps its existing name. */
 	working?: boolean
-	/** The v11 list-row driver: a 26px rounded-square plate in the neutral muted
-	 *  fill with ink initials, instead of the round coloured avatar. */
+	/** The v11 list-row driver: the same plate at a fixed 26px. */
 	tile?: boolean
 	/** v16 status dot on an agent's tile (from 24px up): green while it works, red
 	 *  when its last run failed. Omit for an idle agent. Ignored for non-agents. */
@@ -157,13 +154,12 @@ function ActorAvatarWithLookup({
 
 function ActorAvatarView({
 	name,
-	type: _type,
+	type,
 	size = 'sm',
 	className,
 	onClick,
 	id,
 	imageUrl,
-	tone = 'subtle',
 	working = false,
 	tile = false,
 	status,
@@ -177,43 +173,33 @@ function ActorAvatarView({
 	// Three letters (CTO, PMM) get a smaller glyph so the widest ones still sit inside the plate.
 	const threeLetters = initials.length === 3
 	const sizeClasses = {
-		sm: cn('h-5 w-5', threeLetters ? 'text-[7px]' : 'text-[10px]'),
-		md: cn('h-7 w-7', threeLetters ? 'text-[9px]' : 'text-xs'),
-		lg: cn('h-[38px] w-[38px]', threeLetters ? 'text-xs' : 'text-sm'),
-		xl: cn('h-[52px] w-[52px]', threeLetters ? 'text-[15px]' : 'text-lg'),
+		sm: 'h-5 w-5',
+		md: 'h-7 w-7',
+		lg: 'h-[38px] w-[38px]',
+		xl: 'h-[52px] w-[52px]',
 	}[size]
-	const paletteClass = getActorAvatarPaletteClass(id ?? name, tone)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
-	// Agents are drawn as a tinted tile with a pictogram (v16); people and anything
-	// else keep the round initials plate. An uploaded picture still covers either.
-	const pictogram = _type === 'agent' ? getAgentPictogram(name) : null
-
 	const baseClasses = cn(
-		'relative inline-flex items-center justify-center font-medium select-none',
-		pictogram ? (size === 'sm' ? 'rounded-md' : 'rounded-lg') : 'rounded-full',
-		paletteClass,
+		// A size container, so the glyph can be sized as a share of the plate whatever size the caller sets.
+		'relative inline-flex items-center justify-center font-bold select-none [container-type:size]',
 		sizeClasses,
-		tile &&
-			cn(
-				'size-[26px] rounded-lg bg-muted font-bold text-foreground',
-				threeLetters ? 'text-[8px]' : 'text-[10.5px]',
-			),
+		tile && 'size-[26px]',
 		className,
-		// Last, so the team tint wins over a caller's plain or status fill.
-		pictogram?.tintClass,
 	)
+	// Inline, so a caller's own radius or fill cannot undo the look the app has.
+	const plateStyle = getActorPlateStyle(id ?? name)
+	const isAgent = type === 'agent'
 
 	const content = (
 		<>
-			{pictogram ? (
-				<PictogramMark shapes={pictogram.shapes} />
-			) : (
-				<span className="leading-none" aria-hidden={showImage ? 'true' : undefined}>
-					{initials}
-				</span>
-			)}
-			{pictogram && status && size !== 'sm' ? (
+			<span
+				className={cn('leading-none', threeLetters ? 'text-[length:28cqw]' : 'text-[length:36cqw]')}
+				aria-hidden={showImage ? 'true' : undefined}
+			>
+				{initials}
+			</span>
+			{isAgent && status && size !== 'sm' ? (
 				<span
 					aria-hidden="true"
 					data-avatar-status={status}
@@ -229,10 +215,7 @@ function ActorAvatarView({
 				<img
 					src={imageUrl}
 					alt=""
-					className={cn(
-						'absolute inset-0 h-full w-full object-cover',
-						tile || pictogram ? 'rounded-[inherit]' : 'rounded-full',
-					)}
+					className="absolute inset-0 h-full w-full rounded-[inherit] object-cover"
 					onError={() => setFailedUrl(imageUrl)}
 					draggable={false}
 				/>
@@ -248,6 +231,7 @@ function ActorAvatarView({
 					onClick={onClick}
 					title={name}
 					aria-label={name}
+					style={plateStyle}
 					className={cn(
 						baseClasses,
 						'cursor-pointer transition-opacity hover:opacity-80',
@@ -265,81 +249,10 @@ function ActorAvatarView({
 
 	return (
 		<WorkingRing working={working}>
-			<span title={name} className={baseClasses}>
+			<span title={name} style={plateStyle} className={baseClasses}>
 				{content}
 			</span>
 		</WorkingRing>
-	)
-}
-
-/** The pictogram itself: 62% of the tile, painted with the tile's ink colour. */
-function PictogramMark({ shapes }: { shapes: PictogramShape[] }) {
-	return (
-		<svg
-			viewBox="0 0 24 24"
-			className="size-[62%]"
-			fill="none"
-			aria-hidden="true"
-			focusable="false"
-			data-pictogram
-		>
-			{shapes.map((shape, i) => {
-				const key = `${shape[0]}-${i}`
-				switch (shape[0]) {
-					case 'c':
-						return <circle key={key} cx={shape[1]} cy={shape[2]} r={shape[3]} fill="currentColor" />
-					case 'rg':
-						return (
-							<circle
-								key={key}
-								cx={shape[1]}
-								cy={shape[2]}
-								r={shape[3]}
-								stroke="currentColor"
-								strokeWidth={shape[4]}
-							/>
-						)
-					case 'p':
-						return <path key={key} d={shape[1]} fill="currentColor" />
-					case 'l':
-						return (
-							<path
-								key={key}
-								d={shape[1]}
-								stroke="currentColor"
-								strokeWidth={shape[2]}
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							/>
-						)
-					case 'r':
-						return (
-							<rect
-								key={key}
-								x={shape[1]}
-								y={shape[2]}
-								width={shape[3]}
-								height={shape[4]}
-								rx={shape[5]}
-								fill="currentColor"
-							/>
-						)
-					case 'ro':
-						return (
-							<rect
-								key={key}
-								x={shape[1]}
-								y={shape[2]}
-								width={shape[3]}
-								height={shape[4]}
-								rx={shape[5]}
-								stroke="currentColor"
-								strokeWidth={2.6}
-							/>
-						)
-				}
-			})}
-		</svg>
 	)
 }
 

@@ -75,3 +75,15 @@ export async function isTeamActor(actorId: string, actorType: string): Promise<b
 		return false
 	}
 }
+
+/**
+ * Whether a workspace is one of ours: the workspace named by
+ * POSTHOG_TEAM_WORKSPACE_ID. Unset or malformed means none is, so a customer's
+ * workspace is never marked as ours. Plain comparison, no database read.
+ */
+export function isInternalWorkspace(workspaceId: string | undefined | null): boolean {
+	const teamWorkspaceId = process.env.POSTHOG_TEAM_WORKSPACE_ID?.trim()
+	if (!teamWorkspaceId || !workspaceId) return false
+	if (!UUID_RE.test(teamWorkspaceId)) return false
+	return teamWorkspaceId.toLowerCase() === workspaceId.toLowerCase()
+}

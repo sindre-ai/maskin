@@ -14,25 +14,17 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
 import { useSweepBrowserNotifications } from '@/hooks/use-sweep-browser-notifications'
+import { useWorkspaceAnalytics } from '@/hooks/use-workspace-analytics'
 import { useWorkspaces } from '@/hooks/use-workspaces'
-import { trackAppActive } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
-import { setFaroUser } from '@/lib/faro'
 import { setLastWorkspaceId } from '@/lib/last-workspace'
 import { migrateLegacySidebarState } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { usePageSearchShortcutListener } from '@/lib/page-search-shortcut'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
-import {
-	identifyForWorkspace,
-	registerWorkspaceProperties,
-	setCapturingEnabled,
-	setWorkspaceGroup,
-} from '@/lib/posthog'
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
@@ -77,40 +69,20 @@ function WorkspaceLayout() {
 	const narrowForCall = useMediaQuery('(max-width: 1099px)')
 	const railForCall = onCall && narrowForCall
 
-	// Pin the Synthesizer's join keys on every analytics event from this workspace,
-	// and apply the workspace's Privacy & data settings — both the share-usage
-	// opt-in/out and the SHA-256 identify when anonymise is on — so the prefs
-	// survive reloads, not just the moment the user flips a switch.
 	const settings = workspace?.settings as Record<string, unknown> | undefined
 	const privacy = settings?.privacy as
 		| { share_usage?: boolean; anonymize_workspace?: boolean }
 		| undefined
-	const shareUsage = privacy?.share_usage ?? true
-	const anonymizeWorkspace = privacy?.anonymize_workspace ?? false
-	useEffect(() => {
-		if (!workspace) return
-		const actor = getStoredActor()
-		if (!actor) return
-		registerWorkspaceProperties({
-			workspace_id: workspaceId,
-			actor_id: actor.id,
-			actor_type: actor.type,
-			is_team: workspace.isTeam,
-		})
-		setCapturingEnabled(shareUsage)
-		setWorkspaceGroup(workspaceId, workspace.createdAt)
-		// Faro gets ids only — never the actor's email or the workspace name.
-		// Unlike PostHog this is not gated on the share-usage analytics toggle:
-		// it is crash reporting, the same category as Sentry, which is likewise
-		// ungated.
-		setFaroUser(actor.id, workspaceId)
-		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
-			name: actor.name,
-			email: actor.email,
-		}).then(() => {
-			if (shareUsage) trackAppActive()
-		})
-	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
+	useWorkspaceAnalytics({
+		workspaceId,
+		resolved: hasWorkspace,
+		isTeam: workspace?.isTeam ?? false,
+		internal: workspace?.internal ?? false,
+		paying: workspace?.paying ?? false,
+		createdAt: workspace?.createdAt ?? undefined,
+		shareUsage: privacy?.share_usage ?? true,
+		anonymizeWorkspace: privacy?.anonymize_workspace ?? false,
+	})
 
 	if (!workspace) {
 		return (

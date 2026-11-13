@@ -95,6 +95,13 @@ function ConversationThreadPage() {
 		nonce: number
 	} | null>(null)
 	const fillNonceRef = useRef(0)
+	// The up arrow in the empty box asks one bubble to open its edit card. Same nonce idea as above.
+	const [editRequest, setEditRequest] = useState<{ messageId: number; nonce: number } | null>(null)
+	const editNonceRef = useRef(0)
+	const requestEditLast = useCallback((messageId: number) => {
+		editNonceRef.current += 1
+		setEditRequest({ messageId, nonce: editNonceRef.current })
+	}, [])
 	const headerBarRef = useRef<HTMLDivElement>(null)
 	const composerBarRef = useRef<HTMLDivElement>(null)
 	useHeightVar(headerBarRef, '--thread-header-h')
@@ -120,6 +127,7 @@ function ConversationThreadPage() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
 	useEffect(() => {
 		setFillRequest(null)
+		setEditRequest(null)
 	}, [conversationId])
 	const navigate = useNavigate()
 	// The URL owns the open reply thread (Back and deep links work). Opening pushes; closing
@@ -356,7 +364,7 @@ function ConversationThreadPage() {
 					<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 						{/* The header and the composer float over the transcript, which fills the whole
 						    column and pads itself by their measured heights (see FLOATING_EDGE). */}
-						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 pb-3')}>
+						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 bg-background pb-3')}>
 							<ThreadHeader
 								workspaceId={workspaceId}
 								conversationId={conversationId}
@@ -374,6 +382,7 @@ function ConversationThreadPage() {
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}
 							onOpenReplies={openReplies}
+							editRequest={editRequest}
 						/>
 						{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
@@ -391,6 +400,7 @@ function ConversationThreadPage() {
 									workspaceId={workspaceId}
 									conversationId={conversationId}
 									fillRequest={fillRequest}
+									onEditLast={requestEditLast}
 								/>
 							</div>
 						</div>

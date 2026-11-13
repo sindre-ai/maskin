@@ -56,13 +56,14 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/sessions/x/keychain-access-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/keychain-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/mcp-server-card', // newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/transcriptions/files/x', // transcribe_file: spends plan usage, route not yet checked for the token's workspace pin
 	'POST /api/workspaces', // create_workspace
 	'POST /api/workspaces/x/members', // add_member: changes who is in a workspace
 	'PUT /api/integrations/x/default-access', // newer MCP tool, route not yet checked for the token's workspace pin
 ]
 
-// Pre-existing: the MCP server calls a route the API does not register. Not part of this change.
-const CALLS_TO_UNREGISTERED_ROUTES = ['GET /api/triggers/x']
+// The MCP server calls a route the API does not register. Empty since GET /api/triggers/:id exists.
+const CALLS_TO_UNREGISTERED_ROUTES: string[] = []
 
 function registeredApiRoutes(): string[] {
 	const deps: AppDeps = {

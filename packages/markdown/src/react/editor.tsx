@@ -128,6 +128,11 @@ export interface MarkdownEditorProps {
 	readOnly?: boolean
 	variant?: EditorVariant
 	disallowedNodes?: EditorDisallowedNode[]
+	/**
+	 * Keep GFM tables in a variant that has none by default, so a table pasted in survives as a
+	 * markdown table. No table editing controls come with it.
+	 */
+	allowTables?: boolean
 	mentionSuggestions?: (query: string) => Promise<MentionSuggestionItem[]>
 	onSubmitShortcut?: () => void
 	className?: string
@@ -227,6 +232,10 @@ function errorClassOf(err: unknown): string {
  * - `Alt-F10` moves keyboard focus into the toolbar while a selection is
  *   active (a no-op otherwise, so the key stays free for the browser).
  *
+ * `Mod-Shift-k` and `Alt-F10` act on the toolbar, which only the `document`
+ * variant has. In every other variant they return `false`, so the browser
+ * keeps the key (`Ctrl+Shift+K` is a Firefox shortcut).
+ *
  * `Mod-k` is *deliberately unbound*. The global command palette
  * (`apps/web/src/components/command-palette.tsx:256`) listens on the document
  * without a `contentEditable` guard, so any binding here would clobber it
@@ -240,7 +249,9 @@ function buildShortcutExtension(
 	onShortcutFired: (shortcut: EditorShortcut) => void,
 	toggleLinkPopover: () => void,
 	focusToolbar: () => void,
+	variant: EditorVariant,
 ) {
+	const hasToolbar = variant === 'document'
 	const wrap = (shortcut: EditorShortcut, command: () => boolean) => () => {
 		const ok = command()
 		if (ok) onShortcutFired(shortcut)
@@ -262,6 +273,7 @@ function buildShortcutExtension(
 				'Mod-Shift-s': () => true,
 				// New — Link has no default keybinding in @tiptap/extension-link.
 				'Mod-Shift-k': () => {
+					if (!hasToolbar) return false
 					onShortcutFired('mod+shift+k')
 					toggleLinkPopover()
 					return true
@@ -278,7 +290,9 @@ function buildShortcutExtension(
 					return this.editor.commands.setParagraph()
 				},
 				'Alt-F10': () => {
-					if (this.editor.state.selection.empty || !this.editor.isEditable) return false
+					if (!hasToolbar || this.editor.state.selection.empty || !this.editor.isEditable) {
+						return false
+					}
 					onShortcutFired('alt+f10')
 					focusToolbar()
 					return true
@@ -339,6 +353,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			readOnly = false,
 			variant = 'document',
 			disallowedNodes,
+			allowTables,
 			onSubmitShortcut,
 			className,
 			ariaLabel,
@@ -428,8 +443,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 		const linkChipExtension = useMemo(() => createLinkChips(linkChipHandlersRef), [])
 
 		const shortcutExtension = useMemo(
-			() => buildShortcutExtension(emitShortcut, openLinkPopover, focusToolbar),
-			[emitShortcut, openLinkPopover, focusToolbar],
+			() => buildShortcutExtension(emitShortcut, openLinkPopover, focusToolbar, variant),
+			[emitShortcut, openLinkPopover, focusToolbar, variant],
 		)
 
 		const tiptapExtensions = useMemo(
@@ -440,10 +455,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					placeholder,
 					[...(extensions ?? []), commentExtension, linkChipExtension],
 					shortcutExtension,
+					allowTables,
 				),
 			[
 				variant,
 				disallowedNodes,
+				allowTables,
 				placeholder,
 				extensions,
 				commentExtension,

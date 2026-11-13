@@ -56,6 +56,7 @@ const ALL_TOOL_NAMES = [
 	'rename_file_tag',
 	'merge_file_tags',
 	'get_file',
+	'transcribe_file',
 	'update_file',
 	'propose_file_changes',
 	'delete_file',
@@ -70,6 +71,7 @@ const ALL_TOOL_NAMES = [
 	'update_trigger',
 	'delete_trigger',
 	'list_triggers',
+	'get_trigger',
 	'create_loop',
 	'update_loop',
 	'list_loops',
@@ -77,14 +79,12 @@ const ALL_TOOL_NAMES = [
 	'set_loop_view',
 	'query_data',
 	'delete_loop',
-	'create_session',
 	'create_sub_chat',
 	'create_chat',
 	'add_chat_participant',
 	'remove_chat_participant',
 	'get_chat_activity',
 	'stop_chat_agent',
-	'run_agent',
 	'list_sessions',
 	'get_session',
 	'get_session_activity',
@@ -132,6 +132,7 @@ const ALL_TOOL_NAMES = [
 	'desktop_key',
 	'desktop_run',
 	'desktop_put_file',
+	'desktop_save_file',
 	'desktop_expose_port',
 	'desktop_list_ports',
 	'desktop_close_port',
@@ -541,10 +542,16 @@ describe('create_actor schema', () => {
 			name: 'Bot',
 			description: 'Test agent',
 			workspace_id: uuid,
-			role: 'owner',
+			role: 'member',
 		})
 		expect(result.workspace_id).toBe(uuid)
-		expect(result.role).toBe('owner')
+		expect(result.role).toBe('member')
+	})
+
+	it('rejects owner before any membership call is made', () => {
+		expect(() =>
+			schema.parse({ type: 'agent', name: 'Bot', description: 'Test agent', role: 'owner' }),
+		).toThrow()
 	})
 
 	it('accepts admin role, matching update_actor', () => {
@@ -656,9 +663,13 @@ describe('update_actor schema', () => {
 		expect(result.role).toBe('member')
 	})
 
-	it('accepts owner and admin roles', () => {
-		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+	it('accepts admin and member roles', () => {
 		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'member' }).role).toBe('member')
+	})
+
+	it('rejects owner before any membership call is made', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' })).toThrow()
 	})
 
 	it('rejects an invalid role', () => {
@@ -671,8 +682,8 @@ describe('update_actor schema', () => {
 	})
 })
 
-describe('create_session schema', () => {
-	const schema = tools.create_session.inputSchema
+describe('create_sub_chat schema', () => {
+	const schema = tools.create_sub_chat.inputSchema
 	const base = { workspace_id: uuid, actor_id: uuid, action_prompt: 'Test' }
 
 	it('requires workspace_id, actor_id and action_prompt', () => {
@@ -704,9 +715,9 @@ describe('create_session schema', () => {
 		expect(schema.shape).not.toHaveProperty('notify_on_complete')
 	})
 
-	it('accepts wait and leaves it undefined when omitted, so the default stays non-blocking', () => {
-		expect(schema.parse({ ...base, wait: true }).wait).toBe(true)
-		expect(schema.parse(base).wait).toBeUndefined()
+	it('has no wait parameter: the call always returns at once', () => {
+		expect(schema.shape).not.toHaveProperty('wait')
+		expect(schema.parse({ ...base, wait: true })).not.toHaveProperty('wait')
 	})
 
 	it('accepts spawned_by_message_id', () => {
@@ -991,6 +1002,27 @@ describe('create_trigger schema', () => {
 			target_actor_id: uuid,
 		})
 		expect(result.type).toBe('event')
+	})
+
+	it('accepts run_at in place of type and config, with or without an offset', () => {
+		for (const run_at of ['2030-11-12T09:00:00Z', '2030-11-12T09:00:00+01:00']) {
+			const result = schema.parse({
+				name: 'Call Hans',
+				run_at,
+				action_prompt: 'Call him',
+				target_actor_id: uuid,
+			})
+			expect(result.run_at).toBe(run_at)
+			expect(result.type).toBeUndefined()
+		}
+	})
+
+	it('rejects a run_at that is not a date and time', () => {
+		for (const run_at of ['tomorrow', '2030-11-12', '']) {
+			expect(() =>
+				schema.parse({ name: 'X', run_at, action_prompt: 'Y', target_actor_id: uuid }),
+			).toThrow()
+		}
 	})
 
 	it('rejects invalid trigger type', () => {

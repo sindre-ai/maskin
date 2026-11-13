@@ -112,8 +112,10 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				participants: row.participants.map {
 					ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
 				}, lastReadMessageID: row.last_read_message_id.map(Int.init))
-		default:
-			throw ChatsError("Couldn't start the conversation.")
+		case .badRequest:
+			throw ChatsError("Couldn't start the conversation.", status: 400)
+		case .undocumented(let status, _):
+			throw ChatsError("Couldn't start the conversation.", status: status)
 		}
 	}
 
@@ -147,7 +149,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				ChatActor(
 					participant: ChatParticipant(id: row.id, name: row.name, actorType: row._type),
 					agentState: ChatActor.AgentState(rawValue: row.agentState.rawValue) ?? .unknown,
-					summary: row.description, isSystem: row.isSystem,
+					summary: row.description, isSystem: row.isSystem, isIntegration: row._type == "system",
 					starterPrompts: StarterPrompts.normalize(row.starter_prompts))
 			}
 			if rows.count < pageSize { break }

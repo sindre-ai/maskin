@@ -6,6 +6,7 @@ import {
 	useConversationMessages,
 	useSendMessage,
 } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -16,6 +17,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { type ComposerCue, NEUTRAL_PLACEHOLDER, deriveComposerCue } from '@/lib/composer-cue'
+import { findLastEditableMessage } from '@/lib/last-editable-message'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 
@@ -29,6 +31,11 @@ interface ThreadComposerProps {
 	 * after the draft) when given, and focus the box.
 	 */
 	fillRequest?: { text?: string; append?: boolean; nonce: number } | null
+	/**
+	 * The up arrow in an empty box was pressed and the person has a message of their own to edit:
+	 * called with that message's id. Without it, or in a reply box, the arrow does nothing special.
+	 */
+	onEditLast?: (messageId: number) => void
 	/**
 	 * Makes this a reply under a top-level message: sends carry `thread_root_id` and
 	 * `also_in_channel`, the recipient (when there is one) is seeded as a mention, and
@@ -59,6 +66,7 @@ export function ThreadComposer({
 	workspaceId,
 	conversationId,
 	fillRequest,
+	onEditLast,
 	reply,
 }: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
@@ -67,6 +75,7 @@ export function ThreadComposer({
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const { data: workspaceActors } = useActors(workspaceId)
+	const richText = useFeatureFlag('chat-formatting')
 
 	const self = getStoredActor()
 	// Where a pasted provider secret gets vaulted: the running session of this chat and
@@ -235,6 +244,15 @@ export function ThreadComposer({
 	])
 	// A reply names who it answers, which is the point of the box; the group-chat cue's wording
 	// is for starting a message, so it keeps only its hint here.
+	const editLastEnabled = useFeatureFlag('chat-edit-last-message')
+	const handleEditLast = useMemo(() => {
+		if (!editLastEnabled || !onEditLast || reply) return undefined
+		return () => {
+			const messages = messagesQuery.data ? flattenMessagesOldestFirst(messagesQuery.data) : []
+			const last = findLastEditableMessage(messages, self?.id)
+			if (last) onEditLast(last.id)
+		}
+	}, [editLastEnabled, onEditLast, reply, messagesQuery.data, self?.id])
 	const placeholder = reply ? todaysPlaceholder : (cue?.placeholder ?? todaysPlaceholder)
 
 	return (
@@ -263,7 +281,9 @@ export function ThreadComposer({
 			textareaLabel={reply ? 'Reply in thread' : 'Message this conversation'}
 			draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
 			fillRequest={fillRequest}
+			onEditLast={handleEditLast}
 			inlineTags
+			richText={richText}
 			secretCapture={secretCapture}
 			secretRestarting={secretRestarting}
 			vaultModeBlocked={vaultModeBlocked}

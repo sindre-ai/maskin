@@ -51,6 +51,8 @@ import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
+import emailPickRoutes from './routes/email-pick'
+import emailStopRoutes from './routes/email-stop'
 import eventsRoutes from './routes/events'
 import extensionsRoutes from './routes/extensions'
 import featureFlagsRoutes from './routes/feature-flags'
@@ -63,6 +65,8 @@ import guardrailsRoutes from './routes/guardrails'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsDeepdotsRoutes from './routes/integrations-deepdots'
+import integrationsDeepdotsMcpRoutes from './routes/integrations-deepdots-mcp'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
@@ -76,7 +80,6 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
-import integrationsSlackDirectChannelsRoutes from './routes/integrations-slack-direct-channels'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
@@ -396,6 +399,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/devices/unregister: a signed-out phone dropping its own push registration. It has
 	//     no API key after sign-out, so the device secret it registered with is the credential
 	//     (checked and rate limited per IP inside the handler; routes/devices.ts).
+	//   - GET and POST /api/email/stop: the stop link in a summary email. Opened signed out; the
+	//     signed token in the URL is the credential, checked in the handler.
+	//   - GET and POST /api/email/pick-dismiss: the "Not useful" link under a Marketplace pick.
+	//     Same: opened signed out, the signed token is the credential.
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -428,6 +435,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			return next()
 		}
 		if (path === '/api/devices/unregister' && method === 'POST') return next()
+		// The stop link in a summary email, opened with nobody signed in. The signed token in the
+		// URL is the credential, checked in the handler (routes/email-stop.ts).
+		if (path === '/api/email/stop' && (method === 'GET' || method === 'POST')) return next()
+		// The "Not useful" link under a Marketplace pick, same: signed token (routes/email-pick.ts).
+		if (path === '/api/email/pick-dismiss' && (method === 'GET' || method === 'POST')) return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/internal/mcp-guard/report' && method === 'POST') return next()
@@ -546,6 +558,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// more specific prefix wins the trie — same ordering as Slack's below.
 	// Skjald's one-click connect has its own two routes under /skjald; mounted before the generic catch-all.
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
+	// Deepdots connects from an email and password form, not an OAuth redirect.
+	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -557,6 +571,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// folder watches list + stop for the Drive detail page; its own prefix, so the
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
+	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
@@ -569,7 +584,6 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/resend', integrationsResendRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
-	app.route('/api/integrations/slack/direct-post-channels', integrationsSlackDirectChannelsRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
 	app.route('/api/guardrails', guardrailsRoutes)
@@ -596,6 +610,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
+	app.route('/api/email/stop', emailStopRoutes)
+	app.route('/api/email/pick-dismiss', emailPickRoutes)
 	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/web-push', webPushRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)

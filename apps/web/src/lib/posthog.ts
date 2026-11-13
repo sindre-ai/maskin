@@ -67,7 +67,9 @@ export function scrubAuthorizeUrls<
 // Every web event says where it came from and who acted. The web is only ever
 // used by a signed-in or signing-up person, so an event with no actor_type yet
 // (pageviews before the workspace mounts, sign-up events) is a human's. The
-// workspace mount registers the real actor_type, which wins.
+// workspace mount registers the real actor_type, which wins. The same goes for
+// internal (the workspace is one of ours) and paying (it has an active paid
+// plan): plain booleans that read false until the workspace mount registers them.
 //
 // An event that belongs to a product area also carries feature_area (the shared
 // list in @maskin/shared, the same one the server and the iPhone app use). A value
@@ -82,6 +84,8 @@ export function withSharedProperties<
 		...event,
 		properties: {
 			actor_type: 'human',
+			internal: false,
+			paying: false,
 			...(area ? { feature_area: area } : {}),
 			...properties,
 			surface: 'web',
@@ -109,10 +113,15 @@ export function initPosthog(): void {
 			api_host: import.meta.env.VITE_POSTHOG_HOST ?? DEFAULT_HOST,
 			person_profiles: 'identified_only',
 			capture_pageview: true,
-			// Leave and web-vitals events were a share of the browser volume with
-			// no question behind them.
+			// Page-leave events were a share of the browser volume with no question
+			// behind them. Web vitals (LCP and INP only) are back on purpose for the
+			// app redesign speed check; network timing stays off.
 			capture_pageleave: false,
-			capture_performance: false,
+			capture_performance: {
+				network_timing: false,
+				web_vitals: true,
+				web_vitals_allowed_metrics: ['LCP', 'INP'],
+			},
 			autocapture: false,
 			before_send: beforeSend,
 		})
@@ -158,6 +167,9 @@ export interface WorkspaceSuperProperties {
 	actor_type: string
 	// True when the person is on our own team. A plain boolean, never a name or email.
 	is_team: boolean
+	// True when the workspace is one of ours, and when it has an active paid plan.
+	internal: boolean
+	paying: boolean
 }
 
 // Pins the Synthesizer's join keys onto every subsequent capture call —
@@ -224,25 +236,57 @@ export interface IdentifiedPerson {
 	signupSource?: string | null
 }
 
-// The channel a sign-up came from: the utm_source on the page, else the site that
-// sent the person, else direct. Lower case, short, and only letters, digits and
-// . _ - so a crafted link cannot put free text on a person.
-export function signupSourceFrom(search: string, referrer: string, ownHost: string): string {
-	const clean = (value: string) =>
-		value
+// What posthog-js stored in the browser on the person's first visit: the campaign tag and the site
+// that sent them. The marketing site and the app share a host and a project key, so a visit that began
+// on the home page is still here when the person reaches the sign-up page.
+export interface FirstTouch {
+	utmSource?: unknown
+	referringDomain?: unknown
+}
+
+export function firstTouchFromPosthog(): FirstTouch {
+	try {
+		const initial = posthog.persistence?.get_initial_props() ?? {}
+		return {
+			utmSource: initial.$initial_utm_source,
+			referringDomain: initial.$initial_referring_domain,
+		}
+	} catch {
+		return {}
+	}
+}
+
+// The channel a sign-up came from: the utm_source on the page, else the one from the first visit, else
+// the site that sent the person (this page's referrer, then the first visit's), else direct. Lower case,
+// short, and only letters, digits and . _ - so a crafted link cannot put free text on a person.
+export function signupSourceFrom(
+	search: string,
+	referrer: string,
+	ownHost: string,
+	firstTouch: FirstTouch = {},
+): string {
+	const clean = (value: unknown) =>
+		(typeof value === 'string' ? value : '')
 			.trim()
 			.toLowerCase()
 			.replace(/[^a-z0-9._-]/g, '')
 			.slice(0, 60)
-	const utm = clean(new URLSearchParams(search).get('utm_source') ?? '')
+	const own = clean(ownHost.replace(/^www\./, ''))
+	const outside = (host: unknown) => {
+		const value = clean(typeof host === 'string' ? host.replace(/^www\./, '') : '')
+		return value && value !== own ? value : ''
+	}
+	const utm =
+		clean(new URLSearchParams(search).get('utm_source') ?? '') || clean(firstTouch.utmSource)
 	if (utm) return utm
+	let pageHost = ''
 	try {
-		const host = clean(new URL(referrer).hostname.replace(/^www\./, ''))
-		if (host && host !== clean(ownHost.replace(/^www\./, ''))) return host
+		pageHost = new URL(referrer).hostname
 	} catch {
 		// No referrer, or one that is not a URL.
 	}
-	return 'direct'
+	// PostHog writes $direct when the first visit had no referrer: that is not a site.
+	return outside(pageHost) || outside(firstTouch.referringDomain) || 'direct'
 }
 
 // Identify the actor for analytics, applying the workspace's anonymise pref.

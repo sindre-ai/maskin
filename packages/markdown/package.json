@@ -29,6 +29,10 @@
 			"types": "./src/react/editor.tsx",
 			"default": "./dist/react/editor.js"
 		},
+		"./react/composer": {
+			"types": "./src/react/composer.tsx",
+			"default": "./dist/react/composer.js"
+		},
 		"./extensions": {
 			"types": "./src/extensions.ts",
 			"default": "./dist/extensions.js"

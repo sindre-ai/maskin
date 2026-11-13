@@ -1,4 +1,5 @@
 import {
+	PRESET_SCHEMES,
 	SIGNATURE_SCHEMES,
 	type WebhookFormErrors,
 	type WebhookFormState,
@@ -56,7 +57,9 @@ export function WebhookSection({
 
 	if (saved && !editing) {
 		const cfg = ext.webhookConfig
-		const scheme = SIGNATURE_SCHEMES.find((s) => s.value === cfg?.signatureScheme)
+		const scheme = [...SIGNATURE_SCHEMES, ...PRESET_SCHEMES].find(
+			(s) => s.value === cfg?.signatureScheme,
+		)
 		return (
 			<section aria-labelledby="webhook-heading">
 				<div className="flex items-center justify-between gap-3 px-1 pb-1.5">
@@ -177,7 +180,10 @@ export function WebhookSection({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{SIGNATURE_SCHEMES.map((s) => (
+							{[
+								...SIGNATURE_SCHEMES,
+								...PRESET_SCHEMES.filter((s) => s.value === form.kept?.scheme),
+							].map((s) => (
 								<SelectItem key={s.value} value={s.value}>
 									{s.label}
 								</SelectItem>

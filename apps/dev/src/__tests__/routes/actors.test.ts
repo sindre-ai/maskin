@@ -245,6 +245,38 @@ describe('Actors Routes', () => {
 				expect(calls.inserts).toHaveLength(0)
 			})
 
+			it('returns 400 and writes nothing when an agent caller asks for auto_create_workspace', async () => {
+				const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'agent' }]]
+
+				const res = await app.request(
+					createAgentRequest({ workspace_id: undefined, auto_create_workspace: true }),
+				)
+
+				expect(res.status).toBe(400)
+				const body = await res.json()
+				expect(body.error.details?.[0]?.field).toBe('auto_create_workspace')
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('still lets a human caller create an agent with its own workspace', async () => {
+				const actor = buildActor({ type: 'agent' })
+				const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+				mockResults.selectQueue = [[{ id: CALLER_ID, type: 'human' }]]
+				// actor insert, then the new workspace row; the default roster that
+				// provisionWorkspace seeds after it falls through to the static fallback.
+				mockResults.insertQueue = [[actor], [{}], [{ id: randomUUID(), name: 'ws' }], [{}]]
+				mockResults.insert = [{ id: randomUUID() }]
+
+				const res = await app.request(
+					createAgentRequest({ workspace_id: undefined, auto_create_workspace: true }),
+				)
+
+				expect(res.status).toBe(201)
+				const body = (await res.json()) as { workspace_id?: string }
+				expect(body.workspace_id).toBeDefined()
+			})
+
 			it.each([
 				['tools', { tools: { mcpServers: {} } }],
 				['llm_config', { llm_config: { model: 'fake-model' } }],
@@ -301,6 +333,7 @@ describe('Actors Routes', () => {
 			mockResults.insertQueue = [
 				[actor], // human actor insert
 				[{}], // human primary api_keys insert
+				[{}], // human email-on notification_preferences insert
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
 				[coach], // workspace_coach actor insert
@@ -324,8 +357,8 @@ describe('Actors Routes', () => {
 			}
 			expect(body.workspace_id).toBeDefined()
 			expect(body.workspace_provisioning_failed).toBeUndefined()
-			// inserts: [actor, api key, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[4] as { apiKey?: string; isSystem?: boolean }
+			// inserts: [actor, api key, email prefs, workspace, owner-member, coach, coach-member]
+			const coachInsert = calls.inserts[5] as { apiKey?: string; isSystem?: boolean }
 			expect(coachInsert.isSystem).toBe(true)
 			// Seeded agents get a key per session launch, never a stored one.
 			expect(coachInsert).not.toHaveProperty('apiKey')

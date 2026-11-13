@@ -1,5 +1,6 @@
 import { AgentCallButton } from '@/components/agents/agent-call-button'
 import type { VoiceCallAgent } from '@/components/agents/voice-call-dialog'
+import { ComposerFormatBar, useShowFormatting } from '@/components/chat/composer-format-bar'
 import {
 	MentionPicker,
 	type MentionPickerActor,
@@ -7,6 +8,11 @@ import {
 	detectMentionTrigger,
 	reduceMentionPickerKey,
 } from '@/components/chat/mention-picker'
+import {
+	type ComposerFormat,
+	type RichComposerHandle,
+	RichComposerInput,
+} from '@/components/chat/rich-composer-input'
 import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import { TagInput, type TagInputHandle } from '@/components/chat/tag-input'
@@ -38,7 +44,7 @@ import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
 import { type TagValue, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { VIEWER_READ_ONLY_MESSAGE, isViewerRefusal } from '@/lib/workspace-role'
 import { type SecretMatch, withStarterPrompt, withoutSecrets } from '@maskin/shared'
-import { ArrowUp, AtSign, FileText, Image, Info, Mic, Plus, X } from 'lucide-react'
+import { ArrowUp, AtSign, FileText, Image, Info, Mic, Plus, Type, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type ClipboardEvent,
@@ -152,6 +158,8 @@ export interface ComposerProps {
 	conversationParticipantIds?: string[]
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
+	/** Sit at the left edge of the column instead of centred in it. */
+	alignStart?: boolean
 	/** Optional controlled draft. Supply both to let a caller prefill the
 	 *  composer (the chats zero-state suggestion rows); omit both to keep the
 	 *  composer's own internal state. */
@@ -201,6 +209,17 @@ export interface ComposerProps {
 	 * agent pills are not drawn in this mode. Off by default; callers opt in one by one.
 	 */
 	inlineTags?: boolean
+	/**
+	 * Writes in the formatting box (bold, italic, lists, quotes, code, links) instead of plain
+	 * text. Tags are chips in the sentence, as with `inlineTags`, which it switches on. The
+	 * draft and the sent text are markdown. Off by default; the chat callers pass the flag.
+	 */
+	richText?: boolean
+	/**
+	 * Called when the up arrow is pressed in an empty box. The caller opens its latest message
+	 * for editing. Without it the arrow keeps its normal job in the box.
+	 */
+	onEditLast?: () => void
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -306,6 +325,7 @@ export function Composer({
 	hint,
 	conversationParticipantIds,
 	textareaLabel,
+	alignStart,
 	value: controlledValue,
 	onValueChange,
 	draftKey,
@@ -314,8 +334,11 @@ export function Composer({
 	vaultModeBlocked,
 	callAgent,
 	fillRequest,
-	inlineTags = false,
+	inlineTags: inlineTagsProp = false,
+	richText = false,
+	onEditLast,
 }: ComposerProps) {
+	const inlineTags = inlineTagsProp || richText
 	// Every send from a composer is a write, so a viewer gets the box switched off.
 	const canWrite = useCanWrite()
 	const disabled = disabledByCaller || !canWrite
@@ -377,6 +400,8 @@ export function Composer({
 	const tagIdsRef = useRef(tagIds)
 	const domTextRef = useRef(value)
 	const tagRef = useRef<TagInputHandle | null>(null)
+	const richRef = useRef<RichComposerHandle | null>(null)
+	const [activeFormats, setActiveFormats] = useState<ComposerFormat[]>([])
 	const tagWrapRef = useRef<HTMLDivElement | null>(null)
 	const tagsKeyRef = useRef(draftKey)
 
@@ -530,9 +555,10 @@ export function Composer({
 	const photoInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 	const focusInput = useCallback(() => {
-		if (inlineTags) tagRef.current?.focus()
+		if (richText) richRef.current?.focus()
+		else if (inlineTags) tagRef.current?.focus()
 		else textareaRef.current?.focus()
-	}, [inlineTags])
+	}, [inlineTags, richText])
 
 	// A fill request replaces the draft through the same setter typing uses, so the
 	// sessionStorage mirror keeps working, then puts the caret at the end. Seeded
@@ -547,6 +573,7 @@ export function Composer({
 			else setValue(text)
 		}
 		requestAnimationFrame(() => {
+			if (richText) return richRef.current?.focus()
 			if (inlineTags) return tagRef.current?.focus()
 			const el = textareaRef.current
 			if (!el) return
@@ -554,11 +581,13 @@ export function Composer({
 			const end = el.value.length
 			el.setSelectionRange(end, end)
 		})
-	}, [fillRequest, setValue, inlineTags])
+	}, [fillRequest, setValue, inlineTags, richText])
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
 	const selfActor = getStoredActor()
 	const selfActorId = selfActor?.id ?? null
+	// The format row above the box is the person's own choice, kept per person on this device.
+	const [showFormatting, setShowFormatting] = useShowFormatting(selfActorId)
 
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const conversationList = useMemo(
@@ -607,6 +636,15 @@ export function Composer({
 		),
 	)
 
+	// The chips the formatting box shows, from the ids the selection holds.
+	const richTags = useCallback(
+		() =>
+			tagIdsRef.current.flatMap((id) => {
+				const label = tagLabelOf(id)
+				return label ? [{ id, label }] : []
+			}),
+		[tagLabelOf],
+	)
 	// The input follows `value` whenever something other than typing changed it.
 	const tagSegmentsFor = useCallback(
 		(text: string) => splitTextByTags(text, tagIdsRef.current, tagLabelOf).segments,
@@ -616,9 +654,10 @@ export function Composer({
 	useEffect(() => {
 		if (!inlineTags || valueRef.current === domTextRef.current) return
 		const hadFocus = tagWrapRef.current?.contains(document.activeElement) ?? false
-		tagRef.current?.setContent(tagSegmentsFor(valueRef.current))
-		if (hadFocus) tagRef.current?.focus()
-	}, [inlineTags, value, tagSegmentsFor])
+		if (richText) richRef.current?.setMarkdown(valueRef.current, richTags())
+		else tagRef.current?.setContent(tagSegmentsFor(valueRef.current))
+		if (hadFocus) focusInput()
+	}, [inlineTags, richText, value, tagSegmentsFor, richTags, focusInput])
 
 	// Abort every in-flight upload when the composer unmounts so a closed
 	// chat surface doesn't leave XHRs hanging (and doesn't race-dispatch
@@ -790,6 +829,21 @@ export function Composer({
 					return
 				}
 			}
+			if (
+				e.key === 'ArrowUp' &&
+				onEditLast &&
+				valueRef.current === '' &&
+				tagIdsRef.current.length === 0 &&
+				!e.shiftKey &&
+				!e.altKey &&
+				!e.ctrlKey &&
+				!e.metaKey &&
+				!e.nativeEvent.isComposing
+			) {
+				e.preventDefault()
+				onEditLast()
+				return
+			}
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
@@ -800,7 +854,15 @@ export function Composer({
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[handleSubmit, isMobile, mentionTrigger, mentionFlatRows, mentionHighlightIndex, commitMention],
+		[
+			handleSubmit,
+			isMobile,
+			mentionTrigger,
+			mentionFlatRows,
+			mentionHighlightIndex,
+			commitMention,
+			onEditLast,
+		],
 	)
 
 	const handleChange = useCallback(
@@ -845,14 +907,41 @@ export function Composer({
 				const seed = vaultSeedFrom(next.text)
 				if (seed !== null) {
 					enterVault(seed)
-					tagRef.current?.setContent([])
+					if (richText) richRef.current?.setMarkdown('', [])
+					else tagRef.current?.setContent([])
 					return
 				}
 			}
 			setValue(next.text)
 			syncTagIds(next.ids, true)
 		},
-		[vaultFlow?.blocking, enterVault, setValue, syncTagIds],
+		[vaultFlow?.blocking, enterVault, setValue, syncTagIds, richText],
+	)
+
+	// The formatting box asks about every key first, with the browser's own event. A key the
+	// picker or the send rule used is marked as handled by preventDefault, which is what comes back.
+	const handleRichKeyDown = useCallback(
+		(e: globalThis.KeyboardEvent) => {
+			handleKeyDown({
+				key: e.key,
+				shiftKey: e.shiftKey,
+				altKey: e.altKey,
+				ctrlKey: e.ctrlKey,
+				metaKey: e.metaKey,
+				nativeEvent: e,
+				preventDefault: () => e.preventDefault(),
+			} as unknown as KeyboardEvent<HTMLDivElement>)
+			return e.defaultPrevented
+		},
+		[handleKeyDown],
+	)
+	// Picks a row of the picker: the chip replaces the "@query" in the sentence.
+	const commitRichMention = useCallback(
+		(actor: MentionPickerActor) => {
+			richRef.current?.insertMention({ id: actor.id, label: tagLabel(actor, mentionActors) })
+			setMentionTrigger(null)
+		},
+		[mentionActors],
 	)
 
 	const uploadPickedFile = useCallback(
@@ -1004,12 +1093,16 @@ export function Composer({
 	// The + menu's Person-or-agent row types the `@` for the person and opens the same picker
 	// typing it would, so there is one path to the picker.
 	const startMention = useCallback(() => {
+		if (richText) {
+			richRef.current?.startMention()
+			return
+		}
 		const current = valueRef.current
 		const base = current === '' || /\s$/.test(current) ? current : `${current} `
 		setValue(`${base}@`)
 		setMentionTrigger({ atPos: base.length, query: '' })
 		requestAnimationFrame(() => textareaRef.current?.focus())
-	}, [setValue])
+	}, [setValue, richText])
 
 	const handleRemovePending = useCallback((tempId: string) => {
 		// Abort first so the in-flight XHR is cancelled before the request can
@@ -1034,7 +1127,8 @@ export function Composer({
 	return (
 		<div
 			className={cn(
-				'relative mx-auto flex w-full max-w-[860px] flex-col gap-2',
+				'relative flex w-full max-w-[860px] flex-col gap-2',
+				!alignStart && 'mx-auto',
 				// The secret and vault cards keep a box of their own; the bar is the box otherwise.
 				(secretFlow || vaultFlow) &&
 					'rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
@@ -1044,8 +1138,9 @@ export function Composer({
 			{/* Inline `@` mention picker — the composer's textarea remains the
 			    focused element, and the picker consumes arrow keys / Enter /
 			    Escape via `handleKeyDown`'s `reduceMentionPickerKey` branch. */}
-			{/* In inline-tag mode the tag input owns the `@` picker. */}
-			{inlineTags ? null : (
+			{/* In inline-tag mode the tag input owns the `@` picker. The formatting box has none of
+			    its own, so this one serves it and puts a chip in the sentence. */}
+			{inlineTags && !richText ? null : (
 				<MentionPicker
 					open={mentionTrigger !== null}
 					onOpenChange={(next) => {
@@ -1056,9 +1151,15 @@ export function Composer({
 					query={mentionTrigger?.query ?? ''}
 					workspaceId={workspaceId}
 					selfActorId={selfActorId}
-					onSelect={(actor) => commitMention(actor)}
+					onSelect={(actor) => (richText ? commitRichMention(actor) : commitMention(actor))}
+					highlightIndex={richText ? mentionHighlightIndex : undefined}
+					onHighlightChange={richText ? setMentionHighlightIndex : undefined}
 					anchor={
-						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+						richText ? (
+							<span aria-hidden className="pointer-events-none absolute inset-0" />
+						) : (
+							<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+						)
 					}
 				/>
 			)}
@@ -1183,6 +1284,17 @@ export function Composer({
 			    state is untouched when the user comes back to it. */}
 			<ViewerTooltip className="block">
 				<form onSubmit={handleSubmit} hidden={vaultFlow?.blocking === true}>
+					{richText && showFormatting ? (
+						<ComposerFormatBar
+							active={activeFormats}
+							disabled={disabled || secretFlow?.blocking === true}
+							onToggle={(format) => richRef.current?.toggleFormat(format)}
+							onSetLink={(href) => richRef.current?.setLink(href)}
+							onRemoveLink={() => richRef.current?.removeLink()}
+							linkHref={() => richRef.current?.linkHref() ?? null}
+							focusBox={focusInput}
+						/>
+					) : null}
 					<div
 						onDragOver={handleDragOver}
 						onDragLeave={handleDragLeave}
@@ -1224,9 +1336,45 @@ export function Composer({
 								<DropdownMenuItem onSelect={startMention}>
 									<AtSign aria-hidden /> Person or agent
 								</DropdownMenuItem>
+								{richText ? (
+									<DropdownMenuItem onSelect={() => setShowFormatting(!showFormatting)}>
+										<Type aria-hidden /> {showFormatting ? 'Hide formatting' : 'Show formatting'}
+									</DropdownMenuItem>
+								) : null}
 							</DropdownMenuContent>
 						</DropdownMenu>
-						{inlineTags ? (
+						{richText ? (
+							// Paste is caught on the wrapper first: a secret or a file must not reach the editor.
+							<div
+								ref={tagWrapRef}
+								className="min-w-0 flex-1 px-1 py-1.5 max-md:py-2"
+								onFocus={() => setTextareaFocused(true)}
+								onBlur={() => setTextareaFocused(false)}
+								onPasteCapture={handlePaste}
+							>
+								<RichComposerInput
+									ref={richRef}
+									selfActorId={selfActorId}
+									value={value}
+									tags={richTags()}
+									ariaLabel={textareaLabel ?? placeholder}
+									ariaDescribedBy={hint === undefined ? undefined : hintId}
+									placeholder={canWrite ? placeholder : VIEWER_READ_ONLY_MESSAGE}
+									readOnly={
+										disabled || secretFlow?.blocking === true || vaultFlow?.blocking === true
+									}
+									className="max-h-40 min-h-[28px]"
+									onChange={(next) =>
+										handleTagChange({ text: next.markdown, ids: next.mentionIds })
+									}
+									onTriggerChange={(trigger) =>
+										setMentionTrigger(trigger ? { atPos: 0, query: trigger.query } : null)
+									}
+									onKeyDown={handleRichKeyDown}
+									onActiveFormatsChange={setActiveFormats}
+								/>
+							</div>
+						) : inlineTags ? (
 							// Focus and paste are caught on the wrapper: the tag input has no hooks for them.
 							<div
 								ref={tagWrapRef}

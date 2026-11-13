@@ -279,7 +279,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		case 'session': {
-			// A handoff exists from the moment `create_session` runs, before any message
+			// A handoff exists from the moment `create_sub_chat` runs, before any message
 			// carries it; the messages list returns it as `pending_handoffs`.
 			syncChatsForSession(queryClient, event, event.entity_id)
 			// Broad prefix invalidation covers all session queries including byActor,
@@ -391,6 +391,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 				{ queryKey: queryKeys.conversations.all(workspaceId) },
 				LIST_REFETCH_MS,
 			)
+			break
+		default:
+			// Object types are workspace-defined, so an object event can carry any type name
+			// (a LinkedIn post draft, an email) that the cases above do not list. Refresh the
+			// object's own cache so a chat preview card follows an agent's edit. A key nobody
+			// has cached is a no-op, so an event for a non-object entity costs nothing.
+			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
 			break
 	}
 }

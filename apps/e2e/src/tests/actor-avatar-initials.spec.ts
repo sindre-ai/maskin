@@ -3,7 +3,7 @@ import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers ActorAvatar (T1 of Per-agent avatars in Maskin):
-// 2-letter initials + deterministic per-actor background color.
+// 2 or 3-letter initials + deterministic per-actor background color.
 // Renders on every ship-gate viewport since the primitive is used
 // across desktop, iPad, and mobile surfaces. T2 landed the activity
 // timeline, so this spec now scopes to the comment-author slot as planned:
@@ -16,12 +16,18 @@ function initialsFor(name: string): string {
 	const words = name.trim().split(/\s+/).filter(Boolean)
 	const first = words[0] ?? ''
 	const second = words[1] ?? ''
-	if (first && second) return (first[0] + second[0]).toUpperCase()
+	// Three or more words show the first letter of the first three.
+	if (first && second)
+		return words
+			.slice(0, 3)
+			.map((word) => word[0])
+			.join('')
+			.toUpperCase()
 	if (first.length >= 2) return first.slice(0, 2).toUpperCase()
 	return (first[0] ?? '?').toUpperCase()
 }
 
-test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
+test.describe('ActorAvatar — initials + deterministic color', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`renders initials in the comment-author avatar slot at ${viewport.label}`, async ({
 			page,
@@ -65,17 +71,17 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			// carries a `title` starting with the account-derived workspace name).
 			// The comment row sits in the reader column, ahead of the properties
 			// drawer, so `.first()` is the comment author rather than a subscriber.
-			// ActorAvatar renders as a rounded-full <span> with `title={name}`;
-			// scoping to `.rounded-full` picks only the palette-backed element.
-			const avatar = page.locator('main .rounded-full[title^="E2E "]').first()
+			// ActorAvatar renders as a <span> with `title={name}`.
+			const avatar = page.locator('main [title^="E2E "]').first()
 			await expect(avatar).toBeVisible({ timeout: 10000 })
 			await expect(avatar).toHaveText(expected)
 
 			// AC: same actor renders the same background color across page loads
 			// (deterministic bucket keyed off actor id / name).
-			const firstColor = await avatar.evaluate((el) => getComputedStyle(el).backgroundColor)
-			// Real color must render — not the browser default 'rgba(0, 0, 0, 0)'.
-			expect(firstColor).not.toBe('rgba(0, 0, 0, 0)')
+			// The plate is a gradient, so the colour lives in background-image.
+			const firstColor = await avatar.evaluate((el) => getComputedStyle(el).backgroundImage)
+			// A real gradient must render — not the browser default 'none'.
+			expect(firstColor).toContain('linear-gradient')
 
 			await page.reload()
 			await expect(
@@ -87,10 +93,10 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			// the timeline loads after the heading, so wait for it before reading
 			// the computed colour.
 			await expect(page.getByText('Avatar slot check')).toBeVisible({ timeout: 10000 })
-			const avatarAfterReload = page.locator('main .rounded-full[title^="E2E "]').first()
+			const avatarAfterReload = page.locator('main [title^="E2E "]').first()
 			await expect(avatarAfterReload).toBeVisible({ timeout: 10000 })
 			const secondColor = await avatarAfterReload.evaluate(
-				(el) => getComputedStyle(el).backgroundColor,
+				(el) => getComputedStyle(el).backgroundImage,
 			)
 
 			expect(secondColor).toBe(firstColor)
@@ -129,9 +135,8 @@ test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
 				page.getByRole('heading', { level: 1, name: 'Bet for punctuated initials' }),
 			).toBeVisible({ timeout: 20000 })
 
-			// An agent is drawn as a team pictogram tile (v16), not round initials, so its
-			// avatar is a rounded-square with a mark and no text. What must not come back is
-			// the old bug, an initial taken from the "(" of the punctuated word.
+			// What must not come back is the old bug, an initial taken from the "(" of the
+			// punctuated word.
 			const avatar = page.locator(`main [title="${agentName}"]`).first()
 			await expect(avatar).toBeVisible({ timeout: 10000 })
 			await expect(avatar).not.toContainText('(')

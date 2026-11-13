@@ -30,12 +30,15 @@ function TriggersApp() {
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
 		case 'create_trigger':
-		case 'update_trigger':
-			return isObject<TriggerResponse>(data, 'id', 'name') ? (
-				<TriggerDetailView trigger={data} />
+		case 'update_trigger': {
+			// The tool answers { trigger, warnings }, with the trigger in compact form.
+			const saved = isObject<SavedTrigger>(data, 'trigger') ? data : null
+			return saved && isObject<CompactTrigger>(saved.trigger, 'id', 'name') ? (
+				<TriggerSavedView trigger={saved.trigger} warnings={saved.warnings ?? []} />
 			) : (
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
+		}
 		case 'delete_trigger':
 			return <TriggerDeletedView />
 		default:
@@ -131,6 +134,56 @@ function TriggerDetailView({ trigger }: { trigger: TriggerResponse }) {
 							</div>
 						))}
 					</div>
+				</div>
+			)}
+		</div>
+	)
+}
+
+interface CompactTrigger {
+	id: string
+	name: string
+	status: string
+	kind: string
+	schedule: string
+	next_run: string | null
+	purpose: string
+}
+
+interface SavedTrigger {
+	trigger: CompactTrigger
+	warnings?: Array<{ code: string; message: string }>
+}
+
+function TriggerSavedView({
+	trigger,
+	warnings,
+}: {
+	trigger: CompactTrigger
+	warnings: Array<{ code: string; message: string }>
+}) {
+	return (
+		<div className="p-4 max-w-2xl">
+			<div className="flex items-start justify-between gap-3 mb-2">
+				<div className="flex items-center gap-2 min-w-0">
+					<span
+						className={`w-2 h-2 rounded-full ${trigger.status === 'enabled' ? 'bg-success' : 'bg-muted-foreground'}`}
+					/>
+					<h1 className="text-lg font-semibold text-foreground truncate">{trigger.name}</h1>
+				</div>
+				<WebAppLink target={{ kind: 'trigger', id: trigger.id }} />
+			</div>
+			<div className="text-xs text-muted-foreground mb-2 capitalize">
+				{trigger.kind} | {trigger.status} | {trigger.schedule}
+			</div>
+			{trigger.purpose && <p className="text-sm text-muted-foreground">{trigger.purpose}</p>}
+			{warnings.length > 0 && (
+				<div className="border-t border-border pt-3 mt-3 space-y-1.5">
+					{warnings.map((warning) => (
+						<p key={`${warning.code}-${warning.message}`} className="text-xs text-warning">
+							{warning.message}
+						</p>
+					))}
 				</div>
 			)}
 		</div>

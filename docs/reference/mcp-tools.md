@@ -2,7 +2,7 @@
 title: MCP tools
 slug: mcp-tools
 description: The MCP tool surface — which tools exist, what they return, and when to reach for each.
-last_updated: 2026-11-09
+last_updated: 2026-11-11
 ---
 
 # MCP tools
@@ -62,6 +62,53 @@ applied in order on the server, under the same row lock as a whole-file save:
   the `format: "text"` extract (which drops markup).
 - The save logs an `updated` event for the file, with `editCount`.
 
+### Transcribing a recording: `transcribe_file`
+
+`transcribe_file` turns an uploaded audio or video file into text. The agent passes the
+file `id` and, optionally, a `language` hint; it never downloads or converts anything.
+
+- Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, next_step,
+  audio_seconds, chunks, model }`. The transcript is plain (no timestamps, no speaker labels)
+  and is saved as a `text/plain` workspace file named `<recording> transcript.txt`, tagged
+  `transcript`, whatever its length: there is no size threshold. The response does **not**
+  carry the text. `next_step` tells the agent to `get_file` the `transcript_file_id`.
+- Saving goes through `saveTranscriptFile` (`apps/dev/src/services/transcript-file.ts`), in
+  the same order as `POST /api/files`: row, bytes, `created` event. Two cases return `text`
+  instead: if saving fails, the audio is already paid for, so the call still succeeds with
+  the whole transcript in `text` and `transcript_file_id` null; and if no speech was found,
+  no empty file is saved and `text` is `""`.
+- Audio and video both work. The server decodes the first audio track to 16 kHz mono WAV with
+  ffmpeg, so the API image must have ffmpeg and ffprobe (`apps/dev/Dockerfile`); a local
+  `pnpm dev` needs them on `PATH`. Without them the call fails with a 503 that says so.
+- Up to 60 minutes of audio per call. The audio is cut into 3 minute chunks (the speech
+  provider times out after about a minute per request), three are sent at a time, and the
+  texts are joined in order. A longer file is a 400 that asks for it to be cut up.
+- The file is streamed from storage to a temp directory, never held in memory, so the 1 GiB
+  upload ceiling applies. Only `audio/*`, `video/*` and a few container types are tried; any
+  other MIME type is a 400 before anything is downloaded.
+- Route: `POST /api/transcriptions/files/:id`, writer role, file must be in the
+  `X-Workspace-Id` workspace (another workspace's file is a 404). It sits under
+  `ALL /api/transcriptions` in `packages/auth/src/oauth-route-allowlist.ts`, so a Claude
+  connector token is refused (403 `insufficient_scope`); agents and API keys are fine.
+
+**Billing.** The call runs on Maskin's OpenRouter account, so it is charged to the workspace's
+plan. OpenRouter reports `usage.cost` for each request; that figure, not an estimate, is
+written to `workspace_ai_usage` (one row per call, with the model, the audio seconds, the
+actor and the file). Plan usage is `sessions` cost plus these rows, in one place:
+`getWorkspacePlanUsdCentsUsage` in `apps/dev/src/lib/llm-routing.ts`. That makes the plan cap,
+the usage page (and its model, agent and flow split) and the prepaid credit overage all see it.
+
+- Before any work, `checkPlanCap` runs: over the cap with no credit balance is a 402
+  `PLAN_CAP_EXCEEDED`, the same as starting a session.
+- An enterprise workspace is exempt from the plan cap (`checkPlanCap` returns early), so it is
+  never refused with a 402. Its spend is still recorded in `workspace_ai_usage`.
+- Spend of chunks that succeeded is recorded even if a later chunk fails: it was charged.
+- Credit overage is settled the next time a session ends (the debit takes the period's whole
+  overage minus what was already accounted), not at the moment of transcription.
+- If OpenRouter omits `usage.cost`, the call is counted at `FALLBACK_USD_PER_AUDIO_SECOND`
+  (above the dearest listed model) and a warning is logged.
+- Chat dictation (`POST /api/transcriptions`) is unchanged and still not counted.
+
 ## Workspace skills: id or name
 
 `get_workspace_skill`, `update_workspace_skill` and `delete_workspace_skill` take the skill in their `name` argument, and that value can be either the skill's id (as listed by `list_workspace_skills`) or its name. The argument key stays `name`.
@@ -93,18 +140,13 @@ Unchanged: **type**, **driver**, **updated_after**, **limit** (default 25, max 1
 
 A tool that was removed from the surface can stay callable as a listed alias: a real entry in the tool list whose one line description says "Deprecated, use X", and whose handler maps its arguments onto the tool it points to. Listed, not hidden, because a model can only call tools it sees. Each one costs roughly 60 to 100 tokens in every tool list, so at most 10 are kept (see **packages/mcp/src/tool-aliases.ts**).
 
-Today there are two:
+Today there is one:
 
-- **run_agent**, an alias of **create_session** with **wait** on (details below).
 - **search_objects**, an alias of **list_objects**. It maps **query** to **q**, **driver_id** to **driver** and **offset** to the ranked walk's offset, and passes everything else through, **cursor** included, so a caller can follow **next_cursor** or **page.offset**. Its output is the **list_objects** output, with **page.offset** kept for older callers. Reason: one query tool with one paging style, so agents stop retrying across two tools. Earliest removal: 2027-02-01, and only after a clean stored-prompt sweep (see the ledger entry in **packages/mcp/src/removal-ledger.ts**).
 
-For **run_agent**:
+Removal is a decision with a sweep date, never a zero count alone.
 
-- **actor_id**, **action_prompt** and **spawned_by_message_id** carry over unchanged. **workspace_id** is filled from the connection default when it is missing.
-- **notify_on_complete** is accepted and ignored: **create_session** no longer takes it and registers the same fallback itself when the wait times out.
-- **config**, **poll_interval_seconds**, **timeout_seconds** and **depends_on_session_ids** have no equivalent and are dropped. Their names are recorded in the **alias_use** event.
-
-Removal is a decision with a sweep date, never a zero count alone. Earliest for **run_agent**: late January 2027.
+**run_agent** and **create_session** were deleted outright on 2026-11-11, with no alias. Use **create_sub_chat**, which returns at once and always sends the result back as a new turn when the agent finishes: it has no **wait** or **notify_on_complete** parameter. A call that names a deleted tool fails with an unknown-tool error (see the ledger in **packages/mcp/src/removal-ledger.ts**).
 
 ### Rollback for the list contract
 

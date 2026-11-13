@@ -68,7 +68,7 @@ for (const scheme of ['light', 'dark'] as const) {
 				const newChat = bar.getByRole('button', { name: /New chat/ }).first()
 				await expect(newChat).toBeVisible()
 
-				// The bar has no background and lets clicks through apart from its controls.
+				// The bar is a solid, readable strip (no gradient, no blur) and lets clicks through apart from its controls.
 				const barStyle = await bar.evaluate((el) => {
 					const s = getComputedStyle(el)
 					return {
@@ -80,7 +80,7 @@ for (const scheme of ['light', 'dark'] as const) {
 				})
 				expect(barStyle.position).toBe('absolute')
 				expect(barStyle.image).toBe('none')
-				expect(barStyle.color).toBe('rgba(0, 0, 0, 0)')
+				expect(barStyle.color).not.toBe('rgba(0, 0, 0, 0)')
 				expect(barStyle.events).toBe('none')
 
 				// At rest the first row sits clear of the bar.
@@ -90,6 +90,8 @@ for (const scheme of ['light', 'dark'] as const) {
 					(barBox?.y ?? 0) + (barBox?.height ?? 0) - 1,
 				)
 
+				// The long pipeline lives on Setup now, so scroll there.
+				await page.getByRole('tab', { name: 'Setup' }).click()
 				// Scrolled, the tab row runs up under the bar: it takes the room the bar no longer holds.
 				await page.locator('[data-scroll-root]').evaluate((el) => el.scrollTo(0, 400))
 				const tabsBox = await page.getByRole('tab', { name: 'Overview' }).boundingBox()

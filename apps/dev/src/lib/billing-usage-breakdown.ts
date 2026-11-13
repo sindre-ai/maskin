@@ -1,13 +1,17 @@
 import type { Database } from '@maskin/db'
-import { actors, objects, relationships, sessions } from '@maskin/db/schema'
-import { and, eq, inArray, sql } from 'drizzle-orm'
-import { ceilCents, planUsageConds, sessionUsageCents } from './llm-routing'
+import { actors, sessions, workspaceAiUsage } from '@maskin/db/schema'
+import { inArray } from 'drizzle-orm'
+import {
+	aiUsageConds,
+	ceilCents,
+	planUsageConds,
+	sessionUsageCents,
+	usdToCents,
+} from './llm-routing'
+import { loadFlowLookup } from './session-flow'
 
 /** Most named rows per split; everything past it is folded into the other bucket. */
 export const USAGE_BREAKDOWN_MAX_ROWS = 10
-
-/** Ids per `in_loop` edge lookup, well under Postgres' bind-parameter limit. */
-const EDGE_LOOKUP_CHUNK = 5_000
 
 export type UsageBreakdownRow = {
 	/** Model id, agent id or flow id. Null for the sessions that carry none. */
@@ -106,69 +110,42 @@ export async function readUsageBreakdown(
 		.from(sessions)
 		.where(planUsageConds(workspaceId, periodStartMs))
 
+	// Spend with no session (transcribe_file). Read as rows, not a sum, because
+	// the splits need each one's model and actor; it counts toward the total
+	// exactly as getWorkspacePlanUsdCentsUsage counts it.
+	const aiRows = await db
+		.select({
+			actorId: workspaceAiUsage.actorId,
+			model: workspaceAiUsage.model,
+			costUsd: workspaceAiUsage.costUsd,
+		})
+		.from(workspaceAiUsage)
+		.where(aiUsageConds(workspaceId, periodStartMs))
+
 	let totalCents = 0
 	for (const row of rows) totalCents += sessionUsageCents(row)
+	for (const row of aiRows) totalCents += usdToCents(row.costUsd)
 	const total = ceilCents(totalCents)
 
-	if (rows.length === 0) {
+	if (rows.length === 0 && aiRows.length === 0) {
 		const empty = { rows: [], other_usd_cents: 0 }
 		return { usd_cents_used: total, by_model: empty, by_agent: empty, by_flow: empty }
 	}
 
-	const actorIds = [...new Set(rows.map((r) => r.actorId))]
-	const agentRows = await db
-		.select({ id: actors.id, name: actors.name })
-		.from(actors)
-		.where(inArray(actors.id, actorIds))
+	const actorIds = new Set(rows.map((r) => r.actorId))
+	for (const row of aiRows) if (row.actorId) actorIds.add(row.actorId)
+	// A transcription whose agent was since deleted has no actor; with nothing
+	// else in the period there is no one to name, and an empty inArray is not a query.
+	const agentRows =
+		actorIds.size > 0
+			? await db
+					.select({ id: actors.id, name: actors.name })
+					.from(actors)
+					.where(inArray(actors.id, [...actorIds]))
+			: []
 	const agentNames = new Map(agentRows.map((a) => [a.id, a.name]))
 
-	const loopRows = await db
-		.select({
-			id: objects.id,
-			title: objects.title,
-			triggerIds: sql<string[] | null>`${objects.metadata}->'trigger_ids'`,
-		})
-		.from(objects)
-		.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
-		.orderBy(objects.id)
-	const loopTitles = new Map(loopRows.map((l) => [l.id, l.title]))
-	const loopByTrigger = new Map<string, string>()
-	for (const loop of loopRows) {
-		if (!Array.isArray(loop.triggerIds)) continue
-		for (const triggerId of loop.triggerIds) {
-			if (typeof triggerId === 'string' && !loopByTrigger.has(triggerId)) {
-				loopByTrigger.set(triggerId, loop.id)
-			}
-		}
-	}
-
-	const loopByItem = new Map<string, string>()
-	const itemIds = [
-		...new Set(
-			rows
-				.filter((r) => !(r.triggerId && loopByTrigger.has(r.triggerId)))
-				.map((r) => r.initiatedFromObjectId)
-				.filter((id): id is string => id !== null),
-		),
-	]
-	if (loopTitles.size > 0) {
-		for (let i = 0; i < itemIds.length; i += EDGE_LOOKUP_CHUNK) {
-			const edges = await db
-				.select({ loopId: relationships.sourceId, itemId: relationships.targetId })
-				.from(relationships)
-				.where(
-					and(
-						eq(relationships.type, 'in_loop'),
-						inArray(relationships.targetId, itemIds.slice(i, i + EDGE_LOOKUP_CHUNK)),
-						inArray(relationships.sourceId, [...loopTitles.keys()]),
-					),
-				)
-				.orderBy(relationships.sourceId)
-			for (const edge of edges) {
-				if (!loopByItem.has(edge.itemId)) loopByItem.set(edge.itemId, edge.loopId)
-			}
-		}
-	}
+	const flows = await loadFlowLookup(db, workspaceId, rows)
 
 	const byModel = new Map<string, Group>()
 	const byAgent = new Map<string, Group>()
@@ -177,17 +154,27 @@ export async function readUsageBreakdown(
 		const cents = sessionUsageCents(row)
 		addTo(byModel, row.modelName ?? '', row.modelName, row.modelName ?? 'Unknown model', cents)
 		addTo(byAgent, row.actorId, row.actorId, agentNames.get(row.actorId) ?? 'Unknown agent', cents)
-		const loopId =
-			(row.triggerId ? loopByTrigger.get(row.triggerId) : undefined) ??
-			(row.initiatedFromObjectId ? loopByItem.get(row.initiatedFromObjectId) : undefined) ??
-			null
+		const loopId = flows.flowIdOf(row)
 		addTo(
 			byFlow,
 			loopId ?? '',
 			loopId,
-			loopId ? (loopTitles.get(loopId) ?? 'Flow') : 'No flow',
+			loopId ? (flows.titles.get(loopId) ?? 'Flow') : 'No flow',
 			cents,
 		)
+	}
+	// Session-less spend carries its model and actor, and belongs to no flow.
+	for (const row of aiRows) {
+		const cents = usdToCents(row.costUsd)
+		addTo(byModel, row.model, row.model, row.model, cents)
+		addTo(
+			byAgent,
+			row.actorId ?? '',
+			row.actorId,
+			(row.actorId ? agentNames.get(row.actorId) : undefined) ?? 'Unknown agent',
+			cents,
+		)
+		addTo(byFlow, '', null, 'No flow', cents)
 	}
 
 	return {

@@ -97,7 +97,7 @@ struct ShareSheetModelDestinationTests {
 		await model.start()
 		model.destination = .chat(id: "c-1")
 		await model.selectWorkspace("ws-2")
-		#expect(model.destination == .object(type: "insight"))
+		#expect(model.destination == .newChat(agentID: "agent-chief"))
 	}
 
 	@Test("an offline post is parked for the app and the sheet says so")
@@ -109,6 +109,7 @@ struct ShareSheetModelDestinationTests {
 		let model = ShareSheetModel(
 			secretStore: session(), loadContent: { content }, makeRemote: { _ in remote }, queue: queue)
 		await model.start()
+		model.destination = .object(type: "insight")
 		await model.post()
 		#expect(model.phase == .queued)
 		let parked = try #require(queue.pending().first)
@@ -122,6 +123,7 @@ struct ShareSheetModelDestinationTests {
 		remote.failNext("object", with: .offline)
 		let model = ShareSheetModel(secretStore: session(), loadContent: { content }, makeRemote: { _ in remote })
 		await model.start()
+		model.destination = .object(type: "insight")
 		await model.post()
 		#expect(model.phase == .failed(.offline))
 	}
@@ -135,6 +137,7 @@ struct ShareSheetModelDestinationTests {
 		let model = ShareSheetModel(
 			secretStore: session(), loadContent: { content }, makeRemote: { _ in remote }, queue: queue)
 		await model.start()
+		model.destination = .object(type: "insight")
 		await model.post()
 		#expect(model.phase == .failed(.rejected))
 		#expect(queue.pending().isEmpty)

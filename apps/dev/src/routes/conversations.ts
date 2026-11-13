@@ -28,7 +28,21 @@ import {
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import {
+	type SQL,
+	and,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	not,
+	or,
+	sql,
+} from 'drizzle-orm'
 import {
 	resolveChatTagClient,
 	trackMessageEditedWithTags,
@@ -43,6 +57,7 @@ import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
 	conversationListItemResponseSchema,
+	conversationParticipantResponseSchema,
 	conversationParticipantStateResponseSchema,
 	errorSchema,
 	idParamSchema,
@@ -837,19 +852,24 @@ app.openapi(listConversationsRoute, (async (c) => {
 			)`,
 		)
 	}
-	if (query.unread_only) {
-		// Table names (not Drizzle column refs) inside the correlated subquery —
-		// interpolating column objects here renders unqualified and silently
-		// binds to the inner `messages` alias for names both tables share (see
-		// known-pitfalls.md's correlated-subquery entry).
-		conditions.push(
-			sql`EXISTS (
-				SELECT 1 FROM messages m
-				WHERE m.conversation_id = conversations.id
-					AND m.actor_id != ${callerId}
-					AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
-			)`,
-		)
+	// Table names (not Drizzle column refs) inside the correlated subquery —
+	// interpolating column objects here renders unqualified and silently
+	// binds to the inner `messages` alias for names both tables share (see
+	// known-pitfalls.md's correlated-subquery entry).
+	const hasUnread = sql`EXISTS (
+		SELECT 1 FROM messages m
+		WHERE m.conversation_id = conversations.id
+			AND m.actor_id != ${callerId}
+			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
+	)`
+	if (query.unread_only) conditions.push(hasUnread)
+	if (query.scope) {
+		const isPriority = or(
+			isNotNull(conversations.directPairKey),
+			eq(conversationParticipants.pinned, true),
+			hasUnread,
+		) as SQL
+		conditions.push(query.scope === 'priority' ? isPriority : not(isPriority))
 	}
 
 	const rows = await db
@@ -1186,7 +1206,7 @@ const addParticipantsRoute = createRoute({
 	responses: {
 		200: {
 			content: {
-				'application/json': { schema: z.array(conversationParticipantStateResponseSchema) },
+				'application/json': { schema: z.array(conversationParticipantResponseSchema) },
 			},
 			description: 'Updated participant list (state omitted — see GET /:id)',
 		},
@@ -1483,8 +1503,8 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
-	// An agent posting mid-turn answers where the human is talking: in the thread of the message
-	// that started the turn, as the end-of-turn reply does. Only for the agent's own session in
+	// An agent posting mid-turn answers where the human is talking: in the thread the turn's message
+	// sits in, if any, as the end-of-turn reply does. Only for the agent's own session in
 	// this chat (a verified sessionId), so humans and other callers post exactly as before.
 	// An explicit thread_root_id wins, top_level opts out.
 	// A thread session answers in its own thread; any other session follows the message that
@@ -1501,6 +1521,8 @@ app.openapi(postMessageRoute, (async (c) => {
 		})
 		sessionThreadRootId = placed.sessionThreadRootId
 		if (body.thread_root_id === undefined && body.top_level !== true) {
+			// Only a thread a person already started is continued. A turn started by a top-level
+			// message posts to the main timeline: agents do not start threads on their own.
 			turnThreadRootId = placed.threadRootId
 		}
 	}

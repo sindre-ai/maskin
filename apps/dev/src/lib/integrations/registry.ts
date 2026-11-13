@@ -7,6 +7,8 @@ import { config as attioConfig } from './providers/attio/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clickupConfig } from './providers/clickup/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
+import { deepdotsAuth } from './providers/deepdots/auth'
+import { config as deepdotsConfig } from './providers/deepdots/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -40,6 +42,12 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import {
+	config as microsoftConfig,
+	parseTokenResponse as microsoftParseTokenResponse,
+} from './providers/microsoft/config'
+import { resolveExternalId as microsoftResolveExternalId } from './providers/microsoft/resolve-id'
+import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
 import { config as notionConfig } from './providers/notion/config'
@@ -174,6 +182,16 @@ providers.set('google-search-console', {
 	postInstall: startGscBackfill,
 })
 
+// microsoft — Teams transcripts. Workspace-scoped like Google Meet. No webhook: the poll job in
+// services/microsoft-sync-scheduler.ts lands the transcripts. `postInstall` puts the standing
+// help line on the Settings tile.
+providers.set('microsoft', {
+	config: microsoftConfig,
+	parseTokenResponse: microsoftParseTokenResponse,
+	resolveExternalId: microsoftResolveExternalId,
+	postInstall: setupMicrosoftInstall,
+})
+
 providers.set('posthog', {
 	config: posthogConfig,
 })
@@ -258,6 +276,14 @@ providers.set('skjald', {
 providers.set('ubersuggest', {
 	config: ubersuggestConfig,
 	customAuth: ubersuggestAuth,
+})
+
+// deepdots — connects from an email and password form (routes/integrations-deepdots.ts),
+// which is mounted before the generic /api/integrations routes. The generic connect
+// route would try to build an OAuth redirect and fail, so it must not run for it.
+providers.set('deepdots', {
+	config: deepdotsConfig,
+	customAuth: deepdotsAuth,
 })
 
 // linkedin-unipile — the connect + callback flow is LinkedIn's Hosted Auth

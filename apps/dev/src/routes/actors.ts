@@ -80,6 +80,7 @@ import { introduceAgentToRecipient } from '../services/agent-intro'
 import { createIntroScanRunner } from '../services/agent-intro-scan'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { addDefaultHeartbeat } from '../services/default-heartbeat'
+import { createEmailOnPreferences } from '../services/email-preferences'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
@@ -291,6 +292,17 @@ app.openapi(createActorRoute, async (c) => {
 		creatorType = callerType
 
 		const ownWorkspace = body.auto_create_workspace === true
+		// Same rule as POST /api/workspaces: only people create workspaces, and this
+		// flag runs the same provisioning plus a welcome session.
+		if (ownWorkspace && callerType === 'agent') {
+			refuse('agent_auto_create_workspace', callerId, callerType)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Agents cannot create workspaces', [
+					{ field: 'auto_create_workspace', message: 'Not accepted from an agent caller' },
+				]),
+				400,
+			)
+		}
 		if (body.workspace_id && ownWorkspace) {
 			return c.json(
 				createApiError(
@@ -403,6 +415,7 @@ app.openapi(createActorRoute, async (c) => {
 		const [inserted] = await insertActor(tx)
 		if (!inserted) return undefined
 		key = (await issueApiKey(tx, { actorId: inserted.id, kind: 'primary' })).key
+		if (inserted.type === 'human') await createEmailOnPreferences(tx, inserted.id)
 		return inserted
 	}
 

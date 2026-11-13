@@ -174,14 +174,17 @@ function ChatsLayout() {
 			{header}
 			{hasThread ? null : <ChatsListTitle />}
 			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
-				{wide || listAside || isDraft ? null : (
+				{wide || (listAside && hasThread) || isDraft ? null : (
 					// Below lg (iPad portrait) the list and the thread take turns: the list fills the
 					// width until a chat is open, then the thread replaces it. From lg they sit side by side.
 					<div
 						className={cn(
-							'hidden min-w-0 flex-col border-r border-border bg-background lg:flex lg:w-70 lg:flex-none xl:w-100',
-							// With a chat open the list is lg-and-up only; otherwise it fills the width from md.
-							!hasThread && 'md:flex md:flex-1',
+							'hidden min-w-0 flex-col bg-background lg:flex',
+							// With a chat open the list is a fixed column from lg; with nothing selected it
+							// fills the width from md and the thread pane stays unmounted.
+							hasThread
+								? 'border-r border-border lg:w-70 lg:flex-none xl:w-100'
+								: 'md:flex md:flex-1',
 						)}
 					>
 						{listColumn}
@@ -190,15 +193,17 @@ function ChatsLayout() {
 				{/* One gutter variable for the whole thread pane — the header,
 				    transcript and composer all read `--chat-gut` so they can never
 				    drift apart. */}
-				<div
-					className={cn(
-						'min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]',
-						// Below lg the pane only shows with a chat open; the list holds the width otherwise.
-						hasThread || wide || listAside ? 'flex' : 'max-lg:hidden lg:flex',
-					)}
-				>
-					<Outlet />
-				</div>
+				{hasThread || wide ? (
+					<div
+						className={cn(
+							'min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]',
+							// Below lg the pane only shows with a chat open; the list holds the width otherwise.
+							'flex',
+						)}
+					>
+						<Outlet />
+					</div>
+				) : null}
 			</div>
 		</>
 	)

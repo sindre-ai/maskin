@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { type AliasRow, aliasRowsFor } from './aliases.js'
+import { type AliasRow, JSON_ARRAY_KEYS, aliasRowsFor } from './aliases.js'
 
 export interface AppliedRename {
 	/** Dotted path of the old spelling, array indexes dropped. */
@@ -84,13 +84,31 @@ export function normaliseArgs(
 		if (hits.bothSent) result.bothSent = true
 	}
 
-	result.args = args
+	result.args = parseJsonArrayStrings(tool, args)
 	return result
+}
+
+// A string under a list-valued key is parsed once when it holds a JSON array.
+function parseJsonArrayStrings(tool: string, args: unknown): unknown {
+	const keys = JSON_ARRAY_KEYS[tool]
+	if (!keys || !isPlainObject(args)) return args
+	let out: Record<string, unknown> = args
+	for (const key of keys) {
+		const value = out[key]
+		if (typeof value !== 'string' || !value.trimStart().startsWith('[')) continue
+		try {
+			const parsed: unknown = JSON.parse(value)
+			if (Array.isArray(parsed)) out = { ...out, [key]: parsed }
+		} catch {
+			// Not JSON: leave the string for the schema to reject.
+		}
+	}
+	return out
 }
 
 /** True when a tool needs the normalise step at all. */
 export function needsNormalise(tool: string): boolean {
-	return aliasRowsFor(tool).length > 0
+	return aliasRowsFor(tool).length > 0 || tool in JSON_ARRAY_KEYS
 }
 
 /**
@@ -112,7 +130,12 @@ export function needsNormalise(tool: string): boolean {
 export function wrapInputSchema(
 	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
-	opts: { rejectUnknownKeys?: boolean } = {},
+	opts: {
+		rejectUnknownKeys?: boolean
+		/** Closes the unknown-key refusal. Defaults to the write tools' "Nothing was written." */
+		unknownKeysSuffix?: string
+		explain?: (args: unknown) => string | null
+	} = {},
 ): z.ZodTypeAny {
 	const schema = input instanceof z.ZodType ? input : z.object(input)
 	const shape = input instanceof z.ZodType ? input.shape : input
@@ -124,10 +147,12 @@ export function wrapInputSchema(
 			if (unknown.length > 0) {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Accepted names: ${accepted.join(', ')}. Nothing was written.`,
+					message: `Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Accepted names: ${accepted.join(', ')}. ${opts.unknownKeysSuffix ?? 'Nothing was written.'}`,
 				})
 			}
 		}
+		const explained = opts.explain?.(args)
+		if (explained) ctx.addIssue({ code: z.ZodIssueCode.custom, message: explained })
 		return args
 	}, schema)
 	return Object.assign(wrapped, { shape })

@@ -47,6 +47,29 @@ function buildConversation(
 	}
 }
 
+/** Answers the default list's two fetches: the priority set (DMs, pinned, unread) and the recent rest. */
+function mockScopedList({
+	priority = [],
+	priorityPages,
+	recent,
+	recentHasMore = false,
+}: {
+	priority?: ConversationListItemResponse[]
+	/** Overrides `priority`: one array per page, the last page closing the set. */
+	priorityPages?: ConversationListItemResponse[][]
+	recent: ConversationListItemResponse[]
+	recentHasMore?: boolean
+}) {
+	const pages = priorityPages ?? [priority]
+	vi.mocked(api.conversations.list).mockImplementation(async (_ws, params) => {
+		if (params?.scope === 'priority') {
+			const page = Number(params.offset) / Number(params.limit)
+			return { conversations: pages[page] ?? [], has_more: page < pages.length - 1 }
+		}
+		return { conversations: recent, has_more: recentHasMore }
+	})
+}
+
 describe('ConversationList', () => {
 	beforeEach(() => {
 		vi.mocked(api.conversations.list).mockReset()
@@ -70,11 +93,31 @@ describe('ConversationList', () => {
 		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()
 	})
 
-	it('hides the end-of-history line while more pages remain', async () => {
-		vi.mocked(api.conversations.list).mockResolvedValue({
-			conversations: [buildConversation({ id: 'a' })],
-			has_more: true,
+	it('loads every direct message, pinned and unread chat, and only the newest 20 of the rest', async () => {
+		const dms = Array.from({ length: 3 }, (_, i) =>
+			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` }),
+		)
+		const pinned = buildConversation({ id: 'pin', title: 'Pinned chat', pinned: true })
+		const unread = buildConversation({ id: 'unr', title: 'Unread chat', unread_count: 4 })
+		// Priority streams in over two pages; the list must wait for both before it shows counts.
+		mockScopedList({
+			priorityPages: [[...dms, pinned], [unread]],
+			recent: [buildConversation({ id: 'old', title: 'Old chat' })],
+			recentHasMore: true,
 		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByRole('button', { name: /Unread\s*1/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Direct messages\s*3/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Pinned\s*1/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Earlier\s*1/ })).toBeInTheDocument()
+		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'recent', limit: '20' }))
+		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', offset: '100' }))
+	})
+
+	it('hides the end-of-history line while more pages remain', async () => {
+		mockScopedList({ recent: [buildConversation({ id: 'a' })], recentHasMore: true })
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		// The scroll sentinel owns the tail while pages are still fetchable —
@@ -84,10 +127,7 @@ describe('ConversationList', () => {
 	})
 
 	it('advertises the scroll affordance only while another page is pending', async () => {
-		vi.mocked(api.conversations.list).mockResolvedValue({
-			conversations: [buildConversation({ id: 'a' })],
-			has_more: true,
-		})
+		mockScopedList({ recent: [buildConversation({ id: 'a' })], recentHasMore: true })
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		// The sentinel only claims to be loading while a page is actually in
@@ -350,14 +390,15 @@ describe('ConversationList collapse', () => {
 		)
 		const dm = (i: number) =>
 			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` })
-		vi.mocked(api.conversations.list).mockResolvedValue({
-			conversations: Array.from({ length: 13 }, (_, i) => dm(i)),
-			has_more: true,
+		mockScopedList({
+			priority: Array.from({ length: 13 }, (_, i) => dm(i)),
+			recent: [],
+			recentHasMore: true,
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 		await userEvent.click(await screen.findByRole('button', { name: /Direct messages/ }))
 		for (const fire of live) fire()
-		expect(vi.mocked(api.conversations.list).mock.calls.some(([, q]) => q?.offset === '30')).toBe(
+		expect(vi.mocked(api.conversations.list).mock.calls.some(([, q]) => q?.offset === '20')).toBe(
 			false,
 		)
 		expect(screen.queryAllByRole('link')).toHaveLength(0)

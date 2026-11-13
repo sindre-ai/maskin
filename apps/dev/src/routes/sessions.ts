@@ -199,7 +199,7 @@ app.openapi(createSessionRoute, (async (c) => {
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
 	// every session to the agent that received the owner's first turn without
 	// requiring an additive column migration.
-	// Also record who asked (create_session lands here), so launch can
+	// Also record who asked (create_sub_chat lands here), so launch can
 	// tell the helper who sent it without rewriting the stored action prompt.
 	const baseConfig = {
 		...body.config,
@@ -754,7 +754,7 @@ app.openapi(getSessionRoute, (async (c) => {
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
 /**
- * The flag arrived after the helper ended (create_session with wait: true sets it at poll timeout, and
+ * The flag arrived after the helper ended (create_sub_chat sets it when its wait ends early, and
  * the helper can finish in the gap). Nothing else will fire the return, so do it
  * here. If the end-of-session return already ran and was skipped only because the
  * sender was live, give the one-shot claim back so the flag gets its turn.
@@ -791,7 +791,7 @@ async function returnIfAlreadyEnded(
 const updateSessionSchema = z
 	.object({
 		current_activity: z.string().max(500).nullable().optional(),
-		// create_session (wait: true) sets this when its poll times out: "send me the result later".
+		// create_sub_chat sets this when its wait ends early: "send me the result later".
 		// It only ever turns the flag on.
 		notify_on_complete: z.literal(true).optional(),
 	})
@@ -1550,10 +1550,16 @@ app.openapi(askSessionRoute, (async (c) => {
 	}
 
 	const isHelper = deliveredTo === 'chat' && !session.conversationId
+	// A thread session asks in its own thread, like its replies do, so the person answering there
+	// sees the card; it stays in the main chat too, as before. Only a chat session has a thread of its own; a helper's or a direct message
+	// question has no thread in the chat it lands in.
+	const threadRootId = routedTo === 'session_chat' ? (session.threadRootId ?? null) : null
 	const created = await insertConversationMessage(db, {
 		conversationId,
 		workspaceId: session.workspaceId,
 		actorId: session.actorId,
+		threadRootId,
+		threadAlsoInChannel: threadRootId !== null,
 		content: formatQuestionsAsMarkdown(questions),
 		metadata: {
 			question: {
