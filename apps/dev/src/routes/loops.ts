@@ -13,6 +13,7 @@ import {
 import { TARGET_OF_RELATIONSHIP_TYPE, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
 	type LoopTarget,
+	type LoopTargetView,
 	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_STATUSES_BY_TYPE,
 	findChange,
@@ -29,6 +30,7 @@ import { and, asc, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { expectedByNow, latestReadings, readingKey } from '../lib/readings'
 import { serializeArray } from '../lib/serialize'
 
 /** Loose UUID match — used to filter free-form `metadata.trigger_ids` entries
@@ -201,6 +203,8 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 const HIDDEN_TARGET_STATUSES = ['dropped', 'archived']
 
 type TargetObjectRow = {
+	id: string
+	createdAt: Date | null
 	title: string | null
 	driver: string | null
 	metadata: unknown
@@ -233,6 +237,56 @@ function targetsFromObjects(
 		if (parsed.success) cleaned.push(parsed.data)
 	}
 	return cleaned.length > 0 ? cleaned : null
+}
+
+/** The measure behind a `metric:<namespace>.<key>` source, lowercased, or null for any other source. */
+function metricMeasure(source: string): string | null {
+	return source.startsWith('metric:') ? source.slice('metric:'.length).toLowerCase() : null
+}
+
+type LatestReadings = Awaited<ReturnType<typeof latestReadings>>
+
+/**
+ * Puts the newest checked reading on each `metric:` target. The reading is looked up on the
+ * target's own object and on the flow, and the newer of the two wins. Where one is found, its
+ * value replaces `actual` (an agent could have written `actual`, not a reading) and `reading`
+ * carries when it was read, where from, and where the number should be by now. A target with no
+ * reading comes back as it was. Expected is a straight line from the target object's creation
+ * to its `deadline`, so a row kept only in the flow's metadata has none.
+ */
+function targetsWithReadings(
+	targets: LoopTarget[] | null,
+	loopId: string,
+	targetObjects: TargetObjectRow[],
+	latest: LatestReadings,
+	now: Date,
+): LoopTargetView[] | null {
+	if (!targets) return targets
+	return targets.map((target) => {
+		const measure = metricMeasure(target.source)
+		if (!measure) return target
+		const object = targetObjects.find((o) => o.title === target.label)
+		const found = [object?.id, loopId]
+			.filter((id): id is string => Boolean(id))
+			.map((id) => latest.get(readingKey(id, measure)))
+			.filter((r): r is NonNullable<typeof r> => Boolean(r))
+			.sort((a, b) => b.readAt.getTime() - a.readAt.getTime())[0]
+		if (!found) return target
+		const meta = (object?.metadata as Record<string, unknown> | null) ?? {}
+		const deadline = typeof meta.deadline === 'string' ? new Date(meta.deadline) : null
+		return {
+			...target,
+			actual: found.value,
+			reading: {
+				readAt: found.readAt.toISOString(),
+				source: found.source,
+				expected:
+					object?.createdAt && deadline && !Number.isNaN(deadline.getTime())
+						? expectedByNow({ start: object.createdAt, deadline, goal: target.target, now })
+						: null,
+			},
+		}
+	})
 }
 
 /**
@@ -356,6 +410,8 @@ app.openapi(listLoopsRoute, (async (c) => {
 	const targetObjectRows = await db
 		.select({
 			loopId: relationships.targetId,
+			id: objects.id,
+			createdAt: objects.createdAt,
 			title: objects.title,
 			driver: objects.driver,
 			metadata: objects.metadata,
@@ -378,6 +434,28 @@ app.openapi(listLoopsRoute, (async (c) => {
 		list.push(row)
 		targetObjectsByLoop.set(row.loopId, list)
 	}
+
+	// Newest checked readings behind the flows' `metric:` targets, one query for all flows.
+	const readingMeasures = new Set<string>()
+	for (const row of targetObjectRows) {
+		const source = (row.metadata as Record<string, unknown> | null)?.source
+		const measure = typeof source === 'string' ? metricMeasure(source) : null
+		if (measure) readingMeasures.add(measure)
+	}
+	for (const loop of loopRows) {
+		const legacy = readLoopTargets((loop.metadata as Record<string, unknown> | null) ?? {})
+		for (const t of legacy ?? []) {
+			const measure = metricMeasure(t.source)
+			if (measure) readingMeasures.add(measure)
+		}
+	}
+	const latestByKey = await latestReadings(
+		db,
+		workspaceId,
+		[...loopIds, ...targetObjectRows.map((r) => r.id)],
+		[...readingMeasures],
+	)
+	const readNow = new Date()
 
 	// Trigger ids referenced in metadata.trigger_ids. Membership lives on the
 	// loop row (per T1(b)) since triggers can outlive their loop. Collect
@@ -643,8 +721,14 @@ app.openapi(listLoopsRoute, (async (c) => {
 			// Target objects first; the rows in metadata.targets stay as the
 			// fallback for a flow with no target objects yet.
 			const legacyTargets = readLoopTargets(meta)
-			const targets =
-				targetsFromObjects(targetObjectsByLoop.get(row.id) ?? [], legacyTargets) ?? legacyTargets
+			const targetObjectsForLoop = targetObjectsByLoop.get(row.id) ?? []
+			const targets = targetsWithReadings(
+				targetsFromObjects(targetObjectsForLoop, legacyTargets) ?? legacyTargets,
+				row.id,
+				targetObjectsForLoop,
+				latestByKey,
+				readNow,
+			)
 			const tags = normalizeTags(meta.tags)
 
 			const stats = childStatsByLoop.get(row.id) ?? {

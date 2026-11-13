@@ -4,6 +4,7 @@ import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { recordReading } from '../../lib/readings'
 import {
 	ensureWorkspaceMember,
 	insertActor,
@@ -431,6 +432,107 @@ describe('Loops read API integration', () => {
 			await targetOf(loop.id, { title: 'No numbers', metadata: { source: 'x' } })
 
 			expect(await listTargets(loop.id)).toBeNull()
+		})
+
+		describe('metric: targets and readings', () => {
+			type ReadTarget = {
+				label: string
+				actual: number
+				reading?: { readAt: string; source: string; expected: number | null }
+			}
+
+			const read = (subjectId: string, value: number, readAt: string, sourceRef: string) =>
+				recordReading(db, {
+					workspaceId,
+					subjectId,
+					measure: 'luma.registrations',
+					value,
+					readAt: new Date(readAt),
+					source: 'luma-api',
+					sourceRef,
+				})
+
+			async function metricTarget(
+				loopId: string,
+				metadata: Record<string, unknown>,
+				overrides: Record<string, unknown> = {},
+			) {
+				return targetOf(loopId, {
+					title: 'Registrations',
+					metadata: { source: 'metric:luma.registrations', actual: 2, target: 100, ...metadata },
+					...overrides,
+				})
+			}
+
+			it('shows the newest reading and its read time instead of the written actual', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await read(target.id, 10, '2026-11-01T08:00:00Z', 'slot-1')
+				await read(target.id, 42, '2026-11-02T08:00:00Z', 'slot-2')
+				await read(target.id, 30, '2026-11-01T20:00:00Z', 'slot-late-arrival')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(42)
+				expect(row.reading).toMatchObject({
+					readAt: '2026-11-02T08:00:00.000Z',
+					source: 'luma-api',
+					expected: null,
+				})
+			})
+
+			it('finds a reading recorded on the flow itself, and takes the newer of the two', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await read(target.id, 5, '2026-11-01T08:00:00Z', 'a')
+				await read(loop.id, 9, '2026-11-03T08:00:00Z', 'b')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(9)
+				expect(row.reading?.readAt).toBe('2026-11-03T08:00:00.000Z')
+			})
+
+			it('keeps the written actual and adds no reading when none exists', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				await metricTarget(loop.id, {})
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(2)
+				expect(row.reading).toBeUndefined()
+			})
+
+			it('does not use a reading of another measure', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await recordReading(db, {
+					workspaceId,
+					subjectId: target.id,
+					measure: 'stripe.paid',
+					value: 999,
+					readAt: new Date('2026-11-02T08:00:00Z'),
+					source: 'stripe',
+					sourceRef: 'inv-1',
+				})
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(2)
+				expect(row.reading).toBeUndefined()
+			})
+
+			it('computes where the number should be today on read, as a straight line to the deadline', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const day = 86_400_000
+				const start = new Date(Date.now() - 10 * day)
+				const deadline = new Date(Date.now() + 10 * day)
+				const target = await metricTarget(
+					loop.id,
+					{ deadline: deadline.toISOString() },
+					{ createdAt: start },
+				)
+				await read(target.id, 40, new Date().toISOString(), 'now')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.reading?.expected).toBeCloseTo(50, 0)
+			})
 		})
 	})
 

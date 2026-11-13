@@ -121,6 +121,16 @@ export const FLAGS = {
 	 * steps on its own. Retire once it is on for everyone.
 	 */
 	JOB_TARGET_IN_CHAT: 'job-target-in-chat',
+	/**
+	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
+	 * else, or a decision card it posted expires. Backend only, workspace-scoped: read with
+	 * isFlagEnabledForWorkspace in services/driver-wake.ts. Off means no wake is started and
+	 * nothing is recorded. Turn on only after the self-start limits (cap, back-off and daily
+	 * budget) are live, because they are the only brake on a wake. Retire once the wake is on for
+	 * everyone.
+	 */
+	DRIVER_WAKE: 'driver-wake',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

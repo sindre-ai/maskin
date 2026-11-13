@@ -1159,6 +1159,45 @@ export const nextSteps = pgTable(
 	],
 )
 
+// ── Readings ───────────────────────────────────────────────────────────────
+
+// Numbers only server code can write (registrations, payments), each with the time it was read
+// and where it came from. Append-only: a trigger refuses UPDATE, and the newest row per subject
+// and measure is the current reading. Written through apps/dev/src/lib/readings.ts by webhook
+// handlers and scheduled jobs; there is no REST or MCP write path. See 0150_readings.sql.
+export const readings = pgTable(
+	'readings',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The object or flow (loops are objects) the number is about.
+		subjectId: uuid('subject_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		// <namespace>.<key>, for example luma.registrations.
+		measure: text('measure').notNull(),
+		value: doublePrecision('value').notNull(),
+		// When the source was read, not when the row was written.
+		readAt: timestamp('read_at', { withTimezone: true }).notNull(),
+		// Where it came from, for example luma-api or stripe.
+		source: text('source').notNull(),
+		// The source's own id for this reading (invoice id, poll slot); dedupes repeated writes.
+		sourceRef: text('source_ref').notNull(),
+		// Small extra facts, for example counts by status.
+		detail: jsonb('detail').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('readings_dedupe_idx').on(t.subjectId, t.measure, t.source, t.sourceRef),
+		index('readings_latest_idx').on(t.subjectId, t.measure, t.readAt.desc()),
+		index('readings_workspace_idx').on(t.workspaceId),
+		check('readings_measure_check', sql`${t.measure} ~ '^[a-z0-9_]+(\\.[a-z0-9_]+)+$'`),
+		check('readings_value_check', sql`${t.value} <> 'NaN'::double precision`),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(

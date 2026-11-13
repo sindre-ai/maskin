@@ -67,10 +67,14 @@ export const LOOP_STATUSES = [
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
 
 export {
+	loopTargetReadingSchema,
 	loopTargetSchema,
 	loopTargetSourceSchema,
+	loopTargetViewSchema,
 	type LoopTarget,
+	type LoopTargetReading,
 	type LoopTargetSource,
+	type LoopTargetView,
 } from './loop-targets'
 
 export const createObjectSchema = z.object({
