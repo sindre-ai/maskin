@@ -46,7 +46,11 @@ const LIVE_CARD = {
 	title: 'Which way should we go?',
 	summary: 'Both routes are drafted and the call is open.',
 	options: [
-		{ label: 'Route A', recommended: true, consequences: ['Ships this week', 'Costs one more day'] },
+		{
+			label: 'Route A',
+			recommended: true,
+			consequences: ['Ships this week', 'Costs one more day'],
+		},
 		{ label: 'Route B', consequences: ['Ships next week', 'Costs nothing extra'] },
 	],
 }
