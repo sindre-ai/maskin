@@ -59,8 +59,9 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const loop = await flow(account, 'Bare flow', [])
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await page.getByRole('tab', { name: 'Setup' }).click()
 
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible({
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expect(page.getByText('This flow runs when you ask.')).toBeVisible()
@@ -78,6 +79,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 				{ agentId: a.id, name: 'Paused sweep', type: 'cron', enabled: false },
 			])
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await page.getByRole('tab', { name: 'Setup' }).click()
 
 			const pipeline = page.getByTestId('loop-pipeline')
 			await expect(pipeline).toBeVisible({ timeout: 15_000 })
@@ -106,6 +108,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			}
 			const loop = await flow(account, 'Crowded flow', steps)
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await page.getByRole('tab', { name: 'Setup' }).click()
 
 			const pipeline = page.getByTestId('loop-pipeline')
 			await expect(pipeline).toBeVisible({ timeout: 15_000 })
@@ -133,6 +136,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 		const a = await agent(account, 'Relay')
 		const loop = await flow(account, 'Growing flow', [{ agentId: a.id, name: 'First step' }])
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		await page.getByRole('tab', { name: 'Setup' }).click()
 
 		await page.getByRole('button', { name: '+ Add trigger' }).dblclick()
 

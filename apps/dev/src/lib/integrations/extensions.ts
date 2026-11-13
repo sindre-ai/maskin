@@ -11,6 +11,8 @@ import type { WebhookHandler } from './webhooks/handler'
 import {
 	ed25519PublicKeyError,
 	verifyEd25519Signature,
+	verifyStandardWebhooks,
+	verifyStripeSignature,
 	verifyTimestampSignature,
 } from './webhooks/signatures'
 
@@ -193,8 +195,8 @@ export function deliveryEntityId(extensionId: string, externalId: string): strin
  * Check a delivery against an extension's webhook_config using the secret the
  * caller already resolved. Header names are matched lowercased, the way the
  * route builds its header map. The timestamp scheme is checked here with the
- * extension's own maxAgeSeconds, and so is ed25519 (where the "secret" is the
- * vendor's public key); the raw-body schemes go through the shared WebhookHandler.
+ * extension's own maxAgeSeconds, and so are ed25519 (where the "secret" is the
+ * vendor's public key) and the standard-webhooks and stripe presets; the raw-body schemes go through the shared WebhookHandler.
  */
 export function verifyExtensionSignature(
 	handler: WebhookHandler,
@@ -216,6 +218,24 @@ export function verifyExtensionSignature(
 			// The spec's {ts} and the verifier's {timestamp} mean the same thing.
 			bodyTemplate: config.timestampBodyTemplate.replace('{ts}', '{timestamp}'),
 			signaturePrefix: config.signaturePrefix,
+			digestEncoding: config.digestEncoding,
+			maxAgeSeconds: config.maxAgeSeconds,
+		})
+	}
+	if (config.signatureScheme === 'standard-webhooks') {
+		if (!config.idHeader || !config.timestampHeader) {
+			throw new Error('idHeader and timestampHeader are required for the standard-webhooks scheme')
+		}
+		return verifyStandardWebhooks(body, headers, secret, {
+			idHeader: config.idHeader.toLowerCase(),
+			timestampHeader: config.timestampHeader.toLowerCase(),
+			signatureHeader,
+			maxAgeSeconds: config.maxAgeSeconds,
+		})
+	}
+	if (config.signatureScheme === 'stripe') {
+		return verifyStripeSignature(body, headers, secret, {
+			signatureHeader,
 			maxAgeSeconds: config.maxAgeSeconds,
 		})
 	}
@@ -236,6 +256,7 @@ export function verifyExtensionSignature(
 		signatureHeader,
 		signatureScheme: config.signatureScheme,
 		signaturePrefix: config.signaturePrefix,
+		digestEncoding: config.digestEncoding,
 		// The secret is passed in; the env name is never read.
 		secretEnv: '',
 	}

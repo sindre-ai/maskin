@@ -22,10 +22,25 @@ export interface RemovalEntry {
 export const REMOVAL_LEDGER: readonly RemovalEntry[] = [
 	{
 		tool: 'run_agent',
-		removed: '2026-10-12',
-		sweepDate: '2026-10-15',
+		removed: '2026-11-11',
+		sweepDate: '2026-11-11',
 		decision:
-			'Removed in PR 1986. Restored as a listed alias of create_session (CTO decision D5): live in tools/list, see tool-aliases.ts. Not removed on a zero count alone; earliest removal is late January 2027, after another cross-workspace prompt sweep.',
+			'Deleted outright, with no alias. It was a listed alias of create_session (PR 1986, CTO decision D5). Use create_sub_chat, which returns at once and sends the result back when the agent finishes. Stored prompts and triggers in other workspaces that still name it now get an unknown-tool error and must be rewritten.',
+	},
+	{
+		tool: 'create_session',
+		removed: '2026-11-11',
+		sweepDate: '2026-11-11',
+		decision:
+			'Deleted outright, with no alias. It was the same handler as create_sub_chat under an older name. Use create_sub_chat. Stored prompts and triggers in other workspaces that still name it now get an unknown-tool error and must be rewritten.',
+	},
+	{
+		tool: 'create_sub_chat',
+		path: 'wait',
+		removed: '2026-11-11',
+		sweepDate: '2026-11-11',
+		decision:
+			'Removed on purpose: create_sub_chat never waits. It returns at once and the result always comes back as a new turn, so there is nothing to switch. A caller that still sends wait is ignored (the schema strips it).',
 	},
 	{
 		tool: 'search_objects',

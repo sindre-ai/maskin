@@ -7,11 +7,11 @@ let agentT0 = Date(timeIntervalSince1970: 1_790_000_000)
 
 func agentRow(
 	_ id: String, name: String? = nil, description: String? = nil, state: AgentStatus = .idle,
-	system: Bool = false
+	system: Bool = false, tags: [String] = []
 ) -> AgentSummary {
 	AgentSummary(
 		id: id, name: name ?? id.capitalized, description: description, isSystem: system,
-		storedState: state)
+		storedState: state, tags: tags)
 }
 
 func agentSession(

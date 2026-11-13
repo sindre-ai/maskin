@@ -50,6 +50,8 @@ export interface WebhookConfig {
 	signatureScheme: 'hmac-sha256' | 'hmac-sha1' | 'timestamp'
 	/** Prefix before the hex digest (e.g. 'sha256=' for GitHub) */
 	signaturePrefix?: string
+	/** How the HMAC digest is written: 'hex' (default) or 'base64'. Applies to all three schemes. */
+	digestEncoding?: 'hex' | 'base64'
 	/** Env var name for the webhook signing secret */
 	secretEnv: string
 	/** Header containing the event type (e.g. 'x-github-event') */

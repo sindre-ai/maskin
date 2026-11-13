@@ -55,7 +55,7 @@ describe('LoopFlow', () => {
 			},
 		)
 
-		expect(await screen.findByRole('heading', { name: 'Pipeline' })).toBeInTheDocument()
+		expect(await screen.findByRole('heading', { name: 'How it runs' })).toBeInTheDocument()
 		expect(screen.queryByText('The flow, right now')).not.toBeInTheDocument()
 		expect(screen.queryByText(/triggers on/)).not.toBeInTheDocument()
 	})
@@ -100,7 +100,7 @@ describe('LoopFlow', () => {
 	it("orders the steps by the flow's trigger order, else A to Z", async () => {
 		const names = () =>
 			within(screen.getByTestId('loop-pipeline'))
-				.getAllByRole('link', { name: /^(Relay|Compass)$/ })
+				.getAllByRole('link', { name: /(Relay|Compass)$/ })
 				.map((a) => a.textContent)
 
 		const { unmount } = render(
@@ -112,7 +112,8 @@ describe('LoopFlow', () => {
 			/>,
 			{ wrapper: wrapper() },
 		)
-		expect(names()).toEqual(['Relay', 'Compass'])
+		// Each link starts with the agent's avatar initials.
+		expect(names()).toEqual(['RERelay', 'COCompass'])
 		unmount()
 
 		render(
@@ -125,7 +126,7 @@ describe('LoopFlow', () => {
 				wrapper: wrapper(),
 			},
 		)
-		expect(names()).toEqual(['Compass', 'Relay'])
+		expect(names()).toEqual(['COCompass', 'RERelay'])
 	})
 
 	it('turns a trigger on or off from the card without opening it', async () => {
@@ -163,7 +164,7 @@ describe('LoopFlow', () => {
 		)
 
 		expect(await screen.findByText('No trigger')).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Compass' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Compass$/ })).toBeInTheDocument()
 	})
 
 	it('filters the columns by agent from the chips', async () => {

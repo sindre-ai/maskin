@@ -498,6 +498,22 @@ describe('Settings > Keys > Claude Subscriptions', () => {
 		expect(mockRename).not.toHaveBeenCalled()
 	})
 
+	it('puts the old nickname back and does not save when Esc is pressed', async () => {
+		const user = userEvent.setup()
+		mockStatus.mockResolvedValue(statusFixture([{ slot: 'primary', nickname: 'Old name' }]))
+
+		renderPage()
+
+		const input = await screen.findByTestId('slot-primary-nickname')
+		await user.clear(input)
+		await user.type(input, 'Half typed')
+		await user.keyboard('{Escape}')
+
+		expect(input).toHaveValue('Old name')
+		expect(input).not.toHaveFocus()
+		expect(mockRename).not.toHaveBeenCalled()
+	})
+
 	it('reverts the draft and shows an error when saving the nickname fails', async () => {
 		const user = userEvent.setup()
 		mockStatus.mockResolvedValue(statusFixture([{ slot: 'primary', nickname: 'Old name' }]))

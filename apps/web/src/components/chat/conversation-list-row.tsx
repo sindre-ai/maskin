@@ -22,6 +22,8 @@ interface ConversationListRowProps {
 	/** Unread replies in this chat's threads (0 when none). Chat unread and thread unread are
 	 *  separate reads, so a chat can look read while a thread inside it is not. */
 	threadUnread?: number
+	/** The row was clicked or opened with the keyboard (not the `···` menu). */
+	onOpen?: () => void
 }
 
 /**
@@ -34,6 +36,7 @@ export function ConversationListRow({
 	workspaceId,
 	conversation,
 	threadUnread = 0,
+	onOpen,
 }: ConversationListRowProps) {
 	// Counterparts first, the viewer last: a one-to-one thread reads as "the
 	// agent's row". A thread with nobody else falls back to its own participants.
@@ -70,6 +73,7 @@ export function ConversationListRow({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: conversation.id }}
+				onClick={onOpen}
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 			>
@@ -77,18 +81,13 @@ export function ConversationListRow({
 					// Several actors: the cluster the iPhone list draws, so nobody is hidden behind one icon.
 					<ConversationAvatarStack participants={others} className="mt-1 w-[46px]" />
 				) : lead ? (
-					// The row's title and snippet already name who is talking; agents get their pictogram.
+					// The row's title and snippet already name who is talking; agents show their initials too.
 					<ActorAvatar
 						name={lead.actorName}
 						type={lead.actorType}
 						id={lead.actorId}
 						size="md"
-						className={cn(
-							'mt-px size-8 shrink-0 rounded-[9px] text-[11px] font-bold',
-							isUnread
-								? 'bg-brand-subtle text-brand-subtle-foreground'
-								: 'bg-secondary text-foreground',
-						)}
+						className="mt-px size-8 shrink-0"
 					/>
 				) : null}
 				<div className="min-w-0 flex-1">

@@ -56,6 +56,7 @@ const PROVIDER_TAGLINES: Record<string, string> = {
 	'google-drive': 'Files',
 	'linkedin-unipile': 'Posting and outreach',
 	linear: 'Issues',
+	microsoft: 'Teams transcripts',
 	posthog: 'Product analytics',
 	resend: 'Email sending',
 	slack: 'Channels and triggers',
@@ -157,6 +158,13 @@ export function ProviderRow({
 		provider.name,
 	)
 
+	// A line a provider keeps on its own row (Microsoft: what it covers, or that the company's
+	// IT admin has not switched transcripts on). Written by the server, shown as is.
+	const statusNote =
+		isConnected && typeof integration.config?.status_note === 'string'
+			? integration.config.status_note
+			: null
+
 	const connectedLabel = isConnected
 		? needsReconnect
 			? missingSlackHistoryScopes
@@ -223,6 +231,7 @@ export function ProviderRow({
 			}
 			notes={
 				<>
+					{statusNote && <p className="text-xs text-muted-foreground">{statusNote}</p>}
 					{isDrive && (
 						<>
 							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
