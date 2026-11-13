@@ -26,7 +26,7 @@ private func room(
 
 private func build(
 	_ conversations: [ConversationSummary], flows: [TeamFlowRoom] = [], chip: TeamFilterChip = .all,
-	options: TeamDisplayOptions = .default, query: String = ""
+	options: TeamDisplayOptions = TeamDisplayOptions(grouping: .byTime), query: String = ""
 ) -> TeamLayout {
 	TeamLayout.build(
 		TeamLayout.Input(
