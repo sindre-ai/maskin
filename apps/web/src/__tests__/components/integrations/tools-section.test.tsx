@@ -151,6 +151,56 @@ describe('ToolsSection', () => {
 		)
 	})
 
+	it('saves when Enter is pressed in a text field', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
+		await user.type(screen.getByLabelText('Name'), 'Docs search')
+		await user.type(screen.getByLabelText('Command'), 'npx{Enter}')
+		expect(createServer).toHaveBeenCalledWith(
+			{ name: 'Docs search', server: { type: 'stdio', command: 'npx', args: [], env: {} } },
+			expect.anything(),
+		)
+	})
+
+	it('does not save on Enter while Save is disabled', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
+		await user.type(screen.getByLabelText('Name'), 'Docs search{Enter}')
+		expect(createServer).not.toHaveBeenCalled()
+	})
+
+	it('adds a row without saving the form', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
+		await user.type(screen.getByLabelText('Name'), 'Docs search')
+		await user.type(screen.getByLabelText('Command'), 'npx')
+		await user.click(screen.getByRole('button', { name: 'Add' }))
+		expect(screen.getByLabelText('Environment variables name')).toBeInTheDocument()
+		expect(createServer).not.toHaveBeenCalled()
+	})
+
+	it('cancels on Esc in a text field', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
+		await user.type(screen.getByLabelText('Name'), 'Docs search{Escape}')
+		expect(screen.queryByLabelText('Name')).toBeNull()
+	})
+
+	it('keeps the form when Esc closes the Transport dropdown', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
+		await user.click(screen.getByRole('combobox', { name: 'Transport' }))
+		await screen.findByRole('option', { name: 'HTTP' })
+		await user.keyboard('{Escape}')
+		expect(screen.queryByRole('option', { name: 'HTTP' })).toBeNull()
+		expect(screen.getByLabelText('Name')).toBeInTheDocument()
+	})
+
 	it('lets a header point at a saved credential instead of pasting the secret', async () => {
 		const user = userEvent.setup()
 		integrations = [
