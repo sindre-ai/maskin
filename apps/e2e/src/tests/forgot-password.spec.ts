@@ -70,4 +70,12 @@ test.describe('Forgot password', () => {
 		await page.getByRole('button', { name: 'Set new password' }).click()
 		await expect(page.getByText('Passwords do not match')).toBeVisible()
 	})
+
+	test('drops the token from the address and sends no referrer', async ({ page }) => {
+		await page.goto('/reset-password?token=rst_not-a-real-token')
+
+		await expect(page.getByRole('button', { name: 'Set new password' })).toBeVisible()
+		await expect(page).not.toHaveURL(/token/)
+		await expect(page.locator('meta[name="referrer"]')).toHaveAttribute('content', 'no-referrer')
+	})
 })
