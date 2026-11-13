@@ -31,6 +31,8 @@ export function AgentCreateForm({
 	const canWrite = useCanWrite()
 	const [name, setName] = useState('')
 	const hasAutoCreatedRef = useRef(false)
+	// Set by Esc so the blur it triggers puts the saved value back instead of saving the draft.
+	const skipBlurSaveRef = useRef(false)
 	const [descriptionDraft, setDescriptionDraft] = useState('')
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
 	const [llmProvider, setLlmProvider] = useState('anthropic')
@@ -46,16 +48,31 @@ export function AgentCreateForm({
 	}, [isValid, name, onAutoCreate])
 
 	const handleNameBlur = () => {
+		if (skipBlurSaveRef.current) {
+			skipBlurSaveRef.current = false
+			return
+		}
 		if (agent && name.trim() !== agent.name && onUpdate) {
 			onUpdate({ name: name.trim() })
 		}
 	}
 
 	const handleDescriptionBlur = () => {
+		if (skipBlurSaveRef.current) {
+			skipBlurSaveRef.current = false
+			return
+		}
 		const next = descriptionDraft.trim()
 		if (agent && next !== (agent.description ?? '') && onUpdate) {
 			onUpdate({ description: next })
 		}
+	}
+
+	const handleEscape = (e: React.KeyboardEvent<HTMLElement>, revert: () => void) => {
+		if (e.key !== 'Escape') return
+		skipBlurSaveRef.current = true
+		revert()
+		e.currentTarget.blur()
 	}
 
 	const handleSystemPromptBlur = () => {
@@ -89,7 +106,10 @@ export function AgentCreateForm({
 						e.target.style.height = `${e.target.scrollHeight}px`
 					}}
 					onBlur={handleNameBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter') e.currentTarget.blur()
+						handleEscape(e, () => setName(agent?.name ?? ''))
+					}}
 					placeholder={canWrite ? 'Agent name' : VIEWER_READ_ONLY_MESSAGE}
 					disabled={!canWrite}
 					// biome-ignore lint/a11y/noAutofocus: focus title on create
@@ -112,7 +132,10 @@ export function AgentCreateForm({
 					value={descriptionDraft}
 					onChange={(e) => setDescriptionDraft(e.target.value)}
 					onBlur={handleDescriptionBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter') e.currentTarget.blur()
+						handleEscape(e, () => setDescriptionDraft(agent?.description ?? ''))
+					}}
 					placeholder={
 						canWrite ? 'Short description shown on the Agents page' : VIEWER_READ_ONLY_MESSAGE
 					}

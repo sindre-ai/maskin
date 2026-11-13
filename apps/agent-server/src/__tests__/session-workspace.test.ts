@@ -43,6 +43,10 @@ class InMemoryStorage implements StorageProvider {
 		return value
 	}
 
+	async getStream(key: string): Promise<Readable> {
+		return Readable.from(await this.get(key))
+	}
+
 	async list(prefix: string): Promise<string[]> {
 		return Array.from(this.objects.keys()).filter((k) => k.startsWith(prefix))
 	}
@@ -81,6 +85,9 @@ class InMemoryStorage implements StorageProvider {
 		return value ? { size: value.byteLength } : null
 	}
 	async presignDownload(): Promise<string> {
+		throw new Error('Presign not exercised by this test')
+	}
+	async presignUpload(): Promise<string> {
 		throw new Error('Presign not exercised by this test')
 	}
 

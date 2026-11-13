@@ -196,6 +196,7 @@
 		"desktop_list_ports": ["agent_id", "workspace_id"],
 		"desktop_move": ["agent_id", "workspace_id", "x", "y"],
 		"desktop_run": ["agent_id", "command", "timeout_s", "workspace_id"],
+		"desktop_save_file": ["agent_id", "name", "path", "workspace_id"],
 		"desktop_screenshot": ["agent_id", "workspace_id"],
 		"desktop_scroll": ["agent_id", "amount", "direction", "workspace_id", "x", "y"],
 		"desktop_type": ["agent_id", "text", "workspace_id"],
@@ -407,6 +408,7 @@
 		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
+		"transcribe_file": ["id", "language", "workspace_id"],
 		"traverse_graph": [
 			"direction",
 			"edge_type_allow_list",
