@@ -107,9 +107,9 @@ test.describe('Chats v2 — grouped list', () => {
 
 		await page.goto(`/${account.workspaceId}/chats`)
 		await expect(list.getByText(chats.plain)).toBeVisible({ timeout: 15_000 })
-		// Pinned sorts above Unread and Earlier; a chat the viewer wrote last is read.
+		// Pinned chats lead the Agents view, and a chat with no agent in it is a plain row under Agents.
 		await expect(list.getByText('Pinned', { exact: true })).toBeVisible()
-		await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
+		await expect(list.getByText('Agents', { exact: true })).toBeVisible()
 	})
 })
 
@@ -260,7 +260,7 @@ test.describe('Chats v2 — list title and column', () => {
 			if (vp.width < 768) expect(Math.abs((box?.y ?? 0) - 20)).toBeLessThanOrEqual(3)
 
 			// Section headers are present, and the list sits below the title row.
-			await expect(list.getByText('Earlier', { exact: true })).toBeVisible()
+			await expect(list.getByText('Agents', { exact: true })).toBeVisible()
 			expect((listBox?.y ?? 0) >= (box?.y ?? 0) + (box?.height ?? 0) - 1).toBe(true)
 			await expectNoHorizontalOverflow(page)
 

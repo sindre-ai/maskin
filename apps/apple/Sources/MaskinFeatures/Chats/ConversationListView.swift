@@ -282,7 +282,7 @@ struct ConversationListView: View {
 				var status = store.status(
 					for: p.latest, displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID),
 					me: currentActorID)
-				status.preview = "\(p.conversations.count) conversations · \(ChatPreviewText.plain(p.latest.title))"
+				status.preview = "\(p.conversations.count) chats · \(TeamLayout.chatLabel(p.latest))"
 				return status
 			}
 			return store.status(
@@ -456,6 +456,10 @@ struct ConversationListView: View {
 	/// The active chats: filter chips, the Pinned rows, then the day or person sections.
 	@ViewBuilder
 	private func activeContent(layout: TeamLayout, now: Date) -> some View {
+			if store.displayOptions.isSectioned, !layout.isFiltering, !picking.isActive {
+				TeamListViewSwitch(selection: $store.displayOptions.listView)
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+			}
 			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
 				TeamFilterChips(
 					chip: $store.chip, unreadCount: layout.unreadCount,
@@ -664,7 +668,7 @@ struct TeamConversationRow: View {
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s4) {
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				Text(ChatPreviewText.plain(conversation.title))
+				Text(TeamLayout.chatLabel(conversation))
 					.maskinText(.body)
 					.fontWeight(conversation.isUnread ? .bold : .semibold)
 					.foregroundStyle(MaskinColor.ink)

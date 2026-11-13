@@ -11,7 +11,10 @@ import {
 	trackChatOpenedFromList,
 } from '@/lib/analytics'
 import { type ConversationListItemResponse, api } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
+import { type ChatListView, DEFAULT_CHAT_LIST_VIEW } from '@/lib/chat-list-view'
 import { cn } from '@/lib/cn'
+import { groupByAgent } from '@/lib/conversation-agent-rows'
 import { groupConversations } from '@/lib/conversation-groups'
 import { type LoadedList, activityTime } from '@/lib/conversation-search'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
@@ -20,6 +23,7 @@ import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from '
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
+import { ConversationAgentRow } from './conversation-agent-row'
 import { ConversationListRow } from './conversation-list-row'
 import { ConversationSearchResults } from './conversation-search-results'
 import { ReplyThreadList } from './replies/reply-thread-list'
@@ -143,6 +147,9 @@ interface ConversationListProps {
 	/** Hide the "Start a new one" link in the empty state — set beside the new
 	 *  chat screen, where the link would point at the page the reader is on. */
 	hideStartLink?: boolean
+	/** Agents folds each agent's chats into one row; Recent is the flat newest-first list. Only the
+	 *  full list ("All", no search) takes a view; the other filters stay single lists. */
+	view?: ChatListView
 }
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
@@ -174,6 +181,7 @@ const SEARCH_SETTLE_MS = 1000
 function sectionOfGroup(groupKey: string): ChatListSection {
 	if (groupKey === 'rooms') return 'room'
 	if (groupKey === 'pinned') return 'pinned'
+	if (groupKey === 'agents') return 'agent'
 	if (groupKey === 'unread') return 'unread'
 	return 'recent'
 }
@@ -200,6 +208,7 @@ function ChatConversationList({
 	className,
 	expanded,
 	hideStartLink,
+	view = DEFAULT_CHAT_LIST_VIEW,
 }: ConversationListProps) {
 	// Omit `archived` unless it's the active filter — the backend already
 	// defaults the list to non-archived conversations (see
@@ -340,17 +349,36 @@ function ChatConversationList({
 			oldestActivityAt: rows.length > 0 ? Math.min(...rows.map(activityTime)) : null,
 		}
 	}, [scoped, recentData, fetched, hasNextPage, priorityHasMore, isLoading])
-	const groups = groupConversations(conversations, {
-		mode: filter === 'archived' ? 'archived' : 'unread',
-	})
+	// Only the full list ("All") takes a view; the other filters stay single lists.
+	const viewed = filter === 'all'
+	const groups =
+		viewed && view === 'agents'
+			? groupByAgent(conversations, getStoredActor()?.id)
+			: groupConversations(conversations, {
+					mode:
+						filter === 'archived' ? 'archived' : viewed && view === 'recent' ? 'recent' : 'unread',
+				})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 	// Where each row on screen sits, for the "opened from the list" event. Rows in a folded group
 	// are not on screen, so they take no place.
 	const placeById = new Map<string, { section: ChatListSection; position: number }>()
+	let position = 0
 	for (const group of groups) {
 		if (collapsed.has(group.key)) continue
 		const section = sectionOfGroup(group.key)
-		for (const c of group.items) placeById.set(c.id, { section, position: placeById.size + 1 })
+		if (group.entries) {
+			// An agent row is one place; the chats folded under it share it.
+			for (const entry of group.entries) {
+				position += 1
+				const chats = entry.kind === 'agent' ? entry.conversations : [entry.conversation]
+				for (const c of chats) placeById.set(c.id, { section, position })
+			}
+			continue
+		}
+		for (const c of group.items) {
+			position += 1
+			placeById.set(c.id, { section, position })
+		}
 	}
 	const searching = needle !== ''
 	// Only list rows come through here; while words are typed the rows are search hits, which
@@ -514,7 +542,7 @@ function ChatConversationList({
 											/>
 											<span>{group.label}</span>
 											<span className="font-medium text-muted-foreground">
-												{group.items.length}
+												{group.entries?.length ?? group.items.length}
 											</span>
 										</button>
 										{group.key === 'unread' ? (
@@ -527,15 +555,37 @@ function ChatConversationList({
 											</button>
 										) : null}
 									</div>
-									{(collapsed.has(group.key) ? [] : group.items).map((c) => (
-										<ConversationListRow
-											key={c.id}
-											workspaceId={workspaceId}
-											conversation={c}
-											threadUnread={threadUnreadByChat.get(c.id) ?? 0}
-											onOpen={() => trackOpened(c.id)}
-										/>
-									))}
+									{collapsed.has(group.key)
+										? null
+										: group.entries
+											? group.entries.map((entry) =>
+													entry.kind === 'agent' ? (
+														<ConversationAgentRow
+															key={entry.key}
+															workspaceId={workspaceId}
+															entry={entry}
+															threadUnreadByChat={threadUnreadByChat}
+															onOpen={trackOpened}
+														/>
+													) : (
+														<ConversationListRow
+															key={entry.key}
+															workspaceId={workspaceId}
+															conversation={entry.conversation}
+															threadUnread={threadUnreadByChat.get(entry.conversation.id) ?? 0}
+															onOpen={() => trackOpened(entry.conversation.id)}
+														/>
+													),
+												)
+											: group.items.map((c) => (
+													<ConversationListRow
+														key={c.id}
+														workspaceId={workspaceId}
+														conversation={c}
+														threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+														onOpen={() => trackOpened(c.id)}
+													/>
+												))}
 								</div>
 							))}
 							{hasNextPage ? (

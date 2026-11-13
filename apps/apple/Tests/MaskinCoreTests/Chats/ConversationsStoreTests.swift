@@ -642,6 +642,7 @@ struct ConversationsStoreTeamTests {
 	func markAllReadFromLayout() async {
 		let api = TeamFakeAPI(active: [chatConvo("u1", unread: 2), chatConvo("u2", unread: 1), chatConvo("r")])
 		let store = ConversationsStore(api: api, events: nil)
+		store.displayOptions.grouping = .byTime
 		await store.start()
 		let ids = store.layout(currentActorID: "me").section("unread")?.unreadConversationIDs ?? []
 		#expect(Set(ids) == ["u1", "u2"])

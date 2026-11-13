@@ -4,8 +4,8 @@ import Foundation
 /// and property values (`chat_opened_from_list`, `chat_list_search_used`), categories only: never a
 /// chat title, the search text or a chat id.
 ///
-/// `section` is the list section the opened row sat in. `agent` is set by the rows that add it;
-/// until then direct messages and every dated or person group read as `recent`, like the web list.
+/// `section` is the list section the opened row sat in. `agent` is a row of the Agents view; every
+/// dated or person group and the flat list read as `recent`, like the web list.
 /// A row in the Rooms section reads as `room`, even when it is pinned.
 public enum ChatListTracking {
 	public enum Section: String, Sendable {
@@ -79,6 +79,8 @@ extension TeamLayout {
 				switch section.kind {
 				case .rooms: .room
 				case .unread: .unread
+				// The Agents view's rows; a chat folded under an agent reports its agent row's place.
+				case .people where section.id == "agents": .agent
 				default: .recent
 				}
 			for row in section.rows {
