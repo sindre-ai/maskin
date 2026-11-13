@@ -102,8 +102,14 @@ describe('DriverWaker', () => {
 			type,
 		})
 
-	// A status change on `objectId` by `actorId`, as PATCH /objects writes it, handed to the waker.
-	async function moved(objectId: string, type: string, from: string, to: string, actorId: string) {
+	// A status change on `objectId` by `actorId`, as PATCH /objects writes it.
+	async function change(
+		objectId: string,
+		type: string,
+		from: string,
+		to: string,
+		actorId: string,
+	): Promise<PgEvent> {
 		await db.update(objects).set({ status: to }).where(eq(objects.id, objectId))
 		const row = await recordEventReturning(db, {
 			workspaceId,
@@ -113,7 +119,7 @@ describe('DriverWaker', () => {
 			entityId: objectId,
 			data: { changes: [{ field: 'status', old: from, new: to }] },
 		})
-		const event: PgEvent = {
+		return {
 			workspace_id: workspaceId,
 			actor_id: actorId,
 			action: 'status_changed',
@@ -121,7 +127,11 @@ describe('DriverWaker', () => {
 			entity_id: objectId,
 			event_id: String(row.id),
 		}
-		await waker.onStatusChanged(event)
+	}
+
+	// The same change, handed to the waker.
+	async function moved(objectId: string, type: string, from: string, to: string, actorId: string) {
+		await waker.onStatusChanged(await change(objectId, type, from, to, actorId))
 	}
 
 	const flushAll = (driver: string, objectId: string) => waker.flush(`${driver}:${objectId}`)
@@ -354,6 +364,77 @@ describe('DriverWaker', () => {
 		expect(wokenEvents()).toEqual([
 			expect.objectContaining({ outcome: 'dropped_other_mechanism', drop_reason: 'not_admitted' }),
 		])
+	})
+
+	it('drops a wake when a trigger started a run before the wake was held', async () => {
+		const task = await makeObject('task', 'in_review')
+
+		// The trigger's session lands right after the change, before the waker has looked at it.
+		const event = await change(task.id, 'task', 'in_review', 'todo', otherAgentId)
+		await insertSession(db, workspaceId, driverId, driverId, {
+			status: 'completed',
+			initiatedFromObjectId: task.id,
+			completedAt: new Date(),
+		})
+		await waker.onStatusChanged(event)
+		await flushAll(driverId, task.id)
+
+		expect(startSessionMock).not.toHaveBeenCalled()
+		expect(wokenEvents()).toEqual([expect.objectContaining({ drop_reason: 'run_already_started' })])
+	})
+
+	it('starts one session and reports no drop when two servers hold the same wake', async () => {
+		const task = await makeObject('task', 'in_review')
+		const second = new DriverWaker(db, { on() {}, off() {} } as unknown as PgNotifyBridge, {
+			settleMs: 60 * MINUTE,
+		})
+
+		const event = await change(task.id, 'task', 'in_review', 'in_progress', otherAgentId)
+		await waker.onStatusChanged(event)
+		await second.onStatusChanged(event)
+		await Promise.all([flushAll(driverId, task.id), second.flush(`${driverId}:${task.id}`)])
+		second.stop()
+
+		expect(startSessionMock).toHaveBeenCalledTimes(1)
+		expect(wokenEvents()).toEqual([])
+	})
+
+	it('counts the woken session itself toward the hourly limit', async () => {
+		const task = await makeObject('task', 'in_review')
+
+		await moved(task.id, 'task', 'in_review', 'in_progress', otherAgentId)
+		await flushAll(driverId, task.id)
+		expect(startSessionMock).toHaveBeenCalledTimes(1)
+
+		// The wake row failed to save, but the session it started is there.
+		await db.delete(events).where(eq(events.action, DRIVER_WOKEN_ACTION))
+		await db
+			.update(sessions)
+			.set({ status: 'completed', completedAt: new Date() })
+			.where(eq(sessions.initiatedFromObjectId, task.id))
+		await moved(task.id, 'task', 'in_progress', 'in_review', otherAgentId)
+		await flushAll(driverId, task.id)
+
+		expect(startSessionMock).toHaveBeenCalledTimes(1)
+		expect(wokenEvents()).toEqual([expect.objectContaining({ drop_reason: 'rate_limited' })])
+	})
+
+	it('records nothing for a start that fails, so the next change wakes the driver', async () => {
+		const task = await makeObject('task', 'in_review')
+		startSessionMock.mockRejectedValueOnce(
+			new SessionNotAdmittedError('continuation_cap', 'blocked', 'driver_wake', null, 'capped'),
+		)
+
+		await moved(task.id, 'task', 'in_review', 'in_progress', otherAgentId)
+		await flushAll(driverId, task.id)
+		expect(startSessionMock).toHaveBeenCalledTimes(1)
+		expect(await db.select().from(events).where(eq(events.action, DRIVER_WOKEN_ACTION))).toEqual([])
+
+		await moved(task.id, 'task', 'in_progress', 'in_review', otherAgentId)
+		await flushAll(driverId, task.id)
+
+		expect(startSessionMock).toHaveBeenCalledTimes(2)
+		expect(await wakeSessions(task.id)).toHaveLength(1)
 	})
 
 	it('sends the outcome when the woken run ends', async () => {

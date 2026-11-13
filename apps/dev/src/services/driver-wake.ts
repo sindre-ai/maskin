@@ -25,6 +25,11 @@
  *
  * The held wakes live in memory. A restart loses the ones still waiting to settle; the sweep for
  * overdue next steps is the backstop for those.
+ *
+ * Every server instance sees the same change and holds the same wake. They queue on an advisory lock
+ * per driver and object, and the one that comes second finds the first one's session and reports
+ * nothing. The session carries its wake reasons in its config, so it is the record of the wake even
+ * if the driver_woken row failed to save.
  */
 import type { Database, Transaction } from '@maskin/db'
 import {
@@ -42,7 +47,7 @@ import {
 	parseCommentDecision,
 	readChanges,
 } from '@maskin/shared'
-import { and, eq, gt, gte, inArray, notInArray, sql } from 'drizzle-orm'
+import { and, eq, gt, gte, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { isActorHumanPaused } from '../lib/agent-pause'
 import {
 	type DriverWakeDropReason,
@@ -189,16 +194,18 @@ interface WakeRequest {
 	objectId: string
 	reason: DriverWakeReason
 	changedObjectId: string
+	/** When the change happened. A run another mechanism started for it can be no older than this. */
+	changedAt: Date
 }
 
-/** What the wake transaction came to: dropped with a reason, or a session started for `fresh` reasons. */
+/**
+ * What the wake transaction came to: another server already woke the driver for this change
+ * (nothing to report), dropped with a reason, or a session started for `fresh` reasons.
+ */
 type WakeAttempt =
+	| { peerWoke: true }
 	| { dropped: DriverWakeDropReason }
-	| {
-			dropped?: undefined
-			started: Awaited<ReturnType<typeof startSession>>
-			fresh: DriverWakeReason[]
-	  }
+	| { started: Awaited<ReturnType<typeof startSession>>; fresh: DriverWakeReason[] }
 
 interface Held {
 	workspaceId: string
@@ -294,13 +301,14 @@ export class DriverWaker {
 	async onStatusChanged(event: PgEvent): Promise<void> {
 		if (!this.enabled(event.workspace_id)) return
 		const [row] = await this.db
-			.select({ data: events.data })
+			.select({ data: events.data, createdAt: events.createdAt })
 			.from(events)
 			.where(eq(events.id, Number(event.event_id)))
 			.limit(1)
 		const change = readChanges(row?.data)?.find((c) => c.field === 'status')
 		if (!change || typeof change.new !== 'string') return
 		const newStatus = change.new
+		const changedAt = row?.createdAt ?? this.now()
 
 		const [obj] = await this.db
 			.select({
@@ -323,6 +331,7 @@ export class DriverWaker {
 				objectId: target.id,
 				reason,
 				changedObjectId: obj.id,
+				changedAt,
 			})
 		}
 
@@ -467,6 +476,7 @@ export class DriverWaker {
 			objectId: obj.id,
 			reason: 'decision_expired',
 			changedObjectId: obj.id,
+			changedAt: this.now(),
 		})
 	}
 
@@ -480,12 +490,13 @@ export class DriverWaker {
 				workspaceId: req.workspaceId,
 				driverId: req.driverId,
 				objectId: req.objectId,
-				since: this.now(),
+				since: req.changedAt,
 				reasons: new Map(),
 				timer: null,
 			}
 			this.held.set(key, held)
 		}
+		if (req.changedAt < held.since) held.since = req.changedAt
 		const changed = held.reasons.get(req.reason) ?? new Set<string>()
 		changed.add(req.changedObjectId)
 		held.reasons.set(req.reason, changed)
@@ -555,22 +566,6 @@ export class DriverWaker {
 		const reasons = [...held.reasons.keys()]
 		if (await isActorHumanPaused(this.db, held.driverId)) return this.drop(held, reasons, 'paused')
 
-		// A run the driver already has on the object since the change: an event trigger or the
-		// comment dispatcher got there first.
-		const [existing] = await this.db
-			.select({ id: sessions.id })
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.workspaceId, held.workspaceId),
-					eq(sessions.actorId, held.driverId),
-					eq(sessions.initiatedFromObjectId, held.objectId),
-					gte(sessions.createdAt, held.since),
-				),
-			)
-			.limit(1)
-		if (existing) return this.drop(held, reasons, 'run_already_started')
-
 		const [object] = await this.db
 			.select({ id: objects.id, type: objects.type, title: objects.title, status: objects.status })
 			.from(objects)
@@ -587,14 +582,36 @@ export class DriverWaker {
 
 		const handle: WakeAttempt = await this.db
 			.transaction(async (tx): Promise<WakeAttempt> => {
-				const [lock] = (await tx.execute(
-					sql`SELECT pg_try_advisory_xact_lock(hashtext(${`driver-wake:${held.driverId}:${held.objectId}`})) AS locked`,
-				)) as unknown as Array<{ locked: boolean } | undefined>
-				if (!lock?.locked) return { dropped: 'rate_limited' }
+				// Every server sees the same change and holds the same wake. They queue on this lock, so
+				// whoever comes second finds what the first one did.
+				await tx.execute(
+					sql`SELECT pg_advisory_xact_lock(hashtext(${`driver-wake:${held.driverId}:${held.objectId}`}))`,
+				)
 
+				// Another server woke the driver for this change while we waited. Nothing to report: the
+				// wake happened, and a dropped event here would count one wake twice.
+				if (await this.wokeSince(tx, held, reasons, held.since)) return { peerWoke: true }
+
+				// A run the driver already has on the object since the change: an event trigger or the
+				// comment dispatcher got there first.
+				const [existing] = await tx
+					.select({ id: sessions.id })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.workspaceId, held.workspaceId),
+							eq(sessions.actorId, held.driverId),
+							eq(sessions.initiatedFromObjectId, held.objectId),
+							gte(sessions.createdAt, held.since),
+						),
+					)
+					.limit(1)
+				if (existing) return { dropped: 'run_already_started' }
+
+				const windowStart = new Date(this.now().getTime() - WAKE_WINDOW_MS)
 				const fresh: DriverWakeReason[] = []
 				for (const reason of reasons) {
-					if (!(await this.wokeRecently(tx, held, reason))) fresh.push(reason)
+					if (!(await this.wokeSince(tx, held, [reason], windowStart))) fresh.push(reason)
 				}
 				if (fresh.length === 0) return { dropped: 'rate_limited' }
 
@@ -640,7 +657,8 @@ export class DriverWaker {
 				throw err
 			})
 
-		if (handle.dropped) return this.drop(held, reasons, handle.dropped)
+		if ('peerWoke' in handle) return
+		if ('dropped' in handle) return this.drop(held, reasons, handle.dropped)
 
 		// The session is the object's live one, as the task restarter links it.
 		await this.db
@@ -651,10 +669,17 @@ export class DriverWaker {
 		if (rateLimited.length > 0) await this.drop(held, rateLimited, 'rate_limited')
 	}
 
-	private async wokeRecently(
+	/**
+	 * Whether the driver was woken on the object for any of `reasons` since `after`. Two records
+	 * say yes: the driver_woken row, and the session itself, which carries the reasons in its config.
+	 * The session is written by startSession in one step, so a wake whose row failed to save still
+	 * counts, and a start that threw (nothing written) counts for nothing.
+	 */
+	private async wokeSince(
 		db: Database | Transaction,
 		held: Held,
-		reason: DriverWakeReason,
+		reasons: DriverWakeReason[],
+		after: Date,
 	): Promise<boolean> {
 		const [row] = await db
 			.select({ id: events.id })
@@ -664,13 +689,32 @@ export class DriverWaker {
 					eq(events.workspaceId, held.workspaceId),
 					eq(events.actorId, held.driverId),
 					eq(events.action, DRIVER_WOKEN_ACTION),
-					gte(events.createdAt, new Date(this.now().getTime() - WAKE_WINDOW_MS)),
+					gte(events.createdAt, after),
 					sql`${events.data}->>'object_id' = ${held.objectId}`,
-					sql`${events.data}->>'reason' = ${reason}`,
+					inArray(sql`${events.data}->>'reason'`, reasons),
 				),
 			)
 			.limit(1)
-		return !!row
+		if (row) return true
+		const [session] = await db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, held.workspaceId),
+					eq(sessions.actorId, held.driverId),
+					eq(sessions.initiatedFromObjectId, held.objectId),
+					gte(sessions.createdAt, after),
+					or(
+						...reasons.map(
+							(r) =>
+								sql`(${sessions.config})::jsonb->'driver_wake'->'reasons' @> ${JSON.stringify([r])}::jsonb`,
+						),
+					),
+				),
+			)
+			.limit(1)
+		return !!session
 	}
 
 	// ── When a run ends ─────────────────────────────────────────────────────
