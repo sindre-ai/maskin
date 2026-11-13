@@ -1645,7 +1645,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 })
 
 // GET /{id}/graph/traverse - Bounded multi-hop BFS across the relationships
-// table starting at {id}. Returns nodes (objects only) + edges as flat lists.
+// table starting at {id}. Returns nodes (objects, files, chats and sessions) + edges as flat lists.
 // Bounds: depth cap, node cap, and their product ceiling (5000). Cycles are
 // broken by a visited set keyed on object id, so a workspace with a
 // `supersedes`/`contradicts` loop returns a bounded, terminating response.
@@ -1682,7 +1682,7 @@ const traverseGraphRoute = createRoute({
 	tags: ['Objects'],
 	summary: 'Bounded multi-hop graph traversal from an object',
 	description:
-		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.",
+		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.",
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,

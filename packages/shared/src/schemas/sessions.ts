@@ -171,6 +171,9 @@ export const createSessionSchema = z.object({
 	// started it when this one ends. Stored in config only when the spawn link
 	// is accepted; unset keeps the return exactly as it is without the flag.
 	notify_on_complete: z.boolean().optional(),
+	// Workspace files handed to the session. Listed by name and id after the action prompt,
+	// so a helper started from a chat gets the files its sender was working with.
+	file_ids: z.array(z.string().uuid()).max(20).optional(),
 })
 
 export const sessionQuerySchema = z.object({
