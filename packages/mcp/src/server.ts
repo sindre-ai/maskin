@@ -36,6 +36,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
+import { stashRenames, takeRenames, withRenameNotice } from './alias-notice.js'
+import { ALWAYS_LOAD_META_KEY, ALWAYS_LOAD_TOOLS } from './always-load.js'
 import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
 import {
 	CURSOR_MAX_OFFSET,
@@ -69,6 +71,7 @@ import {
 	toolErrorResponse,
 } from './read-error.js'
 import { RESUME_CURSOR, applyResponseTokenCap } from './response-cap.js'
+import { SERVER_INSTRUCTIONS } from './server-instructions.js'
 import {
 	type ApiCaller as SetupApiCaller,
 	buildActorSetupBlockFromApi,
@@ -3535,10 +3538,13 @@ const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
 ])
 
 export function createMcpServer(config: McpConfig) {
-	const server = new McpServer({
-		name: 'maskin',
-		version: '0.1.0',
-	})
+	const server = new McpServer(
+		{
+			name: 'maskin',
+			version: '0.1.0',
+		},
+		{ instructions: SERVER_INSTRUCTIONS },
+	)
 
 	// Populated inside the `registerAppTool` wrapper below as each tool is
 	// registered — one entry per tool, keyed by the same name the SDK indexes.
@@ -3609,6 +3615,8 @@ export function createMcpServer(config: McpConfig) {
 								// fails validation is still counted. Fire and forget; key names
 								// only. A separate event type from tool_call, so the server-side
 								// trace is not double counted.
+								// The reply tells the agent which names to use next time.
+								stashRenames(name, renames)
 								if (renames.length > 0 || toolAlias) {
 									recordAliasUse(telemetrySink, telemetryTarget, {
 										tool_name: name,
@@ -3635,6 +3643,8 @@ export function createMcpServer(config: McpConfig) {
 
 		const wrappedHandler = async (args: unknown, extra: unknown) => {
 			const start = Date.now()
+			// Read before the handler runs: the schema step stashed these for this call.
+			const renames = takeRenames(name)
 			let response: unknown
 			try {
 				assertWriteStaysInSessionWorkspace(config, name, args)
@@ -3660,7 +3670,7 @@ export function createMcpServer(config: McpConfig) {
 					// log the raw error here — this is the only place the original
 					// stack trace is still available.
 					console.error(`[MCP] Read tool "${name}" failed:`, err)
-					const errorResponse = toolErrorResponse(name, err)
+					const errorResponse = withRenameNotice(toolErrorResponse(name, err), renames)
 					recordToolCallResponseSize(telemetrySink, telemetryTarget, {
 						tool_name: name,
 						content: errorResponse.content,
@@ -3706,7 +3716,7 @@ export function createMcpServer(config: McpConfig) {
 			// telemetry event measures the shipped payload — the size event and
 			// the wire response see the same, capped shape.
 			const capped = applyResponseTokenCap(name, response)
-			const finalResponse = capped.response
+			const finalResponse = withRenameNotice(capped.response, renames)
 
 			// Response-size baseline for response-size telemetry. Measures the
 			// two channels MCP serializes onto the wire — `content`
@@ -3761,6 +3771,9 @@ export function createMcpServer(config: McpConfig) {
 		const annotatedDefinition = annotation
 			? {
 					...definition,
+					...(ALWAYS_LOAD_TOOLS.has(name)
+						? { _meta: { ...definition?._meta, [ALWAYS_LOAD_META_KEY]: true } }
+						: {}),
 					title: annotation.title,
 					annotations: {
 						readOnlyHint: annotation.readOnlyHint,
