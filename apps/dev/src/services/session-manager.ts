@@ -92,6 +92,7 @@ import {
 	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
+	classifyUnclassifiedExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
 	isCreditBalanceLowText,
@@ -573,7 +574,7 @@ function classifyExit(args: {
 }): TerminalClassification {
 	if (args.userStopped) return 'human_stop'
 	if (args.status === 'completed') return 'agent_completed'
-	if (!args.failureReason) return 'unknown'
+	if (!args.failureReason || args.failureReason.reason_code === 'unclassified') return 'unknown'
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
@@ -4645,7 +4646,11 @@ ${cont.continues_prompt}
 						reset_at: null,
 						verbatim_output: null,
 					}
-				: null)
+				: // A non-zero exit that nothing recognised is never saved bare: it gets an explicit
+					// reason, and settleSession tells the owner. A stop someone asked for is not a death.
+					exitCode !== null && exitCode !== 0 && !this.stopRequested.has(sessionId)
+					? classifyUnclassifiedExit(stdoutTail)
+					: null)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 		// A stop the user asked for ends as user_stopped, not failed. A budget stop
 		// also goes through stopSession (so it sits in stopRequested too) but it is
@@ -6772,7 +6777,14 @@ ${cont.continues_prompt}
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
+			!stoppedByUser && exitCode !== null
+				? (classifySessionExit(stdoutTail, exitCode) ??
+					// Same rule as handleCompletion: a non-zero exit nothing recognised gets an explicit
+					// reason, unless a person asked for the stop.
+					(exitCode !== 0 && !this.stopRequested.has(sessionId)
+						? classifyUnclassifiedExit(stdoutTail)
+						: null))
+				: null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,
