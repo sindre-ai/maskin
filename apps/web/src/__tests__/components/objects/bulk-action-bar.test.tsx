@@ -238,13 +238,15 @@ describe('BulkActionBar', () => {
 		popper.setAttribute('data-radix-popper-content-wrapper', '')
 		document.body.appendChild(popper)
 		// Radix dismisses from a document capture listener and the content can be
-		// gone by the time the bubble listener on window runs.
-		const dismiss = () => document.body.removeChild(popper)
+		// gone by the time the bubble listener on window runs. Dispatch at body, not
+		// window: an event aimed at window never passes through document.
+		const dismiss = () => popper.remove()
 		document.addEventListener('keydown', dismiss, true)
 		act(() => {
-			fireEvent.keyDown(window, { key: 'Escape' })
+			fireEvent.keyDown(document.body, { key: 'Escape' })
 		})
 		document.removeEventListener('keydown', dismiss, true)
+		expect(popper.isConnected).toBe(false)
 		expect(props.onClear).not.toHaveBeenCalled()
 	})
 
