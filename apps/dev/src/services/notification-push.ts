@@ -9,6 +9,7 @@ import {
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { FOR_YOU_KIND, parseCommentDecision } from '@maskin/shared'
 import { and, count, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { trackNotificationSent } from '../lib/analytics/notification-events'
 import { logger } from '../lib/logger'
 import {
 	DEFAULT_PUSH_PREFS,
@@ -316,6 +317,7 @@ export class NotificationPushFanout {
 				body: null,
 				workspaceId: n.workspaceId,
 				notificationId: n.id,
+				notificationType: n.type,
 				objectId: null,
 				conversationId: null,
 				decision: null,
@@ -333,6 +335,7 @@ export class NotificationPushFanout {
 				body: due ? withDeadline(body, due, now, prefs.timezone) : body,
 				workspaceId: n.workspaceId,
 				notificationId: n.id,
+				notificationType: n.type,
 				objectId: n.objectId,
 				conversationId,
 				threadRootId: typeof meta.thread_root_id === 'number' ? meta.thread_root_id : null,
@@ -344,6 +347,16 @@ export class NotificationPushFanout {
 		}
 
 		this.record(n, meta, category, verdict, nowMs)
+		// One per notification that goes out as a push, whatever the channels: the ledger above
+		// stops a second send from this process, and a skipped or delayed one never gets here.
+		void trackNotificationSent({
+			workspaceId: n.workspaceId,
+			actorId: targetActorId,
+			notificationId: n.id,
+			notificationType: n.type,
+			category,
+			rollup: verdict.action === 'rollup',
+		})
 		// allSettled: a channel that throws (sendToActor should not) must not starve the others.
 		const wanted = channelsWanted(prefs, category)
 		const targets = channels.filter((c) => c.channelKind === undefined || wanted[c.channelKind])

@@ -98,6 +98,13 @@ describe('buildApnsPayload', () => {
 			notification_id: 'n-1',
 		})
 	})
+	it('carries the notification type for the app to count an open, only when known', () => {
+		expect(buildApnsPayload({ ...msg, notificationType: 'needs_input' })).toMatchObject({
+			notification_id: 'n-1',
+			notification_type: 'needs_input',
+		})
+		expect(buildApnsPayload(msg)).not.toHaveProperty('notification_type')
+	})
 	it('prefers the chat for deep link and thread, and falls back to the inbox', () => {
 		expect(deepLinkFor({ ...msg, conversationId: 'c-1' })).toBe('maskin://ws-1/chats/c-1')
 		expect(buildApnsPayload({ ...msg, conversationId: 'c-1' }).aps).toMatchObject({

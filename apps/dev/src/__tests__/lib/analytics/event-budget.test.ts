@@ -47,6 +47,7 @@ describe('admitPosthogEvent', () => {
 			'checkout_session_completed',
 			'support_item_opened',
 			'support_item_resolved',
+			'notification_sent',
 		]) {
 			for (let i = 0; i < 10; i++) expect(admitPosthogEvent(event)).toEqual({ send: true })
 		}

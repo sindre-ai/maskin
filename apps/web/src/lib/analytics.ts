@@ -170,6 +170,54 @@ export function trackEmailReturn(via: EmailReturnVia, search?: string): boolean 
 	return true
 }
 
+// A person who opened the app by clicking a browser (Web Push) notification. The server
+// tags the link with `?notification=<id>&notification_type=<type>`. `notification_opened`
+// fires once per notification, after sign-in is known so it lands on the person. Only an id
+// and a type from a fixed shape are accepted; anything else is dropped, so no text rides in.
+// The iPhone app sends its own push_notification_opened with the same two properties.
+const NOTIFICATION_ARRIVAL_KEY = 'maskin-notification-arrival'
+const NOTIFICATION_OPENED_KEY = 'maskin-notification-opened'
+const NOTIFICATION_ID = /^[A-Za-z0-9_-]{1,64}$/
+const NOTIFICATION_TYPE = /^[a-z0-9_]{1,40}$/
+
+function noteNotificationArrival(search: string): void {
+	try {
+		const params = new URLSearchParams(search)
+		const id = params.get('notification')
+		if (!id || !NOTIFICATION_ID.test(id)) return
+		const type = params.get('notification_type')
+		sessionStorage.setItem(
+			NOTIFICATION_ARRIVAL_KEY,
+			JSON.stringify({ id, type: type && NOTIFICATION_TYPE.test(type) ? type : null }),
+		)
+	} catch {
+		// No storage: no arrival is recorded, which only means no notification_opened.
+	}
+}
+
+if (typeof window !== 'undefined') noteNotificationArrival(window.location.search)
+
+// Returns true when it sent the event. A reload of the same link sends nothing the second time.
+export function trackNotificationOpened(search?: string): boolean {
+	let arrival: { id: string; type: string | null }
+	try {
+		if (search !== undefined) noteNotificationArrival(search)
+		const raw = sessionStorage.getItem(NOTIFICATION_ARRIVAL_KEY)
+		if (!raw) return false
+		arrival = JSON.parse(raw)
+		if (sessionStorage.getItem(NOTIFICATION_OPENED_KEY) === arrival.id) return false
+		sessionStorage.setItem(NOTIFICATION_OPENED_KEY, arrival.id)
+	} catch {
+		return false
+	}
+	trackEvent('notification_opened', {
+		notification_id: arrival.id,
+		...(arrival.type ? { type: arrival.type } : {}),
+		source: 'web_push',
+	})
+	return true
+}
+
 // The browser does not send agent_session_completed or trigger_fired: the
 // backend already reports completions (with trigger provenance), and the
 // browser copies were about half of all PostHog events, outside the backend
@@ -187,6 +235,7 @@ let appActiveDaySent = ''
 // loop_active_day. Call it after identify so the event lands on the person.
 export function trackAppActive(now: Date = new Date()): boolean {
 	trackEmailReturn('app_active')
+	trackNotificationOpened()
 	const utcDay = now.toISOString().slice(0, 10)
 	if (appActiveDaySent === utcDay) return false
 	appActiveDaySent = utcDay
@@ -1180,17 +1229,31 @@ export function trackMarkReadClicked(p: { loop_id: string; unread_count: number 
 // flow_id in this page load.
 const flowClock = createFlowClock()
 
+/** A fresh id for one run of a flow; the steps and errors of that run share it. */
+export function newFlowId(): string {
+	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+		? crypto.randomUUID()
+		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+// `durationMs` replaces the clock when the caller timed the step itself (time to first
+// frame); the clock still moves, so the next step counts from this one. `from` names where
+// the flow was started, from a fixed list at the call site.
 export function trackFlowStep<F extends FlowName>(p: {
 	flow: F
 	step: FlowStepName<F>
 	flowId: string
+	durationMs?: number
+	from?: string
 }): void {
+	const sinceLast = flowClock.tick(p.flowId)
 	const props = buildFlowStepProps({
 		flow: p.flow,
 		step: p.step,
 		flowId: p.flowId,
 		surface: 'web',
-		durationMs: flowClock.tick(p.flowId),
+		durationMs: p.durationMs !== undefined ? Math.round(p.durationMs) : sinceLast,
+		from: p.from,
 	})
 	if (props) trackEvent('flow_step', props)
 }
