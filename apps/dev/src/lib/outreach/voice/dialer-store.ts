@@ -6,6 +6,7 @@ import { applyVoiceEvent, runAppliedEffects } from './apply'
 import { RETRY_STATUSES, dialAttemptOf } from './dialer'
 import type { DialerStore, QueueExclusion, QueuedContact } from './dialer'
 import {
+	DIALABLE_COMPANY_TYPES,
 	ERASURE_MARKER_FIELD,
 	MAX_DIALS_PER_CONTACT,
 	PROTECT_TAGS,
@@ -58,7 +59,7 @@ const isTrue = (name: string) =>
  * True when the contact carries a stamped dnc_refusal AND a permanent cause still holds in its
  * live metadata. The stamp alone is never enough: a check name also covers transient refusals
  * (founder lookup failed), and a cause that was cleared (hold lifted, phone added, company type
- * stamped aps or as) must put the contact back on the queue. Each cause below mirrors the gate
+ * stamped with a dialable form) must put the contact back on the queue. Each cause below mirrors the gate
  * check named beside it in dnc-gate.ts and is checked against it in voice-dialer.test.ts. Time of
  * day (check 5) is never stamped and has no clause here. Status (check 2) cannot occur: the queue
  * only holds voice_queued and the retry statuses. Every clause is null-safe, so the predicate is
@@ -74,6 +75,10 @@ function permanentlyRefused(exclusion: QueueExclusion) {
 		when ${digits} ~ '^[0-9]{8}$' then '+45' || ${digits}
 		when ${digits} ~ '^\\+45[0-9]{8}$' then ${digits}
 	end end)`
+	const companyTypes = sql.join(
+		DIALABLE_COMPANY_TYPES.map((t) => sql`${JSON.stringify(t)}::jsonb`),
+		sql`, `,
+	)
 	const owner = sql`lower(${trimmed(stringOf('owner'))})`
 	const slugs = exclusion.founderSlugs
 	return sql`coalesce(${field('dnc_refusal')} is not null and (
@@ -86,7 +91,7 @@ function permanentlyRefused(exclusion: QueueExclusion) {
 		or coalesce(case when jsonb_typeof(${field('dial_attempt_n')}) = 'number'
 			then (${field('dial_attempt_n')} #>> '{}')::numeric end >= ${MAX_DIALS_PER_CONTACT}::numeric, false)
 		or ${phone} is null
-		or coalesce(${field('company_type')} not in ('"aps"'::jsonb, '"as"'::jsonb), true)
+		or coalesce(${field('company_type')} not in (${companyTypes}), true)
 		or coalesce(not (${isString('owner')}), true) or ${owner} = ''
 		${
 			slugs

@@ -232,9 +232,28 @@ describe('runDncGate', () => {
 	})
 
 	describe('check 4: company type', () => {
-		it.each(['aps', 'as'])('passes a contact whose company_type is %s', async (companyType) => {
-			expect(await runDncGate(clean({ company_type: companyType }), deps())).toEqual({ pass: true })
-		})
+		it.each(['aps', 'as', 'enkeltmand', 'enkeltmandsvirksomhed'])(
+			'passes a contact whose company_type is %s',
+			async (companyType) => {
+				expect(await runDncGate(clean({ company_type: companyType }), deps())).toEqual({
+					pass: true,
+				})
+			},
+		)
+		it.each(['protect', 'protected', 'do-not-contact'])(
+			'still refuses a sole proprietor tagged %s',
+			async (tag) => {
+				const r = await refusal(clean({ company_type: 'enkeltmandsvirksomhed', tags: [tag] }))
+				expect(r.check).toBe('protect')
+			},
+		)
+		it.each(['rejected', 'voice_declined', 'deleted_by_request'])(
+			'still refuses a sole proprietor whose status is %s',
+			async (status) => {
+				const r = await refusal(clean({ company_type: 'enkeltmandsvirksomhed' }, status))
+				expect(r.check).toBe('status')
+			},
+		)
 		it('refuses a contact with no company_type and says it is missing', async () => {
 			const r = await refusal(clean({ company_type: undefined }))
 			expect(r.check).toBe('company_type')
@@ -245,15 +264,7 @@ describe('runDncGate', () => {
 			expect(r.check).toBe('company_type')
 			expect(r.reason).toContain('empty')
 		})
-		it.each(['enkeltmandsvirksomhed', 'enk', 'iv'])(
-			'refuses the sole-proprietor-style value %s and names it',
-			async (companyType) => {
-				const r = await refusal(clean({ company_type: companyType }))
-				expect(r.check).toBe('company_type')
-				expect(r.reason).toContain(`"${companyType}"`)
-			},
-		)
-		it.each(['aps ', 'APS', 'A/S', 'k/s', 'ivs'])(
+		it.each(['aps ', 'APS', 'ApS', 'A/S', 'k/s', 'ivs', 'enk', 'iv', 'is', 'other', 'Enkeltmand'])(
 			'refuses any other value (%s) and names it',
 			async (companyType) => {
 				const r = await refusal(clean({ company_type: companyType }))

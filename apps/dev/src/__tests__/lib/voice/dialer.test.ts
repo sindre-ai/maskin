@@ -323,7 +323,7 @@ describe('runDialerTick', () => {
 		it('stamps a company_type refusal that names the value found, and does not dial', async () => {
 			const store = fakeStore([
 				contact(1, {
-					metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'enkeltmandsvirksomhed' },
+					metadata: { owner: 'sebk', phone: '+4520123401', company_type: 'other' },
 				}),
 			])
 			const { deps, createCall } = setup(store)
@@ -331,7 +331,7 @@ describe('runDialerTick', () => {
 			expect(createCall).not.toHaveBeenCalled()
 			const stamp = store.stamps[0]?.patch.dnc_refusal as Record<string, unknown>
 			expect(stamp).toMatchObject({ check: 'company_type', at: NOW.toISOString() })
-			expect(String(stamp.reason)).toContain('enkeltmandsvirksomhed')
+			expect(String(stamp.reason)).toContain('"other"')
 		})
 
 		it('stamps a refusal again when the company_type changes to another refused value', async () => {
