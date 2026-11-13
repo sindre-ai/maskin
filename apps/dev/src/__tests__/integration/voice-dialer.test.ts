@@ -213,7 +213,9 @@ describe('voice dialer against real Postgres', () => {
 			['company_type null', { ...OK, company_type: null }],
 			['company_type empty', { ...OK, company_type: '' }],
 			['company_type enkeltmandsvirksomhed', { ...OK, company_type: 'enkeltmandsvirksomhed' }],
+			['company_type enkeltmand', { ...OK, company_type: 'enkeltmand' }],
 			['company_type enk', { ...OK, company_type: 'enk' }],
+			['company_type is', { ...OK, company_type: 'is' }],
 			['company_type iv', { ...OK, company_type: 'iv' }],
 			['company_type in capitals', { ...OK, company_type: 'APS' }],
 			['company_type padded', { ...OK, company_type: ' aps' }],
@@ -279,12 +281,12 @@ describe('voice dialer against real Postgres', () => {
 				})
 				await seedContact(ws.id, 'voice_queued', {
 					company_type: 'enk',
-					...refused('company_type "enk" is not ApS or A/S'),
+					...refused('company_type "enk" is not dialable'),
 				})
 				expect(await readIds(ws.id)).toEqual([])
 			})
 
-			it.each(['aps', 'as'])(
+			it.each(['aps', 'as', 'enkeltmand', 'enkeltmandsvirksomhed'])(
 				'reads the contact again once its company_type is stamped %s',
 				async (companyType) => {
 					const ws = await freshWorkspace()
@@ -306,7 +308,7 @@ describe('voice dialer against real Postgres', () => {
 			it('is stamped by the tick with the value found, then skipped on later reads', async () => {
 				const ws = await freshWorkspace()
 				const c = await seedContact(ws.id, 'voice_queued', {
-					company_type: 'enkeltmandsvirksomhed',
+					company_type: 'other',
 				})
 				const { d, createCall } = deps(ws.id)
 
@@ -318,11 +320,42 @@ describe('voice dialer against real Postgres', () => {
 				expect(stamped?.metadata).toMatchObject({
 					dnc_refusal: {
 						check: 'company_type',
-						reason: expect.stringContaining('enkeltmandsvirksomhed'),
+						reason: expect.stringContaining('other'),
 					},
 				})
 				expect(await readIds(ws.id)).toEqual([])
 				expect(createCall).not.toHaveBeenCalled()
+			})
+
+			it.each(['enkeltmand', 'enkeltmandsvirksomhed'])(
+				'dials a sole proprietor (%s) with a Danish phone and reads it from the queue',
+				async (companyType) => {
+					const ws = await freshWorkspace()
+					const c = await seedContact(ws.id, 'voice_queued', { company_type: companyType })
+					expect(await readIds(ws.id)).toEqual([c?.id])
+					const { d, createCall } = deps(ws.id)
+
+					const result = await runDialerTick(ws.id, d)
+
+					expect(result).toMatchObject({ dialed_count: 1, refused_count: 0 })
+					expect(createCall).toHaveBeenCalledTimes(1)
+					expect(await statusOf(c?.id ?? '')).toBe('voice_dialing')
+				},
+			)
+
+			it('still refuses a sole proprietor on do-not-contact and leaves it off the dial', async () => {
+				const ws = await freshWorkspace()
+				const c = await seedContact(ws.id, 'voice_queued', {
+					company_type: 'enkeltmandsvirksomhed',
+					tags: ['do-not-contact'],
+				})
+				const { d, createCall } = deps(ws.id)
+
+				const result = await runDialerTick(ws.id, d)
+
+				expect(result).toMatchObject({ dialed_count: 0, refused_count: 1 })
+				expect(createCall).not.toHaveBeenCalled()
+				expect(await statusOf(c?.id ?? '')).toBe('voice_queued')
 			})
 		})
 

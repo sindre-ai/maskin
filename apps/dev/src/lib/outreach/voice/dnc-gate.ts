@@ -102,22 +102,28 @@ export const MAX_DIALS_PER_CONTACT = 3
 
 /**
  * The only metadata.company_type values the dialer accepts, exact and lowercase, as the
- * prospect-list work stamps them from the CVR company form. Sole proprietors are the one
- * protected group reachable by phone, so anything else (or nothing) is refused.
+ * prospect-list work stamps them from the CVR company form: ApS, A/S and the two spellings of a
+ * sole proprietor (Sebastian, 12 Nov 2026: Robinson does not apply to businesses). Anything else,
+ * or nothing, is refused.
  */
-export const DIALABLE_COMPANY_TYPES: readonly string[] = ['aps', 'as']
+export const DIALABLE_COMPANY_TYPES: readonly string[] = [
+	'aps',
+	'as',
+	'enkeltmand',
+	'enkeltmandsvirksomhed',
+]
 
 function companyTypeReason(m: Record<string, unknown>): string | null {
 	const v = m.company_type
 	if (v === undefined || v === null) {
-		return 'contact has no company type (metadata.company_type is missing), so it is not known to be an ApS or A/S'
+		return 'contact has no company type (metadata.company_type is missing), so its company form is not known'
 	}
 	if (typeof v === 'string' && DIALABLE_COMPANY_TYPES.includes(v)) return null
 	if (v === '') {
-		return 'contact company type is empty (metadata.company_type is ""), so it is not known to be an ApS or A/S'
+		return 'contact company type is empty (metadata.company_type is ""), so its company form is not known'
 	}
 	const found = typeof v === 'string' ? v : JSON.stringify(v)
-	return `contact company type "${found}" is not ApS or A/S (metadata.company_type must be aps or as)`
+	return `contact company type "${found}" is not dialable (metadata.company_type must be one of ${DIALABLE_COMPANY_TYPES.join(', ')})`
 }
 
 export type DncCheck =
@@ -272,7 +278,7 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 	if (!actor) return refuse('owner', `founder actor for "${owner}" no longer exists`)
 	if (actor.type !== 'human') return refuse('owner', `founder actor for "${owner}" is not a human`)
 
-	// 4. Company type. Only an ApS or A/S is dialed; sole proprietors are a protected group.
+	// 4. Company type. Only a known company form is dialed: ApS, A/S or a sole proprietor.
 	const companyType = companyTypeReason(m)
 	if (companyType) return refuse('company_type', companyType)
 
