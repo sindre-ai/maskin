@@ -53,7 +53,7 @@ import {
 import {
 	TrialPromoCodeInvalidError,
 	hitPromoRateLimit,
-	isPromoCodeValid,
+	promoCodeTrialDays,
 	startTrialWithPromo,
 } from '../lib/trial-promo'
 import { extractClientIp } from '../lib/trusted-proxy'
@@ -627,6 +627,9 @@ const trialPromoCheckBodySchema = z.object({
 const trialPromoCheckResponseSchema = z.object({
 	// One answer for a wrong, expired, switched-off or used-up code, so a guess learns nothing.
 	valid: z.boolean(),
+	// Days the trial lasts with this code, for the page to say; null when the code is not valid.
+	// Only wording: the length is read again on the server when the trial starts.
+	trial_days: z.number().int().positive().nullable(),
 })
 
 const trialStartResponseSchema = z.object({
@@ -676,7 +679,8 @@ const trialStartRoute = createRoute({
 	path: '/trial/start',
 	'x-viewer-policy': 'writer',
 	tags: ['billing'],
-	summary: 'Start the 7-day trial from a finished card setup, or from a promo code with no card',
+	summary:
+		"Start the trial from a finished card setup (7 days), or from a promo code with no card (the code's length)",
 	request: {
 		headers: workspaceIdHeader,
 		body: { content: { 'application/json': { schema: trialStartBodySchema } }, required: true },
@@ -719,7 +723,7 @@ const trialPromoCheckRoute = createRoute({
 	path: '/trial/promo/check',
 	'x-viewer-policy': 'writer',
 	tags: ['billing'],
-	summary: 'Check a promo code for the 7-day trial. Looks only; nothing is used up.',
+	summary: 'Check a promo code for the trial. Looks only; nothing is used up.',
 	request: {
 		headers: workspaceIdHeader,
 		body: {
@@ -858,7 +862,8 @@ app.openapi(trialPromoCheckRoute, async (c) => {
 	if (!row || !billing.success || billing.data.billing?.trial_state !== 'awaiting_card') {
 		return c.json(createApiError('CONFLICT', 'This workspace is not waiting for a card'), 409)
 	}
-	return c.json({ valid: await isPromoCodeValid(db, code) }, 200)
+	const trialDays = await promoCodeTrialDays(db, code)
+	return c.json({ valid: trialDays !== null, trial_days: trialDays }, 200)
 })
 
 app.openapi(trialStartRoute, async (c) => {

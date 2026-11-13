@@ -5,15 +5,16 @@ import { capturePosthogEvent } from './analytics/posthog'
 import { evictBillingUsage } from './billing-usage-cache'
 import { createWindowLimiter } from './fixed-window-limiter'
 import { logger } from './logger'
-import { TRIAL_LENGTH_SECONDS, TrialCardError } from './trial-card'
+import { DAY_SECONDS, TrialCardError } from './trial-card'
 
 // Promo codes at the start-trial page (bet "A card to start a 7-day trial", task "Promo code on the
-// start-trial page"). A valid code starts the 7-day trial with no card. Codes live in our own table
+// start-trial page"). A valid code starts the trial with no card, and it lasts the code's own
+// trial_days (14 by default; a card trial is 7). Codes live in our own table
 // (trial_promo_codes), not in Stripe: Stripe counts a promotion code as used only when it is applied
 // to a checkout or subscription, and a trial with no card has neither, so Stripe could neither say
 // "this code skips the card" nor count the use for us.
 //
-// The page asks `isPromoCodeValid` when the person presses Apply. That only looks; nothing is used up.
+// The page asks `promoCodeTrialDays` when the person presses Apply. That only looks; nothing is used up.
 // The code is used up by `startTrialWithPromo`, which re-checks it in the same transaction that
 // starts the trial, so the page is never trusted and two people cannot take the last use.
 
@@ -68,20 +69,23 @@ function usable(now: Date) {
 	)
 }
 
-/** Whether the code could be used right now. Looks only; nothing is used up. */
-export async function isPromoCodeValid(
+/**
+ * The trial length in days if the code could be used right now, otherwise null. Looks only;
+ * nothing is used up.
+ */
+export async function promoCodeTrialDays(
 	db: Database,
 	raw: string,
 	now = new Date(),
-): Promise<boolean> {
+): Promise<number | null> {
 	const code = normalizePromoCode(raw)
-	if (!code) return false
+	if (!code) return null
 	const [row] = await db
-		.select({ id: trialPromoCodes.id })
+		.select({ trialDays: trialPromoCodes.trialDays })
 		.from(trialPromoCodes)
 		.where(and(eq(trialPromoCodes.code, code), usable(now)))
 		.limit(1)
-	return Boolean(row)
+	return row?.trialDays ?? null
 }
 
 export type RecordPromoTrialOutcome =
@@ -94,7 +98,7 @@ export type RecordPromoTrialOutcome =
  * The database half of starting a trial with a code. In one transaction: lock the workspace, check
  * it is waiting for its card, use up one redemption with a single conditional UPDATE (it only
  * matches while the code is active, unexpired and under its limit, so the last use goes to exactly
- * one caller), and start the 7 days. If any step fails nothing is used up. Stores the code's id on
+ * one caller), and start the code's trial_days. If any step fails nothing is used up. Stores the code's id on
  * the workspace, never the code text, and no card or fingerprint.
  */
 export async function recordPromoTrialStart(params: {
@@ -129,10 +133,10 @@ export async function recordPromoTrialStart(params: {
 			.update(trialPromoCodes)
 			.set({ redemptions: sql`${trialPromoCodes.redemptions} + 1` })
 			.where(and(eq(trialPromoCodes.code, code), usable(new Date(nowSec * 1000))))
-			.returning({ id: trialPromoCodes.id })
+			.returning({ id: trialPromoCodes.id, trialDays: trialPromoCodes.trialDays })
 		if (!redeemed) return { outcome: 'invalid_code' } as const
 
-		const periodEnd = nowSec + TRIAL_LENGTH_SECONDS
+		const periodEnd = nowSec + redeemed.trialDays * DAY_SECONDS
 		await tx
 			.update(workspaces)
 			.set({
@@ -155,7 +159,7 @@ export async function recordPromoTrialStart(params: {
 }
 
 /**
- * Starts the 7-day trial with a promo code and no card. Sends trial_started with promo true and no
+ * Starts the trial with a promo code and no card, for the code's own length. Sends trial_started with promo true and no
  * card; the event carries ids, booleans and a category only, never the code.
  */
 export async function startTrialWithPromo(params: {
