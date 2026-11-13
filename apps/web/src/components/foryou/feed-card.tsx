@@ -22,6 +22,7 @@ import type {
 	UnreadItem,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { defaultOnSilenceLine } from '@/lib/comment-decision'
 import {
 	type CardAction,
 	type CardKind,
@@ -334,6 +335,7 @@ export function FeedCard({
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
+						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
 						onChoose={(option) => chooseOption(option)}

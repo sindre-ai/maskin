@@ -1,4 +1,9 @@
-import { decisionOfEvent, hasDecision, legacyChipsOf } from '@/lib/comment-decision'
+import {
+	decisionOfEvent,
+	defaultOnSilenceLine,
+	hasDecision,
+	legacyChipsOf,
+} from '@/lib/comment-decision'
 import { describe, expect, it } from 'vitest'
 import { buildEventResponse } from '../factories'
 
@@ -102,5 +107,25 @@ describe('legacyChipsOf', () => {
 	it('returns an empty list for an event that is not a comment', () => {
 		const event = buildEventResponse({ action: 'updated', data: { metadata: { chips: ['a'] } } })
 		expect(legacyChipsOf(event)).toEqual([])
+	})
+})
+
+describe('defaultOnSilenceLine', () => {
+	const [first, second] = validDecision.options
+	const withDefault = {
+		expires_at: '2026-11-20T14:00:00Z',
+		options: [{ ...first, default_on_silence: true }, second],
+	}
+
+	it('names the default and the deadline', () => {
+		const line = defaultOnSilenceLine(withDefault)
+		expect(line).toContain('If nobody answers by')
+		expect(line).toContain('the default is "7-day window".')
+	})
+
+	it('is null for a card with no default, no deadline or no card', () => {
+		expect(defaultOnSilenceLine(validDecision)).toBeNull()
+		expect(defaultOnSilenceLine({ ...withDefault, expires_at: undefined })).toBeNull()
+		expect(defaultOnSilenceLine(null)).toBeNull()
 	})
 })

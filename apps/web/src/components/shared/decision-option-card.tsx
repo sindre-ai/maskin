@@ -45,6 +45,7 @@ export function DecisionOptions({
 	pendingId,
 	onChoose,
 	variant = 'card',
+	defaultLine = null,
 }: {
 	/** `row` is the For You feed: no "Suggested" line, the recommended option's first consequence sits under its bar. */
 	variant?: 'card' | 'row'
@@ -52,6 +53,8 @@ export function DecisionOptions({
 	/** The option being posted. Every button is held until it settles, so the question cannot be answered twice. */
 	pendingId: string | null
 	onChoose: (option: DecisionOption) => void
+	/** What happens if nobody answers, when the card names a default (see `defaultOnSilenceLine`). */
+	defaultLine?: string | null
 }) {
 	// Answering posts a comment, which a viewer cannot do.
 	const canWrite = useCanWrite()
@@ -104,6 +107,14 @@ export function DecisionOptions({
 					</div>
 				)}
 				{line && <p className="text-[12px] leading-[1.45] text-muted-foreground">{line}</p>}
+				{defaultLine && (
+					<p
+						data-testid="decision-default-line"
+						className="text-[12px] leading-[1.45] text-muted-foreground"
+					>
+						{defaultLine}
+					</p>
+				)}
 			</div>
 		</ViewerTooltip>
 	)

@@ -43,6 +43,7 @@ import {
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import {
 	TERMINAL_STATUSES_BY_TYPE,
+	findDefaultOnSilenceOption,
 	isDecisionExpired,
 	parseCommentDecision,
 	readChanges,
@@ -425,6 +426,13 @@ export class DriverWaker {
 			const decision = parseCommentDecision((row.data as { decision?: unknown } | null)?.decision)
 			if (!decision?.expires_at || !isDecisionExpired(decision, now)) continue
 			if (new Date(decision.expires_at).getTime() <= from.getTime()) continue
+			// A card with a default on silence is carried out by DecisionDefaultWake, which names the
+			// default. Waking the driver here too would start two runs for one card.
+			if (
+				findDefaultOnSilenceOption(decision) &&
+				isFlagEnabledForWorkspace(row.workspaceId, FLAGS.DECISION_DEFAULT)
+			)
+				continue
 			await this.requestForExpiredCard({ ...row, id: Number(row.id) })
 		}
 	}

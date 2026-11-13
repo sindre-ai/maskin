@@ -2147,6 +2147,8 @@ export interface LatestMentionDecisionOption {
 	destructive?: boolean
 	/** Tapping this option changes the status of an object (the one the card is on by default). */
 	set_status?: { status: string; object_id?: string }
+	/** The option the agent carries out if nobody answers by the card's `expires_at`. */
+	default_on_silence?: boolean
 }
 
 /**
@@ -2173,6 +2175,8 @@ export interface LatestMentionDecision {
 	summary: string
 	ask?: string
 	options: LatestMentionDecisionOption[]
+	/** When the ask runs out. With `default_on_silence` on an option, what happens then. */
+	expires_at?: string
 	draft?: LatestMentionDecisionDraft
 	/** One card, several messages: each shows as its own preview with Send and Skip. */
 	drafts?: LatestMentionDecisionDraft[]

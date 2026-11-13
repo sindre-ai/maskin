@@ -145,6 +145,17 @@ export const FLAGS = {
 	 * would-wake list was compared with what is really stuck and the self-start limits are live.
 	 */
 	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
+	/**
+	 * Gates the default on silence for decision cards (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Let decision cards carry a default on silence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/bcfed848-7a51-418e-a5d0-172999385c9c)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in routes/events.ts
+	 * (off means a card that names a default is refused, so no agent is promised a wake that
+	 * never comes) and in services/decision-default-wake.ts (off means no wake is started). The
+	 * card line on web and iOS only draws for a card that names a default. Turn on only after the
+	 * self-start limits (cap, back-off and daily budget) are live, because the wake goes through
+	 * them. Retire once it is on for everyone.
+	 */
+	DECISION_DEFAULT: 'decision-default',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
