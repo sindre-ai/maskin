@@ -426,3 +426,26 @@ describe('RPC contract: POST /sessions/:sessionId/push-agent-files (§7.1)', () 
 		'pushAgentFiles() retries up to 5 times with backoff on 5xx (§7.1) — retry policy not implemented on this branch',
 	)
 })
+
+describe('AgentServerClient.sendInput', () => {
+	const payload = { type: 'user', message: { role: 'user', content: 'Done.' } }
+	const sent = (calls: Array<{ init: RequestInit | undefined }>) =>
+		JSON.parse(String(calls[0]?.init?.body))
+
+	it('sends only the text when there are no images', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(new Response(JSON.stringify({ ok: true })))
+		await new AgentServerClient({ server: SERVER, fetchImpl }).sendInput('s1', payload)
+		expect(sent(calls)).toEqual({ content: 'Done.' })
+	})
+
+	it('sends images in the snake_case form the agent-server reads', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(new Response(JSON.stringify({ ok: true })))
+		await new AgentServerClient({ server: SERVER, fetchImpl }).sendInput('s1', payload, [
+			{ mediaType: 'image/jpeg', data: 'QUJD' },
+		])
+		expect(sent(calls)).toEqual({
+			content: 'Done.',
+			images: [{ media_type: 'image/jpeg', data: 'QUJD' }],
+		})
+	})
+})
