@@ -32,7 +32,9 @@ interface Expected {
 }
 
 const CASES: Expected[] = [
-	{ message: LONG_AGENT_MESSAGES[0], cards: 0, chips: 6 },
+	// All six links sit in a sentence or a bullet: the first bet gets a text card under the message
+	// and its link stays a plain link, so five chips remain.
+	{ message: LONG_AGENT_MESSAGES[0], cards: 1, chips: 5 },
 	{ message: LONG_AGENT_MESSAGES[1], cards: 1, chips: 6 },
 	{ message: LONG_AGENT_MESSAGES[2], cards: 3, chips: 7 },
 	{ message: PROTOTYPE_LONG_MESSAGE, cards: 3, chips: 4 },
