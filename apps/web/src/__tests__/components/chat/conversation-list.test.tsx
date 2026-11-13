@@ -405,6 +405,61 @@ describe('ConversationList collapse', () => {
 		vi.unstubAllGlobals()
 	})
 
+	it('loads the next Earlier page on scroll when the priority set finishes after the Earlier set', async () => {
+		const live = new Set<() => void>()
+		vi.stubGlobal(
+			'IntersectionObserver',
+			class {
+				fire: () => void
+				constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void) {
+					this.fire = () => cb([{ isIntersecting: true }])
+				}
+				observe() {
+					live.add(this.fire)
+				}
+				disconnect() {
+					live.delete(this.fire)
+				}
+			},
+		)
+		// The Earlier set answers at once, the priority set is held back: the skeleton is up
+		// (so there is no scroll marker) while the Earlier set already has a next page.
+		let releasePriority: () => void = () => {}
+		const priorityHeld = new Promise<void>((resolve) => {
+			releasePriority = resolve
+		})
+		vi.mocked(api.conversations.list).mockImplementation(async (_ws, params) => {
+			if (params?.scope === 'priority') {
+				await priorityHeld
+				return { conversations: [], has_more: false }
+			}
+			return {
+				conversations: [buildConversation({ id: `old-${params?.offset}`, title: 'Old chat' })],
+				has_more: params?.offset === '0',
+			}
+		})
+		const earlierCalls = () =>
+			vi
+				.mocked(api.conversations.list)
+				.mock.calls.filter(([, q]) => q?.scope === 'recent')
+				.map(([, q]) => q?.offset)
+		try {
+			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+			await waitFor(() => expect(earlierCalls()).toContain('0'))
+			await act(async () => {
+				releasePriority()
+			})
+			expect(await screen.findByText(/Older conversations load as you scroll/)).toBeInTheDocument()
+
+			await act(async () => {
+				for (const fire of live) fire()
+			})
+			await waitFor(() => expect(earlierCalls()).toContain('20'))
+		} finally {
+			vi.unstubAllGlobals()
+		}
+	})
+
 	it('lists a chat once when a later page repeats it', async () => {
 		const dm = (i: number) =>
 			buildConversation({ id: `dm-${i}`, title: `Agent ${i}`, directPairKey: `pair-${i}` })
