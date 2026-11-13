@@ -34,6 +34,20 @@ vi.mock('@/hooks/use-loops', () => ({
 	useObjectsByIds: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-flow-room', () => ({
+	useFlowRoom: () => ({
+		chatId: null,
+		messages: [],
+		isLoading: false,
+		isError: false,
+		refetch: vi.fn(),
+		hasEarlier: false,
+		loadingEarlier: false,
+		loadEarlier: vi.fn(),
+		post: vi.fn(),
+	}),
+}))
+
 const mockUseActors = vi.fn()
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
@@ -304,7 +318,7 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		mockUseLoopActivity.mockReturnValue({ data: undefined, isError: true, refetch })
 		render(<LoopDetailRoute />)
 
-		await user.click(screen.getByRole('button', { name: 'Activity' }))
+		await user.click(screen.getByRole('button', { name: 'Room' }))
 		expect(screen.getByText(/Couldn't load the flow's recent activity/)).toBeInTheDocument()
 		expect(screen.queryByText(/Couldn't load how this flow runs/)).not.toBeInTheDocument()
 

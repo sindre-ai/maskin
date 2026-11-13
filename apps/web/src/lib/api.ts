@@ -3162,6 +3162,8 @@ export interface MessageQuestionAnswer {
 export interface MessageMetadata {
 	attachments?: MessageAttachment[]
 	mentions?: string[]
+	/** Backend-owned: the comment this message was copied from (object chats). */
+	comment_event_id?: number
 	context_objects?: MessageContextObject[]
 	context_notifications?: MessageContextNotification[]
 	/**
@@ -3331,6 +3333,8 @@ export interface MessagesListResponse {
 export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
+	/** What the chat is about. Asking again for the same subject returns the chat that exists. */
+	subject?: { type: 'object' | 'loop'; id: string }
 	/** Open the pair's one direct message instead of a new topical chat. */
 	direct?: boolean
 	/** Make the new chat a room: a named, long-lived chat in the list's Rooms group. */

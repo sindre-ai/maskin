@@ -172,7 +172,7 @@ test.describe('Loop page — custom view tabs', () => {
 		const tabNames = (await page.getByRole('tab').allTextContents()).map((t) =>
 			t.replace(/\d+$/, ''),
 		)
-		expect(tabNames).toEqual(['Overview', 'Items', 'Activity', 'Setup', 'Results', 'Pipeline view'])
+		expect(tabNames).toEqual(['Overview', 'Items', 'Room', 'Setup', 'Results', 'Pipeline view'])
 
 		await openTab(page, 'Pipeline view')
 		await expect(viewFrame(page).getByText('Second view heading')).toBeVisible({
@@ -314,7 +314,7 @@ test.describe('Loop page — custom view tabs', () => {
 		expect(await page.getByRole('tab').allTextContents()).toEqual([
 			'Overview',
 			'Items',
-			'Activity',
+			'Room',
 			'Setup',
 		])
 		await expect(page.locator(FRAME)).toHaveCount(0)

@@ -3,7 +3,7 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop (v19): status and stage, then the Overview, Performance, Briefings, Items, Activity and
+/// One loop (v19): status and stage, then the Overview, Performance, Briefings, Items, Room and
 /// Setup tabs, then any custom views, with the flow's composer pinned at the bottom.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
@@ -53,7 +53,7 @@ struct LoopDetailView: View {
 			}
 			await timeline?.start()
 		}
-		// The composer messages the flow's driver once the overview says who it is.
+		// The room's first message invites the flow's driver once the overview says who it is.
 		.onChange(of: store.driver?.id, initial: true) {
 			timeline?.owner = store.driver.map { ChatParticipant(id: $0.id, name: $0.name, kind: .agent) }
 		}
@@ -133,7 +133,7 @@ enum LoopDetailTab: Hashable, Identifiable {
 		case .performance: "Performance"
 		case .briefings: "Briefings"
 		case .items: "Items"
-		case .activity: "Activity"
+		case .activity: "Room"
 		case .setup: "Setup"
 		case .view(_, let view): view.name
 		}
@@ -155,8 +155,8 @@ enum LoopDetailTab: Hashable, Identifiable {
 struct LoopDetailContent: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
-	/// The flow's timeline (comments and events). Nil in previews and tests: the Activity tab then
-	/// shows the agents' posts and the run feed instead.
+	/// The flow's room (chat messages, comments and events). Nil in previews and tests: the Room tab
+	/// then shows the agents' posts and the run feed instead.
 	var timeline: FlowTimelineModel?
 	var onOpenTrigger: (String) -> Void = { _ in }
 	/// Shown at the foot of Setup (pause, change in chat, delete).
@@ -335,7 +335,7 @@ struct LoopDetailContent: View {
 	}
 }
 
-/// Overview, Performance, Briefings, Items, Activity, Setup, then the loop's views: text tabs with an
+/// Overview, Performance, Briefings, Items, Room, Setup, then the loop's views: text tabs with an
 /// ink underline under the open one, scrolling sideways when they don't fit.
 struct FlowTabBar: View {
 	let tabs: [LoopDetailTab]
