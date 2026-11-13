@@ -41,6 +41,12 @@ public enum ChatListTracking {
 		}
 	}
 
+	/// Where a hit of the list search sits among the hits on screen. Nil when it is not among them.
+	public static func searchPlace(of conversationID: String, among hits: [ChatSearchHit]) -> Place? {
+		hits.firstIndex(where: { $0.id == conversationID })
+			.map { Place(source: .search, section: .search, position: $0 + 1) }
+	}
+
 	public static func resultCountBucket(_ count: Int) -> String {
 		switch count {
 		case ...0: "0"

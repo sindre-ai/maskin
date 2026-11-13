@@ -1,4 +1,5 @@
 import { LiveCallComposerSlot } from '@/components/agents/live-call-surface'
+import { ArchivedBar } from '@/components/chat/archived-bar'
 import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
@@ -372,6 +373,7 @@ function ConversationThreadPage() {
 								overviewHasNew={overviewHasNew}
 								onToggleOverview={toggleOverview}
 							/>
+							<ArchivedBar workspaceId={workspaceId} conversationId={conversationId} />
 						</div>
 						<ThreadMessages
 							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[max(0px,calc(var(--thread-header-h,4.5rem)-54px))] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"

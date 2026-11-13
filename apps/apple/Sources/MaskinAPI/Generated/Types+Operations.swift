@@ -48676,6 +48676,8 @@ public enum Operations {
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/sort`.
                 public var sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/hide_quiet`.
+                public var hide_quiet: Swift.Bool?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/offset`.
@@ -48691,6 +48693,7 @@ public enum Operations {
                 ///   - updated_after:
                 ///   - has_human:
                 ///   - sort:
+                ///   - hide_quiet:
                 ///   - limit:
                 ///   - offset:
                 public init(
@@ -48702,6 +48705,7 @@ public enum Operations {
                     updated_after: Foundation.Date? = nil,
                     has_human: Swift.Bool? = nil,
                     sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload? = nil,
+                    hide_quiet: Swift.Bool? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil
                 ) {
@@ -48713,6 +48717,7 @@ public enum Operations {
                     self.updated_after = updated_after
                     self.has_human = has_human
                     self.sort = sort
+                    self.hide_quiet = hide_quiet
                     self.limit = limit
                     self.offset = offset
                 }

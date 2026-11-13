@@ -299,7 +299,7 @@ public final class ConversationsStore {
 				let limit = ServerLimits.refreshLimit(minimum: pageSize, loaded: conversations.count)
 				let page = try await api.list(
 					archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
-					limit: limit, offset: 0)
+					hideQuiet: hidesQuiet, limit: limit, offset: 0)
 				guard mine == generation else { continue }
 				// Re-read what's on screen (capped by the server) so paged-in rows survive an event.
 				let keptTail = conversations.count > limit
@@ -318,6 +318,10 @@ public final class ConversationsStore {
 		} while refreshQueued
 	}
 
+	/// Only the default list leaves out empty agent DMs, retired agents and quiet topic chats; the
+	/// Unread, Pinned and Archived lists show what they filter on.
+	private var hidesQuiet: Bool { scope == .active && filter == .all }
+
 	public func loadMore() async {
 		guard hasMore, !isLoadingMore, phase == .loaded else { return }
 		isLoadingMore = true
@@ -325,7 +329,7 @@ public final class ConversationsStore {
 		do {
 			let page = try await api.list(
 				archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
-				limit: pageSize, offset: conversations.count)
+				hideQuiet: hidesQuiet, limit: pageSize, offset: conversations.count)
 			let known = Set(conversations.map(\.id))
 			conversations += page.conversations.filter { !known.contains($0.id) && !locallyDeleted.contains($0.id) }
 			hasMore = page.hasMore

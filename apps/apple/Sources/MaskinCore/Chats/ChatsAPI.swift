@@ -6,6 +6,13 @@ public protocol ConversationsAPI: Sendable {
 	/// a boolean query (even "false") as true.
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int)
 		async throws -> ConversationPage
+	/// The default list. With `hideQuiet` the server leaves out empty direct messages with agents,
+	/// chats with retired agents and topic chats quiet for about 14 days, unless pinned or unread.
+	/// Nothing is archived: they stay in search and return when a new message arrives. Sent only
+	/// when true, like the other flags.
+	func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage
 	/// `POST /api/conversations`. Returns the created conversation.
 	func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
@@ -79,6 +86,14 @@ extension ConversationsAPI {
 		-> String
 	{
 		throw ChatsError("Rooms aren't available here.")
+	}
+
+	/// Sources that cannot filter on the server (test doubles) return the whole list.
+	public func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, limit: limit, offset: offset)
 	}
 
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {

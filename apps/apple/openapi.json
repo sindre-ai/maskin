@@ -46456,6 +46456,14 @@
 					},
 					{
 						"schema": {
+							"type": "boolean"
+						},
+						"required": false,
+						"name": "hide_quiet",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"minimum": 1,
 							"maximum": 100,
