@@ -111,4 +111,22 @@ describe('groupByAgent', () => {
 		expect(groupByAgent([chat('a', [actor('cto')])], SELF).map((g) => g.label)).toEqual(['Agents'])
 		expect(groupByAgent([], SELF)).toEqual([])
 	})
+
+	it('lists a free-form room first and keeps it out of the agent rows', () => {
+		const groups = groupByAgent(
+			[chat('room', [actor('cto')], { roomKind: 'free' }), chat('b', [actor('cto')])],
+			SELF,
+		)
+		expect(groups.map((g) => g.label)).toEqual(['Rooms', 'Agents'])
+		expect(groups[0].items.map((c) => c.id)).toEqual(['room'])
+		expect(groups[1].items.map((c) => c.id)).toEqual(['b'])
+	})
+
+	it('leaves a flow room with no messages out of every group', () => {
+		const groups = groupByAgent(
+			[chat('flow', [actor('cto')], { roomKind: 'flow', snippet: null })],
+			SELF,
+		)
+		expect(groups).toEqual([])
+	})
 })

@@ -2,7 +2,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
-import { useEffect, useRef, useState } from 'react'
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
 import { LinkedObjects } from './linked-objects'
 import { MetadataProperties } from './metadata-properties'
@@ -57,6 +57,14 @@ export function ObjectCreateForm({
 		}
 	}
 
+	// Enter and Esc both leave the field. The typed title stays and is saved on blur.
+	const handleTitleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+		// Keys that belong to an input method (IME) are not ours.
+		if (e.nativeEvent.isComposing) return
+		if (e.key === 'Escape') e.stopPropagation()
+		if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+	}
+
 	const handleContentChange = (content: string) => {
 		if (object && onUpdate) {
 			onUpdate({ content })
@@ -74,7 +82,7 @@ export function ObjectCreateForm({
 					e.target.style.height = `${e.target.scrollHeight}px`
 				}}
 				onBlur={handleTitleBlur}
-				onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+				onKeyDown={handleTitleKeyDown}
 				placeholder="Untitled"
 				// biome-ignore lint/a11y/noAutofocus: focus title on create
 				autoFocus

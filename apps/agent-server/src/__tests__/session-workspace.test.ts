@@ -87,6 +87,9 @@ class InMemoryStorage implements StorageProvider {
 	async presignDownload(): Promise<string> {
 		throw new Error('Presign not exercised by this test')
 	}
+	async presignUpload(): Promise<string> {
+		throw new Error('Presign not exercised by this test')
+	}
 
 	keys(): string[] {
 		return Array.from(this.objects.keys())

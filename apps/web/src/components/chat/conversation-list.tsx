@@ -2,14 +2,21 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useChatListSearch } from '@/hooks/use-chat-list-search'
 import { useReplyThreads } from '@/hooks/use-conversation'
 import { useConversationsInfinite, useUpdateConversationMe } from '@/hooks/use-conversations'
+import {
+	type ChatListSection,
+	trackChatListSearchUsed,
+	trackChatOpenedFromList,
+} from '@/lib/analytics'
 import { type ConversationListItemResponse, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { type ChatListView, DEFAULT_CHAT_LIST_VIEW } from '@/lib/chat-list-view'
 import { cn } from '@/lib/cn'
 import { groupByAgent } from '@/lib/conversation-agent-rows'
 import { groupConversations } from '@/lib/conversation-groups'
+import { type LoadedList, activityTime } from '@/lib/conversation-search'
 import { focusField, usePageSearchShortcut } from '@/lib/page-search-shortcut'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, MessageCircle, MessageCircleWarning, Plus, Search } from 'lucide-react'
@@ -18,6 +25,7 @@ import { toast } from 'sonner'
 import { type ChatsFilter, ChatsFilterMenu } from './chats-filter-menu'
 import { ConversationAgentRow } from './conversation-agent-row'
 import { ConversationListRow } from './conversation-list-row'
+import { ConversationSearchResults } from './conversation-search-results'
 import { ReplyThreadList } from './replies/reply-thread-list'
 
 /**
@@ -130,7 +138,7 @@ export function ConversationListHeader({
 interface ConversationListProps {
 	workspaceId: string
 	filter?: ChatsFilter
-	/** Narrows the loaded chats by title, preview or participant name. */
+	/** Searches every chat by title, person or message text, archived ones included. */
 	query?: string
 	className?: string
 	/** True when the list owns the whole content width (no thread open) — the
@@ -163,6 +171,19 @@ const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = 
 	},
 	// Threads has its own list (`ReplyThreadList`); this entry only satisfies the record.
 	threads: { title: 'No threads yet', description: 'Reply to a message to start one.' },
+}
+
+/** How long the search box holds still before the search counts as used. */
+const SEARCH_SETTLE_MS = 1000
+
+/** The list section a group reads as in the tracking events. Direct messages and the dated groups
+ *  are `recent` until the agent rows exist. */
+function sectionOfGroup(groupKey: string): ChatListSection {
+	if (groupKey === 'rooms') return 'room'
+	if (groupKey === 'pinned') return 'pinned'
+	if (groupKey === 'agents') return 'agent'
+	if (groupKey === 'unread') return 'unread'
+	return 'recent'
 }
 
 export function ConversationList(props: ConversationListProps) {
@@ -207,8 +228,18 @@ function ChatConversationList({
 		},
 		{ enabled: !scoped },
 	)
-	const priority = useConversationsInfinite(workspaceId, { scope: 'priority' }, { enabled: scoped })
-	const recent = useConversationsInfinite(workspaceId, { scope: 'recent' }, { enabled: scoped })
+	// Both default-list fetches leave out empty agent DMs, retired agents and quiet topic chats
+	// (still found by search and shown again by a new message).
+	const priority = useConversationsInfinite(
+		workspaceId,
+		{ scope: 'priority', hide_quiet: true },
+		{ enabled: scoped },
+	)
+	const recent = useConversationsInfinite(
+		workspaceId,
+		{ scope: 'recent', hide_quiet: true },
+		{ enabled: scoped },
+	)
 	const { fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = scoped
 		? recent
 		: single
@@ -302,24 +333,77 @@ function ChatConversationList({
 			(threadUnreadByChat.get(t.conversationId) ?? 0) + t.thread.unreadCount,
 		)
 	}
-	const needle = (query ?? '').trim().toLowerCase()
-	const shown = needle
-		? conversations.filter((c) =>
-				[c.title, c.snippet ?? '', ...c.participants.map((p) => p.actorName)]
-					.join(' ')
-					.toLowerCase()
-					.includes(needle),
-			)
-		: conversations
-	const viewed = filter === 'all' && !needle
+	// Words in the search box leave the grouped list and ask the server for every chat the person
+	// is in, so an old or archived chat is found even when this list never loaded it.
+	const needle = (query ?? '').trim()
+	const search = useChatListSearch(workspaceId, needle)
+	const known = useMemo(() => new Map(fetched.map((c) => [c.id, c])), [fetched])
+	// What the default list holds, to tell which hits it leaves out. A filtered list is not that
+	// list, so only the person's own archive marks a hit there.
+	const loaded = useMemo<LoadedList | null>(() => {
+		if (!scoped) return null
+		const rows = (recentData?.pages ?? []).flatMap((page) => page.conversations)
+		return {
+			ids: new Set(fetched.map((c) => c.id)),
+			hasMore: !!hasNextPage || priorityHasMore || isLoading,
+			oldestActivityAt: rows.length > 0 ? Math.min(...rows.map(activityTime)) : null,
+		}
+	}, [scoped, recentData, fetched, hasNextPage, priorityHasMore, isLoading])
+	// Only the full list ("All") takes a view; the other filters stay single lists.
+	const viewed = filter === 'all'
 	const groups =
 		viewed && view === 'agents'
-			? groupByAgent(shown, getStoredActor()?.id)
-			: groupConversations(shown, {
+			? groupByAgent(conversations, getStoredActor()?.id)
+			: groupConversations(conversations, {
 					mode:
 						filter === 'archived' ? 'archived' : viewed && view === 'recent' ? 'recent' : 'unread',
 				})
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+	// Where each row on screen sits, for the "opened from the list" event. Rows in a folded group
+	// are not on screen, so they take no place.
+	const placeById = new Map<string, { section: ChatListSection; position: number }>()
+	let position = 0
+	for (const group of groups) {
+		if (collapsed.has(group.key)) continue
+		const section = sectionOfGroup(group.key)
+		if (group.entries) {
+			// An agent row is one place; the chats folded under it share it.
+			for (const entry of group.entries) {
+				position += 1
+				const chats = entry.kind === 'agent' ? entry.conversations : [entry.conversation]
+				for (const c of chats) placeById.set(c.id, { section, position })
+			}
+			continue
+		}
+		for (const c of group.items) {
+			position += 1
+			placeById.set(c.id, { section, position })
+		}
+	}
+	const searching = needle !== ''
+	// Only list rows come through here; while words are typed the rows are search hits, which
+	// report their own open.
+	const trackOpened = (id: string) => {
+		const place = placeById.get(id)
+		if (place) trackChatOpenedFromList({ source: 'list', ...place })
+	}
+	const trackSearchOpened = (position: number) =>
+		trackChatOpenedFromList({ source: 'search', section: 'search', position })
+	// One event per search that has settled, with how many chats the server found. The count is read
+	// when the timer fires.
+	const hitCountRef = useRef(0)
+	hitCountRef.current = search.data?.results.length ?? 0
+	// The query once the answer to it is on screen; empty before that and when nothing is typed.
+	const answered = !!search.data && !search.isFetching && !search.pending && !search.isError
+	const settledQuery = searching && answered ? needle : ''
+	useEffect(() => {
+		if (!settledQuery) return
+		const timer = setTimeout(
+			() => trackChatListSearchUsed({ result_count: hitCountRef.current }),
+			SEARCH_SETTLE_MS,
+		)
+		return () => clearTimeout(timer)
+	}, [settledQuery])
 	const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key))
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const markAllRead = async () => {
@@ -375,7 +459,16 @@ function ChatConversationList({
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 lg:pr-4 lg:pl-10">
 				<div className={cn('w-full', expanded && 'mx-auto max-w-[900px]')}>
-					{isLoading ? (
+					{needle ? (
+						<ConversationSearchResults
+							workspaceId={workspaceId}
+							query={needle}
+							search={search}
+							known={known}
+							loaded={loaded}
+							onOpen={trackSearchOpened}
+						/>
+					) : isLoading ? (
 						<ListSkeleton rows={8} />
 					) : isError ? (
 						// A failed fetch must not borrow the empty state: "No conversations
@@ -472,6 +565,7 @@ function ChatConversationList({
 															workspaceId={workspaceId}
 															entry={entry}
 															threadUnreadByChat={threadUnreadByChat}
+															onOpen={trackOpened}
 														/>
 													) : (
 														<ConversationListRow
@@ -479,6 +573,7 @@ function ChatConversationList({
 															workspaceId={workspaceId}
 															conversation={entry.conversation}
 															threadUnread={threadUnreadByChat.get(entry.conversation.id) ?? 0}
+															onOpen={() => trackOpened(entry.conversation.id)}
 														/>
 													),
 												)
@@ -488,6 +583,7 @@ function ChatConversationList({
 														workspaceId={workspaceId}
 														conversation={c}
 														threadUnread={threadUnreadByChat.get(c.id) ?? 0}
+														onOpen={() => trackOpened(c.id)}
 													/>
 												))}
 								</div>

@@ -1,5 +1,7 @@
 import type { ConversationListItemResponse } from '@/lib/api'
-import type { ConversationGroup } from '@/lib/conversation-groups'
+import { type ConversationGroup, activityMs, isRoomListed } from '@/lib/conversation-groups'
+
+export { activityMs }
 
 type Participant = ConversationListItemResponse['participants'][number]
 
@@ -15,13 +17,6 @@ export type ConversationListEntry =
 			/** Unread messages summed over the chats. */
 			unread: number
 	  }
-
-/** When a chat was last active, as epoch ms. A missing or unparseable time sorts last. */
-export function activityMs(c: ConversationListItemResponse): number {
-	const raw = c.lastMessageAt ?? c.createdAt
-	const ms = raw ? new Date(raw).getTime() : Number.NaN
-	return Number.isNaN(ms) ? 0 : ms
-}
 
 /** The one agent a chat is with: the viewer plus exactly one agent. Anything else (a person, several
  *  actors, nobody) belongs to no agent and is a row of its own. */
@@ -73,18 +68,23 @@ export function buildAgentEntries(
 	return entries.sort((a, b) => b.at - a.at).map((e) => e.entry)
 }
 
-/** The Agents view's groups: pinned chats on top as plain rows, then the agent rows. A pinned chat
- *  leaves its agent's fold, so it is listed once. */
+/** The Agents view's groups: rooms first (the same rule as the other views), pinned chats as plain
+ *  rows, then the agent rows. A room or a pinned chat leaves its agent's fold, so each chat is
+ *  listed once. */
 export function groupByAgent(
 	conversations: ConversationListItemResponse[],
 	selfId: string | undefined,
+	now: Date = new Date(),
 ): ConversationGroup[] {
-	const pinned = conversations.filter((c) => c.pinned).sort((a, b) => activityMs(b) - activityMs(a))
+	const rooms = conversations.filter((c) => isRoomListed(c, now))
+	const rest = conversations.filter((c) => !c.roomKind)
+	const pinned = rest.filter((c) => c.pinned).sort((a, b) => activityMs(b) - activityMs(a))
 	const entries = buildAgentEntries(
-		conversations.filter((c) => !c.pinned),
+		rest.filter((c) => !c.pinned),
 		selfId,
 	)
 	return [
+		{ key: 'rooms', label: 'Rooms', items: rooms },
 		{ key: 'pinned', label: 'Pinned', items: pinned },
 		{
 			key: 'agents',

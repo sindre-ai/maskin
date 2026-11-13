@@ -1,5 +1,5 @@
 import type { ConversationListItemResponse } from '@/lib/api'
-import { groupConversations, startOfDay } from '@/lib/conversation-groups'
+import { groupConversations, isRoomListed, startOfDay } from '@/lib/conversation-groups'
 import { describe, expect, it } from 'vitest'
 
 const NOW = new Date('2026-03-12T10:00:00.000Z')
@@ -228,5 +228,56 @@ describe('groupConversations', () => {
 		expect(
 			groupConversations([buildConversation()], { mode: 'unread', now: NOW }).map((g) => g.label),
 		).toEqual(['Earlier'])
+	})
+})
+
+describe('rooms', () => {
+	const room = (overrides: Partial<ConversationListItemResponse>) =>
+		buildConversation({ snippet: 'hello', ...overrides })
+
+	it('puts rooms in a Rooms group above everything else, each chat once', () => {
+		const groups = groupConversations(
+			[
+				buildConversation({ id: 'dm', directPairKey: 'a:b' }),
+				room({ id: 'free', roomKind: 'free', pinned: true }),
+				buildConversation({ id: 'plain' }),
+			],
+			{ mode: 'unread', now: NOW },
+		)
+		expect(groups.map((g) => [g.label, g.items.map((c) => c.id)])).toEqual([
+			['Rooms', ['free']],
+			['Direct messages', ['dm']],
+			['Earlier', ['plain']],
+		])
+		const dated = groupConversations([room({ id: 'free', roomKind: 'free' })], { now: NOW })
+		expect(dated.map((g) => g.label)).toEqual(['Rooms'])
+	})
+
+	it('always lists a free-form room, however quiet or empty', () => {
+		const quiet = room({ roomKind: 'free', lastMessageAt: daysAgo(200), snippet: null })
+		expect(isRoomListed(quiet, NOW)).toBe(true)
+	})
+
+	it('lists a flow room with a message in the last 14 days', () => {
+		expect(isRoomListed(room({ roomKind: 'flow', lastMessageAt: daysAgo(13) }), NOW)).toBe(true)
+		expect(isRoomListed(room({ roomKind: 'flow', lastMessageAt: daysAgo(15) }), NOW)).toBe(false)
+	})
+
+	it('lists a quiet flow room when it is unread, pinned or working', () => {
+		const quiet = { roomKind: 'flow' as const, lastMessageAt: daysAgo(60) }
+		expect(isRoomListed(room({ ...quiet, unread_count: 1 }), NOW)).toBe(true)
+		expect(isRoomListed(room({ ...quiet, pinned: true }), NOW)).toBe(true)
+		expect(isRoomListed(room({ ...quiet, working_actor_ids: ['agent-1'] }), NOW)).toBe(true)
+	})
+
+	it('hides a flow room with no messages, like an empty direct message', () => {
+		const empty = room({ roomKind: 'flow', snippet: null, pinned: true, lastMessageAt: daysAgo(0) })
+		expect(isRoomListed(empty, NOW)).toBe(false)
+		const groups = groupConversations([empty], { mode: 'unread', now: NOW })
+		expect(groups).toEqual([])
+	})
+
+	it('does not treat an ordinary chat as a room', () => {
+		expect(isRoomListed(buildConversation(), NOW)).toBe(false)
 	})
 })

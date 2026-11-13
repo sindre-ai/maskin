@@ -1,4 +1,6 @@
 import {
+	chatListPositionBucket,
+	chatListResultCountBucket,
 	commentShape,
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
@@ -15,7 +17,9 @@ import {
 	trackChatFirstReplyReceived,
 	trackChatImageUpload,
 	trackChatLeft,
+	trackChatListSearchUsed,
 	trackChatMessageResent,
+	trackChatOpenedFromList,
 	trackChatSessionStarted,
 	trackChatStopClicked,
 	trackCommentPosted,
@@ -27,6 +31,8 @@ import {
 	trackFileViewerPinPlaced,
 	trackFileViewerRoundSent,
 	trackFileViewerZoomUsed,
+	trackFlowError,
+	trackFlowStep,
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackKnowledgePageViewed,
@@ -1168,5 +1174,107 @@ describe('email_return', () => {
 		expect(trackEmailReturn('app_active', '?surface=web')).toBe(false)
 		expect(trackEmailReturn('app_active', '')).toBe(false)
 		expect(capture).not.toHaveBeenCalled()
+	})
+})
+
+describe('flow_step and flow_error', () => {
+	it('flow_step carries flow, step, flow_id, surface and a null duration on the first step', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({ flow: 'agent_computer', step: 'view_opened', flowId: 'flow-a' })
+
+		expect(capture).toHaveBeenCalledWith('flow_step', {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flow_id: 'flow-a',
+			surface: 'web',
+			duration_ms: null,
+		})
+	})
+
+	it('flow_step sets duration_ms from the previous step of the same flow_id', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({ flow: 'agent_computer', step: 'view_opened', flowId: 'flow-b' })
+		trackFlowStep({ flow: 'agent_computer', step: 'take_over_started', flowId: 'flow-b' })
+
+		const second = capture.mock.calls[1][1] as { duration_ms: unknown }
+		expect(typeof second.duration_ms).toBe('number')
+	})
+
+	it('flow_step sends nothing for a step outside the vocabulary', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		// @ts-expect-error unknown step names fail the type check
+		trackFlowStep({ flow: 'agent_computer', step: 'not_a_step', flowId: 'flow-c' })
+
+		expect(capture).not.toHaveBeenCalled()
+	})
+
+	it('flow_error carries a category and nothing else free-form', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowError({
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flowId: 'flow-d',
+			errorCategory: 'connection_lost',
+		})
+
+		expect(capture).toHaveBeenCalledWith('flow_error', {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flow_id: 'flow-d',
+			surface: 'web',
+			error_category: 'connection_lost',
+		})
+	})
+})
+
+describe('chat list use', () => {
+	it('chat_opened_from_list carries the source, section and a position bucket, nothing else', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatOpenedFromList({ source: 'list', section: 'unread', position: 7 })
+
+		expect(capture).toHaveBeenCalledWith('chat_opened_from_list', {
+			source: 'list',
+			section: 'unread',
+			position_bucket: '4_10',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_list_search_used carries a result count bucket and no text', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatListSearchUsed({ result_count: 0 })
+
+		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
+			result_count_bucket: '0',
+			feature_area: 'chats',
+		})
+	})
+
+	it('buckets positions and result counts at their edges', () => {
+		expect([1, 2, 3, 4, 10, 11, 25, 26].map(chatListPositionBucket)).toEqual([
+			'1',
+			'2_3',
+			'2_3',
+			'4_10',
+			'4_10',
+			'11_25',
+			'11_25',
+			'26_plus',
+		])
+		expect([0, 1, 2, 5, 6, 20, 21].map(chatListResultCountBucket)).toEqual([
+			'0',
+			'1',
+			'2_5',
+			'2_5',
+			'6_20',
+			'6_20',
+			'21_plus',
+		])
 	})
 })

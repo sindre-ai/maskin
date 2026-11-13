@@ -15,7 +15,11 @@ import {
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
-import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
+import {
+	useMakeConversationAFlow,
+	useUpdateConversation,
+	useUpdateConversationMe,
+} from '@/hooks/use-conversations'
 import { useLoop } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
@@ -31,15 +35,17 @@ import {
 	ArrowLeft,
 	Copy,
 	EyeOff,
+	Hash,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
 	PanelRight,
 	Pencil,
 	Pin,
+	Repeat,
 	X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -76,6 +82,7 @@ export function ThreadHeader({
 	const { wide } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
+	const makeFlow = useMakeConversationAFlow(workspaceId)
 	const loopId = conversation?.loop_id ?? null
 	// Call mounts only for a thread with exactly one agent participant: a
 	// multi-agent call is v2, and with two agents there is no single agent for
@@ -95,6 +102,16 @@ export function ThreadHeader({
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
+	const renameButtonRef = useRef<HTMLButtonElement>(null)
+	// Set by Enter and Esc only, so a blur-commit never pulls focus back.
+	const returnFocusToTitle = useRef(false)
+
+	// The title button only mounts once the input is gone, so focus moves after the render.
+	useEffect(() => {
+		if (isEditingTitle || !returnFocusToTitle.current) return
+		returnFocusToTitle.current = false
+		renameButtonRef.current?.focus()
+	}, [isEditingTitle])
 
 	const handleClose = () => {
 		navigate({ to: '/$workspaceId/chats', params: { workspaceId }, search: (prev) => prev })
@@ -230,11 +247,15 @@ export function ThreadHeader({
 						onChange={(e) => setTitleDraft(e.target.value)}
 						onBlur={commitTitle}
 						onKeyDown={(e) => {
+							// An Enter that confirms an IME candidate is not a rename.
+							if (e.nativeEvent.isComposing || e.key === 'Process') return
 							if (e.key === 'Enter') {
 								e.preventDefault()
+								returnFocusToTitle.current = true
 								commitTitle()
 							} else if (e.key === 'Escape') {
 								e.preventDefault()
+								returnFocusToTitle.current = true
 								setIsEditingTitle(false)
 							}
 						}}
@@ -246,6 +267,7 @@ export function ThreadHeader({
 					<h2 className="truncate text-base font-semibold leading-tight">
 						{/* Click the title to rename it in place; the agent's page opens from its avatar. */}
 						<button
+							ref={renameButtonRef}
 							type="button"
 							onClick={startEditingTitle}
 							title="Click to rename"
@@ -329,6 +351,34 @@ export function ThreadHeader({
 						<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
 						<span>{conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}</span>
 					</DropdownMenuItem>
+					{conversation.directPairKey ||
+					conversation.roomKind === 'flow' ? null : conversation.roomKind === 'free' ? (
+						<>
+							<DropdownMenuItem
+								onSelect={() => makeFlow.mutate({ id: conversationId, title: conversation.title })}
+							>
+								<Repeat size={14} />
+								<span>Make this a flow</span>
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onSelect={() =>
+									updateConversation.mutate({ id: conversationId, data: { room: false } })
+								}
+							>
+								<Hash size={14} />
+								<span>Turn back into a chat</span>
+							</DropdownMenuItem>
+						</>
+					) : (
+						<DropdownMenuItem
+							onSelect={() =>
+								updateConversation.mutate({ id: conversationId, data: { room: true } })
+							}
+						>
+							<Hash size={14} />
+							<span>Make this a room</span>
+						</DropdownMenuItem>
+					)}
 					<DropdownMenuItem onSelect={handleMarkUnread}>
 						<EyeOff size={14} />
 						<span>Mark as unread</span>

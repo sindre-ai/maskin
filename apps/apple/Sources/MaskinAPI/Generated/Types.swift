@@ -266,6 +266,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/triggers`.
     /// - Remark: Generated from `#/paths//api/triggers/post`.
     func post_sol_api_sol_triggers(_ input: Operations.post_sol_api_sol_triggers.Input) async throws -> Operations.post_sol_api_sol_triggers.Output
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    func get_sol_api_sol_triggers_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -457,7 +462,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/get`.
     func get_sol_api_sol_conversations_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output
-    /// Rename a conversation or change its tags
+    /// Rename a conversation, change its tags, make it a room, or make it about a flow
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -1377,6 +1382,19 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    public func get_sol_api_sol_triggers_sol__lcub_id_rcub_(
+        path: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output {
+        try await get_sol_api_sol_triggers_sol__lcub_id_rcub_(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers
+        ))
+    }
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -1862,7 +1880,7 @@ extension APIProtocol {
             headers: headers
         ))
     }
-    /// Rename a conversation or change its tags
+    /// Rename a conversation, change its tags, make it a room, or make it about a flow
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.

@@ -13,7 +13,7 @@ import { cn } from '@/lib/cn'
 import { shortActorName, snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { MoreHorizontal } from 'lucide-react'
+import { Hash, MoreHorizontal, Repeat } from 'lucide-react'
 import { ConversationAvatarStack } from './conversation-avatar-stack'
 
 interface ConversationListRowProps {
@@ -25,6 +25,8 @@ interface ConversationListRowProps {
 	/** Names the row when its own title would repeat the line above it (a direct message folded
 	 *  under its agent reads "Direct message"). */
 	label?: string
+	/** The row was clicked or opened with the keyboard (not the `···` menu). */
+	onOpen?: () => void
 }
 
 /**
@@ -38,6 +40,7 @@ export function ConversationListRow({
 	conversation,
 	threadUnread = 0,
 	label,
+	onOpen,
 }: ConversationListRowProps) {
 	// Counterparts first, the viewer last: a one-to-one thread reads as "the
 	// agent's row". A thread with nobody else falls back to its own participants.
@@ -75,10 +78,24 @@ export function ConversationListRow({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: conversation.id }}
+				onClick={onOpen}
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 			>
-				{others.length > 1 ? (
+				{conversation.roomKind ? (
+					// A room is a square tile, not people: arrows for a flow's room, # for one a person made.
+					<span
+						role="img"
+						aria-label={conversation.roomKind === 'flow' ? 'Flow room' : 'Room'}
+						className="mt-px grid size-8 shrink-0 place-items-center rounded-[10px] bg-secondary text-foreground"
+					>
+						{conversation.roomKind === 'flow' ? (
+							<Repeat size={15} aria-hidden />
+						) : (
+							<Hash size={15} aria-hidden />
+						)}
+					</span>
+				) : others.length > 1 ? (
 					// Several actors: the cluster the iPhone list draws, so nobody is hidden behind one icon.
 					<ConversationAvatarStack participants={others} className="mt-1 w-[46px]" />
 				) : lead ? (

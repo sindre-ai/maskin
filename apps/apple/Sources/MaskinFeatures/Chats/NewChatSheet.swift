@@ -25,6 +25,9 @@ struct NewChatSheet: View {
 	@State private var highlightedChip: String?
 	@State private var restoredDraft = false
 	@State private var isCreating = false
+	/// "Make it a room": the chat is created as a room with this name.
+	@State private var asRoom = false
+	@State private var roomName = ""
 	@State private var error: String?
 	@State private var composer: ChatComposerModel
 	@FocusState private var toFocused: Bool
@@ -49,10 +52,13 @@ struct NewChatSheet: View {
 	var body: some View {
 		NavigationStack {
 			ScrollView {
-				NewConversationForm(
-					store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
-					draft: $draft, query: $query, highlightedChip: $highlightedChip,
-					toFocused: $toFocused, onRecipientPicked: { composer.requestFocus() })
+				VStack(alignment: .leading, spacing: 0) {
+					NewConversationForm(
+						store: store, currentActorID: currentActorID, initialRecipient: initialRecipient, error: error,
+						draft: $draft, query: $query, highlightedChip: $highlightedChip,
+						toFocused: $toFocused, onRecipientPicked: { composer.requestFocus() })
+					roomControls
+				}
 			}
 			// Dragging the open list must not drop the keyboard: that would blur To and close the list.
 			.scrollDismissesKeyboard(toFocused ? .never : .interactively)
@@ -84,6 +90,29 @@ struct NewChatSheet: View {
 				}
 			}
 		}
+	}
+
+	// MARK: Room
+
+	/// A named chat for a topic that keeps coming back; it stays in the list's Rooms group.
+	private var roomControls: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+			Toggle("Make it a room", isOn: $asRoom)
+				.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
+				.accessibilityHint("A named chat that stays in the Rooms group of the list")
+			if asRoom {
+				TextField("Room name", text: $roomName)
+					.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
+					.padding(.horizontal, MaskinSpace.s8)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.s14 + MaskinSpace.s1, alignment: .leading)
+					.background(
+						MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadiusLarge.tile, style: .continuous)
+					)
+					.accessibilityLabel("Room name")
+			}
+		}
+		.padding(.horizontal, MaskinSpace.s11)
+		.padding(.bottom, MaskinSpace.s12)
 	}
 
 	// MARK: Composer
@@ -131,6 +160,12 @@ struct NewChatSheet: View {
 		}
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
 		guard !people.isEmpty else { return }
+		let roomTitle = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
+		if asRoom, roomTitle.isEmpty {
+			error = "Name the room"
+			MaskinHaptics.play(.error)
+			return
+		}
 		isCreating = true
 		defer { isCreating = false }
 		// Live starts the call with no first message; the typed text stays in the composer.
@@ -140,10 +175,17 @@ struct NewChatSheet: View {
 		guard live || message != nil else { return }
 		error = nil
 		do {
-			let created = try await store.create(
-				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
-				participantIDs: people.map(\.id), firstMessage: message,
-				firstMessageMetadata: taken?.metadata)
+			let created: ConversationSummary
+			if asRoom {
+				created = try await store.createRoom(
+					title: roomTitle, participantIDs: people.map(\.id), firstMessage: message,
+					firstMessageMetadata: taken?.metadata)
+			} else {
+				created = try await store.create(
+					title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
+					participantIDs: people.map(\.id), firstMessage: message,
+					firstMessageMetadata: taken?.metadata)
+			}
 			Analytics.shared.chatSessionStarted(conversationId: created.id, participants: people)
 			MaskinHaptics.play(.success)
 			onCreated(created, live)

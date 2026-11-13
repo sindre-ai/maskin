@@ -26,11 +26,14 @@ export function ConversationAgentRow({
 	workspaceId,
 	entry,
 	threadUnreadByChat,
+	onOpen,
 }: {
 	workspaceId: string
 	entry: AgentEntry
 	/** Unread thread replies per chat, so a folded chat that is caught up still shows its threads. */
 	threadUnreadByChat: Map<string, number>
+	/** A chat under this row was opened (the row itself opens the newest). */
+	onOpen?: (conversationId: string) => void
 }) {
 	const [open, setOpen] = useState(false)
 	const [showAll, setShowAll] = useState(false)
@@ -45,6 +48,7 @@ export function ConversationAgentRow({
 				<Link
 					to="/$workspaceId/chats/$conversationId"
 					params={{ workspaceId, conversationId: newest.id }}
+					onClick={() => onOpen?.(newest.id)}
 					className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
 				>
 					<ActorAvatar
@@ -109,6 +113,7 @@ export function ConversationAgentRow({
 							conversation={c}
 							threadUnread={threadUnreadByChat.get(c.id) ?? 0}
 							label={chatLabel(c)}
+							onOpen={() => onOpen?.(c.id)}
 						/>
 					))}
 					{hidden > 0 ? (

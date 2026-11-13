@@ -46,3 +46,37 @@ export async function trackFileSaved(p: FileSavedProps): Promise<void> {
 			: {}),
 	})
 }
+
+type DesktopFileMovedProps = {
+	workspaceId: string
+	actorId: string
+	/** to_computer: a workspace file put on the computer. to_maskin: a computer file saved. */
+	direction: 'to_computer' | 'to_maskin'
+	/** ok, or the category of what went wrong. Never a message, a name or a path. */
+	outcome: string
+	sizeBytes: number | null
+}
+
+/** Size buckets that keep the property low-cardinality; unknown when the size was never read. */
+export function desktopFileSizeBucket(sizeBytes: number | null): string {
+	if (sizeBytes == null) return 'unknown'
+	const MB = 1024 * 1024
+	if (sizeBytes < MB) return 'under_1mb'
+	if (sizeBytes < 10 * MB) return '1_10mb'
+	if (sizeBytes < 50 * MB) return '10_50mb'
+	if (sizeBytes <= 100 * MB) return '50_100mb'
+	return 'over_100mb'
+}
+
+/**
+ * A file moved between a workspace and an agent's computer, in either direction, or the
+ * attempt failed. Sent by the server after the move has settled. Carries no file name or path.
+ */
+export async function trackDesktopFileMoved(p: DesktopFileMovedProps): Promise<void> {
+	await capturePosthogEvent('desktop_file_moved', p.actorId, {
+		workspace_id: p.workspaceId,
+		direction: p.direction,
+		outcome: p.outcome,
+		size_bucket: desktopFileSizeBucket(p.sizeBytes),
+	})
+}
