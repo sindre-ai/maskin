@@ -69,12 +69,12 @@ describe('useFlowRoom', () => {
 
 		await waitFor(() => expect(result.current.messages).toHaveLength(2))
 		expect(api.conversations.list).toHaveBeenNthCalledWith(1, 'ws-1', {
-			subject_type: 'loop',
+			subject_type: 'object',
 			subject_id: 'flow-1',
 			limit: '1',
 		})
 		expect(api.conversations.list).toHaveBeenNthCalledWith(2, 'ws-1', {
-			subject_type: 'loop',
+			subject_type: 'object',
 			subject_id: 'flow-1',
 			limit: '1',
 			archived: 'true',
@@ -126,7 +126,7 @@ describe('useFlowRoom', () => {
 		expect(api.conversations.create).toHaveBeenCalledWith('ws-1', {
 			title: 'Weekly review',
 			participant_actor_ids: ['agent-1'],
-			subject: { type: 'loop', id: 'flow-1' },
+			subject: { type: 'object', id: 'flow-1' },
 		})
 		expect(api.conversations.postMessage).toHaveBeenCalledWith('chat-9', 'ws-1', {
 			content: 'Hold until the sketch is in',

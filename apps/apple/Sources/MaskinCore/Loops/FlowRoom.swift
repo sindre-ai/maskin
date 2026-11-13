@@ -1,8 +1,9 @@
 import Foundation
 
 /// A flow's room: one thread where people and agents talk, with the flow's own events as quiet lines.
-/// It is a read-time merge of three sources that never overlap: the flow's chat messages, the
-/// comments the flow already had, and its events. Nothing is copied between them.
+/// It is a read-time merge of the flow's chat messages, the comments the flow already had, and its
+/// events. The flow's chat copies the flow's comments in when it is made and mirrors each message
+/// back as a comment, so a message and a comment that are copies of each other show once.
 public enum FlowRoom {
 	/// The composer's placeholder (same words as the web).
 	public static let placeholder = "Message the room"
@@ -40,10 +41,21 @@ public enum FlowRoom {
 	}
 
 	/// The flow's events and comments with its chat messages, oldest first. Thread replies stay out
-	/// unless their author also sent them to the room. Items without a date go last; equal times keep
-	/// the order they came in.
+	/// unless their author also sent them to the room. A message copied from a comment, and a comment
+	/// mirrored from a message, show once (the comment is kept when it is the original, the message
+	/// when it is). Items without a date go last; equal times keep the order they came in.
 	public static func merged(timeline: [TimelineItem], messages: [ChatMessage]) -> [TimelineItem] {
-		let all = timeline + messages.filter(\.showsInTimeline).map(item(for:))
+		let commentIDs = Set(timeline.compactMap(\.eventId))
+		let messageIDs = Set(messages.compactMap(\.serverID))
+		let comments = timeline.filter { item in
+			guard let mirrored = item.viaChatMessageID else { return true }
+			return !messageIDs.contains(mirrored)
+		}
+		let chat = messages.filter(\.showsInTimeline).filter { message in
+			guard case .number(let n)? = message.metadata?["comment_event_id"] else { return true }
+			return !commentIDs.contains(Int(n))
+		}
+		let all = comments + chat.map(item(for:))
 		return all.enumerated().sorted { a, b in
 			let left = a.element.date ?? .distantFuture
 			let right = b.element.date ?? .distantFuture

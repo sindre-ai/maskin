@@ -602,7 +602,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 	return rest as T
 }
 
-/** What a group chat is about: an object (task, bet, insight), an installed loop, or a flow. */
+/** What a group chat is about: an object (task, bet, insight) or an installed loop. */
 export const conversationSubjectSchema = z.object({
 	type: z.enum(['object', 'loop']),
 	id: z.string().uuid(),

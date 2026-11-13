@@ -3162,6 +3162,8 @@ export interface MessageQuestionAnswer {
 export interface MessageMetadata {
 	attachments?: MessageAttachment[]
 	mentions?: string[]
+	/** Backend-owned: the comment this message was copied from (object chats). */
+	comment_event_id?: number
 	context_objects?: MessageContextObject[]
 	context_notifications?: MessageContextNotification[]
 	/**

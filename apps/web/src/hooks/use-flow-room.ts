@@ -23,7 +23,7 @@ function useFlowRoomChatId(workspaceId: string, flowId: string) {
 		queryFn: async () => {
 			for (const archived of [false, true]) {
 				const { conversations } = await api.conversations.list(workspaceId, {
-					subject_type: 'loop',
+					subject_type: 'object',
 					subject_id: flowId,
 					limit: '1',
 					...(archived ? { archived: 'true' } : {}),
@@ -43,9 +43,9 @@ function isRoomMessage(message: MessageResponse) {
 
 /**
  * The messages of a flow's room, and the way to add one. The room is read as a merge: these
- * messages sit beside the flow's old comments and its events on the flow page, and nothing is
- * copied between them. The chat is made on the first post, with the flow's driver agent in it
- * so someone answers.
+ * messages sit beside the flow's old comments and its events on the flow page, and the page
+ * leaves out a message or comment that is only a copy of the other. The chat is made on the
+ * first post, with the flow's driver agent in it so someone answers.
  */
 export function useFlowRoom(
 	workspaceId: string,
@@ -85,7 +85,7 @@ export function useFlowRoom(
 			const created = await createChat.mutateAsync({
 				title: flow.name?.trim() || 'Flow room',
 				participant_actor_ids: options.agentId ? [options.agentId] : [],
-				subject: { type: 'loop', id: flow.id },
+				subject: { type: 'object', id: flow.id },
 			})
 			await api.conversations.postMessage(created.id, workspaceId, input)
 			queryClient.setQueryData(queryKeys.conversations.flowRoom(workspaceId, flow.id), created.id)

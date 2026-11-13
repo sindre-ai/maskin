@@ -85,6 +85,26 @@ struct FlowRoomTests {
 		#expect(merged.map(\.id) == ["e1", "room-m1", "room-m2"])
 	}
 
+	@Test("a message copied from a comment shows once, as the comment")
+	func copiedMessageHidden() {
+		let copy = ChatMessage.confirmed(
+			serverID: 4, conversationID: "room", actorID: "sam", actorName: "Sam", author: .human,
+			content: "Kicking this off", createdAt: at(10), metadata: .object(["comment_event_id": .number(1)]))
+		let merged = FlowRoom.merged(
+			timeline: [comment("c1", "Kicking this off", at: 10, eventId: 1)], messages: [copy, message(5, "Hello", at: 20)])
+		#expect(merged.map(\.id) == ["c1", "room-m5"])
+	}
+
+	@Test("a comment mirrored from a chat message shows once, as the message")
+	func mirroredCommentHidden() {
+		var mirror = comment("c2", "Hello", at: 20, eventId: 2)
+		mirror.viaChatMessageID = 5
+		var unrelated = comment("c3", "Other", at: 30, eventId: 3)
+		unrelated.viaChatMessageID = 99
+		let merged = FlowRoom.merged(timeline: [mirror, unrelated], messages: [message(5, "Hello", at: 20)])
+		#expect(merged.map(\.id) == ["room-m5", "c3"])
+	}
+
 	@Test("a message with no date goes last")
 	func undatedLast() {
 		let undated = ChatMessage(

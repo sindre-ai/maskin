@@ -47,7 +47,7 @@ public protocol ConversationsAPI: Sendable {
 	func latestMessageID(conversationID: String) async throws -> Int?
 	/// Threads you started or replied in, across conversations, most recently active first.
 	func threads(limit: Int) async throws -> [ThreadListItem]
-	/// The chat that belongs to a flow (`GET /api/conversations?subject_type=loop&subject_id=`): its
+	/// The chat that belongs to a flow (`GET /api/conversations?subject_type=object&subject_id=`): its
 	/// room. Nil when the flow has none yet.
 	func flowConversation(flowID: String, archived: Bool) async throws -> ConversationSummary?
 	/// `POST /api/conversations` with the flow as the chat's subject. Asking again for the same flow

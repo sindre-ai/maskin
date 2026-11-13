@@ -208,10 +208,7 @@ test.describe('Loop detail page', () => {
 		})
 	}
 
-	test('submitting an utterance opens the chat panel with the loop attached (AC5)', async ({
-		page,
-		account,
-	}) => {
+	test('submitting an utterance posts it to the flow room', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 
 		const loop = await account.api.createObject(account.workspaceId, {
@@ -229,15 +226,15 @@ test.describe('Loop detail page', () => {
 		await input.fill('Tighten the close timeline')
 		await input.press('Enter')
 
-		// The utterance is forwarded to the chat-driven edit path: navigates to
-		// a new chat with the loop attached via the `objectId` search param. The
-		// local input unmounts as part of that navigation (timing between the
-		// synchronous clear and the route swap isn't reliably observable), so
-		// the destination is the only thing worth asserting here.
-		await expect(page).toHaveURL(new RegExp(`chats/new\\?.*objectId=${loop.id}`), {
+		// A word that is not a plan edit is a message to the flow's room: the page moves to the
+		// Room tab and the message is there. It no longer hands off to a new chat.
+		await expect(page.getByRole('tab', { name: 'Room' })).toHaveAttribute('aria-selected', 'true', {
 			timeout: 10000,
 		})
-		await expect(page.getByRole('heading', { name: 'New chat', exact: true })).toBeVisible()
+		await expect(page.getByText('Tighten the close timeline').first()).toBeVisible({
+			timeout: 10000,
+		})
+		await expect(page).not.toHaveURL(/chats\/new/)
 	})
 
 	test('Pause/Resume toggles the loop pill', async ({ page, account }) => {
@@ -343,20 +340,27 @@ test.describe('Loop detail page', () => {
 				timeout: 15_000,
 			})
 			await page.getByRole('tab', { name: 'Room' }).click()
-			await expect(page.getByText('A comment from before the room')).toBeVisible()
+			await expect(page.getByText('A comment from before the room').first()).toBeVisible()
 
 			// The page's own composer posts to the flow's chat, below the old comment.
 			const composer = page.getByPlaceholder('Message the room')
 			await composer.fill('First word in the room')
 			await sendFromComposer(page, composer, viewport.width)
-			await expect(page.getByText('First word in the room')).toBeVisible({ timeout: 15_000 })
-			await expect(page.getByText('A comment from before the room')).toBeVisible()
+			await expect(page.getByText('First word in the room').first()).toBeVisible({
+				timeout: 15_000,
+			})
+			await expect(page.getByText('A comment from before the room').first()).toBeVisible()
 
-			// It is still there after a reload: the chat holds it, no comment was written.
+			// It is still there after a reload, and the old comment shows once, not again as a copy.
 			await page.reload()
+			await expect(page.getByRole('heading', { name: 'Room loop' })).toBeVisible({
+				timeout: 15_000,
+			})
 			await page.getByRole('tab', { name: 'Room' }).click()
-			await expect(page.getByText('First word in the room')).toBeVisible({ timeout: 15_000 })
-			await expect(page.getByText('A comment from before the room')).toBeVisible()
+			await expect(page.getByText('First word in the room').first()).toBeVisible({
+				timeout: 15_000,
+			})
+			await expect(page.getByText('A comment from before the room')).toHaveCount(1)
 		})
 	}
 })

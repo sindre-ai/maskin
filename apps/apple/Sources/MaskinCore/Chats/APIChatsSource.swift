@@ -31,8 +31,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			limit: limit, offset: offset, flowID: nil)
 	}
 
-	/// A flow's room: the one chat whose subject is the flow. A flow is an object, but the server's
-	/// subject type for it is "loop" (it also covers marketplace installs).
+	/// A flow's room: the one chat whose subject is the flow (a flow is an object of type loop).
 	public func flowConversation(flowID: String, archived: Bool) async throws -> ConversationSummary? {
 		try await fetchList(
 			archived: archived, pinnedOnly: false, unreadOnly: false, hideQuiet: false, limit: 1, offset: 0,
@@ -45,7 +44,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		flowID: String?
 	) async throws -> ConversationPage {
 		let subjectType: Operations.get_sol_api_sol_conversations.Input.Query.subject_typePayload? =
-			flowID == nil ? nil : .loop
+			flowID == nil ? nil : .object
 		let output = try await client.get_sol_api_sol_conversations(
 			.init(
 				// The server parses `?archived=false` with `z.coerce.boolean()`, which reads the string
@@ -168,7 +167,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		initialMessage: String?, initialMetadata: ChatSendMetadata?, idempotencyKey: String,
 		flowID: String? = nil
 	) async throws -> ConversationSummary {
-		let subject = flowID.map { Subject(_type: .loop, id: $0) }
+		let subject = flowID.map { Subject(_type: .object, id: $0) }
 		// Same round-trip as `send`: ChatSendMetadata already uses the API's exact keys.
 		let wireMetadata = try initialMetadata.flatMap { value -> InitialMetadata? in
 			guard !value.isEmpty else { return nil }

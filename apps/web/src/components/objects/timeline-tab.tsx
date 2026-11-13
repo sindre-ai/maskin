@@ -441,10 +441,19 @@ export function TimelineTab({
 	const entries = useMemo(() => {
 		const rows: TimelineEntry[] = []
 
+		// A flow's chat copies the flow's comments in when it is made, and mirrors each message back
+		// as a comment. The copy is left out whichever side it sits on, so nothing shows twice.
+		const roomMessageIds = new Set(roomMessages.map((m) => m.id))
+		const commentIds = new Set<number>()
+		for (const event of events ?? []) if (event.action === 'commented') commentIds.add(event.id)
+
 		for (const event of events ?? []) {
 			if (event.action === 'commented') {
 				// Replies render inside their parent's row, never as their own entry.
 				if (event.data?.parentEventId) continue
+				const mirrored = (event.data?.metadata as { via_chat?: { message_id?: number } } | null)
+					?.via_chat?.message_id
+				if (mirrored !== undefined && roomMessageIds.has(mirrored)) continue
 				rows.push({ kind: 'comment', key: `comment-${event.id}`, time: event.createdAt, event })
 				continue
 			}
@@ -521,6 +530,8 @@ export function TimelineTab({
 		}
 
 		for (const message of roomMessages) {
+			const copiedFrom = message.metadata?.comment_event_id
+			if (copiedFrom !== undefined && commentIds.has(copiedFrom)) continue
 			rows.push({ kind: 'message', key: `message-${message.id}`, time: message.createdAt, message })
 		}
 

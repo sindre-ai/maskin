@@ -1112,7 +1112,14 @@ describe('TimelineTab', () => {
 })
 
 describe('TimelineTab as a room', () => {
-	const roomOptions = (messages: Array<{ id: number; content: string; createdAt: string }>) => ({
+	const roomOptions = (
+		messages: Array<{
+			id: number
+			content: string
+			createdAt: string
+			metadata?: Record<string, unknown>
+		}>,
+	) => ({
 		messages: messages.map(
 			(m) =>
 				({
@@ -1122,7 +1129,7 @@ describe('TimelineTab as a room', () => {
 					actorName: 'Ada',
 					actorType: 'human',
 					kind: 'message',
-					metadata: null,
+					metadata: m.metadata ?? null,
 					sessionId: null,
 					editedAt: null,
 				}) as never,
@@ -1182,6 +1189,55 @@ describe('TimelineTab as a room', () => {
 		// Room names for the filters: comments are messages, changes are events.
 		expect(screen.getByRole('button', { name: 'Messages (3)' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Events (1)' })).toBeInTheDocument()
+	})
+
+	it('shows a comment and its chat copy once', () => {
+		const object = buildObjectResponse({ id: 'loop-1', type: 'loop' as never })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 1,
+					action: 'commented',
+					entityType: 'object',
+					entityId: 'loop-1',
+					actorId: 'actor-1',
+					createdAt: '2026-01-01T00:00:00Z',
+					data: { content: 'Written before the room' },
+				}),
+				// A chat message the server wrote down as a comment.
+				buildEventResponse({
+					id: 3,
+					action: 'commented',
+					entityType: 'object',
+					entityId: 'loop-1',
+					actorId: 'actor-1',
+					createdAt: '2026-01-03T00:00:00Z',
+					data: { content: 'Said in the room', metadata: { via_chat: { message_id: 8 } } },
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(
+			<TimelineTab
+				object={object}
+				room={roomOptions([
+					{
+						id: 7,
+						content: 'Written before the room',
+						createdAt: '2026-01-01T00:00:00Z',
+						metadata: { comment_event_id: 1 },
+					},
+					{ id: 8, content: 'Said in the room', createdAt: '2026-01-03T00:00:00Z' },
+				])}
+			/>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+
+		expect(screen.getAllByText('Written before the room')).toHaveLength(1)
+		expect(screen.getAllByText('Said in the room')).toHaveLength(1)
 	})
 
 	it('keeps events out of the Messages filter', async () => {
