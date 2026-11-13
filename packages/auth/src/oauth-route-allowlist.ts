@@ -396,6 +396,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/objects/:id/chat-approval',
 	'PATCH /api/objects/:id/next-step',
 	'POST /api/objects/:id/next-step',
+	'POST /api/objects/:id/schedule-next-step',
 	'POST /api/sessions/:id/chat',
 	'POST /api/sessions/:id/computer-card',
 	'POST /api/sessions/:id/connect-card',
