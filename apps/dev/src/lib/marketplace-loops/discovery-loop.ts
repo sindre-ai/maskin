@@ -1,9 +1,15 @@
 // Shared constants for the Product Discovery Loop marketplace bundle.
 //
 // The bundle contains the Product Discovery Agent, the CPO and the Strategist,
-// plus every trigger they drive: triage of new insights, a clustering sweep, a
-// backlog drain, a weekly digest, rolling revalidation of opportunity bets, and
-// shaping once a person moves a bet to define.
+// plus every trigger they drive: triage of new insights, an insight synthesis
+// sweep, a backlog drain, a weekly briefing, weekly and daily upkeep of the
+// Discovery understanding and Bet intelligence pages, the evidence base and
+// strategy check pages, the CPO's critique and grading pass, review of
+// opportunity bets, and shaping once a person moves a bet to define.
+//
+// The workspace's coordinator (the Chief of Staff every workspace is seeded
+// with) is deliberately not in the bundle. Its attention trigger and the loop
+// owner heartbeat are left out; the agents here find the coordinator by role.
 //
 // The prompts, trigger prompts and skills in data/discovery-*.json are the real
 // ones from a working workspace, with everything specific to that company, its
@@ -25,10 +31,10 @@ export const DISCOVERY_ACTOR_STRATEGIST = '02f60f27-615a-4cdd-9af0-23f402f067e4'
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Loop',
-	version: '1.1.0',
+	version: '1.2.0',
 	useCase: 'Discovery',
 	description:
-		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, a plain-words weekly digest says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
+		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, two living pages (what we understand about customers, and what it means for each bet) are kept current and graded each week, a plain-words weekly briefing says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
 } as const
 
 export const DISCOVERY_ACTOR_IDS = [
