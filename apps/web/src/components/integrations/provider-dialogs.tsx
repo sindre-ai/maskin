@@ -64,27 +64,32 @@ export function ApiKeyDialog({
 						Enter your {provider?.displayName} API key to store it for this workspace only.
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-2">
-					<Label htmlFor="provider-api-key">API key</Label>
-					<Input
-						id="provider-api-key"
-						type="password"
-						value={apiKey}
-						onChange={(e) => onApiKeyChange(e.target.value)}
-						placeholder="Paste your API key"
-					/>
-				</div>
-				<div className="flex justify-end gap-2">
-					<Button variant="ghost" onClick={onClose}>
-						Cancel
-					</Button>
-					<Button
-						onClick={handleConnect}
-						disabled={!apiKey.trim() || connect.isPending || !canWrite}
-					>
-						Connect
-					</Button>
-				</div>
+				<form
+					className="space-y-4"
+					onSubmit={(e) => {
+						e.preventDefault()
+						if (apiKey.trim() && !connect.isPending) handleConnect()
+					}}
+				>
+					<div className="space-y-2">
+						<Label htmlFor="provider-api-key">API key</Label>
+						<Input
+							id="provider-api-key"
+							type="password"
+							value={apiKey}
+							onChange={(e) => onApiKeyChange(e.target.value)}
+							placeholder="Paste your API key"
+						/>
+					</div>
+					<div className="flex justify-end gap-2">
+						<Button type="button" variant="ghost" onClick={onClose}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!apiKey.trim() || connect.isPending || !canWrite}>
+							Connect
+						</Button>
+					</div>
+				</form>
 			</DialogContent>
 		</Dialog>
 	)
@@ -357,7 +362,13 @@ export function SkjaldConnectDialog({
 						</div>
 					</div>
 				) : (
-					<div className="space-y-3">
+					<form
+						className="space-y-3"
+						onSubmit={(e) => {
+							e.preventDefault()
+							if (secret.trim() && !complete.isPending) handleComplete()
+						}}
+					>
 						<div className="space-y-2">
 							<Label htmlFor="skjald-secret">Webhook secret</Label>
 							<Input
@@ -369,17 +380,14 @@ export function SkjaldConnectDialog({
 							/>
 						</div>
 						<div className="flex justify-end gap-2">
-							<Button variant="ghost" onClick={() => setStep(1)}>
+							<Button type="button" variant="ghost" onClick={() => setStep(1)}>
 								Back
 							</Button>
-							<Button
-								onClick={handleComplete}
-								disabled={!secret.trim() || complete.isPending || !canWrite}
-							>
+							<Button type="submit" disabled={!secret.trim() || complete.isPending || !canWrite}>
 								Connect
 							</Button>
 						</div>
-					</div>
+					</form>
 				)}
 			</DialogContent>
 		</Dialog>
