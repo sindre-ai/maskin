@@ -32,7 +32,8 @@ async function openTab(page: Page, name: string) {
 		await tab.click()
 		return
 	}
-	await page.getByRole('button', { name: /^More/ }).click()
+	// The strip's own button reads "More (n)"; the page has other buttons that start with More.
+	await page.getByRole('button', { name: /^More \(\d+\)$/ }).click()
 	await page.getByRole('menuitemradio', { name, exact: true }).click()
 }
 
