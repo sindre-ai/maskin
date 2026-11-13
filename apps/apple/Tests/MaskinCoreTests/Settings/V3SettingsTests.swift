@@ -322,7 +322,18 @@ private final class FakeAccess: IntegrationAccessAPI, @unchecked Sendable {
 	/// When set, the write for this actor parks on `gate`, then fails with `failure`.
 	var parkedActor: String?
 	var gate: Gate?
+	var chat: [ChatGrant] = []
+	var chatFailure: SettingsError?
+	var removed: [String] = []
 	func grants(integrationId: String) async throws -> IntegrationGrants { current }
+	func chatGrants(integrationId: String) async throws -> [ChatGrant] {
+		if let chatFailure { throw chatFailure }
+		return chat
+	}
+	func removeChatGrant(integrationId: String, grantId: String, idempotencyKey: String) async throws {
+		if let failure { throw failure }
+		removed.append(grantId)
+	}
 	func setGrant(integrationId: String, actorId: String, access: AgentAccess, idempotencyKey: String) async throws {
 		if actorId == parkedActor {
 			await gate?.wait()
@@ -380,6 +391,58 @@ struct IntegrationAccessTests {
 		await store.load()
 		await store.set(.none, for: agents[1])
 		#expect(store.access(for: "a") == .read)
+	}
+
+	@MainActor @Test func chatGrantsAreListedAndRemovedOnce() async {
+		let api = FakeAccess()
+		api.chat = [ChatGrant(id: "g1", actorId: "a", expiresAt: nil), ChatGrant(id: "g2", actorId: "b", expiresAt: nil)]
+		let store = IntegrationAccessStore(api: api, integrationId: "i", agents: agents, canManage: true)
+		await store.load()
+		#expect(store.chatGrants.map(\.id) == ["g1", "g2"])
+		await store.removeChatGrant(store.chatGrants[0])
+		#expect(api.removed == ["g1"])
+		#expect(store.chatGrants.map(\.id) == ["g2"])
+	}
+
+	@MainActor @Test func aRefusedRemoveKeepsTheGrantAndSaysWhy() async {
+		let api = FakeAccess()
+		api.chat = [ChatGrant(id: "g1", actorId: "a", expiresAt: nil)]
+		let store = IntegrationAccessStore(api: api, integrationId: "i", agents: agents, canManage: true)
+		await store.load()
+		api.failure = SettingsError("Only a person can change agent access")
+		await store.removeChatGrant(store.chatGrants[0])
+		#expect(store.chatGrants.map(\.id) == ["g1"])
+		#expect(store.actionError == "Only a person can change agent access")
+	}
+
+	@MainActor @Test func readersCannotRemoveAChatGrant() async {
+		let api = FakeAccess()
+		api.chat = [ChatGrant(id: "g1", actorId: "a", expiresAt: nil)]
+		let store = IntegrationAccessStore(api: api, integrationId: "i", agents: agents, canManage: false)
+		await store.load()
+		await store.removeChatGrant(store.chatGrants[0])
+		#expect(api.removed.isEmpty)
+		#expect(store.chatGrants.count == 1)
+	}
+
+	@MainActor @Test func aChatListThatFailsToLoadDoesNotBreakThePage() async {
+		let api = FakeAccess()
+		api.chatFailure = SettingsError("down")
+		let store = IntegrationAccessStore(api: api, integrationId: "i", agents: agents, canManage: true)
+		await store.load()
+		#expect(store.phase == .loaded)
+		#expect(store.chatGrants.isEmpty)
+	}
+
+	@Test func aChatGrantSaysWhenItEnds() {
+		#expect(ChatGrant(id: "g", actorId: "a", expiresAt: nil).detail == "Only in one chat")
+		#expect(ChatGrant(id: "g", actorId: "a", expiresAt: Date(timeIntervalSince1970: 0)).detail.hasPrefix("Only in one chat · expires "))
+	}
+
+	@Test func chatGrantDatesReadWithAndWithoutFractions() {
+		#expect(APISettingsIntegrationAccessSource.date("2026-11-13T20:00:00.000Z") != nil)
+		#expect(APISettingsIntegrationAccessSource.date("2026-11-13T20:00:00Z") != nil)
+		#expect(APISettingsIntegrationAccessSource.date(nil) == nil)
 	}
 
 	@Test func labelsMatchTheServer() {
