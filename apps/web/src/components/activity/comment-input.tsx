@@ -58,12 +58,12 @@ interface CommentInputProps {
 	// page pins to the bottom of its document (mockup 1358–1366) — no avatar, no
 	// hint, controls inline with the field.
 	variant?: 'stacked' | 'bar'
-	// Overrides the composer's own placeholder. The bar reads
-	// "Comment — / commands, @ mentions" on object detail.
-	placeholder?: string
 	// Bar only: sits first inside the bar, before the field (the item page's
 	// Comment / Message chip). The + menu then follows the field.
 	leading?: React.ReactNode
+	// Overrides the composer's own placeholder. The bar reads
+	// "Comment — / commands, @ mentions" on object detail.
+	placeholder?: string
 	// Puts the caret in the box on mount, for a composer opened by an action
 	// (the Reply button) rather than one that is part of the page.
 	autoFocus?: boolean
@@ -113,8 +113,8 @@ function CommentInputForm({
 	focusRef,
 	hint,
 	variant = 'stacked',
-	placeholder,
 	leading,
+	placeholder,
 	autoFocus,
 	onCancel,
 }: CommentInputProps) {
