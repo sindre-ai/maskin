@@ -650,6 +650,30 @@ describe('NotificationPushFanout channel switches', () => {
 		expect(browser.sendToActor).toHaveBeenCalledTimes(1)
 	})
 
+	it('sends notification_sent only for a notification that reaches a channel', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		await run({})
+		expect(trackNotificationSent).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends no notification_sent when every channel we hold is switched off', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		// Push switch on, browser switch off, and the browser is the only channel registered:
+		// the policy lets the notification through but no target is left to receive it.
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [
+			[notif()],
+			[prefsRow({ browserCategories: { conversation: false } })],
+		]
+		const browser = { channelKind: 'browser', isEnabled: () => true, sendToActor: vi.fn() }
+		const fanout = new NotificationPushFanout(db, new EventEmitter() as never, [
+			browser as unknown as PushChannel,
+		])
+		await fanout.handleEvent(event)
+		expect(browser.sendToActor).not.toHaveBeenCalled()
+		expect(trackNotificationSent).not.toHaveBeenCalled()
+	})
+
 	it('treats a browser switch never asked about as the push switch', async () => {
 		const { phone, browser } = await run({
 			categories: { needs_you: true, conversation: false, digest: true, tips: true },
