@@ -40,7 +40,8 @@ async function storedMetadata(actorId: string) {
 		.select({ metadata: actors.metadata })
 		.from(actors)
 		.where(eq(actors.id, actorId))
-	return row.metadata
+	// An actor nothing was ever saved on has null metadata.
+	return row.metadata ?? {}
 }
 
 describe('Initials on agents', () => {
