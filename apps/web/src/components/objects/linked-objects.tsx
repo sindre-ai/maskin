@@ -690,6 +690,15 @@ export function AddLinkForm({
 		[objectType, objectId, relType, onCreateRelationship, onClose],
 	)
 
+	const listboxId = `addlink-listbox-${tab}`
+
+	// Arrow-key nav only: scroll the row into view so it never sits hidden in
+	// the short list. Mouse hover sets the index directly and must not scroll.
+	const moveActive = (next: number) => {
+		setActiveIndex(next)
+		document.getElementById(`${listboxId}-opt-${next}`)?.scrollIntoView({ block: 'nearest' })
+	}
+
 	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
 		// Tab-jump shortcuts. Guard with Meta/Alt so 'o' or 'f' typed into the
 		// search input still work as text; the shortcuts fire only when the
@@ -706,12 +715,12 @@ export function AddLinkForm({
 		}
 		if (e.key === 'ArrowDown') {
 			e.preventDefault()
-			setActiveIndex((i) => Math.min(rowsCount - 1, i + 1))
+			moveActive(Math.min(rowsCount - 1, activeIndex + 1))
 			return
 		}
 		if (e.key === 'ArrowUp') {
 			e.preventDefault()
-			setActiveIndex((i) => Math.max(0, i - 1))
+			moveActive(Math.max(0, activeIndex - 1))
 			return
 		}
 		if (e.key === 'Enter') {
@@ -728,8 +737,6 @@ export function AddLinkForm({
 			onClose()
 		}
 	}
-
-	const listboxId = `addlink-listbox-${tab}`
 
 	return (
 		<div className="rounded border border-border bg-card p-3 space-y-2 mb-3">
