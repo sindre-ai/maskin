@@ -5,7 +5,9 @@ import Testing
 @MainActor
 @Suite("Emoji list matches the web") struct EmojiCatalogTests {
 	@Test func typingSmiOffersTheWebRowsInTheWebOrder() {
-		#expect(EmojiShortcodes.suggestions(for: "smi").map(\.name) == ["smile", "smiley", "slightly_smiling_face"])
+		#expect(
+			EmojiShortcodes.suggestions(for: "smi").map(\.name)
+				== ["smile", "smiley", "slightly_smiling_face", "sweat_smile"])
 		#expect(EmojiShortcodes.suggestions(for: "smi").first?.emoji == "😄")
 	}
 
