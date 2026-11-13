@@ -42,11 +42,20 @@ describe('Microsoft provider config', () => {
 		])
 	})
 
-	it('is registered, with no webhook and no MCP server', () => {
+	it('is registered, with no webhook and the Maskin-hosted calendar MCP that agents opt into', () => {
 		expect(listProviders().map((p) => p.config.name)).toContain(MICROSOFT_PROVIDER)
 		const resolved = getProvider(MICROSOFT_PROVIDER)
 		expect(resolved.config.webhook).toBeUndefined()
-		expect(resolved.config.mcp).toBeUndefined()
+		expect(resolved.config.mcp?.autoInject).toBe(false)
+		// Only the Maskin key goes into a session; the Microsoft token is resolved server-side.
+		expect(resolved.config.mcp?.server).toEqual({
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/microsoft/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
+		})
 		expect(resolved.postInstall).toBeTypeOf('function')
 		expect(resolved.resolveExternalId).toBeTypeOf('function')
 	})

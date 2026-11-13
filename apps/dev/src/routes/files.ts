@@ -26,6 +26,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { trackFileSaved } from '../lib/analytics/file-events'
+import { linkFilesToConversation } from '../lib/conversation-file-links'
 import {
 	buildCreatedAtCursorConditions,
 	msCreatedAt,
@@ -60,6 +61,7 @@ import {
 	isWorkspaceMember,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+import { assertInWorkspace } from '../lib/workspace-scope'
 
 type Env = {
 	Variables: {
@@ -73,7 +75,20 @@ type Env = {
 		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
 		 * file mutations to their originating session. */
 		maskinSessionId?: string
+		/** Set by authMiddleware for a session key: the session the key was minted for. */
+		apiKeySessionId?: string | null
 	}
+}
+
+/**
+ * The session a file mutation belongs to. The caller's session key names it, so a plain
+ * HTTP call from the agent's computer counts; the header is the fallback for other keys.
+ */
+function producingSessionId(
+	apiKeySessionId: string | null | undefined,
+	headerSessionId: string | undefined,
+): string | undefined {
+	return apiKeySessionId ?? headerSessionId
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -230,6 +245,13 @@ app.openapi(createFileRoute, (async (c) => {
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
 	const body = c.req.valid('json')
 
+	// A chat or work item the caller names must belong to this workspace; checked before
+	// anything is written, like every other id that comes out of a request body.
+	await assertInWorkspace(db, workspaceId, {
+		conversations: [body.conversation_id],
+		objects: [body.object_id],
+	})
+
 	// Resolve the frontend URL up front. If FRONTEND_URL is missing in prod we
 	// fail before any side effects — otherwise we'd write a row + S3 object,
 	// then 500 the response, and a retry would create another pair.
@@ -291,9 +313,45 @@ app.openapi(createFileRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
 	}
 
+	// The chat or work item the caller named. Best effort, like the provenance links: the
+	// file is already stored, and a failed link never fails the create.
+	if (body.conversation_id) {
+		await linkFilesToConversation(db, {
+			workspaceId,
+			conversationId: body.conversation_id,
+			fileIds: [created.id],
+			createdBy: actorId,
+		})
+	}
+	if (body.object_id) {
+		try {
+			await db
+				.insert(relationships)
+				.values({
+					sourceType: 'object',
+					sourceId: body.object_id,
+					targetType: 'file',
+					targetId: created.id,
+					type: 'attached',
+					createdBy: actorId,
+				})
+				.onConflictDoNothing({
+					target: [relationships.sourceId, relationships.targetId, relationships.type],
+				})
+		} catch (err) {
+			logger.warn('file attach to work item failed', {
+				workspaceId,
+				fileId: created.id,
+				objectId: body.object_id,
+				error: String(err),
+			})
+		}
+	}
+
 	// Audit event — never include the file content (8KB NOTIFY cap). Passes
 	// provenance context so the S2 writer hook can also upsert a
-	// `session → file` `produced_by` edge when the mutation came in via MCP.
+	// `session → file` `produced_by` edge, and link the chat the session runs in to
+	// the file unless the caller named a chat above.
 	try {
 		await recordEvent(db, {
 			workspaceId,
@@ -307,7 +365,11 @@ app.openapi(createFileRoute, (async (c) => {
 				mimeType: created.mimeType,
 				sizeBytes: created.sizeBytes,
 			},
-			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
+			provenance: {
+				sessionId: producingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+				entityKind: 'file',
+				...(body.conversation_id ? { conversationId: null } : {}),
+			},
 		})
 	} catch (err) {
 		logger.error('Failed to record file created audit event', {
@@ -928,7 +990,10 @@ app.openapi(updateFileRoute, (async (c) => {
 				sizeBytes: updated.sizeBytes,
 				...(body.edits ? { editCount: body.edits.length } : {}),
 			},
-			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
+			provenance: {
+				sessionId: producingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+				entityKind: 'file',
+			},
 		})
 	} catch (err) {
 		logger.error('Failed to record file updated audit event', {
@@ -1044,7 +1109,10 @@ app.openapi(deleteFileRoute, (async (c) => {
 				mimeType: existing.mimeType,
 				sizeBytes: existing.sizeBytes,
 			},
-			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
+			provenance: {
+				sessionId: producingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+				entityKind: 'file',
+			},
 		})
 	} catch (err) {
 		logger.error('Failed to record file deleted audit event', {
@@ -1431,7 +1499,11 @@ app.openapi(completeUploadRoute, (async (c) => {
 	}
 
 	try {
-		await recordFileCreated(db, { file: created, actorId, sessionId: c.get('maskinSessionId') })
+		await recordFileCreated(db, {
+			file: created,
+			actorId,
+			sessionId: producingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
 	} catch (err) {
 		logger.error('Failed to record file created audit event', {
 			workspaceId: created.workspaceId,

@@ -38,6 +38,7 @@ describe('admitPosthogEvent', () => {
 		for (const event of [
 			'agent_session_started',
 			'chat_session_started',
+			'chat_session_seeded',
 			'integration_connect_started',
 			'integration_tool_called',
 			'foryou_card_action',

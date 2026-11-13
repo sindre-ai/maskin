@@ -36,7 +36,7 @@ import {
 	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
-	showsTaskCard,
+	showsTextCard,
 } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -455,6 +455,7 @@ export function LinkedCardOrLink({
 	inList = false,
 	after = false,
 	updated = false,
+	first = false,
 	draftsAndFiles = true,
 }: {
 	workspaceId: string
@@ -470,6 +471,8 @@ export function LinkedCardOrLink({
 	after?: boolean
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
+	/** The first card under a message: an object with text is drawn though its link sits in a sentence. */
+	first?: boolean
 	/** False outside chat: a draft keeps its plain link, with no approval card. */
 	draftsAndFiles?: boolean
 }) {
@@ -524,6 +527,7 @@ export function LinkedCardOrLink({
 			inList={inList}
 			after={after}
 			updated={updated}
+			first={first}
 			draftsAndFiles={draftsAndFiles}
 		/>
 	) : (
@@ -576,6 +580,7 @@ export function renderLinkedCard(
 		inList?: boolean
 		after?: boolean
 		updated?: boolean
+		first?: boolean
 		draftsAndFiles?: boolean
 	},
 ): ReactNode {
@@ -682,6 +687,7 @@ function ObjectCardOrLink({
 	inList,
 	after,
 	updated,
+	first,
 	draftsAndFiles,
 }: {
 	workspaceId: string
@@ -693,6 +699,7 @@ function ObjectCardOrLink({
 	inList: boolean
 	after: boolean
 	updated: boolean
+	first: boolean
 	draftsAndFiles: boolean
 }) {
 	const { data: object } = useObject(objectId)
@@ -711,8 +718,9 @@ function ObjectCardOrLink({
 			/>,
 		)
 	}
-	// A task with text, alone on its own line in chat, is its text; see `showsTaskCard`.
-	if (draftsAndFiles && !after && !inList && showsTaskCard(object, workspaceId)) {
+	// An object with text, alone on its own line in chat, is its text; so is the first one a
+	// sentence links, drawn under the message. See `showsTextCard`.
+	if (draftsAndFiles && !inList && (after ? first : true) && showsTextCard(object, workspaceId)) {
 		return withLabel(
 			label,
 			<LinkedObjectCard

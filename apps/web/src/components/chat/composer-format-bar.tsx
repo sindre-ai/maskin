@@ -14,7 +14,7 @@ import {
 	SquareCode,
 	Strikethrough,
 } from 'lucide-react'
-import { type FormEvent, useCallback, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, useCallback, useRef, useState } from 'react'
 
 // The shortcut text is the one the editor binds, so the hint and the key agree.
 const FORMATS: {
@@ -90,6 +90,8 @@ interface ComposerFormatBarProps {
 	focusBox: () => void
 }
 
+const ITEM_ATTR = 'data-toolbar-item'
+
 const buttonClass =
 	'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 max-md:size-11'
 
@@ -112,6 +114,32 @@ export function ComposerFormatBar({
 	// The address of the link the caret sits in, read once when the field opens.
 	const [existingHref, setExistingHref] = useState<string | null>(null)
 	const [invalid, setInvalid] = useState(false)
+	// The one button Tab lands on. Arrow keys move it, so the row is a single tab stop.
+	const [tabStop, setTabStop] = useState<string>(FORMATS[0].format)
+	const barRef = useRef<HTMLDivElement>(null)
+
+	const itemProps = (key: string) => ({
+		[ITEM_ATTR]: key,
+		tabIndex: tabStop === key ? 0 : -1,
+	})
+
+	const onBarKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+		// The link field renders in a portal but its keys still bubble here through React's tree.
+		if (!barRef.current?.contains(e.target as Node)) return
+		const items = Array.from(
+			barRef.current.querySelectorAll<HTMLButtonElement>(`button[${ITEM_ATTR}]:not(:disabled)`),
+		)
+		const current = items.indexOf(e.target as HTMLButtonElement)
+		if (current === -1) return
+		let next: number
+		if (e.key === 'ArrowRight') next = (current + 1) % items.length
+		else if (e.key === 'ArrowLeft') next = (current - 1 + items.length) % items.length
+		else if (e.key === 'Home') next = 0
+		else if (e.key === 'End') next = items.length - 1
+		else return
+		e.preventDefault()
+		items[next].focus()
+	}
 
 	const button = ({ format, label, shortcut, icon: Icon }: (typeof FORMATS)[number]) => (
 		<button
@@ -122,6 +150,7 @@ export function ComposerFormatBar({
 			aria-pressed={active.includes(format)}
 			title={shortcut ? `${label} (${shortcut})` : label}
 			disabled={disabled}
+			{...itemProps(format)}
 			onMouseDown={(e) => e.preventDefault()}
 			onClick={() => onToggle(format)}
 		>
@@ -142,9 +171,15 @@ export function ComposerFormatBar({
 
 	return (
 		<div
+			ref={barRef}
 			role="toolbar"
 			aria-label="Formatting"
 			className="mb-1.5 flex items-center gap-0.5 overflow-x-auto rounded-2xl bg-card px-2 py-1 inset-ring inset-ring-input"
+			onKeyDown={onBarKeyDown}
+			onFocus={(e) => {
+				const key = (e.target as HTMLElement).getAttribute?.(ITEM_ATTR)
+				if (key && barRef.current?.contains(e.target as Node)) setTabStop(key)
+			}}
 		>
 			{FORMATS.map(button)}
 			<Popover
@@ -170,6 +205,7 @@ export function ComposerFormatBar({
 						aria-pressed={active.includes('link')}
 						title="Link"
 						disabled={disabled}
+						{...itemProps('link')}
 						onMouseDown={(e) => e.preventDefault()}
 					>
 						<LinkIcon size={16} aria-hidden />
