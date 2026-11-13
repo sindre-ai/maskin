@@ -1067,7 +1067,11 @@ export function buildApp(deps: AppDeps): Hono {
 			if (!desktop) return c.json({ error: 'not_found' }, 404)
 			// Reports `suspended` rather than waking it: a status poll must not undo
 			// the idle suspend. Opening the stream or PUT-ing the desktop wakes it.
-			return c.json({ status: desktop.status, password: desktop.password })
+			return c.json({
+				status: desktop.status,
+				password: desktop.password,
+				host: desktops.hostInfo(),
+			})
 		})
 
 		app.delete('/desktops/:workspaceId/:agentId', async (c) => {

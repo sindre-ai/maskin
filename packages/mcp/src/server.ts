@@ -10684,6 +10684,52 @@ ${claudeCredsBlock}`,
 
 	registerAppTool(
 		server,
+		'desktop_apply_settings',
+		{
+			description: tools.desktop_apply_settings.description,
+			inputSchema: tools.desktop_apply_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/apply-settings', args.agent_id),
+				{},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_apply_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_settings',
+		{
+			description: tools.desktop_settings.description,
+			inputSchema: tools.desktop_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				desktopPath('/api/desktop/settings', args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'desktop_save_file',
 		{
 			description: tools.desktop_save_file.description,
