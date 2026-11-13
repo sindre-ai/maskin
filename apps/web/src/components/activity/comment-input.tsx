@@ -581,9 +581,10 @@ function CommentInputForm({
 									// The placeholder stays on one line, ends in an ellipsis when the bar is narrow and
 									// centres on the bar's middle line, level with the chip.
 									isBar &&
-										'min-w-0 flex-1 [&>span]:top-1/2 [&>span]:bottom-auto [&>span]:-translate-y-1/2 [&>span]:truncate',
+										'min-w-0 flex-1 [&>span]:top-1/2 [&>span]:bottom-auto [&>span]:-translate-y-1/2',
 									overLimit && 'text-error',
 								)}
+								placeholderClassName={isBar ? 'truncate' : undefined}
 								invalid={overLimit}
 								autoFocus={autoFocus}
 								onChange={setValue}
