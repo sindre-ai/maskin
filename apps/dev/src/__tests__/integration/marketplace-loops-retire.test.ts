@@ -153,7 +153,7 @@ describe('Marketplace loop retirement', () => {
 		expect(slugs).not.toContain(legacy.slug)
 		expect(slugs.sort()).toEqual([
 			'market-competitor-watch-loop',
-			'meeting-manager-loop',
+			'meeting-loop',
 			'product-discovery-loop',
 		])
 		expect(body.counts.total).toBe(3)

@@ -5,34 +5,34 @@ import {
 	getTriggerData,
 } from '../../../lib/marketplace-loops/loop-data'
 import {
-	MEETING_MANAGER_ACTOR_IDS,
-	MEETING_MANAGER_LOOP,
-	MEETING_MANAGER_SKILL_IDS,
-	MEETING_MANAGER_TRIGGER_IDS,
-} from '../../../lib/marketplace-loops/meeting-manager-loop'
+	MEETING_LOOP,
+	MEETING_LOOP_ACTOR_IDS,
+	MEETING_LOOP_SKILL_IDS,
+	MEETING_LOOP_TRIGGER_IDS,
+} from '../../../lib/marketplace-loops/meeting-loop'
 
-describe('Meeting Manager loop definition', () => {
+describe('Meeting Loop definition', () => {
 	it('uses the correct slug and metadata', () => {
-		expect(MEETING_MANAGER_LOOP.slug).toBe('meeting-manager-loop')
-		expect(MEETING_MANAGER_LOOP.name).toBe('Meeting Manager')
-		expect(MEETING_MANAGER_LOOP.useCase).toBe('Operations')
-		expect(MEETING_MANAGER_LOOP.version).toBe('1.0.0')
-		expect(MEETING_MANAGER_LOOP.description.length).toBeGreaterThan(0)
+		expect(MEETING_LOOP.slug).toBe('meeting-loop')
+		expect(MEETING_LOOP.name).toBe('Meeting Loop')
+		expect(MEETING_LOOP.useCase).toBe('Operations')
+		expect(MEETING_LOOP.version).toBe('1.0.0')
+		expect(MEETING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
 	it('ships one actor, six triggers and eight skills, no duplicates', () => {
-		expect(MEETING_MANAGER_ACTOR_IDS.length).toBe(1)
-		expect(MEETING_MANAGER_TRIGGER_IDS.length).toBe(6)
-		expect(MEETING_MANAGER_SKILL_IDS.length).toBe(8)
-		expect(new Set(MEETING_MANAGER_TRIGGER_IDS).size).toBe(MEETING_MANAGER_TRIGGER_IDS.length)
-		expect(new Set(MEETING_MANAGER_SKILL_IDS).size).toBe(MEETING_MANAGER_SKILL_IDS.length)
+		expect(MEETING_LOOP_ACTOR_IDS.length).toBe(1)
+		expect(MEETING_LOOP_TRIGGER_IDS.length).toBe(6)
+		expect(MEETING_LOOP_SKILL_IDS.length).toBe(8)
+		expect(new Set(MEETING_LOOP_TRIGGER_IDS).size).toBe(MEETING_LOOP_TRIGGER_IDS.length)
+		expect(new Set(MEETING_LOOP_SKILL_IDS).size).toBe(MEETING_LOOP_SKILL_IDS.length)
 	})
 
 	it('drives every trigger with the Meeting Manager', () => {
-		const [actorId] = MEETING_MANAGER_ACTOR_IDS
+		const [actorId] = MEETING_LOOP_ACTOR_IDS
 		expect(getActorData(actorId).name).toBe('Meeting Manager')
 		const byName = Object.fromEntries(
-			MEETING_MANAGER_TRIGGER_IDS.map((id) => {
+			MEETING_LOOP_TRIGGER_IDS.map((id) => {
 				const t = getTriggerData(id)
 				return [t.name, t.targetActorId]
 			}),
@@ -49,7 +49,7 @@ describe('Meeting Manager loop definition', () => {
 	})
 
 	it('attaches the four meeting skills and four shared skills to the agent', () => {
-		const names = MEETING_MANAGER_SKILL_IDS.map((id) => getSkillData(id).name).sort()
+		const names = MEETING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()
 		expect(names).toEqual([
 			'ask-an-agent-first',
 			'for-you-format',
@@ -63,11 +63,11 @@ describe('Meeting Manager loop definition', () => {
 	})
 
 	it('wires every trigger to a published actor and every skill to published actors only', () => {
-		const actorIds = new Set<string>(MEETING_MANAGER_ACTOR_IDS)
-		for (const id of MEETING_MANAGER_TRIGGER_IDS) {
+		const actorIds = new Set<string>(MEETING_LOOP_ACTOR_IDS)
+		for (const id of MEETING_LOOP_TRIGGER_IDS) {
 			expect(actorIds.has(getTriggerData(id).targetActorId)).toBe(true)
 		}
-		for (const id of MEETING_MANAGER_SKILL_IDS) {
+		for (const id of MEETING_LOOP_SKILL_IDS) {
 			const attached = getSkillData(id).attachedActorIds
 			expect(attached.length).toBeGreaterThan(0)
 			for (const actorId of attached) expect(actorIds.has(actorId)).toBe(true)
@@ -80,10 +80,10 @@ describe('Meeting Manager loop definition', () => {
 	// the one exception.
 	it('carries no workspace-specific text and no credentials', () => {
 		const text = JSON.stringify([
-			MEETING_MANAGER_LOOP,
-			...MEETING_MANAGER_ACTOR_IDS.map(getActorData),
-			...MEETING_MANAGER_TRIGGER_IDS.map(getTriggerData),
-			...MEETING_MANAGER_SKILL_IDS.map(getSkillData),
+			MEETING_LOOP,
+			...MEETING_LOOP_ACTOR_IDS.map(getActorData),
+			...MEETING_LOOP_TRIGGER_IDS.map(getTriggerData),
+			...MEETING_LOOP_SKILL_IDS.map(getSkillData),
 		])
 		const forbidden = [
 			/sebastian|sebk|magnus/i,
@@ -100,9 +100,9 @@ describe('Meeting Manager loop definition', () => {
 		for (const pattern of forbidden) expect(text).not.toMatch(pattern)
 
 		const ownIds = new Set<string>([
-			...MEETING_MANAGER_ACTOR_IDS,
-			...MEETING_MANAGER_TRIGGER_IDS,
-			...MEETING_MANAGER_SKILL_IDS,
+			...MEETING_LOOP_ACTOR_IDS,
+			...MEETING_LOOP_TRIGGER_IDS,
+			...MEETING_LOOP_SKILL_IDS,
 		])
 		const foreignIds = (
 			text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) ?? []
@@ -111,7 +111,7 @@ describe('Meeting Manager loop definition', () => {
 			.filter((id) => !ownIds.has(id))
 		expect(foreignIds).toEqual([])
 
-		for (const id of MEETING_MANAGER_ACTOR_IDS) {
+		for (const id of MEETING_LOOP_ACTOR_IDS) {
 			expect(JSON.stringify(getActorData(id).tools)).not.toContain('mcpServers')
 		}
 	})
