@@ -77,7 +77,7 @@ test.describe('Object detail — v2 surface', () => {
 			// on desktop and the short form on the phone so the bar stays one line at 375px.
 			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 			await expect(
-				page.getByText(vp.width >= 768 ? 'Comment — / commands, @ mentions' : 'Comment…'),
+				page.getByText(vp.width >= 768 ? 'Type / for commands or @ to mention' : 'Type / or @'),
 			).toBeVisible()
 			await expect(page.getByText(/is listening$/)).toHaveCount(0)
 
@@ -100,7 +100,7 @@ test.describe('Object detail — v2 surface', () => {
 	}
 
 	// v16: one composer at a time. An item an agent owns offers
-	// "Comment / Message <agent>" above the composer; the crumb has three levels.
+	// a chip inside the comment bar that switches Comment / Message <agent>; the crumb has three levels.
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`switches Comment / Message <agent> and shows a three-level crumb at ${vp.label}`, async ({
 			page,
@@ -132,10 +132,16 @@ test.describe('Object detail — v2 surface', () => {
 
 			// Exactly one composer at a time.
 			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
-			await page.getByRole('tab', { name: 'Message Relay' }).click()
-			await expect(page.getByPlaceholder('Message Relay…')).toBeVisible()
+			const modeChip = page.getByRole('button', { name: 'Switch between comment and message' })
+			await expect(modeChip).toContainText('Comment')
+			await modeChip.click()
+			// The phone bar has no room for the name beside the box, so its placeholder is short.
+			await expect(
+				page.getByPlaceholder(vp.width >= 768 ? 'Message Relay' : 'Message'),
+			).toBeVisible()
+			await expect(modeChip).toContainText('Message')
 			await expect(page.getByRole('textbox', { name: 'Comment' })).toHaveCount(0)
-			await page.getByRole('tab', { name: 'Comment', exact: true }).click()
+			await modeChip.click()
 			await expect(page.getByRole('textbox', { name: 'Comment' })).toBeVisible()
 		})
 	}

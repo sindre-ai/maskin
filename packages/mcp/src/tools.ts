@@ -304,6 +304,13 @@ const startAgentInputSchema = z.object({
 		.describe(
 			'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
 		),
+	file_ids: z
+		.array(z.string().uuid())
+		.max(20)
+		.optional()
+		.describe(
+			'Ids of workspace files the agent needs (an upload, a render, a working package). They are listed by name and id in its starting prompt, so it does not have to hunt for them or ask for them again.',
+		),
 })
 
 /** The `sort` values of list_objects. `relevance` needs `q`. */
@@ -675,7 +682,7 @@ export const tools = {
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. Send at least one of `object_id`, `source_id`, `target_id` or `type`; with none the call is refused. Any parameter not listed here is rejected with an error.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -713,7 +720,7 @@ export const tools = {
 	},
 	traverse_graph: {
 		description:
-			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on object id. Only object endpoints inside the caller's workspace are followed; file endpoints and cross-workspace ids are skipped. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
+			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on node id. Nodes can be objects, files, chats (`conversation`) and sessions inside the caller's workspace; cross-workspace ids are skipped. The start node must be an object — a chat or file id returns 404. A default call follows every edge type, so on a loop item the sibling items fill the result and cut it off at `max_nodes`: pass `edge_type_allow_list` (for example `attached` to find an object's files, `produced_by` for what a session made, `spawned` for the sessions a chat started, `in_loop` for loop membership) or a smaller `max_depth`. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -751,11 +758,16 @@ export const tools = {
 						'about',
 						'competes_with',
 						'derived_from',
+						'attached',
+						'in_loop',
+						'produced_by',
+						'spawned',
+						'has_file',
 					]),
 				)
 				.optional()
 				.describe(
-					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type.',
+					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type. `attached` links an object to a file, `in_loop` a loop to its items, `produced_by` a session to what it created, `spawned` a chat to a session it started, `has_file` a chat to a file uploaded in it.',
 				),
 			direction: z
 				.enum(['outbound', 'inbound', 'both'])
@@ -1185,7 +1197,7 @@ export const tools = {
 	// ─── Files ───────────────────────────────────────────────
 	create_file: {
 		description:
-			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else. The file is linked to the chat you are running in, so it stays reachable from that chat; pass `conversation_id` to link it to another chat, and `object_id` to attach it to a work item.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -1227,15 +1239,47 @@ export const tools = {
 				.describe(
 					'Encoding of `content`. Defaults to "utf8" — pass markdown/HTML/JSON as a normal string. Use "base64" for binary files (images, PDFs, archives).',
 				),
+			conversation_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Chat to link the file to. Leave out to link it to the chat you are running in (none when you are not in a chat).',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Work item (bet, task, insight, ...) to attach the file to.'),
 		}),
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. To see which files belong to one chat, pass `conversation_id` (a chat you are in): it returns the 50 newest files attached to messages in that chat, each with name, mime type, size, who attached it and when, plus `total` and `omitted` for the rest, however old the chat is. Narrow it with `type` (a mime type or prefix, e.g. "video") and `uploaded_by` (an actor id). With `conversation_id` the other filters and paging do not apply. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			kind: z.enum(['briefing']).optional().describe('Only files of this kind.'),
+			conversation_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'List the files attached to messages in this chat instead of the whole workspace. Only chats you are in.',
+				),
+			type: z
+				.string()
+				.optional()
+				.describe(
+					'With conversation_id: only files whose mime type starts with this, e.g. "video" or "application/pdf".',
+				),
+			uploaded_by: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'With conversation_id: only files attached by this actor (see get_conversation).',
+				),
 			tags: z
 				.array(z.string())
 				.max(20)
@@ -1513,7 +1557,7 @@ export const tools = {
 	},
 	list_conversation_messages: {
 		description:
-			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
+			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. Each message row carries its `metadata`; files people uploaded with a message are in `metadata.attachments`, an array of `{file_id, name, mime_type, size_bytes}`. Fetch one with get_file using that id. An upload is on the message it was sent with, so page back with before_id to find an older one. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -3015,6 +3059,43 @@ export const tools = {
 				.describe(
 					'Folder on your computer, absolute or starting with ~/. Created if missing. Defaults to ~/Downloads.',
 				),
+		}),
+	},
+	desktop_apply_settings: {
+		description:
+			"Bring YOUR computer's settings files up to date without deleting it, so your saved logins and open pages stay. A computer keeps the settings of the image it was created from, so a later fix (the file chooser's size and position) does not reach it until now. Rewrites a fixed list of user settings files on the computer and nothing else. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_settings: {
+		description:
+			"Read-only look at YOUR computer: the image it was created from (image_tag, null if it predates image tags), its settings version against the current one, the file chooser's size and position, free and total disk in MB, and whether idle computers are suspended to a snapshot on this host (and after how many minutes). Does not start or wake your computer: while it is asleep only the host's answer comes back and the rest is null. If settings_version is null or lower than current_settings_version, run desktop_apply_settings.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+		}),
+	},
+	desktop_save_file: {
+		description:
+			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file, and get its file id back. Do this the moment a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost, but a saved file is safe in the workspace. After a reset, bring a saved file back with desktop_put_file. The computer uploads the file straight to storage: its content never passes through you, so videos and large files are fine. Returns file_id, name, size_bytes, sha256 and a url a person can open. Every call makes a new file, it never overwrites an earlier one. Limits: only a regular file under your home folder (for example ~/Downloads or ~/renders), not inside a hidden folder (a name starting with a dot, where the browser keeps its logins); up to 100 MB (a bigger file is refused and nothing is uploaded, so cut it down or split it; raw footage over the limit stays re-fetchable from where it came from, such as Drive); an empty file is refused; at most 20 saves per hour from your computer, so zip several small files into one. If the call fails nothing is saved, and you can call it again. A file over 50 MB is not returned inline by get_file: you get a download link, which is expected. Only your own computer is reachable.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			path: z
+				.string()
+				.min(1)
+				.max(1024)
+				.describe(
+					'Path of the file on your computer, absolute or starting with ~/. Must be under your home folder.',
+				),
+			name: z
+				.string()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe('Name for the new workspace file. Defaults to the name of the file on disk.'),
 		}),
 	},
 	desktop_expose_port: {

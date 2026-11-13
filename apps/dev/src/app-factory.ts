@@ -106,6 +106,7 @@ import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
+import telemetryClientRoutes from './routes/telemetry-client'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
@@ -127,6 +128,8 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		/** The session a session key was minted for; null for any other key. Set by auth. */
+		apiKeySessionId?: string | null
 		/**
 		 * The originating session's id, when the request carried a well-formed
 		 * `X-Maskin-Session-Id` header (S2 writer hook). Undefined for human
@@ -626,6 +629,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// of /api, and refused for Claude's own (mat_) tokens.
 	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
+	app.route('/api/telemetry', telemetryClientRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/saved-views', savedViewsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)

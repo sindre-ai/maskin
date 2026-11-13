@@ -28,6 +28,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'DELETE /api/integrations/x', // disconnect_integration: third-party credentials
 	'GET /api/actors/x/access', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
+	'GET /api/conversations/x/files', // list_files with conversation_id: newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/data/query', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/activity', // newer MCP tool, route not yet checked for the token's workspace pin

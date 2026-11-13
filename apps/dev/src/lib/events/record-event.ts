@@ -3,6 +3,7 @@ import { events, relationships, sessions } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
 import { evictBillingUsage } from '../billing-usage-cache'
+import { linkFilesToConversation } from '../conversation-file-links'
 import { logger } from '../logger'
 
 // Accepts both a `Database` (top-level connection) and a `Transaction`
@@ -50,7 +51,8 @@ export type ProvenanceEndpointKind = 'object' | 'file'
  * Opt-in provenance context. Pass only when the mutation is on a row in
  * `objects` or `files`. When both `sessionId` and `entityKind` are set, the
  * helper upserts a `session → entity` `produced_by` relationship after the
- * event row lands. Any other combination is a no-op — the mutation still
+ * event row lands; for a file it also links the chat the session runs in to the
+ * file. Any other combination is a no-op — the mutation still
  * succeeds silently, no lineage rows land (spec §Rabbit holes:
  * "absence = no edge = no lineage, never 'unknown'").
  *
@@ -60,6 +62,11 @@ export type ProvenanceEndpointKind = 'object' | 'file'
 export interface ProvenanceContext {
 	sessionId?: string | null
 	entityKind?: ProvenanceEndpointKind
+	/**
+	 * Files only: the chat to link the file to. Absent = the chat the session runs in;
+	 * null = link no chat (the caller named one itself).
+	 */
+	conversationId?: string | null
 }
 
 export interface RecordEventParams {
@@ -86,10 +93,10 @@ export interface RecordEventParams {
  *
  * Behaviour parity with the inline pattern it replaces: same column set,
  * same fire-and-forget event insert. The provenance write is a strict
- * superset — it only fires when the caller opts in with `provenance`, the
- * flag is on for the session's actor, and both `sessionId` and `entityKind`
- * are truthy. A provenance-write failure is swallowed and logged; the
- * mutation and its audit row are already committed.
+ * superset — it only fires when the caller opts in with `provenance` and
+ * both `sessionId` and `entityKind` are truthy. There is no feature flag: the
+ * writer runs for every workspace. A provenance-write failure is swallowed and
+ * logged; the mutation and its audit row are already committed.
  */
 export async function recordEvent(dbOrTx: EventsWriter, params: RecordEventParams): Promise<void> {
 	await dbOrTx.insert(events).values({
@@ -111,12 +118,13 @@ export async function recordEvent(dbOrTx: EventsWriter, params: RecordEventParam
 			sessionId: provenance.sessionId,
 			entityKind: provenance.entityKind,
 			entityId: params.entityId,
+			conversationId: provenance.conversationId,
 		})
 	} catch (err) {
 		// Never let a lineage-write failure roll back the mutation or its audit
 		// row: `produced_by` is annotation-quality, not authoritative. Log and
-		// move on so a broken flag lookup or transient CHECK failure never
-		// takes a real write down with it.
+		// move on so a transient CHECK failure never takes a real write down
+		// with it.
 		logger.warn('produced_by edge write failed', {
 			workspaceId: params.workspaceId,
 			entityId: params.entityId,
@@ -192,13 +200,14 @@ async function writeProducedByEdge(
 		sessionId: string
 		entityKind: ProvenanceEndpointKind
 		entityId: string
+		conversationId?: string | null
 	},
 ): Promise<void> {
-	// Look up the session's actor — the header promises the sessionId. A
+	// Look up the session's actor — the caller promises the sessionId. A
 	// session whose row was deleted (rare: cascade from actor delete) gets no
 	// edge written.
 	const [session] = await dbOrTx
-		.select({ actorId: sessions.actorId })
+		.select({ actorId: sessions.actorId, conversationId: sessions.conversationId })
 		.from(sessions)
 		.where(eq(sessions.id, params.sessionId))
 		.limit(1)
@@ -218,6 +227,20 @@ async function writeProducedByEdge(
 			target: [relationships.sourceId, relationships.targetId, relationships.type],
 		})
 		.returning({ id: relationships.id })
+
+	// A file made in a chat session is reachable from that chat. Its own write, so a
+	// file whose produced_by edge already exists still gets the chat link.
+	const chatId =
+		params.conversationId !== undefined ? params.conversationId : session.conversationId
+	if (params.entityKind === 'file' && chatId) {
+		await linkFilesToConversation(dbOrTx, {
+			workspaceId: params.workspaceId,
+			conversationId: chatId,
+			fileIds: [params.entityId],
+			createdBy: session.actorId,
+			metadata: { sessionId: params.sessionId },
+		})
+	}
 
 	// A conflicting row already exists: same edge already written by a prior
 	// call (idempotent retry, dispatcher redelivery). No PostHog event fires
@@ -248,9 +271,8 @@ async function writeProducedByEdge(
  * `relationships.metadata` so Task 4's deep-link can hit the exact chat
  * message.
  *
- * Guardrails identical to `writeProducedByEdge`: flag-gated on the
- * session's actor, idempotent on `(source_id, target_id, type)`. A `null`
- * or missing `messageId` still writes the edge (the spawn is still valid
+ * Guardrails identical to `writeProducedByEdge`: no flag, idempotent on
+ * `(source_id, target_id, type)`. A `null` or missing `messageId` still writes the edge (the spawn is still valid
  * provenance); `metadata` is just `null` for that row.
  *
  * Exported because the session CREATE path is the only writer — this is

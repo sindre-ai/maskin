@@ -16,6 +16,10 @@ vi.mock('../../services/session-lifecycle', () => ({
 	})),
 }))
 
+vi.mock('../../services/run-death-alerts', () => ({
+	alertOwnersOncePerDay: vi.fn(async () => true),
+}))
+
 vi.mock('../../lib/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -25,6 +29,7 @@ vi.mock('../../lib/logger', () => ({
 	},
 }))
 
+import { alertOwnersOncePerDay } from '../../services/run-death-alerts'
 import { startSession } from '../../services/session-lifecycle'
 
 interface FakeUpdateBuilder {
@@ -145,6 +150,61 @@ describe('SessionRetryScheduler', () => {
 
 		expect(startSession).not.toHaveBeenCalled()
 		expect(inserts.some((r) => r.action === 'session_retry_capped')).toBe(true)
+	})
+
+	it('tells the owners at the cap, with the Claude limit wording when the run died on a limit', async () => {
+		const { db } = fakeDb([
+			buildDueRow({
+				attemptNumber: MAX_RETRY_ATTEMPTS,
+				result: {
+					failure_reason: {
+						provider: 'anthropic',
+						reason_code: 'weekly_limit',
+						human_message: 'Claude weekly limit reached',
+						http_status: null,
+						reset_at: null,
+						verbatim_output: null,
+					},
+				},
+			}),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		expect(alertOwnersOncePerDay).toHaveBeenCalledTimes(1)
+		expect(vi.mocked(alertOwnersOncePerDay).mock.calls[0][1]).toMatchObject({
+			workspaceId: 'ws-00000000-0000-0000-0000-000000000001',
+			causeKey: 'retry_cap:actor-00000000-0000-0000-0000-000000000001',
+			headline: `Gave up waiting on Claude's limit after ${MAX_RETRY_ATTEMPTS} starts`,
+		})
+	})
+
+	it('uses the neutral wording at the cap when the run did not die on a limit', async () => {
+		const { db } = fakeDb([buildDueRow({ attemptNumber: MAX_RETRY_ATTEMPTS })])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		expect(vi.mocked(alertOwnersOncePerDay).mock.calls[0][1].headline).toBe(
+			`Gave up retrying after ${MAX_RETRY_ATTEMPTS} starts`,
+		)
+	})
+
+	it('puts retry_at back when the retry fails to start, so the next tick finds it', async () => {
+		const dueRow = buildDueRow()
+		const { db, updates } = fakeDb([dueRow])
+		vi.mocked(startSession).mockRejectedValueOnce(new Error('wake hold'))
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		// First the claim clears it, then the failed start restores the original time.
+		const retryAtWrites = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt)
+		expect(retryAtWrites).toEqual([null, dueRow.retryAt])
+		// No retry started, so nothing was linked and no attempt was spent.
+		expect(updates.some((u) => 'retriedSessionId' in u)).toBe(false)
+		expect(updates.some((u) => 'attemptNumber' in u)).toBe(false)
 	})
 
 	it('honours the FEATURE_RETRY_SCHEDULER=0 killswitch', async () => {

@@ -1645,7 +1645,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 })
 
 // GET /{id}/graph/traverse - Bounded multi-hop BFS across the relationships
-// table starting at {id}. Returns nodes (objects only) + edges as flat lists.
+// table starting at {id}. Returns nodes (objects, files, chats and sessions) + edges as flat lists.
 // Bounds: depth cap, node cap, and their product ceiling (5000). Cycles are
 // broken by a visited set keyed on object id, so a workspace with a
 // `supersedes`/`contradicts` loop returns a bounded, terminating response.
@@ -1682,7 +1682,7 @@ const traverseGraphRoute = createRoute({
 	tags: ['Objects'],
 	summary: 'Bounded multi-hop graph traversal from an object',
 	description:
-		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.",
+		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.",
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -2051,6 +2051,8 @@ const updateObjectRoute = createRoute({
 						chat: z
 							.object({ conversation_id: z.string().uuid(), agent_id: z.string().uuid() })
 							.optional(),
+						/** Apply only if the object is still in this status; otherwise nothing is written and the answer is 409. */
+						expected_status: z.string().optional(),
 					}),
 				},
 			},
@@ -2069,6 +2071,10 @@ const updateObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'The object is no longer in expected_status',
+		},
 	},
 })
 
@@ -2076,7 +2082,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { chat, ...body } = c.req.valid('json')
+	const { chat, expected_status: expectedStatus, ...body } = c.req.valid('json')
 
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
@@ -2118,10 +2124,27 @@ app.openapi(updateObjectRoute, async (c) => {
 	}
 
 	// One transaction for the update, its status event and the notification fan-out.
-	const { row: updated } = await db.transaction((tx) =>
-		applyObjectUpdate(tx, { id, actorId, body, sessionId: c.get('maskinSessionId') }),
+	const { row: updated, staleStatus } = await db.transaction((tx) =>
+		applyObjectUpdate(tx, {
+			id,
+			actorId,
+			body,
+			sessionId: c.get('maskinSessionId'),
+			onlyIfStatus: expectedStatus,
+		}),
 	)
 
+	if (staleStatus !== undefined) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				`This item is no longer ${expectedStatus}. It is ${staleStatus ?? 'gone'} now, so nothing was changed.`,
+				undefined,
+				'Read the item again and decide from its current status.',
+			),
+			409,
+		)
+	}
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}

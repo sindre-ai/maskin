@@ -39,6 +39,11 @@ jobs:
             type=raw,value=latest
             type=sha,format=short
 
+      # Actions expressions have no substr, so the short sha is cut in the shell.
+      - name: Short commit id
+        id: short
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -46,6 +51,7 @@ jobs:
           context: docker/desktop
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: IMAGE_TAG=sha-${{ steps.short.outputs.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

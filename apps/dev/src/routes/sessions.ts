@@ -46,6 +46,7 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { maskArgs } from '../lib/actor-tools-redaction'
+import { withHandedFiles } from '../lib/conversation-file-links'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
@@ -274,7 +275,11 @@ app.openapi(createSessionRoute, (async (c) => {
 		workspaceId,
 		actorId: body.actor_id,
 		callerKind: 'rest',
-		actionPrompt: body.action_prompt,
+		actionPrompt: await withHandedFiles(db, {
+			workspaceId,
+			actionPrompt: body.action_prompt,
+			fileIds: body.file_ids,
+		}),
 		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
