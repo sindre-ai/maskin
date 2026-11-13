@@ -84,7 +84,7 @@ export function IntegrationAccessRequestCard({
 	const [chosen, setChosen] = useState<'read' | 'read_write'>(request.level)
 	const storedAnswer = useCardAnswer(conversationId, workspaceId, messageId)
 	const declined = declinedNow || storedAnswer === 'declined'
-	// Offered by the server for a write ask on Calendar or Meet. Only the full level can be lifted.
+	// Offered by the server for a write ask on a provider on the in-code list. Only the full level can be lifted.
 	const lift = request.level === 'read_write' ? (request.chat_lift ?? null) : null
 	const chatAllowed = lift !== null && (chatAllowedNow || storedAnswer === 'done')
 

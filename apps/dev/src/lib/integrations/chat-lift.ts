@@ -9,8 +9,12 @@ import { TERMINAL_STATUSES } from '../../services/session-lifecycle'
  * and the list is code, not config: widening it means first deciding what a chat-wide Allow
  * gives away for that provider (a provider with an irreversible action needs that gated first).
  *
+ * Gmail is here for every write tool except sending: a send is not a gateway tool, it goes through
+ * gmail_send_email, which needs a person's approval of the exact text whatever the access level, so
+ * a lift does not open it.
+ *
  * Not on the list, on purpose: PostHog (one `exec` tool is its whole admin surface), Resend,
- * LinkedIn, Slack, Ubersuggest, custom tool servers. Gmail, Linear and GitHub follow separately.
+ * LinkedIn, Slack, Ubersuggest, custom tool servers. GitHub follows separately.
  */
 export const CHAT_LIFT_HOURS = 8
 export const CHAT_LIFT_MS = CHAT_LIFT_HOURS * 60 * 60 * 1000
@@ -21,6 +25,10 @@ export const CHAT_LIFT_TEXT: Readonly<Record<string, string>> = {
 		'Lets this agent change your calendar for 8 hours in this chat. That includes creating, editing and deleting events, and sending invites to attendees. It can still read as before.',
 	'google-meet':
 		'Lets this agent create Meet spaces and calendar events with a Meet link for 8 hours in this chat. Events with attendees send invites.',
+	gmail:
+		'Lets this agent create drafts and change labels, and move mail to trash or spam, for 8 hours in this chat. Sending an email still needs its own approval.',
+	linear:
+		'Lets this agent create, edit and delete Linear issues and comments for 8 hours in this chat.',
 }
 
 export function isChatLiftable(provider: string): boolean {

@@ -1224,8 +1224,8 @@ describe('gmail_send_email: an approval covers the exact text the person saw', (
 describe('gmail_send_email: with an Allow in this chat on Gmail', () => {
 	/**
 	 * A chat of the agent's, a running session in it, and a chat grant on Gmail written directly
-	 * (Gmail is not on the allowlist, so no route writes one): the agent's standing level is Read,
-	 * and the lift is the only thing that makes it read & write.
+	 * (so these tests do not depend on the allowlist): the agent's standing level is Read, and the
+	 * lift is the only thing that makes it read & write.
 	 */
 	async function liftedChat(s: Setup, expiresAt: Date | null = new Date(Date.now() + 3_600_000)) {
 		const [conversation] = await db

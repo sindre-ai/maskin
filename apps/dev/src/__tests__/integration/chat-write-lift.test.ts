@@ -138,7 +138,7 @@ const dataOf = (e: { data: unknown }) => e.data as Record<string, unknown>
 const chatGrants = (integrationId: string) =>
 	db.select().from(agentChatGrants).where(eq(agentChatGrants.integrationId, integrationId))
 
-describe('the card for Calendar and Meet', () => {
+describe('the card for Calendar, Meet, Gmail and Linear', () => {
 	it('offers Allow in this chat with fixed text, and writes one shown row with the card', async () => {
 		const s = await setup()
 		const calendar = await s.integration('google-calendar')
@@ -174,6 +174,30 @@ describe('the card for Calendar and Meet', () => {
 			conversation_id: s.conversation.id,
 			chat_lift_offered: true,
 		})
+	})
+
+	it.each([
+		['gmail', 'create drafts and change labels, and move mail to trash or spam, for 8 hours'],
+		['linear', 'create, edit and delete Linear issues and comments for 8 hours in this chat'],
+	])('offers Allow in this chat on %s with its own fixed text', async (provider, text) => {
+		const s = await setup()
+		const row = await s.integration(provider)
+
+		const res = await card(s, { integration_id: row.id, level: 'read_write' })
+
+		expect(res.status).toBe(200)
+		const out = (await res.json()) as { message_id: number }
+		const [message] = await db.select().from(messages).where(eq(messages.id, out.message_id))
+		const request = (
+			message?.metadata as {
+				integration_access_request: { chat_lift?: { hours: number; text: string } }
+			}
+		).integration_access_request
+		expect(request.chat_lift?.hours).toBe(8)
+		expect(request.chat_lift?.text).toContain(text)
+		const shown = (await eventsOf(row.id)).filter((e) => dataOf(e).change === 'chat_access_card')
+		expect(shown).toHaveLength(1)
+		expect(dataOf(shown[0] as never)).toMatchObject({ provider, chat_lift_offered: true })
 	})
 
 	it('names the tool of the refused call, and only a tool the provider really listed', async () => {
@@ -318,9 +342,37 @@ describe('POST /integrations/:id/allow-access with scope chat', () => {
 		expect(await get()).toBe('read')
 	})
 
+	it.each(['gmail', 'linear'])(
+		'lifts %s in this conversation only, for 8 hours, and writes the allowed row',
+		async (provider) => {
+			const s = await setup()
+			const row = await s.integration(provider)
+			await card(s, { integration_id: row.id, level: 'read_write' })
+
+			const res = await allow(s, row.id)
+
+			expect(res.status).toBe(200)
+			const [grant] = await chatGrants(row.id)
+			expect(grant).toMatchObject({ actorId: s.agent.id, conversationId: s.conversation.id })
+			expect((grant?.expiresAt?.getTime() ?? 0) - Date.now()).toBeGreaterThan(CHAT_LIFT_MS - 60_000)
+			const elsewhere = await s.chat()
+			const get = (conversationId?: string) =>
+				resolveAgentAccess(db, s.ws.id, row.id, s.agent.id, { conversationId })
+			expect(await get(s.conversation.id)).toBe('read_write')
+			expect(await get(elsewhere.conversation.id)).toBe('read')
+			expect(await get()).toBe('read')
+			const allowed = (await eventsOf(row.id)).filter((e) => dataOf(e).outcome === 'allowed')
+			expect(allowed).toHaveLength(1)
+			expect(dataOf(allowed[0] as never)).toMatchObject({
+				scope: 'chat',
+				access_after: 'read_write',
+			})
+		},
+	)
+
 	it('refuses a provider that is not on the list, PostHog included, and writes nothing', async () => {
 		const s = await setup()
-		for (const provider of ['posthog', 'resend', 'slack', 'linkedin-unipile', 'gmail', 'github']) {
+		for (const provider of ['posthog', 'resend', 'slack', 'linkedin-unipile', 'github']) {
 			const row = await s.integration(provider)
 			const res = await allow(s, row.id)
 			expect(res.status, provider).toBe(403)
