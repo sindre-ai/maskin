@@ -8588,6 +8588,8 @@ public enum Operations {
                         public var tags: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/starter_prompts`.
                         public var starter_prompts: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/initials`.
+                        public var initials: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8639,6 +8641,7 @@ public enum Operations {
                         ///   - avatar_url:
                         ///   - tags:
                         ///   - starter_prompts:
+                        ///   - initials:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8655,6 +8658,7 @@ public enum Operations {
                             avatar_url: Swift.String? = nil,
                             tags: [Swift.String]? = nil,
                             starter_prompts: [Swift.String]? = nil,
+                            initials: Swift.String? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8671,6 +8675,7 @@ public enum Operations {
                             self.avatar_url = avatar_url
                             self.tags = tags
                             self.starter_prompts = starter_prompts
+                            self.initials = initials
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8688,6 +8693,7 @@ public enum Operations {
                             case avatar_url
                             case tags
                             case starter_prompts
+                            case initials
                             case workspaces
                             case skills
                         }
@@ -11235,6 +11241,8 @@ public enum Operations {
                     public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/starter_prompts`.
                     public var starter_prompts: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/initials`.
+                    public var initials: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11250,6 +11258,7 @@ public enum Operations {
                     ///   - default_workspace_id:
                     ///   - tags:
                     ///   - starter_prompts:
+                    ///   - initials:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11262,7 +11271,8 @@ public enum Operations {
                         mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil,
                         tags: [Swift.String]? = nil,
-                        starter_prompts: [Swift.String]? = nil
+                        starter_prompts: [Swift.String]? = nil,
+                        initials: Swift.String? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11276,6 +11286,7 @@ public enum Operations {
                         self.default_workspace_id = default_workspace_id
                         self.tags = tags
                         self.starter_prompts = starter_prompts
+                        self.initials = initials
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11290,6 +11301,7 @@ public enum Operations {
                         case default_workspace_id
                         case tags
                         case starter_prompts
+                        case initials
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -15379,6 +15391,297 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    public enum post_sol_api_sol_auth_sol_forgot_hyphen_password {
+        public static let id: Swift.String = "post/api/auth/forgot-password"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers
+            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/json/email`.
+                    public var email: Swift.String
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - email:
+                    public init(email: Swift.String) {
+                        self.email = email
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case email
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/content/application\/json`.
+                case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body.jsonPayload)
+            }
+            public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers = .init(),
+                body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/json/ok`.
+                        public var ok: Swift.Bool
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - ok:
+                        public init(ok: Swift.Bool) {
+                            self.ok = ok
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case ok
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// If the email has an account, a link was sent
+            ///
+            /// - Remark: Generated from `#/paths//api/auth/forgot-password/post/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct TooManyRequests: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body
+                /// Creates a new `TooManyRequests`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body) {
+                    self.body = body
+                }
+            }
+            /// Too many requests from this IP
+            ///
+            /// - Remark: Generated from `#/paths//api/auth/forgot-password/post/responses/429`.
+            ///
+            /// HTTP response code: `429 tooManyRequests`.
+            case tooManyRequests(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests)
+            /// The associated value of the enum case if `self` is `.tooManyRequests`.
+            ///
+            /// - Throws: An error if `self` is not `.tooManyRequests`.
+            /// - SeeAlso: `.tooManyRequests`.
+            public var tooManyRequests: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests {
+                get throws {
+                    switch self {
+                    case let .tooManyRequests(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "tooManyRequests",
                             response: self
                         )
                     }
@@ -49109,6 +49412,8 @@ public enum Operations {
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/scope`.
                 public var scope: Operations.get_sol_api_sol_conversations.Input.Query.scopePayload?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/hide_quiet`.
+                public var hide_quiet: Swift.Bool?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/offset`.
@@ -49125,6 +49430,7 @@ public enum Operations {
                 ///   - has_human:
                 ///   - sort:
                 ///   - scope:
+                ///   - hide_quiet:
                 ///   - limit:
                 ///   - offset:
                 public init(
@@ -49137,6 +49443,7 @@ public enum Operations {
                     has_human: Swift.Bool? = nil,
                     sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload? = nil,
                     scope: Operations.get_sol_api_sol_conversations.Input.Query.scopePayload? = nil,
+                    hide_quiet: Swift.Bool? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil
                 ) {
@@ -49149,6 +49456,7 @@ public enum Operations {
                     self.has_human = has_human
                     self.sort = sort
                     self.scope = scope
+                    self.hide_quiet = hide_quiet
                     self.limit = limit
                     self.offset = offset
                 }

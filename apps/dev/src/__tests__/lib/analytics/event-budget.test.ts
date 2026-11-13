@@ -38,6 +38,7 @@ describe('admitPosthogEvent', () => {
 		for (const event of [
 			'agent_session_started',
 			'chat_session_started',
+			'chat_session_seeded',
 			'integration_connect_started',
 			'integration_tool_called',
 			'foryou_card_action',
@@ -46,6 +47,7 @@ describe('admitPosthogEvent', () => {
 			'checkout_session_completed',
 			'support_item_opened',
 			'support_item_resolved',
+			'notification_sent',
 		]) {
 			for (let i = 0; i < 10; i++) expect(admitPosthogEvent(event)).toEqual({ send: true })
 		}

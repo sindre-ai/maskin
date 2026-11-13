@@ -141,7 +141,10 @@ public struct APIObjectsRemote: ObjectsRemote {
 						body: .json(
 							.init(
 								title: patch.title, content: patch.content, status: patch.status,
-								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver))))
+								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver,
+								chat: patch.chat.map {
+									.init(conversation_id: $0.conversationID, agent_id: $0.agentID)
+								}))))
 			}
 			switch output {
 			case .ok(let ok): return try Self.convert(ok.body.json, as: ObjectDTO.self).model
@@ -289,13 +292,19 @@ public struct APIObjectsRemote: ObjectsRemote {
 		}
 	}
 
-	static func schema(from settings: JSONValue) -> ObjectsSchema {
+	/// The status order per type the workspace's settings list; empty when it lists none.
+	static func statuses(from settings: JSONValue) -> [String: [String]] {
 		var statuses: [String: [String]] = [:]
 		if case .object(let raw)? = settings["statuses"] {
 			for (type, value) in raw {
 				if case .array(let items) = value { statuses[type] = items.compactMap(\.stringValue) }
 			}
 		}
+		return statuses
+	}
+
+	static func schema(from settings: JSONValue) -> ObjectsSchema {
+		let statuses = statuses(from: settings)
 		var names: [String: String] = [:]
 		if case .object(let raw)? = settings["display_names"] {
 			for (type, value) in raw { if let s = value.stringValue { names[type] = s } }
@@ -501,6 +510,14 @@ extension APIObjectsRemote: ObjectDraftsRemote {
 		} catch {
 			throw Self.wrap(error)
 		}
+	}
+
+	public func workspaceStatuses(workspaceId: String) async -> [String: [String]] {
+		guard let output = try? await client.get_sol_api_sol_workspaces(), case .ok(let ok) = output,
+			let workspaces = try? Self.convert(ok.body.json, as: [WorkspaceDTO].self),
+			let settings = workspaces.first(where: { $0.id == workspaceId })?.settings
+		else { return [:] }
+		return Self.statuses(from: settings)
 	}
 
 	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {

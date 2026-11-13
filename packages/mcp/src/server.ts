@@ -3522,17 +3522,51 @@ async function listObjectsPage(
 }
 
 // Tools whose schema rejects a top-level argument name it does not know instead
-// of stripping it, each with the closing sentence of the refusal. Only tools where a
-// dropped key reads as a finished call: a dropped list on a write, or a dropped filter
-// on query_data that returns a plausible but wrong total. Other tools keep stripping,
-// since agents often send harmless extra keys.
+// of stripping it, each with the closing sentence of the refusal (empty for reads, which
+// write nothing). Tools where a dropped list reads as a finished write, and the
+// relationship, graph and file reads, where a dropped filter returns unrelated
+// rows or a plausible but wrong total that look like an answer. Rolled out one tool at
+// a time, each after its extra-key counts in PostHog (mcp_tool_call arg_keys) were read.
+// Other tools keep stripping, since agents often send harmless extra keys.
 const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
 	['update_objects', 'Nothing was written.'],
 	[
 		'query_data',
 		'It takes no SQL. Example: query_data({ type: "task", filters: { status: "done" }, group_by: "created_at.day" }).',
 	],
+	['list_relationships', ''],
+	['traverse_graph', ''],
+	['get_objects', ''],
+	['list_files', ''],
+	['get_file', ''],
 ])
+
+// Misspellings agents really send (PostHog, 14 days to 12 Nov 2026), shown in the
+// error beside the unknown name.
+const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
+	list_relationships: { entity_id: 'object_id', offset: 'cursor' },
+	traverse_graph: {
+		start_id: 'object_id',
+		id: 'object_id',
+		depth: 'max_depth',
+		relationship_types: 'edge_type_allow_list',
+		types: 'edge_type_allow_list',
+	},
+	get_objects: {
+		include_content: 'include: ["content"]',
+		include_body: 'include: ["content"]',
+		include_metadata: 'include: ["metadata"]',
+		include_relationships: 'include: ["relationships"]',
+	},
+	list_files: { query: 'q', search: 'q' },
+	get_file: { file_id: 'id' },
+}
+
+// A list_relationships call with none of these would list every relationship in
+// the workspace, newest first, and look like an answer.
+const REQUIRE_ONE_OF: Record<string, readonly string[]> = {
+	list_relationships: ['object_id', 'source_id', 'target_id', 'type'],
+}
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
@@ -3582,7 +3616,8 @@ export function createMcpServer(config: McpConfig) {
 		// SDK validates arguments before our handler runs. A tool with no alias
 		// rows passes through untouched, so its tools/list entry is unchanged.
 		const definition =
-			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
+			baseDefinition?.inputSchema &&
+			(needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name) || name in REQUIRE_ONE_OF)
 				? {
 						...baseDefinition,
 						inputSchema: wrapInputSchema(
@@ -3625,6 +3660,8 @@ export function createMcpServer(config: McpConfig) {
 								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
 								unknownKeysSuffix: REJECT_UNKNOWN_KEYS_TOOLS.get(name),
 								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
+								hints: UNKNOWN_KEY_HINTS[name],
+								requireOneOf: REQUIRE_ONE_OF[name],
 							},
 						),
 					}
@@ -6136,6 +6173,8 @@ export function createMcpServer(config: McpConfig) {
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
+					...(args.conversation_id !== undefined ? { conversation_id: args.conversation_id } : {}),
+					...(args.object_id !== undefined ? { object_id: args.object_id } : {}),
 				},
 				{ workspaceId: wsId },
 			)
@@ -6156,6 +6195,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
+			if (args.conversation_id) {
+				const chatParams = new URLSearchParams()
+				if (args.type) chatParams.set('type', args.type)
+				if (args.uploaded_by) chatParams.set('uploaded_by', args.uploaded_by)
+				const chatQs = chatParams.toString()
+				const chatFiles = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${args.conversation_id}/files${chatQs ? `?${chatQs}` : ''}`,
+					undefined,
+					{ workspaceId: wsId },
+				)) as { files: unknown[]; total: number; omitted: number }
+				return {
+					_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: buildListContentText(chatFiles) }],
+					structuredContent: chatFiles,
+				}
+			}
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
@@ -9600,7 +9657,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done. Then call desktop_screenshot to see what changed before you carry on.',
+						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done, with a screenshot of your computer taken at that moment. Look at it before you carry on; if the message says no screenshot could be taken, call desktop_screenshot yourself.',
 					},
 				],
 			}
@@ -10677,6 +10734,52 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_apply_settings',
+		{
+			description: tools.desktop_apply_settings.description,
+			inputSchema: tools.desktop_apply_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/apply-settings', args.agent_id),
+				{},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_apply_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_settings',
+		{
+			description: tools.desktop_settings.description,
+			inputSchema: tools.desktop_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				desktopPath('/api/desktop/settings', args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_settings', config, args.workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

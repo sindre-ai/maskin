@@ -10,7 +10,7 @@ import type { ObjectResponse, WorkspaceWithRole } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import type { SafeJsonValue, SafeMetadata } from '@maskin/shared'
 import { Calendar, CheckSquare, Hash, List, Type, X } from 'lucide-react'
-import { useState } from 'react'
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
 
 export function MetadataPropertiesView({
 	object,
@@ -33,6 +33,18 @@ export function MetadataPropertiesView({
 	const [showAddMenu, setShowAddMenu] = useState(false)
 	const [showCreateForm, setShowCreateForm] = useState(false)
 	const canWrite = useCanWrite()
+	const addButtonRef = useRef<HTMLButtonElement>(null)
+	const menuWasOpen = useRef(false)
+
+	// Whenever the add menu closes, hand focus back to + Add property.
+	useEffect(() => {
+		if (showAddMenu) {
+			menuWasOpen.current = true
+		} else if (menuWasOpen.current) {
+			menuWasOpen.current = false
+			addButtonRef.current?.focus()
+		}
+	}, [showAddMenu])
 
 	const settings = workspace.settings as Record<string, unknown>
 	const fieldDefs =
@@ -93,6 +105,7 @@ export function MetadataPropertiesView({
 				<p className="text-xs text-muted-foreground">No custom fields on this item.</p>
 				<ViewerTooltip>
 					<Button
+						ref={addButtonRef}
 						variant="outline"
 						size="sm"
 						className="h-auto rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
@@ -143,6 +156,7 @@ export function MetadataPropertiesView({
 			) : (
 				<ViewerTooltip>
 					<Button
+						ref={addButtonRef}
 						variant="outline"
 						size="sm"
 						className="mt-1.5 h-auto self-start rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
@@ -365,6 +379,14 @@ function AddPropertyMenu({
 	onFieldCreated: (field: FieldDefinition) => void
 	onSaveField?: (field: FieldDefinition) => void
 }) {
+	const menuRef = useRef<HTMLDivElement>(null)
+
+	// The + Add property button unmounts when the menu opens, so move focus into
+	// the menu to let Esc reach it.
+	useEffect(() => {
+		if (!showCreateForm) menuRef.current?.focus()
+	}, [showCreateForm])
+
 	if (showCreateForm) {
 		return (
 			<CreateFieldForm
@@ -378,7 +400,12 @@ function AddPropertyMenu({
 	}
 
 	return (
-		<div className="rounded border border-border bg-card p-2 text-xs space-y-1 w-full sm:w-fit">
+		<div
+			ref={menuRef}
+			tabIndex={-1}
+			onKeyDown={(e) => closeOnEscape(e, onClose)}
+			className="rounded border border-border bg-card p-2 text-xs space-y-1 w-full sm:w-fit outline-none"
+		>
 			{unsetFields.length > 0 && (
 				<>
 					<p className="text-muted-foreground px-1 text-[10px] uppercase tracking-wider">
@@ -458,8 +485,17 @@ function CreateFieldForm({
 		}
 	}
 
+	const createOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+		if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+		e.preventDefault()
+		handleCreate()
+	}
+
 	return (
-		<div className="rounded border border-border bg-card p-2 text-xs space-y-2">
+		<div
+			onKeyDown={(e) => closeOnEscape(e, onCancel)}
+			className="rounded border border-border bg-card p-2 text-xs space-y-2"
+		>
 			<p className="text-muted-foreground text-[10px] uppercase tracking-wider px-1">
 				Create new property
 			</p>
@@ -467,6 +503,7 @@ function CreateFieldForm({
 				type="text"
 				value={name}
 				onChange={(e) => setName(e.target.value)}
+				onKeyDown={createOnEnter}
 				placeholder="Property name (e.g. Due Date)"
 				className="h-7 text-xs"
 				autoFocus
@@ -488,6 +525,7 @@ function CreateFieldForm({
 					type="text"
 					value={enumValues}
 					onChange={(e) => setEnumValues(e.target.value)}
+					onKeyDown={createOnEnter}
 					placeholder="Options (comma-separated)"
 					className="h-7 text-xs"
 				/>
@@ -502,6 +540,13 @@ function CreateFieldForm({
 			</div>
 		</div>
 	)
+}
+
+// Esc closes the add flow without also closing whatever sits around it.
+function closeOnEscape(e: KeyboardEvent, close: () => void) {
+	if (e.key !== 'Escape' || e.nativeEvent.isComposing) return
+	e.stopPropagation()
+	close()
 }
 
 function FieldTypeIcon({ type }: { type: string }) {

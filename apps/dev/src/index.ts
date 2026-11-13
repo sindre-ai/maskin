@@ -398,7 +398,7 @@ briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
 // Summary email (one grouped mail a day). Own query, own claim; killswitch
-// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+// FEATURE_BRIEFING_EMAIL: in production only =1 sends, elsewhere =0 stops; the push is left alone.
 const briefingEmailScheduler = new BriefingEmailScheduler(db)
 briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.
@@ -521,7 +521,7 @@ void runDefaultHeartbeatBackfillOnBoot(db)
 // database, and never blocks or fails startup.
 void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
-const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
+const loopVersionPusher = new LoopVersionPusher(db, agentStorage, undefined, storageProvider)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 

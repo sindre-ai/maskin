@@ -184,6 +184,32 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 		}
 	}
 
+	const nextDisabled = !apiKey.trim() || connect.isPending
+	const registerDisabled = !canWrite || !domain.trim() || dnsPrecheck.isPending || connect.isPending
+	const finishDisabled =
+		!canWrite || !signingSecret.trim() || !isVerified(dnsRecords) || complete.isPending
+
+	// Enter in a field runs the footer's primary button for the current scene,
+	// only when that button is enabled. Limited to inputs so Enter on a Copy
+	// or link button keeps its own meaning.
+	const handleBodyKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+		if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+		if (!(e.target instanceof HTMLInputElement)) return
+		if (scene === 's1' || scene === 's1-err') {
+			if (nextDisabled) return
+			e.preventDefault()
+			handleApiKeyNext()
+		} else if (scene === 's2' || scene === 's2-err') {
+			if (registerDisabled) return
+			e.preventDefault()
+			void handleDomainSubmit()
+		} else if (scene === 's3-pending') {
+			if (finishDisabled) return
+			e.preventDefault()
+			void handleComplete()
+		}
+	}
+
 	const dialogTitleId = 'resend-connect-dialog-title'
 
 	return (
@@ -201,7 +227,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 						<ConnectStepper steps={steps} />
 					</div>
 				</DialogHeader>
-				<div className="max-h-[65vh] overflow-y-auto pr-1">
+				<div className="max-h-[65vh] overflow-y-auto pr-1" onKeyDown={handleBodyKeyDown}>
 					{(scene === 's1' || scene === 's1-err') && (
 						<StepOne
 							apiKey={apiKey}
@@ -249,7 +275,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 								<Button variant="ghost" onClick={closeAndReset}>
 									Cancel
 								</Button>
-								<Button onClick={handleApiKeyNext} disabled={!apiKey.trim() || connect.isPending}>
+								<Button onClick={handleApiKeyNext} disabled={nextDisabled}>
 									{scene === 's1-err' ? 'Try again' : 'Next'}
 									<ArrowRight className="ml-1 h-3.5 w-3.5" />
 								</Button>
@@ -261,27 +287,14 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 									<ArrowLeft className="mr-1 h-3.5 w-3.5" />
 									Back
 								</Button>
-								<Button
-									onClick={handleDomainSubmit}
-									disabled={
-										!canWrite || !domain.trim() || dnsPrecheck.isPending || connect.isPending
-									}
-								>
+								<Button onClick={handleDomainSubmit} disabled={registerDisabled}>
 									{scene === 's2-err' ? 'Try another domain' : 'Register domain'}
 								</Button>
 							</>
 						)}
 						{scene === 's3-loading' && <Button disabled>Registering…</Button>}
 						{scene === 's3-pending' && (
-							<Button
-								onClick={handleComplete}
-								disabled={
-									!canWrite ||
-									!signingSecret.trim() ||
-									!isVerified(dnsRecords) ||
-									complete.isPending
-								}
-							>
+							<Button onClick={handleComplete} disabled={finishDisabled}>
 								{isVerified(dnsRecords) ? 'Finish connecting' : 'Waiting on DNS…'}
 							</Button>
 						)}

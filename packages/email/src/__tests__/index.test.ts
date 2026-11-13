@@ -15,6 +15,7 @@ import {
 	resolveFrom,
 	sendEmail,
 	sendInviteEmail,
+	sendPasswordResetEmail,
 	sendVoiceFollowupEmail,
 } from '../index'
 
@@ -287,5 +288,36 @@ describe('sender on the wire', () => {
 	it('sendInviteEmail sends from Maskin <notifications@maskin.io> by default', async () => {
 		await sendInviteEmail(params)
 		expect(send.mock.calls[0][0].from).toBe('Maskin <notifications@maskin.io>')
+	})
+})
+
+describe('sendPasswordResetEmail', () => {
+	beforeEach(() => {
+		vi.stubEnv('RESEND_API_KEY', 're_test_key')
+		send.mockReset()
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+	})
+
+	it('sends the link in both the text and html parts', async () => {
+		send.mockResolvedValue({ data: { id: 'email-1' }, error: null })
+		const resetUrl = 'https://maskin.io/reset-password?token=rst_abc'
+		await expect(sendPasswordResetEmail({ to: 'a@example.com', resetUrl })).resolves.toBe(true)
+		const sent = send.mock.calls[0][0]
+		expect(sent.to).toBe('a@example.com')
+		expect(sent.text).toContain(resetUrl)
+		expect(sent.html).toContain(resetUrl)
+	})
+
+	it('does not log the message when no key is set', async () => {
+		vi.stubEnv('RESEND_API_KEY', '')
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+		const resetUrl = 'https://maskin.io/reset-password?token=rst_secret'
+		await expect(sendPasswordResetEmail({ to: 'a@example.com', resetUrl })).resolves.toBe(false)
+		expect(JSON.stringify(log.mock.calls)).not.toContain('rst_secret')
+		expect(send).not.toHaveBeenCalled()
+		log.mockRestore()
 	})
 })

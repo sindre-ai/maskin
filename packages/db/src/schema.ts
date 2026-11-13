@@ -1036,6 +1036,29 @@ export const apiKeys = pgTable(
 )
 export type ApiKey = typeof apiKeys.$inferSelect
 
+// ── Password Reset Tokens ──────────────────────────────────────────────────
+
+/**
+ * One-time links for "Forgot password". token_hash is the hex SHA-256 of the token in the emailed
+ * link; the token itself is never stored. A row works while used_at is null and expires_at is in
+ * the future. A newer request deletes the actor's older unused rows (lib/password-reset).
+ */
+export const passwordResetTokens = pgTable(
+	'password_reset_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [index('password_reset_tokens_actor_idx').on(t.actorId)],
+)
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect
+
 // ── Comment Responder Claims ───────────────────────────────────────────────
 // One responder session per (comment event, actor). The thread-reply spawn and the
 // CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
@@ -2421,7 +2444,7 @@ export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 //
 // Frozen snapshots of each element that ships with a published marketplace
 // loop. `source_item_id` is the original actor/trigger/skill/integration id in
-// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// the publishing workspace (for a `view`, a stable id minted for that tab) — kept so intra-loop wiring inside `item_snapshot`
 // (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
@@ -2442,7 +2465,7 @@ export const marketplaceLoopItems = pgTable(
 		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
 			'marketplace_loop_items_item_type_check',
-			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration', 'view')`,
 		),
 	],
 )
@@ -3269,9 +3292,12 @@ export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
 export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert
 
 // ── API route timing counts ─────────────────────────────────────────────────
-// One row per minute, per route, per server build, per sender: how many requests the API answered and how long
-// they took. Counts and sums only. No actor, workspace, URL or header is stored; the route is the
-// pattern (`/api/objects/:id`). Written by the once-a-minute timing flush
+// One row per minute, per route, per server build, per sender, per app build, per app release: how many requests the API
+// answered and how long they took. Counts and sums only. No actor, workspace, URL or free text is stored;
+// the route is the pattern (`/api/objects/:id`) and client_build is the iOS build number from
+// X-Client-Build (1 to 12 digits) and client_version is the release from X-Client-Version (digits and dots,
+// 1 to 12), each '' for web, agents and anything else. Written by the once-a-minute
+// timing flush
 // (apps/dev/src/lib/route-timing-store.ts) and deleted after 30 days, so the load per route can be
 // read over a week. `minute` is the minute the flush ran in; two replicas (or two flushes in one
 // minute) add into the same row.
@@ -3286,6 +3312,10 @@ export const apiRouteTimingMinutes = pgTable(
 		// Who sent the requests: ui, ios, mcp, other or none (no header). '' on rows written before
 		// this column existed, which stay in the all-traffic sum.
 		clientSource: text('client_source').notNull().default(''),
+		// iOS build number from X-Client-Build (1 to 12 digits); '' for web, agents and anything else.
+		clientBuild: text('client_build').notNull().default(''),
+		// iOS release from X-Client-Version (digits and dots, 1 to 12); '' for web, agents and anything else.
+		clientVersion: text('client_version').notNull().default(''),
 		requests: integer('requests').notNull(),
 		slowRequests: integer('slow_requests').notNull(),
 		errors5xx: integer('errors_5xx').notNull(),
@@ -3294,6 +3324,17 @@ export const apiRouteTimingMinutes = pgTable(
 		dbQueries: integer('db_queries').notNull(),
 	},
 	(t) => [
-		primaryKey({ columns: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource] }),
+		primaryKey({
+			columns: [
+				t.minute,
+				t.build,
+				t.method,
+				t.route,
+				t.stream,
+				t.clientSource,
+				t.clientBuild,
+				t.clientVersion,
+			],
+		}),
 	],
 )

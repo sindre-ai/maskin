@@ -49,6 +49,7 @@ import {
 	trackMessageSentTagged,
 } from '../lib/analytics/chat-tag-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
@@ -71,9 +72,14 @@ import { serialize } from '../lib/serialize'
 import { serializeMessage } from '../lib/serialize-message'
 import { forgetConversationParticipants } from '../lib/session-frame-cache'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
-import { insertConversationMessage, mirrorAsObjectComment } from '../services/conversation-messages'
+import {
+	attachedFileIds,
+	insertConversationMessage,
+	mirrorAsObjectComment,
+} from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import {
@@ -743,6 +749,14 @@ app.openapi(createConversationRoute, (async (c) => {
 	}
 
 	if (initialMessage) {
+		// The first message can carry files too: link them to the new chat like any later message.
+		await linkFilesToConversation(db, {
+			workspaceId,
+			conversationId: conversation.id,
+			fileIds: attachedFileIds(initialMessage.metadata),
+			createdBy: callerId,
+			metadata: { messageId: initialMessage.id },
+		})
 		await mirrorAsObjectComment(db, {
 			conversationId: conversation.id,
 			workspaceId,
@@ -863,6 +877,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
 	)`
 	if (query.unread_only) conditions.push(hasUnread)
+	if (query.hide_quiet) conditions.push(visibleInDefaultListCondition(hasUnread))
 	if (query.scope) {
 		const isPriority = or(
 			isNotNull(conversations.directPairKey),
@@ -1115,6 +1130,126 @@ app.openapi(getConversationRoute, (async (c) => {
 		participants: participantsByConversation.get(id) ?? [],
 	} as z.infer<typeof conversationDetailResponseSchema>)
 }) as RouteHandler<typeof getConversationRoute, Env>)
+
+// GET /:id/files - Files attached to the chat's messages
+const CHAT_FILES_CAP = 50
+
+const chatFilesQuerySchema = z.object({
+	// Mime type or a prefix of one, e.g. "video" or "video/mp4".
+	type: z.string().trim().min(1).max(255).optional(),
+	// Only files attached by this actor's messages.
+	uploaded_by: z.string().uuid().optional(),
+})
+
+const chatFilesResponseSchema = z.object({
+	files: z.array(
+		z.object({
+			id: z.string().uuid(),
+			name: z.string(),
+			mime_type: z.string(),
+			size_bytes: z.number().int().nonnegative(),
+			uploaded_by: z.string().uuid(),
+			uploaded_by_name: z.string(),
+			message_id: z.number().int(),
+			uploaded_at: z.string(),
+		}),
+	),
+	total: z.number().int().nonnegative(),
+	omitted: z.number().int().nonnegative(),
+})
+
+const listChatFilesRoute = createRoute({
+	method: 'get',
+	path: '/{id}/files',
+	tags: ['Conversations'],
+	summary: 'List the files attached to messages in a conversation (participants-only)',
+	request: { headers: workspaceIdHeader, params: idParamSchema, query: chatFilesQuerySchema },
+	responses: {
+		200: {
+			content: { 'application/json': { schema: chatFilesResponseSchema } },
+			description: 'The 50 newest files, with the count of the rest',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(listChatFilesRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const query = c.req.valid('query')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	// Reads the attachments straight from the message data, so it covers every old chat with no
+	// backfill. A file attached twice is listed once, at its first message. A file that no longer
+	// exists has no row to join and is left out: nobody can fetch it.
+	const typeFilter = query.type
+		? sql`AND f.mime_type ILIKE ${`${query.type.replace(/[\\%_]/g, '\\$&')}%`}`
+		: sql``
+	const uploaderFilter = query.uploaded_by ? sql`AND m.actor_id = ${query.uploaded_by}` : sql``
+	const rows = await db.execute<{
+		id: string
+		name: string
+		mime_type: string
+		size_bytes: string | number
+		uploaded_by: string
+		uploaded_by_name: string
+		message_id: string | number
+		uploaded_at: Date | string
+		total: string | number
+	}>(sql`
+		SELECT *, count(*) OVER () AS total FROM (
+			SELECT DISTINCT ON (f.id)
+				f.id,
+				f.name,
+				f.mime_type,
+				f.size_bytes,
+				m.actor_id AS uploaded_by,
+				a.name AS uploaded_by_name,
+				m.id AS message_id,
+				m.created_at AS uploaded_at
+			FROM messages m
+			CROSS JOIN LATERAL jsonb_array_elements(
+				CASE WHEN jsonb_typeof(m.metadata -> 'attachments') = 'array'
+					THEN m.metadata -> 'attachments' ELSE '[]'::jsonb END
+			) AS att
+			JOIN files f ON f.id::text = att ->> 'file_id' AND f.workspace_id = ${workspaceId}
+			JOIN actors a ON a.id = m.actor_id
+			WHERE m.conversation_id = ${id}
+				AND m.deleted_at IS NULL
+				${typeFilter}
+				${uploaderFilter}
+			ORDER BY f.id, m.id
+		) uploads
+		ORDER BY uploaded_at DESC, id
+		LIMIT ${CHAT_FILES_CAP}
+	`)
+
+	const list = Array.from(rows)
+	const total = list.length > 0 ? Number(list[0]?.total) : 0
+	return c.json(
+		{
+			files: list.map((r) => ({
+				id: r.id,
+				name: r.name,
+				mime_type: r.mime_type,
+				size_bytes: Number(r.size_bytes),
+				uploaded_by: r.uploaded_by,
+				uploaded_by_name: r.uploaded_by_name,
+				message_id: Number(r.message_id),
+				uploaded_at: new Date(r.uploaded_at).toISOString(),
+			})),
+			total,
+			omitted: Math.max(0, total - list.length),
+		},
+		200,
+	)
+}) as RouteHandler<typeof listChatFilesRoute, Env>)
 
 // PATCH /:id - Rename
 const updateConversationRoute = createRoute({

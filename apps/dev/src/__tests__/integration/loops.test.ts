@@ -298,6 +298,118 @@ describe('Loops read API integration', () => {
 		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
 	})
 
+	it('reads metric: targets from the people linked to the flow, ignoring the stored number', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Phone sales',
+			metadata: {
+				targets: [
+					{
+						label: 'Calls today',
+						source: 'metric:phone_sales.calls_today',
+						actual: 20,
+						target: 100,
+					},
+					{
+						label: 'Calls this week',
+						source: 'metric:phone_sales.calls_this_week',
+						actual: 99,
+						target: 500,
+					},
+					{
+						label: 'Calls total',
+						source: 'metric:phone_sales.calls_total',
+						actual: 99,
+						target: 500,
+					},
+					{
+						label: 'Call-ready',
+						source: 'metric:phone_sales.call_ready',
+						actual: 41,
+						target: 1000,
+					},
+					{ label: 'Meetings', source: 'metric:phone_sales.meetings_booked', actual: 1, target: 3 },
+					{ label: 'Interested', source: 'metric:phone_sales.interested', actual: 9, target: 10 },
+					{
+						label: 'Owners reached',
+						source: 'metric:phone_sales.owners_reached',
+						actual: 9,
+						target: 30,
+					},
+					{ label: 'Typed by hand', source: 'calls the agent counted', actual: 7, target: 10 },
+					{
+						label: 'Unknown metric',
+						source: 'metric:linkedin.impressions',
+						actual: 4200,
+						target: 5000,
+					},
+				],
+			},
+		})
+		const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Copenhagen' }).format(
+			new Date(),
+		)
+		const people: Array<{ status: string; metadata: Record<string, unknown> }> = [
+			// Called today, owner reached, still queued as call-ready.
+			{
+				status: 'qualified',
+				metadata: { call_done: true, call_at: today, next_channel: 'call', owner_reached: true },
+			},
+			// Called on an old date: counts in the total only.
+			{ status: 'qualified', metadata: { call_done: true, call_at: '2020-01-01' } },
+			// Not called yet, call-ready.
+			{ status: 'qualified', metadata: { next_channel: 'call' } },
+			{ status: 'in_conversation', metadata: { call_done: true, call_at: today } },
+			{ status: 'meeting_booked', metadata: {} },
+			{ status: 'converted', metadata: {} },
+		]
+		for (const person of people) {
+			const row = await insertObject(db, workspaceId, actorId, { type: 'contact', ...person })
+			await insertRelationship(db, actorId, {
+				sourceId: loop.id,
+				sourceType: 'object',
+				targetId: row.id,
+				targetType: 'object',
+				type: 'in_loop',
+			})
+		}
+		// A person who is not linked to the flow is never counted.
+		await insertObject(db, workspaceId, actorId, {
+			type: 'contact',
+			status: 'meeting_booked',
+			metadata: { call_done: true, call_at: today, owner_reached: true },
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{ targets: Array<{ label: string; actual: number; manual: boolean }> }>
+		}
+		// Only the hand-typed row and the unknown metric key are manual; live rows are not.
+		expect((body.loops[0]?.targets ?? []).filter((t) => t.manual).map((t) => t.label)).toEqual([
+			'Typed by hand',
+			'Unknown metric',
+		])
+		const actualByLabel = Object.fromEntries(
+			(body.loops[0]?.targets ?? []).map((t) => [t.label, t.actual]),
+		)
+		expect(actualByLabel).toEqual({
+			'Calls today': 2,
+			'Calls this week': 2,
+			'Calls total': 3,
+			'Call-ready': 2,
+			Meetings: 2,
+			Interested: 3,
+			'Owners reached': 1,
+			'Typed by hand': 7,
+			'Unknown metric': 4200,
+		})
+	})
+
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',

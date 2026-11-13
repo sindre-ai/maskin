@@ -231,6 +231,17 @@ function IntegrationsPage() {
 							type="search"
 							value={query}
 							onChange={(e) => setQuery(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key !== 'Escape') return
+								// Text first: Esc clears it. On an empty field Esc leaves the field.
+								// preventDefault so Chrome and Safari's own clear does not double up.
+								if (query) {
+									e.preventDefault()
+									setQuery('')
+								} else {
+									e.currentTarget.blur()
+								}
+							}}
 							placeholder="Search integrations and tools"
 							aria-label="Search integrations and tools"
 							className="h-11 rounded-xl border-transparent bg-muted pl-10"
