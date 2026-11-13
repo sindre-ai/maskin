@@ -192,6 +192,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
 	[
 		'POST',
+		'/api/telemetry/client',
+		'Group E, telemetry: product analytics from the caller’s own phone, no workspace data written; a viewer’s usage counts too, and the workspace share-usage setting applies in the handler',
+	],
+	[
+		'POST',
 		'/api/account/delete',
 		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
 	],

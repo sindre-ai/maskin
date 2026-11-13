@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { clearSessionFrameCaches } from '../../lib/session-frame-cache'
 import type { SessionManager } from '../../services/session-manager'
 import { buildEvent, buildSession } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -140,6 +141,9 @@ describe('Events Routes', () => {
 		const participantId = randomUUID()
 		const outsiderId = randomUUID()
 
+		// The session and participant lookups are cached across connections; each test queues its own.
+		beforeEach(() => clearSessionFrameCaches())
+
 		type SseTestEnv = {
 			Variables: {
 				db: Database
@@ -243,7 +247,7 @@ describe('Events Routes', () => {
 				[{ conversationId }], // read gate: anchor message's conversation
 				[{ conversationId }], // read gate: caller is in that conversation
 				[buildSubSessionRow()], // loadSessionStateChangeFrame: sessions row
-				[{ conversationId }], // isConversationParticipant: participant row
+				[{ actorId: participantId }], // conversation participants
 			]
 
 			const res = await app.request(

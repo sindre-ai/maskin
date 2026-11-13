@@ -3,9 +3,9 @@ import { trackViewRefreshed } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import {
 	type ListAnswer,
+	type ListRow,
+	type ListSource,
 	type ListSourceEntry,
-	type OpportunitiesListSource,
-	type OpportunityRow,
 	fetchListRows,
 } from '@/lib/view-lists'
 import { RefreshCw } from 'lucide-react'
@@ -23,7 +23,7 @@ export interface ViewRefresh {
 	/** Goes up by one after every successful Refresh; the stage uses it to replace the frame so the view asks again. */
 	generation: number
 	/** What a list source is answered with. Rows exist only after a Refresh click. */
-	answer: (name: string, source: OpportunitiesListSource) => ListAnswer
+	answer: (name: string, source: ListSource) => ListAnswer
 	refresh: () => void
 }
 
@@ -44,13 +44,13 @@ export function useViewRefresh(
 		generation: number
 	}>({ status: 'idle', fetchedAt: null, generation: 0 })
 	const results = useRef(
-		new Map<string, { declaration: string; rows: OpportunityRow[]; fetchedAt: number }>(),
+		new Map<string, { declaration: string; rows: ListRow[]; fetchedAt: number }>(),
 	)
 	const listsRef = useRef(lists)
 	listsRef.current = lists
 	const inFlight = useRef(false)
 
-	const answer = useCallback((name: string, source: OpportunitiesListSource): ListAnswer => {
+	const answer = useCallback((name: string, source: ListSource): ListAnswer => {
 		const held = results.current.get(name)
 		if (!held || held.declaration !== JSON.stringify(source)) {
 			return { rows: null, notRefreshed: true }
@@ -61,7 +61,7 @@ export function useViewRefresh(
 	const refresh = useCallback(() => {
 		if (inFlight.current) return
 		const declared = [...listsRef.current].filter(
-			(entry): entry is [string, OpportunitiesListSource] => entry[1] !== null,
+			(entry): entry is [string, ListSource] => entry[1] !== null,
 		)
 		const listNames = [...new Set(declared.map(([, source]) => source.list))].join(',')
 		inFlight.current = true

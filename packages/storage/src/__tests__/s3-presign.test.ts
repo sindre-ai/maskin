@@ -60,4 +60,18 @@ describe('S3StorageProvider presigned URLs', () => {
 		)
 		expect(url.searchParams.get('X-Amz-Expires')).toBe('600')
 	})
+
+	it('signs a single PUT for the public endpoint with no checksum or content type', async () => {
+		const url = new URL(
+			await provider('https://s3.example.com').presignUpload('workspaces/w/files/f', 600),
+		)
+
+		expect(url.origin).toBe('https://s3.example.com')
+		expect(url.pathname).toBe('/files/workspaces/w/files/f')
+		expect(url.searchParams.get('X-Amz-Expires')).toBe('600')
+		expect(url.searchParams.get('X-Amz-Signature')).toBeTruthy()
+		expect(url.searchParams.has('uploadId')).toBe(false)
+		expect(url.toString().toLowerCase()).not.toContain('checksum')
+		expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('host')
+	})
 })
