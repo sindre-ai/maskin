@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { firstStepSchema } from './first-steps'
 import { booleanQueryParam } from './primitives'
+import { tagListSchema } from './tags'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
 // Chat turns are capped separately from object comments (COMMENT_MAX_LENGTH in events.ts).
@@ -241,6 +242,9 @@ export const fromSuggestedStepSchema = z.object({
 	index: z.number().int().min(0).max(3),
 })
 
+/** Where a chat was started from, when the client says so. Today only the iPhone share sheet. */
+export const startedFromSchema = z.enum(['share'])
+
 /** What an agent can ask the human to put into the Keychain from a chat card. */
 export const KEYCHAIN_REQUEST_KINDS = ['api_key', 'login'] as const
 export type KeychainRequestKind = (typeof KEYCHAIN_REQUEST_KINDS)[number]
@@ -305,6 +309,12 @@ export const messageIntegrationAccessRequestSchema = z.object({
 	provider: z.string().min(1).max(100),
 	/** The name the person knows it by, e.g. "Slack". */
 	display_name: z.string().min(1).max(100),
+	/**
+	 * Which account is being connected, as a person knows it (the mailbox address for Gmail).
+	 * Only set when the provider stores such an address; a card without it shows no account row.
+	 * Never a provider id.
+	 */
+	account: z.string().min(1).max(320).optional(),
 	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
 	/** One line on what the agent needs it for. */
 	reason: z.string().min(1).max(300).optional(),
@@ -362,11 +372,108 @@ export const messageComputerRequestSchema = z.object({
 	task: z.string().min(1).max(500),
 })
 
+/**
+ * A plan an agent attached to its message: the steps it means to take. Written by an agent
+ * (never by a person, see stripServerOwnedMetadata), additive and versioned so an app that
+ * does not know a version shows the message text and ignores the block. In version 1 only
+ * fields are added, never renamed or removed. The message's `content` carries the same steps
+ * as plain text, so a reader that knows nothing about this block still shows something sensible.
+ */
+export const MESSAGE_PLAN_VERSION = 1
+export const MESSAGE_PLAN_MAX_STEPS = 20
+export const MESSAGE_PLAN_STEP_STATUSES = ['pending', 'in_progress', 'done', 'skipped'] as const
+export const messagePlanSchema = z.object({
+	version: z.literal(MESSAGE_PLAN_VERSION),
+	steps: z
+		.array(
+			z.object({
+				title: z.string().min(1).max(300),
+				status: z.enum(MESSAGE_PLAN_STEP_STATUSES).optional(),
+			}),
+		)
+		.min(1)
+		.max(MESSAGE_PLAN_MAX_STEPS),
+})
+
+/**
+ * A change an agent proposes to one field of one object (a loop is an object, so a loop
+ * setting is a `metadata.<key>` field). The app shows before and after with Apply and
+ * Dismiss. Apply is the normal object update (PATCH /objects/:id) made by the person, with
+ * the usual permission check and event, so a forged proposal can never write anything the
+ * person could not already write. See messagePlanSchema for the versioning rule.
+ */
+export const MESSAGE_PROPOSED_EDIT_VERSION = 1
+export const PROPOSED_EDIT_FIELDS = ['title', 'content', 'status'] as const
+// A function, not a shared schema, for the same reason as replyToSessionSchema: one instance
+// used for both `before` and `after` would be emitted as a $ref in the tool JSON schema.
+const proposedEditValueSchema = () =>
+	z.union([z.string().max(MESSAGE_MAX_LENGTH), z.number(), z.boolean(), z.null()])
+export const messageProposedEditSchema = z.object({
+	version: z.literal(MESSAGE_PROPOSED_EDIT_VERSION),
+	object_id: z.string().uuid(),
+	/** 'title', 'content', 'status', or 'metadata.<key>' for a setting such as a loop's. */
+	field: z.string().regex(/^(title|content|status|metadata\.[A-Za-z0-9_]{1,64})$/),
+	before: proposedEditValueSchema(),
+	after: proposedEditValueSchema(),
+})
+
+/**
+ * The body for PATCH /objects/:id that applies a proposed edit. The one definition of what
+ * Apply sends, so the update stays the normal object update.
+ */
+export function proposedEditToUpdate(edit: MessageProposedEdit): {
+	title?: string
+	content?: string
+	status?: string
+	metadata?: Record<string, string | number | boolean | null>
+} | null {
+	const { field, after } = edit
+	if (field.startsWith('metadata.'))
+		return { metadata: { [field.slice('metadata.'.length)]: after } }
+	if (typeof after !== 'string') return null
+	if (field === 'title') return { title: after }
+	if (field === 'content') return { content: after }
+	if (field === 'status') return { status: after }
+	return null
+}
+
 /** Which card a message answers, and how: a Not now or a Done. */
 export const messageCardAnswerSchema = z.object({
 	message_id: z.number().int().positive(),
 	outcome: z.enum(['declined', 'done']),
 })
+
+/**
+ * The backend-owned blocks that make a message a request card: each one asks the person to
+ * save, allow, add or do something. Only a message holding one of these can be answered.
+ */
+export const REQUEST_CARD_METADATA_KEYS = [
+	'keychain_request',
+	'keychain_access_request',
+	'integration_access_request',
+	'mcp_server_request',
+	'computer_request',
+] as const
+export type RequestCardMetadataKey = (typeof REQUEST_CARD_METADATA_KEYS)[number]
+
+/**
+ * Set by the backend on a request card's own message the moment the person answers it: when,
+ * by whom and how. 'done' covers saved, allowed, added and finished; 'declined' is Not now. The
+ * first answer wins and nothing is written for a card nobody has answered, so a client shows
+ * the time and name only when this is there (an older card has none).
+ *
+ * Read-only for clients and deliberately not a field of messageMetadataSchema: a client never
+ * sends it (stripServerOwnedMetadata drops it), so it stays out of the request schema, the
+ * generated Apple client and the tool schemas. The message read returns the metadata as stored.
+ */
+export const messageCardResolvedSchema = z.object({
+	/** When the answer was saved (ISO 8601). Not the time the card was asked. */
+	at: z.string().datetime({ offset: true }),
+	/** The person (or agent) whose action answered the card. */
+	by_actor_id: z.string().uuid(),
+	outcome: messageCardAnswerSchema.shape.outcome,
+})
+export type MessageCardResolved = z.infer<typeof messageCardResolvedSchema>
 
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
@@ -408,11 +515,29 @@ export const messageMetadataSchema = z.object({
 	mcp_server_request: messageMcpServerRequestSchema.optional(),
 	/** Backend-owned: an agent asking the person to act on its computer, shown as a card. */
 	computer_request: messageComputerRequestSchema.optional(),
+	/** Agent-written: the steps the agent plans, shown as a plan card. Old apps show the text. */
+	plan: messagePlanSchema
+		.describe(
+			'Steps you plan, shown as a plan card. Also write the steps in the message text. Set version to 1.',
+		)
+		.optional(),
+	/** Agent-written: a before and after for one field, shown with Apply and Dismiss. */
+	proposed_edit: messageProposedEditSchema
+		.describe(
+			'A change you propose to one field of one object, shown with Apply and Dismiss. Also describe it in the message text. Set version to 1.',
+		)
+		.optional(),
 	/**
 	 * Client-supplied: this message is the person's answer to a card (a message id), so the
 	 * card reads as answered whenever the chat is opened again.
 	 */
 	card_answer: messageCardAnswerSchema.optional(),
+	/**
+	 * Client-supplied: the message this one quotes (a message id). Stored and returned as sent, so
+	 * an app can jump to the exact original instead of matching on text and author. The id is
+	 * only echoed, never looked up, so it cannot reach into another conversation.
+	 */
+	quoted_message_id: z.number().int().positive().optional(),
 	/** Backend-owned: the helper session whose result this message hands to its sender. */
 	helper_return: z.string().uuid().optional(),
 	/**
@@ -430,6 +555,12 @@ export const messageMetadataSchema = z.object({
 	plain_tail: z.number().int().min(0).max(10).optional(),
 	/** Client-supplied: the intro step a message was sent from. */
 	from_suggested_step: fromSuggestedStepSchema.optional(),
+	/**
+	 * Client-supplied: where the person started the chat from, a category only (no text). Set on
+	 * the first message of a chat started from the iPhone share sheet. It carries no authority and
+	 * only lets share-started chats be counted from saved messages.
+	 */
+	started_from: startedFromSchema.optional(),
 	/** Backend-owned: the `commented` event this message was copied from (object chats). */
 	comment_event_id: z.number().int().optional(),
 })
@@ -441,8 +572,12 @@ export const messageMetadataSchema = z.object({
  */
 export function stripServerOwnedMetadata<T extends Record<string, unknown> | undefined>(
 	metadata: T,
+	options: { callerType?: string } = {},
 ): T {
 	if (!metadata) return metadata
+	// `plan` and `proposed_edit` are written by agents through the post tool, so only a person
+	// (or any non-agent caller) loses them.
+	const { plan: _plan, proposed_edit: _proposedEdit, ...kept } = metadata
 	const {
 		source: _source,
 		final_output: _finalOutput,
@@ -461,8 +596,9 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 		mcp_server_request: _mcpServerRequest,
 		computer_request: _computerRequest,
 		comment_event_id: _commentEventId,
+		card_resolved: _cardResolved,
 		...rest
-	} = metadata
+	} = options.callerType === 'agent' ? metadata : kept
 	return rest as T
 }
 
@@ -508,9 +644,15 @@ export const createConversationSchema = z
 		},
 	)
 
-export const updateConversationSchema = z.object({
-	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
-})
+export const updateConversationSchema = z
+	.object({
+		title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH).optional(),
+		// Labels for grouping chats, for example a team name. Replaces the whole list.
+		tags: tagListSchema.optional(),
+	})
+	.refine((v) => v.title !== undefined || v.tags !== undefined, {
+		message: 'Send a title, tags, or both',
+	})
 
 export const addConversationParticipantsSchema = z.object({
 	actor_ids: z.array(z.string().uuid()).min(1).max(MAX_CONVERSATION_PARTICIPANTS),
@@ -531,6 +673,9 @@ export const conversationListQuerySchema = z.object({
 	// 'pinned' (default) keeps pinned chats on top, as the chat list shows them;
 	// 'activity' orders purely by last message, newest first.
 	sort: z.enum(['pinned', 'activity']).default('pinned'),
+	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
+	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
+	scope: z.enum(['priority', 'recent']).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -551,9 +696,11 @@ export const postMessageSchema = z
 		thread_root_id: z.number().int().positive().optional(),
 		// With thread_root_id: also show the reply in the main timeline.
 		also_in_channel: z.boolean().optional(),
-		// An agent posting mid-turn lands in the thread of the message that started the turn when
-		// no thread_root_id is given. true opts out and posts to the main timeline. Ignored when
-		// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+		// An agent posting mid-turn continues the thread the turn's message was written in when
+		// no thread_root_id is given; a turn started by a top-level message posts to the main
+		// timeline, since people start threads and agents do not. true opts out of the thread.
+		// Ignored when thread_root_id is given, and for anyone but an agent in its own session
+		// for this chat.
 		top_level: z.boolean().optional(),
 	})
 	.refine((v) => v.content.length > 0 || hasAttachments(v.metadata), {
@@ -619,6 +766,8 @@ export const updateConversationParticipantStateSchema = z
 	})
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
+export type MessagePlan = z.infer<typeof messagePlanSchema>
+export type MessageProposedEdit = z.infer<typeof messageProposedEditSchema>
 export type MessageDelivery = z.infer<typeof messageDeliverySchema>
 export type SuggestedStep = z.infer<typeof suggestedStepSchema>
 export type NeededTool = z.infer<typeof neededToolSchema>

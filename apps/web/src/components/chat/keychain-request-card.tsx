@@ -24,6 +24,7 @@ import { useContinueSession, useSendSessionInput } from '@/hooks/use-sessions'
 import { ApiError, type MessageKeychainRequest, api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { queryKeys } from '@/lib/query-keys'
+import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import {
 	CREDENTIAL_NAME_MAX_LENGTH,
@@ -106,7 +107,7 @@ export function KeychainRequestCard({
 			.map((p) => ({ id: p.actorId, name: p.actorName }))
 		const known = new Set(inChat.map((a) => a.id))
 		const named = (request.target_agents ?? []).filter((a) => !known.has(a.id))
-		const withTargets = [...inChat, ...named]
+		const withTargets = sortByName([...inChat, ...named])
 		return withTargets.some((a) => a.id === askingAgentId)
 			? withTargets
 			: [{ id: askingAgentId, name: 'The agent that asked' }, ...withTargets]

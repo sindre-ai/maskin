@@ -132,20 +132,25 @@ public struct ConnectedIntegration: Identifiable, Sendable, Hashable {
 	/// The name a person gave it. Only tool servers carry one that is shown; for every other
 	/// provider the provider's own name is used.
 	public var displayName: String?
+	/// A line the provider keeps on its own row (Microsoft: what it covers, or that the company's
+	/// IT admin has not turned on transcript access). Written by the server; shown as is.
+	public var note: String?
 
 	public init(
-		id: String, provider: String, state: State, externalId: String? = nil, displayName: String? = nil
+		id: String, provider: String, state: State, externalId: String? = nil, displayName: String? = nil,
+		note: String? = nil
 	) {
 		self.id = id
 		self.provider = provider
 		self.state = state
 		self.externalId = externalId
 		self.displayName = displayName
+		self.note = note
 	}
 
 	public init(
 		id: String, provider: String, status: String, externalId: String?, missingScopes: Int,
-		needsReconnect: Bool, displayName: String? = nil
+		needsReconnect: Bool, displayName: String? = nil, note: String? = nil
 	) {
 		let state: State
 		switch status {
@@ -154,7 +159,8 @@ public struct ConnectedIntegration: Identifiable, Sendable, Hashable {
 		default: state = .disconnected
 		}
 		self.init(
-			id: id, provider: provider, state: state, externalId: externalId, displayName: displayName)
+			id: id, provider: provider, state: state, externalId: externalId, displayName: displayName,
+			note: note)
 	}
 }
 

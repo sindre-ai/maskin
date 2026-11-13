@@ -93,6 +93,7 @@ struct MaskinComposer: View {
 		self.busy = busy
 		self.onStop = onStop
 		self.onSend = onSend
+		_showsFormatting = State(initialValue: ComposerFormatting.isShown(actorID: model.selfActorID))
 	}
 
 	/// Design-review states that have no real trigger in a preview or a test.
@@ -100,12 +101,15 @@ struct MaskinComposer: View {
 		var dictating = false
 		var trayOpen = false
 		var dropTargeted = false
+		var formattingOpen = false
 	}
 
 	var preview: Preview?
 
 	@FocusState private var focused: Bool
 	@State private var trayOpen = false
+	/// The formatting row above the field. Off until the person picks "Show formatting"; remembered per person.
+	@State private var showsFormatting: Bool
 	/// Where the bar's top edge sits on screen: the + menu may not be taller than the room above it.
 	@State private var barTop: CGFloat = .infinity
 	/// The + menu card's measured height, so its offset holds at any text size. Nil until it has been laid out.
@@ -135,6 +139,9 @@ struct MaskinComposer: View {
 	private var isDictating: Bool { preview?.dictating ?? dictating }
 	private var isTrayOpen: Bool { preview?.trayOpen ?? trayOpen }
 	private var isDropTargeted: Bool { preview?.dropTargeted ?? dropTargeted }
+	/// Only where the `+` menu is the chat one: a Hold reason or a comment box has no formatting row.
+	private var offersFormatting: Bool { config.showsAttach && config.onPlus == nil }
+	var isFormattingShown: Bool { offersFormatting && !isDictating && (preview?.formattingOpen ?? showsFormatting) }
 
 	var lastSlot: ComposerLastSlot {
 		ComposerLastSlot.resolve(
@@ -161,6 +168,18 @@ struct MaskinComposer: View {
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 					.onTapGesture { model.notice = nil }
 			}
+			// Over the cap: say why Send is on (the text goes as a file) or off, never a bare grey arrow.
+			if let lengthNotice = model.lengthNotice {
+				Text(lengthNotice).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
+			#if os(iOS)
+			// Only when something is wrong (the phone took over, the server heard nothing): stays after Done.
+			if let note = dictation.engineNote {
+				Text(note).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
+			#endif
 		}
 		.animation(MaskinMotion.quick, value: lastSlot)
 		.animation(MaskinMotion.quick, value: isDictating)
@@ -191,6 +210,13 @@ struct MaskinComposer: View {
 					.padding(.top, MaskinSpace.s2)
 					.transition(.opacity)
 			}
+			if isFormattingShown {
+				ComposerFormatBar { format in
+					model.applyFormat(format)
+					focused = true
+				}
+				.transition(.opacity)
+			}
 			row
 		}
 		// Spec 7 §1: bar padding 6, gap 8.
@@ -206,6 +232,7 @@ struct MaskinComposer: View {
 		.overlay(alignment: .top) { suggestionList }
 		.overlay(alignment: .topLeading) { attachMenu }
 		.animation(MaskinMotion.quick, value: isDropTargeted)
+		.animation(MaskinMotion.quick, value: isFormattingShown)
 	}
 
 	/// The standard bar for every host: white, hairline border, soft shadow (`variant` no longer
@@ -347,6 +374,7 @@ struct MaskinComposer: View {
 		#if os(iOS)
 		if UIPasteboard.general.hasImages { actions.append(.paste) }
 		#endif
+		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
 		return actions
 	}
 
@@ -385,6 +413,9 @@ struct MaskinComposer: View {
 			// No object search exists in the chat code yet; `/` is where it will hang (reported).
 			insertTrigger("/")
 		case .person: insertTrigger("@")
+		case .showFormatting, .hideFormatting:
+			showsFormatting = action == .showFormatting
+			ComposerFormatting.setShown(showsFormatting, actorID: model.selfActorID)
 		case .paste:
 			#if os(iOS)
 			pasteImage()

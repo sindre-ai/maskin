@@ -15,8 +15,14 @@ struct IntegrationsView: View {
 	@State private var showAddToolServer = false
 	@State private var showClaude = false
 	@State private var accessTarget: ConnectedIntegration?
+	@State private var tab: Tab = .connected
+	@State private var query = ""
+	/// Nil is the All chip.
+	@State private var category: IntegrationCategory?
 	/// Agents for the Agent access page, read from the member list when the page opens.
 	@State private var accessAgents: [IntegrationAccessStore.AgentRef] = []
+	enum Tab: Hashable { case connected, discover }
+
 	let webSetupURL: URL?
 	/// Builds the pages Integrations pushes (v3): Add tool server and Import from Claude. Nil in
 	/// previews, which drops those rows.
@@ -34,28 +40,13 @@ struct IntegrationsView: View {
 
 	private var page: some View {
 		WorkspacePage(title: "Integrations") {
-			if rows.isEmpty {
-				switch store.phase {
-				case .failed(let message): PageStatus(text: message)
-				case .loaded: PageStatus(text: "No integrations available.")
-				default: PageStatus(text: "Loading integrations")
-				}
-			} else {
-				PageCard(rows: rows)
+			Picker("Integrations", selection: $tab) {
+				Text("Connected \(store.connectedCount)").tag(Tab.connected)
+				Text("Discover \(store.discoverCount)").tag(Tab.discover)
 			}
-			if !toolServerRows.isEmpty {
-				PageGroupLabel(text: "Tool servers")
-				PageCard(rows: toolServerRows)
-			}
-			if services != nil {
-				PageGroupLabel(text: "Claude")
-				PageCard(rows: [
-					PageRowModel(
-						id: "claude", title: "Import from Claude",
-						subtitle: "Use a Claude subscription as the model source", showsChevron: true,
-						action: { showClaude = true })
-				])
-			}
+			.pickerStyle(.segmented)
+			categoryChips
+			if tab == .connected { connectedContent } else { discoverContent }
 			if let error = store.actionError { FormError(error) }
 			if let notice = store.connectNotice {
 				if notice.kind == .failure {
@@ -70,6 +61,76 @@ struct IntegrationsView: View {
 					? "Connecting signs you in with the provider. When you come back, this list refreshes."
 					: "Only owners and admins can connect or disconnect an integration.")
 		}
+		.searchable(text: $query, prompt: "Search integrations and tools")
+	}
+
+	/// All, then one chip per category, in the order the web shows them.
+	private var categoryChips: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s4) {
+				AgentFilterChip(label: "All", selected: category == nil, outlined: true) { category = nil }
+				ForEach(IntegrationCategory.allCases) { chip in
+					AgentFilterChip(label: chip.label, selected: category == chip, outlined: true) {
+						category = chip
+					}
+				}
+			}
+		}
+	}
+
+	@ViewBuilder private var connectedContent: some View {
+		let accounts = connectedRows
+		let servers = toolServerRows
+		if accounts.isEmpty && servers.isEmpty && !isSearching {
+			switch store.phase {
+			case .failed(let message): PageStatus(text: message)
+			case .loaded: PageStatus(text: "Nothing connected yet.")
+			default: PageStatus(text: "Loading integrations")
+			}
+		} else if accounts.isEmpty && servers.isEmpty {
+			PageStatus(text: "No integration matches that search.")
+		}
+		if !accounts.isEmpty { PageCard(rows: accounts) }
+		if !servers.isEmpty { PageCard(rows: servers) }
+		if !isSearching, category == nil || category == .custom {
+			addServerCard
+		}
+	}
+
+	@ViewBuilder private var discoverContent: some View {
+		let rows = discoverRows
+		if rows.isEmpty {
+			PageStatus(text: isSearching ? "No integration matches that search." : "Nothing to discover.")
+		} else {
+			PageCard(rows: rows)
+		}
+	}
+
+	private var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+	/// "Add your own MCP server" and the Claude import, hidden while searching.
+	private var addRows: [PageRowModel] {
+		var rows: [PageRowModel] = []
+		if store.canManage, services != nil {
+			rows.append(
+				PageRowModel(
+					id: "add-tool-server", title: "Add your own MCP server",
+					subtitle: "Paste a server URL and choose what your agents can use.",
+					showsChevron: true, action: { showAddToolServer = true }))
+		}
+		if services != nil {
+			rows.append(
+				PageRowModel(
+					id: "claude", title: "Import from Claude",
+					subtitle: "Use a Claude subscription as the model source", showsChevron: true,
+					action: { showClaude = true }))
+		}
+		return rows
+	}
+
+	@ViewBuilder private var addServerCard: some View {
+		let rows = addRows
+		if !rows.isEmpty { PageCard(rows: rows) }
 	}
 
 	private func destinations(_ view: some View) -> some View {
@@ -147,19 +208,26 @@ struct IntegrationsView: View {
 		}
 	}
 
-	private var rows: [PageRowModel] {
-		let connected = store.accounts.map { integration in
+	private var connectedRows: [PageRowModel] {
+		store.connectedAccounts(query: query, category: category).map { integration in
 			PageRowModel(
 				id: integration.id, title: store.displayName(for: integration),
-				subtitle: WorkspacePageState.integrationSubtitle(
-					integration.state, account: store.accountLabel(for: integration)),
+				subtitle: integration.state == .connected
+					? integration.note
+						?? WorkspacePageState.integrationSubtitle(
+							integration.state, account: store.accountLabel(for: integration))
+					: WorkspacePageState.integrationSubtitle(
+						integration.state, account: store.accountLabel(for: integration)),
 				accessory: .state(
 					isConnecting(integration.provider)
 						? WorkspacePageState.integrationConnecting
 						: WorkspacePageState.integration(integration.state)),
 				action: store.canManage && !store.isConnectInFlight ? { actionTarget = integration } : nil)
 		}
-		let available = store.available.map { provider in
+	}
+
+	private var discoverRows: [PageRowModel] {
+		store.availableProviders(query: query, category: category).map { provider in
 			PageRowModel(
 				id: "available-\(provider.id)", title: provider.displayName,
 				subtitle: WorkspacePageState.integrationAvailableSubtitle,
@@ -168,26 +236,18 @@ struct IntegrationsView: View {
 						? WorkspacePageState.integrationConnecting : WorkspacePageState.integrationAvailable),
 				action: availableAction(provider))
 		}
-		return connected + available
 	}
 
-	/// Tool servers a person added, plus the way to add one (owners and admins; the server only
-	/// accepts people, which the add page reports if an agent key is signed in).
+	/// Tool servers a person added. Adding one is the "Add your own MCP server" card; the server
+	/// only accepts people, which the add page reports if an agent key is signed in.
 	private var toolServerRows: [PageRowModel] {
-		var rows = store.toolServers.map { server in
+		store.connectedToolServers(query: query, category: category).map { server in
 			PageRowModel(
 				id: server.id, title: store.displayName(for: server),
 				subtitle: server.state == .connected ? nil : WorkspacePageState.integrationSubtitle(server.state, account: nil),
 				accessory: .state(WorkspacePageState.integration(server.state)),
 				action: store.canManage && !store.isConnectInFlight ? { actionTarget = server } : nil)
 		}
-		if store.canManage, services != nil {
-			rows.append(
-				PageRowModel(
-					id: "add-tool-server", title: "Add tool server", showsChevron: true,
-					action: { showAddToolServer = true }))
-		}
-		return rows
 	}
 
 	private func isConnecting(_ providerID: String) -> Bool { store.connectPhase.provider == providerID }

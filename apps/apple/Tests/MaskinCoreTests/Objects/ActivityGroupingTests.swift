@@ -148,24 +148,6 @@ struct ActivityGroupingTests {
 	}
 }
 
-@Suite("DescriptionCollapse")
-struct DescriptionCollapseTests {
-	@Test("folds past 520 characters, never under")
-	func threshold() {
-		#expect(!DescriptionCollapse.collapses(String(repeating: "a", count: 520)))
-		#expect(DescriptionCollapse.collapses(String(repeating: "a", count: 521)))
-		#expect(!DescriptionCollapse.collapses(""))
-	}
-
-	@Test("reading time is whole minutes at 200 words a minute, never under one")
-	func readingTime() {
-		#expect(DescriptionCollapse.readingMinutes("a few words") == 1)
-		#expect(DescriptionCollapse.readingMinutes(Array(repeating: "word", count: 200).joined(separator: " ")) == 1)
-		#expect(DescriptionCollapse.readingMinutes(Array(repeating: "word", count: 201).joined(separator: " ")) == 2)
-		#expect(DescriptionCollapse.readAllLabel(Array(repeating: "word", count: 450).joined(separator: " ")) == "Read all · 3 min")
-	}
-}
-
 @Suite("RelatedGrouping")
 struct RelatedGroupingTests {
 	private func link(_ id: String, _ relation: String, out: Bool, type: String = "task") -> ObjectLink {

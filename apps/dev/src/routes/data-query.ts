@@ -2,8 +2,8 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { objects, relationships } from '@maskin/db/schema'
 import {
-	DATA_QUERY_MAX_GROUPS,
-	DATA_QUERY_MAX_ROWS,
+	DATA_QUERY_MAX_PAGE_SIZE,
+	DATA_QUERY_PAGE_SIZE,
 	type DataQueryResult,
 	type DataQuerySpec,
 	type DataQueryTimeUnit,
@@ -14,6 +14,7 @@ import {
 	parseRelativeBound,
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
+import { readSnapshot, saveSnapshot } from '../lib/data-query-snapshots'
 import { formatZodError, validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
@@ -160,15 +161,13 @@ export function buildNextChangeSql(workspaceId: string, spec: DataQuerySpec): Sq
 }
 
 /**
- * One grouped aggregation over `objects`, built so the whole query runs in
- * Postgres and at most DATA_QUERY_MAX_GROUPS rows come back. Every caller-supplied
- * value (type, status, metadata field names and values, dates, loop id) is a
- * bound parameter; field names are already restricted to
- * SAFE_METADATA_FIELD_NAME_RE by the spec schema and are still never spliced
- * into the SQL text.
+ * One grouped aggregation over `objects`, built so the whole query runs in Postgres and one
+ * row per group comes back. Every caller-supplied value (type, status, metadata field names
+ * and values, dates, loop id) is a bound parameter; field names are already restricted to
+ * SAFE_METADATA_FIELD_NAME_RE by the spec schema and are still never spliced into the SQL text.
  *
- * Scanning is capped at DATA_QUERY_MAX_ROWS (by id, so the cut is stable): the
- * extra row fetched past the cap exists only to report `rows_truncated`.
+ * Nothing is capped here: not the rows scanned, not the groups returned. What bounds the work
+ * is the statement timeout `runDataQuery` sets, and what bounds a response is paging.
  */
 export function buildDataQuerySql(workspaceId: string, spec: DataQuerySpec): SqlFragment {
 	const op = spec.aggregate?.op ?? 'count'
@@ -185,8 +184,8 @@ export function buildDataQuerySql(workspaceId: string, spec: DataQuerySpec): Sql
 		const col = column === 'created_at' ? sql`o.created_at` : sql`o.updated_at`
 		keyExpr = sql`to_char(date_trunc(${unit}, ${col} AT TIME ZONE ${tz}), ${BUCKET_KEY_FORMAT[unit]})`
 	}
-	// Time buckets keep the newest groups if the cap bites (shaping puts them back oldest first).
-	const groupOrder = timeBucket(spec.group_by) ? sql`g.k DESC` : sql`g.n DESC, g.k ASC NULLS LAST`
+	// Time buckets run oldest first; everything else puts the biggest groups first.
+	const groupOrder = timeBucket(spec.group_by) ? sql`g.k ASC` : sql`g.n DESC, g.k ASC NULLS LAST`
 
 	// Only real JSON numbers count: a field holding "abc" or null contributes
 	// nothing instead of failing the cast for the whole query.
@@ -196,30 +195,21 @@ export function buildDataQuerySql(workspaceId: string, spec: DataQuerySpec): Sql
 			: sql`CASE WHEN jsonb_typeof(o.metadata -> ${aggField}::text) = 'number'
 				THEN (o.metadata ->> ${aggField}::text)::numeric END`
 
+	// Grouped by output position: the key expression carries bound parameters, and Postgres
+	// cannot tell two placeholders for the same value apart.
 	return sql`
-		WITH picked AS (
-			SELECT o.id, ${keyExpr} AS k, ${valueExpr} AS v
+		WITH grouped AS (
+			SELECT ${keyExpr} AS k, count(*) AS n, sum(${valueExpr}) AS s, count(${valueExpr}) AS nv
 			FROM ${from}
 			WHERE ${sql.join(where, sql` AND `)}
-			ORDER BY o.id
-			LIMIT ${DATA_QUERY_MAX_ROWS + 1}
-		), ranked AS (
-			SELECT k, v, row_number() OVER (ORDER BY id) AS rn FROM picked
-		), grouped AS (
-			SELECT k, count(*) AS n, sum(v) AS s, count(v) AS nv
-			FROM ranked
-			WHERE rn <= ${DATA_QUERY_MAX_ROWS}
-			GROUP BY k
+			GROUP BY 1
 		)
 		SELECT g.k AS key, g.n, g.s, g.nv,
 			sum(g.n) OVER () AS total_n,
 			sum(g.s) OVER () AS total_s,
-			sum(g.nv) OVER () AS total_nv,
-			count(*) OVER () AS group_count,
-			(SELECT count(*) > ${DATA_QUERY_MAX_ROWS} FROM picked) AS rows_truncated
+			sum(g.nv) OVER () AS total_nv
 		FROM grouped g
 		ORDER BY ${groupOrder}
-		LIMIT ${DATA_QUERY_MAX_GROUPS}
 	`
 }
 
@@ -231,8 +221,6 @@ export type DataQueryRow = {
 	total_n: number | string
 	total_s: number | string | null
 	total_nv: number | string
-	group_count: number | string
-	rows_truncated: boolean
 }
 
 function valueFor(op: 'count' | 'sum' | 'avg', n: number, s: number | null, nv: number) {
@@ -243,7 +231,10 @@ function valueFor(op: 'count' | 'sum' | 'avg', n: number, s: number | null, nv: 
 
 const num = (v: number | string | null): number | null => (v === null ? null : Number(v))
 
-/** Turns the grouped rows into the response. No rows means nothing matched. */
+/**
+ * Turns the grouped rows into the whole answer: every group, no cursor. No rows means nothing
+ * matched. `pageOfResult` cuts it into the pages a caller actually receives.
+ */
 export function shapeDataQueryResult(rows: DataQueryRow[], spec: DataQuerySpec): DataQueryResult {
 	const op = spec.aggregate?.op ?? 'count'
 	const first = rows[0]
@@ -251,16 +242,15 @@ export function shapeDataQueryResult(rows: DataQueryRow[], spec: DataQuerySpec):
 		return {
 			groups: [],
 			total: { count: 0, value: op === 'count' ? 0 : null },
+			next_cursor: null,
 			rows_truncated: false,
 			groups_truncated: false,
 		}
 	}
-	// Time buckets are read newest first (so the cap drops the oldest); hand them back oldest first.
-	const ordered = timeBucket(spec.group_by) ? [...rows].reverse() : rows
 	return {
 		// Without a group_by the single null-keyed row is the total, not a group.
 		groups: spec.group_by
-			? ordered.map((r) => ({
+			? rows.map((r) => ({
 					key: r.key,
 					count: Number(r.n),
 					value: valueFor(op, Number(r.n), num(r.s), Number(r.nv)),
@@ -270,8 +260,37 @@ export function shapeDataQueryResult(rows: DataQueryRow[], spec: DataQuerySpec):
 			count: Number(first.total_n),
 			value: valueFor(op, Number(first.total_n), num(first.total_s), Number(first.total_nv)),
 		},
-		rows_truncated: first.rows_truncated === true,
-		groups_truncated: Number(first.group_count) > DATA_QUERY_MAX_GROUPS,
+		next_cursor: null,
+		rows_truncated: false,
+		groups_truncated: false,
+	}
+}
+
+/** A cursor is `<snapshot id>.<offset>`: where the next page starts in that snapshot. */
+const CURSOR_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(\d{1,9})$/
+
+export function parseCursor(cursor: string): { snapshotId: string; offset: number } | null {
+	const m = CURSOR_RE.exec(cursor)
+	return m ? { snapshotId: m[1] as string, offset: Number(m[2]) } : null
+}
+
+/**
+ * One page of a whole answer. `snapshotId` names where the rest can be read; it is only used
+ * when groups remain after this page. The totals always describe every group, not the page.
+ */
+export function pageOfResult(
+	full: DataQueryResult,
+	offset: number,
+	limit: number,
+	snapshotId: string | null,
+): DataQueryResult {
+	const end = offset + limit
+	const more = end < full.groups.length && snapshotId !== null
+	return {
+		...full,
+		groups: full.groups.slice(offset, end),
+		next_cursor: more ? `${snapshotId}.${end}` : null,
+		groups_truncated: more,
 	}
 }
 
@@ -282,14 +301,45 @@ const querySchema = z.object({
 	}),
 })
 
+const dataQueryParamsSchema = querySchema.extend({
+	cursor: z.string().max(80).optional().openapi({
+		description: "The previous page's `next_cursor`, to read the next page of groups.",
+	}),
+	limit: z.coerce
+		.number()
+		.int()
+		.min(1)
+		.max(DATA_QUERY_MAX_PAGE_SIZE)
+		.optional()
+		.openapi({
+			description: `Groups per page (default ${DATA_QUERY_PAGE_SIZE}, at most ${DATA_QUERY_MAX_PAGE_SIZE}).`,
+		}),
+})
+
+/** Longest one query may run. Below the role-level timeout, and set here so a self-hosted DB has one too. */
+const DATA_QUERY_TIMEOUT_MS = 15_000
+
+/** Runs the aggregation under its own statement timeout and shapes the whole answer. */
+async function runDataQuery(
+	db: Database,
+	workspaceId: string,
+	spec: DataQuerySpec,
+): Promise<DataQueryResult> {
+	const rows = await db.transaction(async (tx) => {
+		await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(DATA_QUERY_TIMEOUT_MS))}`)
+		return Array.from(await tx.execute<DataQueryRow>(buildDataQuerySql(workspaceId, spec)))
+	})
+	return shapeDataQueryResult(rows, spec)
+}
+
 const dataQueryRoute = createRoute({
 	method: 'get',
 	path: '/query',
 	tags: ['data'],
 	summary: 'Read-only grouped aggregation over objects',
 	description:
-		'Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database; scanned rows and returned groups are capped and flagged when the cap is hit.',
-	request: { headers: workspaceIdHeader, query: querySchema },
+		'Counts, sums or averages objects of one type, optionally grouped by status, type or a metadata field and scoped to the workspace or one loop. Aggregation runs in the database over every matching object. Groups come back a page at a time: while `next_cursor` is set, pass it back as `cursor` to read the next page. Totals always cover every group.',
+	request: { headers: workspaceIdHeader, query: dataQueryParamsSchema },
 	responses: {
 		200: {
 			description: 'Grouped totals',
@@ -306,12 +356,34 @@ const dataQueryRoute = createRoute({
 	},
 })
 
+/**
+ * Custom loop views fire a burst of these, and the database pool is shared with everything else
+ * (auth on every request, session logs, triggers). Left unbounded, one view held every
+ * connection and the whole server stopped answering. Only this many run at once; the rest wait.
+ */
+const MAX_CONCURRENT_DATA_QUERIES = 3
+let activeDataQueries = 0
+const waitingDataQueries: Array<() => void> = []
+
+async function withDataQuerySlot<T>(work: () => Promise<T>): Promise<T> {
+	if (activeDataQueries >= MAX_CONCURRENT_DATA_QUERIES) {
+		await new Promise<void>((resolve) => waitingDataQueries.push(resolve))
+	}
+	activeDataQueries += 1
+	try {
+		return await work()
+	} finally {
+		activeDataQueries -= 1
+		waitingDataQueries.shift()?.()
+	}
+}
+
 type SpecOutcome =
 	| { spec: DataQuerySpec }
 	| { status: 400 | 404; error: ReturnType<typeof createApiError> }
 
-/** Parses the `spec` query param and checks a loop scope belongs to the workspace. */
-async function readSpec(db: Database, workspaceId: string, rawSpec: string): Promise<SpecOutcome> {
+/** Parses the `spec` query param. No database involved. */
+function parseSpec(rawSpec: string): SpecOutcome {
 	let json: unknown
 	try {
 		json = JSON.parse(rawSpec)
@@ -325,7 +397,14 @@ async function readSpec(db: Database, workspaceId: string, rawSpec: string): Pro
 			error: createApiError('VALIDATION_ERROR', 'Invalid query', formatZodError(parsed.error)),
 		}
 	}
-	const spec = parsed.data
+	return { spec: parsed.data }
+}
+
+/** Parses the `spec` query param and checks a loop scope belongs to the workspace. */
+async function readSpec(db: Database, workspaceId: string, rawSpec: string): Promise<SpecOutcome> {
+	const outcome = parseSpec(rawSpec)
+	if ('error' in outcome) return outcome
+	const { spec } = outcome
 
 	if (spec.scope !== 'workspace') {
 		const [loop] = await db
@@ -347,13 +426,34 @@ async function readSpec(db: Database, workspaceId: string, rawSpec: string): Pro
 app.openapi(dataQueryRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { spec: rawSpec } = c.req.valid('query')
+	const { spec: rawSpec, cursor: rawCursor, limit = DATA_QUERY_PAGE_SIZE } = c.req.valid('query')
 
-	const outcome = await readSpec(db, workspaceId, rawSpec)
-	if ('error' in outcome) return c.json(outcome.error, outcome.status)
+	const cursor = rawCursor === undefined ? null : parseCursor(rawCursor)
+	if (rawCursor !== undefined && !cursor) {
+		return c.json(createApiError('VALIDATION_ERROR', 'cursor is not a valid page cursor'), 400)
+	}
 
-	const rows = await db.execute<DataQueryRow>(buildDataQuerySql(workspaceId, outcome.spec))
-	return c.json(shapeDataQueryResult(Array.from(rows), outcome.spec), 200)
+	const parsed = parseSpec(rawSpec)
+	if ('error' in parsed) return c.json(parsed.error, parsed.status)
+	const specKey = JSON.stringify(parsed.spec)
+
+	// A later page is cut from the snapshot the first page left behind: no query, no pool slot.
+	const held = cursor ? readSnapshot(cursor.snapshotId, workspaceId, specKey) : null
+	if (cursor && held) {
+		return c.json(pageOfResult(held, cursor.offset, limit, cursor.snapshotId), 200)
+	}
+
+	return withDataQuerySlot(async () => {
+		const outcome = await readSpec(db, workspaceId, rawSpec)
+		if ('error' in outcome) return c.json(outcome.error, outcome.status)
+
+		const full = await runDataQuery(db, workspaceId, outcome.spec)
+		const offset = cursor?.offset ?? 0
+		// Only worth keeping when groups remain after this page.
+		const snapshotId =
+			offset + limit < full.groups.length ? saveSnapshot(workspaceId, specKey, full) : null
+		return c.json(pageOfResult(full, offset, limit, snapshotId), 200)
+	})
 }) as RouteHandler<typeof dataQueryRoute, Env>)
 
 const nextChangeResultSchema = z.object({
@@ -389,14 +489,16 @@ app.openapi(nextChangeRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { spec: rawSpec } = c.req.valid('query')
 
-	const outcome = await readSpec(db, workspaceId, rawSpec)
-	if ('error' in outcome) return c.json(outcome.error, outcome.status)
+	return withDataQuerySlot(async () => {
+		const outcome = await readSpec(db, workspaceId, rawSpec)
+		if ('error' in outcome) return c.json(outcome.error, outcome.status)
 
-	const rows = await db.execute<{ in_ms: number | string | null }>(
-		buildNextChangeSql(workspaceId, outcome.spec),
-	)
-	const ms = Array.from(rows)[0]?.in_ms
-	return c.json({ in_ms: ms === null || ms === undefined ? null : Math.max(0, Number(ms)) }, 200)
+		const rows = await db.execute<{ in_ms: number | string | null }>(
+			buildNextChangeSql(workspaceId, outcome.spec),
+		)
+		const ms = Array.from(rows)[0]?.in_ms
+		return c.json({ in_ms: ms === null || ms === undefined ? null : Math.max(0, Number(ms)) }, 200)
+	})
 }) as RouteHandler<typeof nextChangeRoute, Env>)
 
 export default app

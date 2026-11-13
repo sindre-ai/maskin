@@ -99,20 +99,30 @@ describe('toolServerEnabled / summarizeToolServerAccess', () => {
 })
 
 describe('ToolsSection', () => {
-	it('always shows Maskin as read & write and always on, with nothing to change', () => {
+	it('offers adding your own server and importing from Claude', () => {
 		render(<ToolsSection workspaceId="ws-1" />)
-		const region = screen.getByRole('region', { name: 'Tool servers' })
-		expect(within(region).getByText('Maskin')).toBeInTheDocument()
-		expect(within(region).getByText(/Read & write · always on/)).toBeInTheDocument()
-		expect(within(region).queryByRole('switch')).not.toBeInTheDocument()
-		expect(within(region).queryByText(/Every agent has it/)).toBeNull()
-		expect(within(region).queryByText(/instead of setting it up on each agent/)).toBeNull()
+		expect(screen.getByRole('button', { name: /Add your own MCP server/ })).toBeEnabled()
+		expect(screen.getByRole('button', { name: /Import from Claude/ })).toBeEnabled()
 	})
 
-	it('lists each custom server with where it points, and none of the other integrations', () => {
+	it('always shows Maskin as read & write and always on, with nothing to change', () => {
+		render(<ToolsSection workspaceId="ws-1" />)
+		expect(screen.getByText('Maskin')).toBeInTheDocument()
+		expect(screen.getByText(/Read & write · always on/)).toBeInTheDocument()
+		expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+	})
+
+	it('hides the add card while searching and when another category is picked', () => {
+		const { rerender } = render(<ToolsSection workspaceId="ws-1" query="crm" />)
+		expect(screen.queryByRole('button', { name: /Add your own MCP server/ })).toBeNull()
+		rerender(<ToolsSection workspaceId="ws-1" showServers={false} />)
+		expect(screen.queryByRole('button', { name: /Add your own MCP server/ })).toBeNull()
+	})
+
+	it('lists each custom server with where it points, and none of the other integrations', async () => {
 		integrations = [server(), buildIntegrationResponse({ id: 'slack-1', provider: 'slack' })]
 		render(<ToolsSection workspaceId="ws-1" />)
-		expect(screen.getByText('Docs search')).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: /Docs search/ }))
 		expect(screen.getByText('HTTP · https://tools.example.com/mcp')).toBeInTheDocument()
 		expect(screen.queryByText('slack')).not.toBeInTheDocument()
 	})
@@ -126,7 +136,7 @@ describe('ToolsSection', () => {
 	it('saves a new http server from the form', async () => {
 		const user = userEvent.setup()
 		render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add tool server/ }))
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
 		await user.type(screen.getByLabelText('Name'), 'Docs search')
 		await user.click(screen.getByRole('combobox', { name: 'Transport' }))
 		await user.click(await screen.findByRole('option', { name: 'HTTP' }))
@@ -160,7 +170,7 @@ describe('ToolsSection', () => {
 			}),
 		]
 		render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add tool server/ }))
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
 		await user.type(screen.getByLabelText('Name'), 'Billing')
 		await user.click(screen.getByRole('combobox', { name: 'Transport' }))
 		await user.click(await screen.findByRole('option', { name: 'HTTP' }))
@@ -198,7 +208,7 @@ describe('ToolsSection', () => {
 	it('offers no credential picker when nothing is saved in the Keychain', async () => {
 		const user = userEvent.setup()
 		render(<ToolsSection workspaceId="ws-1" />)
-		await user.click(screen.getByRole('button', { name: /Add tool server/ }))
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
 		await user.click(screen.getByRole('button', { name: /^Add$/ }))
 		expect(screen.queryByRole('combobox', { name: /saved credential/i })).toBeNull()
 	})
@@ -207,15 +217,17 @@ describe('ToolsSection', () => {
 		const user = userEvent.setup()
 		integrations = [server()]
 		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Docs search/ }))
 		await user.click(screen.getByRole('button', { name: 'Remove Docs search' }))
 		expect(removeServer).not.toHaveBeenCalled()
 		await user.click(screen.getByRole('button', { name: 'Remove' }))
 		expect(removeServer).toHaveBeenCalledWith('srv-1')
 	})
 
-	it('offers no edit, remove or add to someone who did not add it and is not an admin', () => {
+	it('offers no edit, remove or add to someone who did not add it and is not an admin', async () => {
 		integrations = [server({ createdBy: 'someone-else' })]
 		render(<ToolsSection workspaceId="ws-1" />)
+		await userEvent.click(screen.getByRole('button', { name: /Docs search/ }))
 		expect(screen.queryByRole('button', { name: 'Edit Docs search' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Remove Docs search' })).not.toBeInTheDocument()
 	})
@@ -225,7 +237,7 @@ describe('ToolsSection', () => {
 		render(<ToolsSection workspaceId="ws-1" />, {
 			wrapper: createWorkspaceWrapper({ role: 'viewer' }),
 		})
-		expect(screen.getByRole('button', { name: /Add tool server/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: /Add your own MCP server/ })).toBeDisabled()
 		expect(screen.getByRole('button', { name: /Import from Claude/ })).toBeDisabled()
 	})
 })

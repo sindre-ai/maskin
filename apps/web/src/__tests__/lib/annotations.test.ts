@@ -42,6 +42,7 @@ function makeFile(overrides: Partial<FileDetail> = {}): FileDetail {
 		workspaceId: 'ws-1',
 		name: 'proto.html',
 		description: null,
+		tags: [],
 		mimeType: 'text/html',
 		sizeBytes: 32,
 		storageKey: 'workspaces/ws-1/files/file-1',

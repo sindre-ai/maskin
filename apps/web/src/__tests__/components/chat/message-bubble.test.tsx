@@ -68,6 +68,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useApproveObject: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }))
 
+const reactToggle = vi.fn()
+vi.mock('@/hooks/use-message-reactions', () => ({
+	useToggleReaction: () => ({ toggle: reactToggle }),
+}))
+
 const retryMutate = vi.fn()
 vi.mock('@/hooks/use-conversation', () => ({
 	useConversation: () => ({ data: { participants: [] } }),
@@ -142,6 +147,95 @@ const CHART_MESSAGE = [
 	'```',
 ].join('\n')
 
+describe('MessageBubble reactions', () => {
+	beforeEach(() => reactToggle.mockClear())
+
+	it("offers an Add reaction button on another author's message", () => {
+		renderBubble(buildMessage())
+		expect(screen.getByRole('button', { name: 'Add reaction' })).toBeInTheDocument()
+	})
+
+	it('offers an Add reaction button on your own message', () => {
+		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		expect(screen.getByRole('button', { name: 'Add reaction' })).toBeInTheDocument()
+	})
+
+	it('reacts to the message with the picked emoji', () => {
+		renderBubble(buildMessage({ id: 7 }))
+		fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
+		fireEvent.click(screen.getByRole('button', { name: 'React with 👀' }))
+		expect(reactToggle).toHaveBeenCalledWith(7, '👀')
+	})
+
+	it('shows the reactions under the message and takes yours back when pressed', () => {
+		renderBubble(
+			buildMessage({
+				id: 7,
+				reactions: [
+					{
+						emoji: '👍',
+						count: 2,
+						reactedByMe: true,
+						actors: [
+							{ actorId: 'me', actorName: 'Me' },
+							{ actorId: 'magnus', actorName: 'Magnus' },
+						],
+					},
+				],
+			}),
+		)
+		fireEvent.click(screen.getByRole('button', { name: /You and Magnus reacted with 👍/ }))
+		expect(reactToggle).toHaveBeenCalledWith(7, '👍')
+	})
+
+	it('offers no reaction on a message that is not saved yet', () => {
+		renderBubble(buildMessage({ id: -1 }))
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+
+	it('offers no reaction on a system row', () => {
+		renderBubble(buildMessage({ kind: 'system' }))
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+
+	it('offers no reaction on a deleted message, and shows no chips on it', () => {
+		renderBubble(
+			buildMessage({
+				content: '',
+				deletedAt: new Date().toISOString(),
+				reactions: [{ emoji: '👍', count: 1, reactedByMe: false, actors: [] }],
+			}),
+		)
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /reacted with/ })).not.toBeInTheDocument()
+	})
+
+	it("offers no reaction on an agent's failed-turn notice", () => {
+		renderBubble(
+			buildMessage({
+				metadata: {
+					final_output: { dedupe_key: 'k1', is_error: true, message_id: 3 },
+				} as MessageResponse['metadata'],
+			}),
+		)
+		expect(screen.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument()
+	})
+
+	it('keeps the action row visible while the picker is open', () => {
+		renderBubble(buildMessage())
+		const row = screen.getByLabelText('Message actions')
+		// Hover or focus-within is what shows the row on a pointer device; the portaled picker
+		// has neither, so the row must say so itself.
+		// A bare token: `group-hover:opacity-100` and friends are separate, variant-prefixed classes.
+		const bare = (token: string) => new RegExp(`(^|\\s)${token}(\\s|$)`)
+		expect(row.className).toMatch(bare('opacity-0'))
+		fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
+		expect(row.className).toMatch(bare('opacity-100'))
+		fireEvent.click(screen.getByRole('button', { name: 'React with 👍' }))
+		expect(row.className).toMatch(bare('opacity-0'))
+	})
+})
+
 describe('MessageBubble', () => {
 	it('shows the card of a linked object right after the paragraph that links it', () => {
 		const id = 'a7167fde-3f84-42ce-800d-2ba2362944ea'
@@ -163,6 +257,68 @@ describe('MessageBubble', () => {
 		const body = screen.getByText('Here is what I found.')
 		expect(body.parentElement?.className).toContain('bg-secondary')
 		expect(screen.queryByText('Me')).not.toBeInTheDocument()
+	})
+
+	describe('formatting in your own message', () => {
+		const own = (content: string, extra: Partial<MessageResponse> = {}) =>
+			buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', content, ...extra })
+		beforeEach(() => localStorage.setItem('ff:chat-formatting', 'on'))
+		afterEach(() => localStorage.removeItem('ff:chat-formatting'))
+
+		it('draws your message as before while the chat-formatting flag is off', () => {
+			localStorage.setItem('ff:chat-formatting', 'off')
+			const { container } = renderBubble(own('**Bold** and a list\n- one'))
+			expect(container.querySelector('strong, ul')).toBeNull()
+			expect(container.textContent).toContain('**Bold**')
+		})
+
+		it('draws bold, italic, strikethrough and inline code as formatted text', () => {
+			const { container } = renderBubble(own('**Bold** and *italic* and ~~gone~~ and `code`'))
+			expect(container.querySelector('strong')?.textContent).toBe('Bold')
+			expect(container.querySelector('em')?.textContent).toBe('italic')
+			expect(container.querySelector('del')?.textContent).toBe('gone')
+			expect(container.querySelector('code')?.textContent).toBe('code')
+			expect(container.textContent).not.toContain('**')
+		})
+
+		it('draws lists, a quote and a code block', () => {
+			const { container } = renderBubble(
+				own('- one\n- two\n\n1. first\n2. second\n\n> quoted\n\n```\nlet a = 1\n```'),
+			)
+			expect(container.querySelectorAll('ul > li')).toHaveLength(2)
+			expect(container.querySelectorAll('ol > li')).toHaveLength(2)
+			expect(container.querySelector('blockquote')?.textContent).toContain('quoted')
+			expect(container.querySelector('pre')?.textContent).toContain('let a = 1')
+		})
+
+		it('draws a markdown table as a table', () => {
+			const { container } = renderBubble(own('| Plan | Price |\n| --- | --- |\n| Pro | 20 |'))
+			expect(container.querySelectorAll('table th')).toHaveLength(2)
+			expect(screen.getByText('Pro').tagName).toBe('TD')
+		})
+
+		it('keeps a tag in formatted text as a chip', () => {
+			actorsState.list = [
+				{
+					id: 'a-cto',
+					name: 'CTO',
+					type: 'agent',
+					isSystem: false,
+					description: null,
+					email: null,
+				},
+			]
+			renderBubble(own('**Please** look at this, @CTO', { metadata: { mentions: ['a-cto'] } }))
+			expect(screen.getByText('@CTO').className).toContain('bg-brand/10')
+			expect(screen.queryByText('You mentioned')).not.toBeInTheDocument()
+			actorsState.list = []
+		})
+
+		it('leaves a message with no markdown as plain text in the fitted plate', () => {
+			const { container } = renderBubble(own('2 * 3 * 4 is 24'))
+			expect(container.querySelector('strong, em, ul, ol, table')).toBeNull()
+			expect(screen.getByText('2 * 3 * 4 is 24').className).toContain('whitespace-pre-wrap')
+		})
 	})
 
 	describe('tags in your own message', () => {
@@ -648,6 +804,35 @@ describe('MessageBubble — Reply in thread', () => {
 		renderWithReply(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
 		fireEvent.click(screen.getByRole('button', { name: 'Edit message' }))
 		expect(screen.queryByRole('button', { name: 'Reply in thread' })).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble — edit request', () => {
+	const own = () => buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' })
+	const renderWithRequest = (message: MessageResponse, nonce?: number) =>
+		render(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={nonce} />, {
+			wrapper: TestWrapper,
+		})
+
+	it('opens the edit card when a new request arrives', () => {
+		const message = own()
+		const { rerender } = renderWithRequest(message)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+	})
+
+	it('ignores a request that was already there when the bubble mounted', () => {
+		renderWithRequest(own(), 1)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+	})
+
+	it('does not edit a message that is not yours', () => {
+		const message = buildMessage()
+		const { rerender } = renderWithRequest(message)
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 	})
 })
 

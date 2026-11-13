@@ -28,6 +28,8 @@ public protocol APIProtocol: Sendable {
     func get_sol_api_sol_objects_sol_board(_ input: Operations.get_sol_api_sol_objects_sol_board.Input) async throws -> Operations.get_sol_api_sol_objects_sol_board.Output
     /// Search objects by text
     ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
+    ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
     func get_sol_api_sol_objects_sol_search(_ input: Operations.get_sol_api_sol_objects_sol_search.Input) async throws -> Operations.get_sol_api_sol_objects_sol_search.Output
@@ -264,6 +266,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/triggers`.
     /// - Remark: Generated from `#/paths//api/triggers/post`.
     func post_sol_api_sol_triggers(_ input: Operations.post_sol_api_sol_triggers.Input) async throws -> Operations.post_sol_api_sol_triggers.Output
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    func get_sol_api_sol_triggers_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -410,6 +417,16 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/billing/usage`.
     /// - Remark: Generated from `#/paths//api/billing/usage/get`.
     func get_sol_api_sol_billing_sol_usage(_ input: Operations.get_sol_api_sol_billing_sol_usage.Input) async throws -> Operations.get_sol_api_sol_billing_sol_usage.Output
+    /// The auto top-up rule and whether the last automatic charge failed
+    ///
+    /// - Remark: HTTP `GET /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get`.
+    func get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(_ input: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input) async throws -> Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output
+    /// Save the auto top-up rule (also clears a failed state and retries on the next debit)
+    ///
+    /// - Remark: HTTP `PUT /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put`.
+    func put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(_ input: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input) async throws -> Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output
     /// Paginated event history
     ///
     /// - Remark: HTTP `GET /api/events/history`.
@@ -445,7 +462,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/get`.
     func get_sol_api_sol_conversations_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -475,6 +492,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PATCH /api/conversations/{id}/messages/{messageId}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/patch`.
     func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(_ input: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output
+    /// Delete a message you authored
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete`.
+    func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(_ input: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output
     /// React to a message with an emoji
     ///
     /// - Remark: HTTP `PUT /api/conversations/{id}/messages/{messageId}/reactions`.
@@ -763,6 +785,8 @@ extension APIProtocol {
         ))
     }
     /// Search objects by text
+    ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
     ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
@@ -1358,6 +1382,19 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    public func get_sol_api_sol_triggers_sol__lcub_id_rcub_(
+        path: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output {
+        try await get_sol_api_sol_triggers_sol__lcub_id_rcub_(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers
+        ))
+    }
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -1730,6 +1767,26 @@ extension APIProtocol {
     public func get_sol_api_sol_billing_sol_usage(headers: Operations.get_sol_api_sol_billing_sol_usage.Input.Headers) async throws -> Operations.get_sol_api_sol_billing_sol_usage.Output {
         try await get_sol_api_sol_billing_sol_usage(Operations.get_sol_api_sol_billing_sol_usage.Input(headers: headers))
     }
+    /// The auto top-up rule and whether the last automatic charge failed
+    ///
+    /// - Remark: HTTP `GET /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/get`.
+    public func get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(headers: Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers) async throws -> Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output {
+        try await get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(Operations.get_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input(headers: headers))
+    }
+    /// Save the auto top-up rule (also clears a failed state and retries on the next debit)
+    ///
+    /// - Remark: HTTP `PUT /api/billing/auto-top-up`.
+    /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put`.
+    public func put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(
+        headers: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Headers,
+        body: Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input.Body
+    ) async throws -> Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Output {
+        try await put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up(Operations.put_sol_api_sol_billing_sol_auto_hyphen_top_hyphen_up.Input(
+            headers: headers,
+            body: body
+        ))
+    }
     /// Paginated event history
     ///
     /// - Remark: HTTP `GET /api/events/history`.
@@ -1823,7 +1880,7 @@ extension APIProtocol {
             headers: headers
         ))
     }
-    /// Rename a conversation
+    /// Rename a conversation or change its tags
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -1909,6 +1966,19 @@ extension APIProtocol {
             path: path,
             headers: headers,
             body: body
+        ))
+    }
+    /// Delete a message you authored
+    ///
+    /// - Remark: HTTP `DELETE /api/conversations/{id}/messages/{messageId}`.
+    /// - Remark: Generated from `#/paths//api/conversations/{id}/messages/{messageId}/delete`.
+    public func delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(
+        path: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Path,
+        headers: Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Output {
+        try await delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(Operations.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_.Input(
+            path: path,
+            headers: headers
         ))
     }
     /// React to a message with an emoji
@@ -2394,10 +2464,12 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/files/{id}/get`.
     public func get_sol_api_sol_files_sol__lcub_id_rcub_(
         path: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Path,
+        query: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Query = .init(),
         headers: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input.Headers = .init()
     ) async throws -> Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output {
         try await get_sol_api_sol_files_sol__lcub_id_rcub_(Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Input(
             path: path,
+            query: query,
             headers: headers
         ))
     }

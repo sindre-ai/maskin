@@ -3,8 +3,9 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The watch: three vertical pages on the Digital Crown. Home (ask the Chief of Staff, and what
-/// waits on you), Briefing, Flows. Decisions and the conversation are pushed from Home.
+/// The watch: two vertical pages on the Digital Crown. Home (ask the Chief of Staff, and what
+/// waits on you) and Flows (the daily briefing and the flows, one card each). Decisions and the
+/// conversation are pushed from Home.
 struct WatchHome: View {
 	let environment: AppEnvironment
 	let store: ForYouStore?
@@ -14,10 +15,10 @@ struct WatchHome: View {
 	@State private var listening: WatchListeningStore
 	@State private var page: Page = WatchHome.startingPage
 	@State private var path: [WatchRoute] = []
-	@State private var openFlow: String?
+	@State private var flowsRoute: WatchFlowsRoute?
 	@AppStorage(WatchFirstRun.doneKey) private var firstRunDone = false
 
-	enum Page: Int { case home, briefing, flows }
+	enum Page: Int { case home, flows }
 
 	init(environment: AppEnvironment, store: ForYouStore?, watch: MaskinWatchStore) {
 		self.environment = environment
@@ -29,15 +30,19 @@ struct WatchHome: View {
 			initialValue: WatchListeningStore(
 				transcriber: environment.auth.session == nil ? nil : APIBackendDictation(client: client),
 				language: DictationLanguage.hint(preferredLanguages: Locale.preferredLanguages),
-				makeMicrophone: { EnginePhraseMicrophone() }))
+				makeMicrophone: {
+					// A wrist microphone is quiet: count a lower level as speech than on the iPhone.
+					var options = PhraseSegmenter.Options()
+					options.voiceRMS = 0.006
+					return EnginePhraseMicrophone(options: options)
+				}))
 	}
 
-	/// Design review only: `MASKIN_DEMO_PAGE=briefing` opens that page, because a simulator has no
+	/// Design review only: `MASKIN_DEMO_PAGE=flows` opens that page, because a simulator has no
 	/// Digital Crown to scroll with. Always the first page in Release.
 	private static var startingPage: Page {
 		#if DEBUG
 			switch ProcessInfo.processInfo.environment["MASKIN_DEMO_PAGE"] {
-			case "briefing": return .briefing
 			case "flows": return .flows
 			default: break
 			}
@@ -95,10 +100,9 @@ struct WatchHome: View {
 					}
 			}
 			.tag(Page.home)
-			WatchBriefing(store: store, watch: watch, firstName: firstName).tag(Page.briefing)
 			WatchFlows(
-				flows: flows, loaded: loops?.phase == .loaded || !watch.flows.isEmpty, store: store,
-				openFlow: $openFlow
+				flows: flows, needsCount: needsCount, loaded: loops?.phase == .loaded || !watch.flows.isEmpty,
+				store: store, watch: watch, route: $flowsRoute
 			).tag(Page.flows)
 		}
 		.tabViewStyle(.verticalPage)
@@ -133,10 +137,11 @@ struct WatchHome: View {
 			page = .home
 			path = [.decisions]
 		case "brief":
-			page = .briefing
+			page = .flows
+			flowsRoute = .daily
 		case "flow":
 			page = .flows
-			openFlow = url.pathComponents.dropFirst().first
+			flowsRoute = url.pathComponents.dropFirst().first.map(WatchFlowsRoute.flow)
 		default:
 			break
 		}
@@ -155,6 +160,12 @@ struct WatchHome: View {
 			entries: store?.entries ?? [], sender: { store?.senderName(of: $0) },
 			briefMarkdown: briefMarkdown, loops: loops?.phase == .loaded ? loops?.loops ?? [] : [],
 			firstName: firstName, now: now)
+	}
+
+	/// How many decisions wait: the live feed when it has loaded, else the last snapshot's.
+	private var needsCount: Int {
+		if let store, !store.entries.isEmpty { return store.needsCount }
+		return watch.needsCount
 	}
 
 	private var firstName: String? {

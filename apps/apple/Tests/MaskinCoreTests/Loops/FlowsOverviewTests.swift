@@ -5,24 +5,6 @@ import Testing
 
 @Suite("FlowsOverview")
 struct FlowsOverviewTests {
-	@Test("the banner only exists while decisions wait on a running flow")
-	func banner() {
-		#expect(FlowsOverview.banner(loopRow("a")) == nil)
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 1)) == "1 decision waits on you")
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 3)) == "3 decisions wait on you")
-		#expect(FlowsOverview.banner(loopRow("a", status: .paused, waiting: 3)) == nil)
-	}
-
-	@Test("the banner names the decision when its title is known")
-	func bannerNamesDecision() {
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 1), decisionTitle: "Post text only?") == "Decide: Post text only?")
-		#expect(
-			FlowsOverview.banner(loopRow("a", waiting: 3), decisionTitle: "Post text only?")
-				== "3 decisions waiting: Post text only?")
-		#expect(FlowsOverview.banner(loopRow("a", waiting: 1), decisionTitle: "  ") == "1 decision waits on you")
-		#expect(FlowsOverview.banner(loopRow("a"), decisionTitle: "Post text only?") == nil)
-	}
-
 	@Test("a decision post is called by its title, else the start of its text")
 	func decisionTitle() {
 		let titled = LoopPost(id: 1, actorID: nil, text: "Long body.", isDecision: true, decisionTitle: "Ship it?")
@@ -34,15 +16,15 @@ struct FlowsOverviewTests {
 		#expect(FlowsOverview.decisionTitle(from: nil) == nil)
 	}
 
-	@Test("the overview strip counts only what the list carries")
-	func kpis() {
+	@Test("the sentence under the title counts the flows that wait on the viewer")
+	func needsYouLine() {
 		let busy = loopRow("a", waiting: 1, inProgress: 2, closed: 5)
 		let idle = loopRow("b", inProgress: 1, closed: 0)
 		let paused = loopRow("c", status: .paused, waiting: 4, inProgress: 0, closed: 0)
-		let stats = FlowsOverview.kpis([busy, idle, paused])
-		#expect(stats.map(\.label) == ["Need you", "Running", "In progress", "Closed"])
-		#expect(stats.map(\.value) == ["1", "2 of 3", "3", "5"])
-		#expect(FlowsOverview.kpis([]).isEmpty)
+		#expect(FlowsOverview.needsYouLine([busy, idle, paused]) == "1 of 3 flows need you.")
+		#expect(FlowsOverview.needsYouLine([idle, paused]) == "Nothing needs you.")
+		#expect(FlowsOverview.needsYouLine([busy]) == "1 of 1 flow needs you.")
+		#expect(FlowsOverview.needsYouLine([]) == nil)
 	}
 
 	@Test("the work line leaves out what is zero")

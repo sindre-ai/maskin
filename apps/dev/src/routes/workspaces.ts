@@ -17,8 +17,9 @@ import {
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { isPayingWorkspace } from '../lib/analytics/paying-workspace'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isTeamActor } from '../lib/analytics/team-member'
+import { isInternalWorkspace, isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -30,6 +31,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { loadMembersLastActive } from '../lib/member-last-active'
 import { loadMembershipFacts } from '../lib/membership-facts'
 import { revokeMemberGrants } from '../lib/oauth-server/grants'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
@@ -52,6 +54,7 @@ import {
 	ownershipCapForTier,
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
+import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
 	evictPurgedWorkspace,
@@ -84,6 +87,8 @@ const memberResponseSchema = z.object({
 	joinedAt: z.string().nullable(),
 	name: z.string(),
 	type: z.string(),
+	// Only in the list, and only for an owner or admin: it can show activity in other workspaces.
+	lastActiveAt: z.string().nullable().optional(),
 })
 
 const addMemberBodySchema = z.object({
@@ -105,6 +110,11 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	// Whether the caller is on our own team, for marking browser analytics events.
 	// A fact about the caller, so every row carries the same value.
 	isTeam: z.boolean(),
+	// Whether this workspace is one of ours, and whether it has an active paid
+	// plan, for marking browser analytics events. Derived here because the billing
+	// settings are hidden from plain members.
+	internal: z.boolean(),
+	paying: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -155,7 +165,8 @@ const createWorkspaceRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Actor has reached their workspace-ownership cap for their plan tier',
+			description:
+				'Caller is an agent (workspaces are created by people), or the actor has reached their workspace-ownership cap for their plan tier',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		500: {
@@ -166,6 +177,12 @@ const createWorkspaceRoute = createRoute({
 })
 
 app.openapi(createWorkspaceRoute, async (c) => {
+	// Workspaces are created by people. Every create seeds a default roster and a
+	// welcome session at Maskin's cost, so an agent key never gets that far.
+	if (c.get('actorType') === 'agent') {
+		return c.json(createApiError('FORBIDDEN', 'Only people can create workspaces'), 403)
+	}
+
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
@@ -306,6 +323,9 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
 		...workspaceForCaller(row, callerIsHuman && (row.role === 'owner' || row.role === 'admin')),
 		enterprise: isEnterprise({ ...row, enterpriseGranted }),
+		// Read from the raw row: the billing settings are hidden from plain members.
+		internal: isInternalWorkspace(row.id),
+		paying: isPayingWorkspace(row.settings),
 	}))
 
 	// Member counts come from a second grouped query, not a correlated subquery:
@@ -348,6 +368,64 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	}))
 
 	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
+})
+
+// GET /api/workspaces/counts
+const workspaceCountsSchema = z.object({
+	workspaceId: z.string().uuid(),
+	// Chats with a message from someone else the caller has not read (archived chats left out).
+	unreadChats: z.number().int().nonnegative(),
+	// Items waiting on the caller on that workspace's For You page.
+	forYou: z.number().int().nonnegative(),
+	// unreadChats + forYou: the "N need you" number the iPhone workspace switcher shows.
+	needYou: z.number().int().nonnegative(),
+})
+
+const workspaceCountsRoute = createRoute({
+	method: 'get',
+	path: '/counts',
+	tags: ['workspaces'],
+	summary:
+		"What waits on the caller in each of their workspaces (the iPhone workspace switcher's counts)",
+	description:
+		'One row per workspace the caller belongs to. Kept off the workspace list so that hot read stays cheap.',
+	responses: {
+		200: {
+			description: 'Per-workspace counts for the caller',
+			content: { 'application/json': { schema: z.array(workspaceCountsSchema) } },
+		},
+	},
+})
+
+app.openapi(workspaceCountsRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const pin = getOAuthPin()
+
+	const memberships = await db
+		.select({ workspaceId: workspaceMembers.workspaceId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				// A Claude connector token sees only the workspace it was approved for.
+				...(pin ? [eq(workspaceMembers.workspaceId, pin.workspaceId)] : []),
+			),
+		)
+	const ids = memberships.map((m) => m.workspaceId)
+
+	const [unreadByWorkspace, forYouByWorkspace] = await Promise.all([
+		loadUnreadChatCounts(db, actorId, ids),
+		loadForYouCounts(db, actorId, ids),
+	])
+
+	return c.json(
+		ids.map((workspaceId) => {
+			const unreadChats = unreadByWorkspace.get(workspaceId) ?? 0
+			const forYou = forYouByWorkspace.get(workspaceId) ?? 0
+			return { workspaceId, unreadChats, forYou, needYou: unreadChats + forYou }
+		}),
+	)
 })
 
 /** Top-level keys whose value differs between two settings objects. Names only, never values. */
@@ -1008,7 +1086,17 @@ app.openapi(listMembersRoute, (async (c) => {
 		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
-	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	// A person's last-active time is account-wide (it also reflects other workspaces), so only a
+	// human owner or admin gets it; everyone else gets the list as before.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, actorId, workspaceId))) {
+		return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
+	}
+	const lastActive = await loadMembersLastActive(db, workspaceId, members)
+	return c.json(
+		serializeArray(
+			members.map((m) => ({ ...m, lastActiveAt: lastActive.get(m.actorId) ?? null })),
+		) as z.infer<typeof memberResponseSchema>[],
+	)
 }) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership

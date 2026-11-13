@@ -96,6 +96,11 @@ public final class Analytics {
 	@ObservationIgnored private var workspaceId: String?
 	@ObservationIgnored private var identifiedActorId: String?
 	@ObservationIgnored private var groupedWorkspaceId: String?
+	/// The app came to the front while consent was given but nobody was signed in yet (a cold start
+	/// restores the session a moment later). The `app_opened` is sent once the person is known.
+	@ObservationIgnored private var openWaitingForSignIn = false
+	/// Cards already counted as shown since launch, like the web's per-page-load record.
+	@ObservationIgnored private var impressedCards: Set<String> = []
 
 	static let consentKey = "analytics.consent.v1"
 	static let installedKey = "analytics.sent.app_installed.v1"
@@ -176,6 +181,10 @@ public final class Analytics {
 		}
 		sendOnce(Self.installedKey, event: "app_installed")
 		sendOnce(Self.firstSignInKey(actorId), event: "first_sign_in")
+		if openWaitingForSignIn {
+			openWaitingForSignIn = false
+			appOpened()
+		}
 	}
 
 	private func sendOnce(_ key: String, event: String) {
@@ -187,8 +196,13 @@ public final class Analytics {
 	/// The app came to the front: `app_opened` every time, `app_active` once per UTC day (the daily
 	/// and weekly active people event, same name and `utc_day` as the web app).
 	public func appOpened() {
-		// No actor yet: nothing goes out, so the day must not be marked as sent.
-		guard isActive, actorId != nil else { return }
+		guard isActive else { return }
+		// No actor yet: nothing goes out and the day must not be marked as sent. Remember the open
+		// so it goes out as soon as the session is restored.
+		guard actorId != nil else {
+			openWaitingForSignIn = true
+			return
+		}
 		track("app_opened")
 		let day = Self.utcDay(clock())
 		if storage.value(for: Self.activeDayKey) != day {
@@ -202,6 +216,53 @@ public final class Analytics {
 		var props: AnalyticsProperties = ["screen": .string(name)]
 		if let area { props["feature_area"] = .string(area.rawValue) }
 		track("screen_viewed", props)
+	}
+
+	/// A For you card came on screen: `foryou_card_shown`, once per card per launch (the web's
+	/// denominator for `foryou_card_action`). `cardKind` is `decision` or `thread`.
+	public func foryouCardShown(cardKind: String, cardId: String) {
+		guard isActive, actorId != nil, !impressedCards.contains(cardId) else { return }
+		impressedCards.insert(cardId)
+		track("foryou_card_shown", ["card_kind": .string(cardKind), "card_id": .string(cardId)])
+	}
+
+	/// A chat was created on the server. `participants` are the people and agents the person picked
+	/// (not themselves). The agent's name only feeds the web's kebab-cased role (`chief-of-staff`),
+	/// and only when the chat has that one agent and nobody else.
+	public func chatSessionStarted(conversationId: String, participants: [ChatParticipant]) {
+		var props: AnalyticsProperties = [
+			"entity_id": .string(conversationId), "entity_type": "session", "source": "iphone",
+			"entry_point": "agent_one_shot", "participant_count": .int(participants.count),
+		]
+		if participants.count == 1, let only = participants.first, only.kind == .agent,
+			let role = Self.agentRole(only.name)
+		{
+			props["entry_agent_role"] = .string(role)
+		}
+		track("chat_session_started", props)
+	}
+
+	/// An object was created and the server confirmed it. `type` is the object's own type (bet,
+	/// insight, task...), sent as `object_subtype` like the web.
+	public func objectCreated(id: String, type: String) {
+		track(
+			"object_created",
+			[
+				"entity_id": .string(id), "entity_type": "object", "source": "iphone",
+				"object_subtype": .string(type),
+			])
+	}
+
+	/// An existing object was changed and the server confirmed it. Same names as the web's
+	/// `object_updated` (`mutation_type` is `field` for a title, description or property edit).
+	/// Ids and counts only, never the text that changed.
+	public func objectUpdated(id: String, mutationType: String) {
+		track(
+			"object_updated",
+			[
+				"object_id": .string(id), "mutation_type": .string(mutationType), "via": "single",
+				"bulk_batch_size": 1,
+			])
 	}
 
 	/// Sends one event if the person has agreed and is signed in.
@@ -232,6 +293,23 @@ public final class Analytics {
 		formatter.formatOptions = [.withFullDate]
 		formatter.timeZone = TimeZone(identifier: "UTC")
 		return formatter.string(from: date)
+	}
+
+	/// The web's `deriveEntryAgentRole`: "Chief of Staff" becomes "chief-of-staff".
+	static func agentRole(_ name: String?) -> String? {
+		guard let name else { return nil }
+		var out = ""
+		var pendingSeparator = false
+		for scalar in name.lowercased().unicodeScalars {
+			if (scalar >= "a" && scalar <= "z") || (scalar >= "0" && scalar <= "9") {
+				if pendingSeparator, !out.isEmpty { out.append("-") }
+				pendingSeparator = false
+				out.unicodeScalars.append(scalar)
+			} else {
+				pendingSeparator = true
+			}
+		}
+		return out.isEmpty ? nil : out
 	}
 
 	/// Web-style stable id for a choice label: "7-day window" becomes "7_day_window".

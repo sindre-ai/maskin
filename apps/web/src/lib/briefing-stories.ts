@@ -37,6 +37,27 @@ export function briefingHeadline(html: string | null | undefined, fileName: stri
 	return headlineFromFileName(fileName)
 }
 
+export interface BriefingTileText {
+	value: string
+	label?: string
+}
+
+/**
+ * The big number a deck wants on its For you tile, from two meta tags:
+ * `maskin:tile-value` (required) and `maskin:tile-label`. Null when the value is
+ * missing, so a label alone is ignored and the tile keeps showing the headline.
+ */
+export function briefingTile(html: string | null | undefined): BriefingTileText | null {
+	if (!html) return null
+	const doc = new DOMParser().parseFromString(html, 'text/html')
+	const meta = (name: string) =>
+		collapse(doc.querySelector(`meta[name="${name}"]`)?.getAttribute('content'))
+	const value = meta('maskin:tile-value')
+	if (!value) return null
+	const label = meta('maskin:tile-label')
+	return label ? { value, label } : { value }
+}
+
 export interface BriefingFile {
 	id: string
 	name: string

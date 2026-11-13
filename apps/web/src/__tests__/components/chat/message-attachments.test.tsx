@@ -93,6 +93,28 @@ describe('MessageAttachments images', () => {
 		)
 	})
 
+	it.each([
+		[1, 'max-w-80'],
+		[2, 'max-w-[480px]'],
+		[3, 'max-w-80'],
+		[4, 'max-w-60'],
+	])('caps %i filled images so the block stays within 240px tall', (count, cap) => {
+		render(
+			<MessageAttachments
+				workspaceId="ws-1"
+				items={Array.from({ length: count }, (_, i) => image(i + 1))}
+				align="end"
+				fill
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const list = screen.getByRole('list', {
+			name: count === 1 ? 'Attached image' : `${count} attached images`,
+		})
+		expect(list.className).toContain('w-full')
+		expect(list.className).toContain(cap)
+	})
+
 	it('puts one large tile on the left of three images, spanning both rows', () => {
 		renderAttachments([image(1), image(2), image(3)])
 		const items = screen.getAllByRole('listitem')

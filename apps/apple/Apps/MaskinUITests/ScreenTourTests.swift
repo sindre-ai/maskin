@@ -45,6 +45,16 @@ final class ScreenTourTests: XCTestCase {
 		app.launch()
 		XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
 		sleep(3)
+		dismissNotificationPrompt(wait: 3)
+	}
+
+	/// The "Get told when an agent needs a decision" sheet covers the screen once the feed shows a
+	/// decision. "Not now" is the explanation sheet's own button, so it never opens the system prompt.
+	private func dismissNotificationPrompt(wait: TimeInterval) {
+		let notNow = app.buttons["Not now"].firstMatch
+		guard notNow.waitForExistence(timeout: wait) else { return }
+		notNow.tap()
+		sleep(1)
 	}
 
 	/// A section: starts from a fresh launch (so an earlier one cannot leave a sheet or a pushed
@@ -85,6 +95,7 @@ final class ScreenTourTests: XCTestCase {
 			skipped.append("\(shot) (no \(expect.joined(separator: " / ")))")
 			return false
 		}
+		dismissNotificationPrompt(wait: 1)
 		sleep(1)
 		let png = XCUIScreen.main.screenshot().pngRepresentation
 		try? png.write(to: URL(fileURLWithPath: "\(dir)/\(shot).png"))
@@ -163,23 +174,23 @@ final class ScreenTourTests: XCTestCase {
 		app.tabBars.buttons["For you"].tap()
 		sleep(1)
 		guard tap(profileButton(), "profile") else { return false }
-		return appears(["Your profile"], wait: 6)
+		return appears(["Notifications"], wait: 6)
 	}
 
-	/// Profile sheet, then Settings.
-	private func openSettings() -> Bool {
-		guard openProfile() else { return false }
-		return tapRow("Settings", label: "profile-settings")
-	}
+	/// The account menu lists every settings page itself (Billing, App lock, Sign in a device, Item types).
+	private func openSettings() -> Bool { openProfile() }
 
 	// MARK: Tabs, items, search, sheets
 
 	func testTour() throws {
 		section("foryou") {
-			capture("01-foryou", expect: ["Needs you", "Good", "decision"])
+			// Wait for the decision cards themselves: the greeting is up before the feed loads, and
+			// the first run saved the empty "You're caught up" state.
+			let cards = ["Send 7 follow-ups to Northwind?", "Approve the Q4 webinar spend?"]
+			capture("01-foryou", expect: cards, wait: 40)
 			app.swipeUp()
 			sleep(1)
-			capture("01b-foryou-scrolled", expect: ["Needs you", "Good", "decision", "waiting"])
+			capture("01b-foryou-scrolled", expect: cards + ["Accept the 12-month term?"])
 		}
 
 		section("chats") {
@@ -265,7 +276,7 @@ final class ScreenTourTests: XCTestCase {
 		}
 
 		section("profile") {
-			if openProfile() { capture("10-profile-sheet", expect: ["Your profile"]) }
+			if openProfile() { capture("10-profile-sheet", expect: ["Notifications", "Billing"]) }
 		}
 	}
 
@@ -274,20 +285,15 @@ final class ScreenTourTests: XCTestCase {
 	func testSettings() throws {
 		section("settings-hub") {
 			guard openSettings() else { return }
-			capture("11-01-settings", expect: ["Notifications"])
+			capture("11-01-settings", expect: ["Notifications", "Billing"])
 			app.swipeUp()
 			sleep(1)
-			capture("11-01b-settings-lower", expect: ["Sign in a device", "App lock", "Billing"])
+			capture("11-01b-settings-lower", expect: ["Skills", "Item types", "Keys and secrets", "Sign out"])
 		}
 
 		section("billing") {
 			guard openSettings(), tapRow("Billing", label: "settings-billing") else { return }
 			capture("11-04-billing", expect: ["Trial ends", "Credits this month", "Loading your plan"])
-		}
-
-		section("workspaces") {
-			guard openSettings(), tapRow("Workspaces", label: "settings-workspaces") else { return }
-			capture("11-07-workspaces", expect: ["Your workspaces"])
 		}
 
 		section("app-lock") {
@@ -318,18 +324,6 @@ final class ScreenTourTests: XCTestCase {
 			capture("11-03-integrations", expect: ["Import from Claude"])
 			if tap(exactText("GitHub"), "github-integration", wait: 3) {
 				capture("11-03b-github", expect: ["workflow", "Reconnect", "GitHub"])
-			}
-		}
-
-		section("files") {
-			guard openProfile() else { return }
-			let opened =
-				exactText("Files").exists
-				? tapRow("Files", label: "profile-files")
-				: (tapRow("Settings", label: "profile-settings") && tapRow("Files", label: "settings-files"))
-			guard opened else { return }
-			if capture("11-06-files", expect: [".html"]), tap(text(".html"), "file-detail") {
-				capture("11-06b-file", expect: ["Replies up", "Signups", "Pipeline steady", "Three deals"])
 			}
 		}
 	}

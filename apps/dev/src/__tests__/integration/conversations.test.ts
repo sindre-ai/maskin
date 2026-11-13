@@ -15,7 +15,9 @@ import {
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { vi } from 'vitest'
+import { z } from 'zod'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { conversationParticipantResponseSchema } from '../../lib/openapi-schemas'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -191,6 +193,75 @@ describe('Conversations Integration', () => {
 			])
 		})
 
+		it('stores the share mark on the initial message and leaves other chats unmarked', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const shared = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'From a share',
+						participant_actor_ids: [other.id],
+						initial_message: 'https://example.com/article',
+						initial_message_metadata: { started_from: 'share' },
+					},
+					headers,
+				),
+			)
+			expect(shared.status).toBe(201)
+			const { id: sharedId } = (await shared.json()) as { id: string }
+			const [sharedFirst] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, sharedId))
+			expect(sharedFirst?.metadata?.started_from).toBe('share')
+
+			const plain = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Typed', participant_actor_ids: [other.id], initial_message: 'hello' },
+					headers,
+				),
+			)
+			expect(plain.status).toBe(201)
+			const { id: plainId } = (await plain.json()) as { id: string }
+			const [plainFirst] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, plainId))
+			expect(plainFirst?.metadata?.started_from).toBeUndefined()
+		})
+
+		it('ignores a metadata field it does not know and still starts the chat', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Newer app',
+						participant_actor_ids: [other.id],
+						initial_message: 'hi',
+						initial_message_metadata: { field_from_a_newer_app: 'x' },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const { id } = (await res.json()) as { id: string }
+			const [first] = await db.select().from(messages).where(eq(messages.conversationId, id))
+			expect(first?.content).toBe('hi')
+			expect(first?.metadata ?? {}).not.toHaveProperty('field_from_a_newer_app')
+		})
+
 		it('accepts an empty message when it carries an attachment, and refuses it without one', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)
@@ -298,29 +369,35 @@ describe('Conversations Integration', () => {
 			const list = (await listRes.json()) as {
 				conversations: Array<{
 					id: string
+					directPairKey: string | null
 					unread_count: number
 					snippet: string | null
 					snippet_actor_id: string | null
 					snippet_actor_name: string | null
 				}>
 			}
-			expect(list.conversations).toHaveLength(1)
-			expect(list.conversations[0]?.id).toBe(conversation.id)
-			expect(list.conversations[0]?.unread_count).toBe(1)
-			expect(list.conversations[0]?.snippet).toBe('first message')
+			// People in a workspace also have a direct message with each other, so only
+			// the topical chats are compared here.
+			const topical = list.conversations.filter((c) => c.directPairKey === null)
+			expect(topical).toHaveLength(1)
+			expect(topical[0]?.id).toBe(conversation.id)
+			expect(topical[0]?.unread_count).toBe(1)
+			expect(topical[0]?.snippet).toBe('first message')
 			// The preview carries its author across the actors join, so the list
 			// row can say "Owner: first message" rather than attributing every
 			// preview to whoever is reading it.
-			expect(list.conversations[0]?.snippet_actor_id).toBe(ownerId)
-			expect(list.conversations[0]?.snippet_actor_name).toBeTruthy()
+			expect(topical[0]?.snippet_actor_id).toBe(ownerId)
+			expect(topical[0]?.snippet_actor_name).toBeTruthy()
 
 			// Stranger (workspace member, not a conversation participant) sees nothing.
 			const { app: strangerApp } = createConversationsApp(stranger.id)
 			const strangerList = await strangerApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const strangerBody = (await strangerList.json()) as { conversations: unknown[] }
-			expect(strangerBody.conversations).toHaveLength(0)
+			const strangerBody = (await strangerList.json()) as {
+				conversations: Array<{ directPairKey: string | null }>
+			}
+			expect(strangerBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(0)
 
 			// And a 404 on direct detail access.
 			const strangerDetail = await strangerApp.request(
@@ -664,8 +741,71 @@ describe('Conversations Integration', () => {
 			const unfiltered = await otherApp.request(
 				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
 			)
-			const unfilteredBody = (await unfiltered.json()) as { conversations: Array<{ id: string }> }
-			expect(unfilteredBody.conversations).toHaveLength(2)
+			const unfilteredBody = (await unfiltered.json()) as {
+				conversations: Array<{ id: string; directPairKey: string | null }>
+			}
+			// The direct messages between people are not part of what this test made.
+			expect(unfilteredBody.conversations.filter((c) => c.directPairKey === null)).toHaveLength(2)
+		})
+
+		it('scope splits the list into priority (direct, pinned, unread) and recent, with no overlap', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const create = async (title: string) => {
+				const res = await ownerApp.request(
+					jsonRequest(
+						'POST',
+						'/api/conversations',
+						{ title, participant_actor_ids: [other.id] },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+				return ((await res.json()) as { id: string }).id
+			}
+			const unreadId = await create('Unread')
+			const pinnedId = await create('Pinned')
+			const quietId = await create('Quiet')
+			await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${unreadId}/messages`,
+					{ content: 'ping' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${pinnedId}/me`,
+					{ pinned: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			type Row = { id: string; directPairKey: string | null }
+			const list = async (scope: string) => {
+				const res = await otherApp.request(
+					jsonGet(`/api/conversations?scope=${scope}&sort=activity`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+				expect(res.status).toBe(200)
+				return ((await res.json()) as { conversations: Row[] }).conversations
+			}
+			const priority = await list('priority')
+			const recent = await list('recent')
+
+			const priorityIds = priority.map((c) => c.id)
+			expect(priorityIds).toContain(unreadId)
+			expect(priorityIds).toContain(pinnedId)
+			expect(priorityIds).not.toContain(quietId)
+			// Every direct message is priority, however quiet.
+			expect(priority.filter((c) => c.directPairKey !== null).length).toBeGreaterThan(0)
+			expect(recent.map((c) => c.id)).toEqual([quietId])
+			expect(recent.some((c) => c.directPairKey !== null)).toBe(false)
 		})
 
 		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
@@ -1082,6 +1222,40 @@ describe('Conversations Integration', () => {
 			expect(detailBody.pinned).toBe(true)
 		})
 
+		it('replies to an add with the participant list, matching the declared reply schema', async () => {
+			// Regression: the route declared the per-user state shape (pinned, archived,
+			// last_read_message_id) but sent the participant list, so the generated iOS client
+			// failed to decode the reply ("Key 'pinned' not found") after the person was added.
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Add reply shape', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/participants`,
+					{ actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			const parsed = z.array(conversationParticipantResponseSchema).safeParse(body)
+			expect(parsed.success).toBe(true)
+			expect((body as Array<{ actorId: string }>).map((p) => p.actorId).sort()).toEqual(
+				[ownerId, other.id].sort(),
+			)
+		})
+
 		it('rejects a non-creator participant trying to remove another participant', async () => {
 			// Regression: any active participant used to be able to evict any
 			// other participant (including the creator) — only self-removal or
@@ -1199,6 +1373,49 @@ describe('Conversations Integration', () => {
 					),
 				)
 			expect(countAfterSecond.length).toBe(1)
+		})
+	})
+
+	describe('quoted message id', () => {
+		it('stores the quoted message id as sent and returns it on the stored message', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Quote', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const send = (metadata: unknown) =>
+				app.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${conversation.id}/messages`,
+						{ content: 'replying to that', metadata },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+
+			const res = await send({ quoted_message_id: 42 })
+			expect(res.status).toBe(201)
+			const stored = (await res.json()) as { metadata: { quoted_message_id?: number } | null }
+			expect(stored.metadata?.quoted_message_id).toBe(42)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const body = (await list.json()) as {
+				messages: Array<{ metadata: { quoted_message_id?: number } | null }>
+			}
+			expect(body.messages.at(-1)?.metadata?.quoted_message_id).toBe(42)
+
+			// Not a message id: refused rather than stored.
+			expect((await send({ quoted_message_id: 0 })).status).toBe(400)
+			expect((await send({ quoted_message_id: 'abc' })).status).toBe(400)
 		})
 	})
 
@@ -1835,15 +2052,15 @@ describe('Conversations Integration', () => {
 			)
 			const conversation = (await created.json()) as { id: string }
 
-			// Seed 5 consecutive agent-authored messages directly (bypassing the
+			// Seed 20 consecutive agent-authored messages directly (bypassing the
 			// responder, which has no real LLM credentials in this test env),
 			// simulating an agent-to-agent chain already in progress. The
-			// triggering message below is itself agent-authored (the 6th in a
+			// triggering message below is itself agent-authored (the 21st in a
 			// row) and @mentions the other agent — this is the runaway
 			// ping-pong shape the cap exists to stop. A human message would
 			// reset the tail count to zero, which is correct and NOT what this
 			// test is checking.
-			for (let i = 0; i < 5; i++) {
+			for (let i = 0; i < 20; i++) {
 				await db.insert(messages).values({
 					conversationId: conversation.id,
 					actorId: agent.id,
@@ -2759,6 +2976,165 @@ describe('Conversations Integration', () => {
 				),
 			)
 			expect(res.status).toBe(403)
+		})
+	})
+
+	describe('message deletion', () => {
+		async function chatWithMessage(
+			title: string,
+			values: Partial<typeof messages.$inferInsert> = {},
+		) {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title, participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'secret', ...values })
+				.returning()
+			const remove = (messageId: number | undefined = msg?.id) =>
+				app.request(
+					jsonDelete(`/api/conversations/${conversation.id}/messages/${messageId}`, {
+						'x-workspace-id': workspaceId,
+					}),
+				)
+			return { app, conversation, msg, remove }
+		}
+
+		it('lets the author delete: row stays, content and metadata are cleared, event recorded', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete test', {
+				metadata: { mentions: [ownerId] },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				content: string
+				deletedAt: string | null
+				metadata: unknown
+			}
+			expect(body.content).toBe('')
+			expect(body.deletedAt).toBeTruthy()
+			expect(body.metadata).toBeNull()
+
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('')
+			expect(row?.metadata).toBeNull()
+			expect(row?.deletedAt).toBeTruthy()
+
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+		})
+
+		it('keeps a thread root readable as deleted, with its replies', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Delete root test')
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: ownerId,
+				content: 'a reply',
+				threadRootId: msg?.id,
+			})
+
+			expect((await remove()).status).toBe(200)
+
+			const list = await app.request(
+				jsonGet(`/api/conversations/${conversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(list.status).toBe(200)
+			const page = (await list.json()) as {
+				messages: { id: number; content: string; deletedAt: string | null }[]
+			}
+			const root = page.messages.find((m) => m.id === msg?.id)
+			expect(root?.deletedAt).toBeTruthy()
+			expect(root?.content).toBe('')
+			const [reply] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.threadRootId, msg?.id ?? -1))
+			expect(reply?.content).toBe('a reply')
+		})
+
+		it('is a no-op the second time: one event, same deletedAt', async () => {
+			const { conversation, msg, remove } = await chatWithMessage('Delete twice test')
+			const first = (await (await remove()).json()) as { deletedAt: string }
+			const secondRes = await remove()
+			expect(secondRes.status).toBe(200)
+			const second = (await secondRes.json()) as { deletedAt: string }
+			expect(second.deletedAt).toBe(first.deletedAt)
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_deleted')))
+			expect(auditRows).toHaveLength(1)
+			expect(msg?.id).toBeDefined()
+		})
+
+		it("rejects deleting someone else's message", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { conversation, msg, remove } = await chatWithMessage('Foreign delete test', {
+				actorId: other.id,
+				content: 'not yours',
+			})
+			void conversation
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.content).toBe('not yours')
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('rejects deleting auto-posted agent output', async () => {
+			const { msg, remove } = await chatWithMessage('Final output delete test', {
+				content: 'agent turn output',
+				metadata: { source: 'final_output' },
+			})
+
+			const res = await remove()
+			expect(res.status).toBe(403)
+			const [row] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(row?.deletedAt).toBeNull()
+		})
+
+		it('returns not found for a message that is not in the conversation', async () => {
+			const { remove } = await chatWithMessage('Missing delete test')
+			expect((await remove(999999999)).status).toBe(404)
+		})
+
+		it('refuses to edit a deleted message', async () => {
+			const { app, conversation, msg, remove } = await chatWithMessage('Edit after delete test')
+			expect((await remove()).status).toBe(200)
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'back from the dead' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(404)
 		})
 	})
 

@@ -1,15 +1,31 @@
 import { useActors } from '@/hooks/use-actors'
 import { api } from '@/lib/api'
-import { briefingHeadline, pickBriefingPages } from '@/lib/briefing-stories'
+import {
+	type BriefingTileText,
+	briefingHeadline,
+	briefingTile,
+	pickBriefingPages,
+} from '@/lib/briefing-stories'
 import { decodeBase64Utf8 } from '@/lib/file-utils'
 import { queryKeys } from '@/lib/query-keys'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
+/** One definition of the briefing list so every reader shares a cache entry. */
+function briefingListQuery(workspaceId: string) {
+	return {
+		queryKey: [...queryKeys.files.all(workspaceId), 'briefings'],
+		queryFn: () => api.files.list(workspaceId, { kind: 'briefing' as const, limit: 24 }),
+		enabled: !!workspaceId,
+	}
+}
+
 export interface BriefingCard {
 	id: string
 	name: string
 	headline: string
+	/** The big number and label the deck asks its tile to lead with; absent on older decks. */
+	tile?: BriefingTileText
 	/** Who wrote the page: the Chief of Staff for the daily briefing, else the loop's agent. */
 	author: { id: string | null; name: string; type: string }
 	updatedAt: string
@@ -25,11 +41,7 @@ export interface BriefingCard {
  * is left out of the row rather than shown under its file name.
  */
 export function useBriefings(workspaceId: string) {
-	const list = useQuery({
-		queryKey: [...queryKeys.files.all(workspaceId), 'briefings'],
-		queryFn: () => api.files.list(workspaceId, { kind: 'briefing', limit: 24 }),
-		enabled: !!workspaceId,
-	})
+	const list = useQuery(briefingListQuery(workspaceId))
 	const { data: actors } = useActors(workspaceId)
 
 	const pages = useMemo(() => pickBriefingPages(list.data ?? []), [list.data])
@@ -54,6 +66,7 @@ export function useBriefings(workspaceId: string) {
 				id: file.id,
 				name: file.name,
 				headline: briefingHeadline(html, file.name),
+				tile: briefingTile(html) ?? undefined,
 				author: {
 					id: author?.id ?? null,
 					name: author?.name ?? 'Chief of Staff',
@@ -67,4 +80,22 @@ export function useBriefings(workspaceId: string) {
 	}, [pages, details, actors])
 
 	return { cards, isLoading: list.isLoading, isError: list.isError }
+}
+
+/**
+ * The briefing pages attached to a flow (an `in_loop` link from the flow to the file),
+ * newest first. Only the files it is given are asked for, so a flow with none costs no call.
+ */
+export function useLoopBriefingPages(workspaceId: string, fileIds: readonly string[]) {
+	const list = useQuery({
+		queryKey: [
+			...queryKeys.files.all(workspaceId),
+			'loop-briefings',
+			[...fileIds].sort().join(','),
+		],
+		queryFn: () =>
+			api.files.list(workspaceId, { ids: [...fileIds], kind: 'briefing', limit: fileIds.length }),
+		enabled: !!workspaceId && fileIds.length > 0,
+	})
+	return useMemo(() => pickBriefingPages(list.data ?? []), [list.data])
 }

@@ -1513,6 +1513,8 @@ describe('Subscriptions Integration', () => {
 			expect(item?.latest_mention).toBeDefined()
 			expect(item?.latest_mention?.content).toBe('second ask')
 			expect(item?.latest_mention?.attention).toBe(4)
+			// A person wrote it, so no run is named.
+			expect(item?.latest_mention?.session_id).toBeNull()
 			// Posting stamps the status the object had, so a card with no status button drops later.
 			expect(item?.latest_mention?.decision).toEqual({
 				...decision,

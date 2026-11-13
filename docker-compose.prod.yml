@@ -57,6 +57,7 @@ services:
     restart: "no"
 
   app:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
@@ -190,6 +191,12 @@ services:
       TELNYX_KB_WORKSPACE_ID: ${TELNYX_KB_WORKSPACE_ID:-}
       TELNYX_KB_BUCKET: ${TELNYX_KB_BUCKET:-}
       TELNYX_STORAGE_ENDPOINT: ${TELNYX_STORAGE_ENDPOINT:-}
+      # Signing secret for the stop link in summary emails (32+ characters, e.g. openssl rand -hex 32).
+      # Unset: the stop link refuses every request instead of accepting an unsigned one.
+      EMAIL_STOP_LINK_SECRET: ${EMAIL_STOP_LINK_SECRET:-}
+      # Summary email killswitch. Defaults to 0 (no summary emails) until the CTO has seen one
+      # test mail from production arrive; set FEATURE_BRIEFING_EMAIL=1 in Coolify to start them.
+      FEATURE_BRIEFING_EMAIL: ${FEATURE_BRIEFING_EMAIL:-0}
       # Claude sign-in for the MCP server. Off unless MASKIN_MCP_OAUTH_ENABLED is true; the issuer
       # defaults to the web app origin. See docs/reference/mcp-oauth.md.
       MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-}

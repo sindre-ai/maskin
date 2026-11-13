@@ -9,6 +9,7 @@ import {
 	conversationParticipants,
 	credentialAccessLog,
 	integrations,
+	messages,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -124,6 +125,37 @@ const validBody = (sessionId: string, extra: Record<string, unknown> = {}) => ({
 })
 
 describe('POST /api/integrations/chat-capture', () => {
+	it('records when and by whom on the Keychain card it was saved from, and only for a card save', async () => {
+		const s = await setup()
+		const [card] = await db
+			.insert(messages)
+			.values({
+				conversationId: s.conversation?.id ?? '',
+				actorId: s.agent.id,
+				content: 'I need an API key.',
+				sessionId: s.session.id,
+				metadata: { keychain_request: { session_id: s.session.id, kind: 'api_key' } },
+			})
+			.returning()
+		const read = async () => {
+			const [row] = await db.select().from(messages).where(eq(messages.id, card.id))
+			return (row.metadata as { card_resolved?: Record<string, string> }).card_resolved
+		}
+
+		// A paste in the chat is not an answer to the card.
+		const pasted = await capture(appFor(s.human), s.ws.id, validBody(s.session.id))
+		expect(pasted.status).toBe(201)
+		expect(await read()).toBeUndefined()
+
+		const saved = await capture(
+			appFor(s.human),
+			s.ws.id,
+			validBody(s.session.id, { displayName: 'From the card', fromCard: true }),
+		)
+		expect(saved.status).toBe(201)
+		expect(await read()).toMatchObject({ by_actor_id: s.human, outcome: 'done' })
+	})
+
 	it('vaults the key as pending_undo with an envelope, a create audit row and no raw value anywhere', async () => {
 		const s = await setup()
 		const res = await capture(appFor(s.human), s.ws.id, validBody(s.session.id))

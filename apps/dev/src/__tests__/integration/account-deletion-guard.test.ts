@@ -14,6 +14,7 @@ const ERASED = new Set([
 	'device_tokens',
 	'for_you_dismissals',
 	'live_activity_cards',
+	'live_activity_follows',
 	'live_activity_tokens',
 	'notification_preferences',
 	'notifications',
@@ -49,7 +50,11 @@ const KEPT: Record<string, string> = {
 	for_you_withdrawals:
 		'withdrawn_by is who retired a dead card (ON DELETE SET NULL); the row must stay, or the card comes back',
 	send_permissions: 'updated_by on a workspace setting; the setting stays when the person leaves',
+	saved_views:
+		'created_by on a shared workspace view (ON DELETE SET NULL); the view stays when its author leaves',
 	workspace_skills: 'created_by on workspace content',
+	workspace_ai_usage:
+		'plan-spend ledger of a kept workspace (actor_id is ON DELETE SET NULL); the cost stays billed',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
 	sessions: 'agent run history; actor is the agent or the person who started it',

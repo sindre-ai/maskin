@@ -170,6 +170,7 @@ export const queryKeys = {
 	files: {
 		all: (workspaceId: string) => ['files', workspaceId] as const,
 		detail: (workspaceId: string, id: string) => ['files', workspaceId, 'detail', id] as const,
+		tags: (workspaceId: string) => ['files', workspaceId, 'tags'] as const,
 	},
 	fileComments: {
 		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,

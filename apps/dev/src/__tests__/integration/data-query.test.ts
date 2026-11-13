@@ -1,12 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import {
-	DATA_QUERY_MAX_GROUPS,
-	DATA_QUERY_MAX_ROWS,
-	type DataQueryResult,
-	type DataQuerySpec,
-} from '@maskin/shared'
+import { DATA_QUERY_PAGE_SIZE, type DataQueryResult, type DataQuerySpec } from '@maskin/shared'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import {
@@ -22,7 +17,7 @@ import { db, getTestActorId } from './global-setup'
 // The route's SQL is hand-built (CTEs, window functions, bound parameters inside
 // date_trunc / AT TIME ZONE / make_interval), so the mocked route tests can only check
 // its text. This runs it against real Postgres: scope, filters, the numeric casts, time
-// zones, the row and group caps, and the next-change arithmetic.
+// zones, paging through every group, and the next-change arithmetic.
 const { default: dataQueryRoutes } = await import('../../routes/data-query')
 
 type Env = {
@@ -73,9 +68,9 @@ describe('Data query integration', () => {
 		app = makeApp(actorId)
 	})
 
-	async function query(spec: DataQuerySpec, ws = workspaceId) {
+	async function query(spec: DataQuerySpec, ws = workspaceId, params = '') {
 		const res = await app.request(
-			jsonGet(`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`, {
+			jsonGet(`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}${params}`, {
 				'x-workspace-id': ws,
 			}),
 		)
@@ -191,6 +186,7 @@ describe('Data query integration', () => {
 			expect(r).toEqual({
 				groups: [],
 				total: { count: 0, value: 0 },
+				next_cursor: null,
 				rows_truncated: false,
 				groups_truncated: false,
 			})
@@ -397,48 +393,90 @@ describe('Data query integration', () => {
 		})
 	})
 
-	describe('caps', () => {
-		it('flags rows_truncated and totals only the rows it scanned when over the row cap', async () => {
-			await bulkInsertTasks(DATA_QUERY_MAX_ROWS + 1, () => ({}))
-			const r = await result({ scope: 'workspace', type: 'task' })
-			expect(r.rows_truncated).toBe(true)
-			expect(r.total.count).toBe(DATA_QUERY_MAX_ROWS)
-		})
+	describe('no caps, paged groups', () => {
+		/** Every page of a query, following the cursors the way the web bridge does. */
+		async function readAllPages(spec: DataQuerySpec, limit: number) {
+			const pages: DataQueryResult[] = []
+			let cursor: string | null = null
+			do {
+				const res: Response = await query(
+					spec,
+					workspaceId,
+					`&limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`,
+				)
+				expect(res.status).toBe(200)
+				const page = (await res.json()) as DataQueryResult
+				pages.push(page)
+				cursor = page.next_cursor
+			} while (cursor)
+			return pages
+		}
 
-		it('does not flag rows_truncated at exactly the row cap', async () => {
-			await bulkInsertTasks(DATA_QUERY_MAX_ROWS, () => ({}))
+		it('counts every row, past the old 10,000 row scan cap', async () => {
+			await bulkInsertTasks(10_500, () => ({}))
 			const r = await result({ scope: 'workspace', type: 'task' })
+			expect(r.total.count).toBe(10_500)
 			expect(r.rows_truncated).toBe(false)
-			expect(r.total.count).toBe(DATA_QUERY_MAX_ROWS)
+			expect(r.groups_truncated).toBe(false)
+			expect(r.next_cursor).toBeNull()
 		})
 
-		it('returns the largest groups and flags groups_truncated past the group cap', async () => {
-			const groupCount = DATA_QUERY_MAX_GROUPS + 1
+		it('returns every group across pages, largest first, with no gap or repeat', async () => {
+			const groupCount = 120
 			await bulkInsertTasks(groupCount + 2, (i) => ({
-				// 51 groups; group k07 gets two extra rows so it is the largest.
-				metadata: { k: `k${String(i < groupCount ? i : 7).padStart(2, '0')}` },
+				// 120 groups; group k007 gets two extra rows so it is the largest.
+				metadata: { k: `k${String(i < groupCount ? i : 7).padStart(3, '0')}` },
 			}))
-			const r = await result({ scope: 'workspace', type: 'task', group_by: 'metadata.k' })
-			expect(r.groups_truncated).toBe(true)
-			expect(r.groups).toHaveLength(DATA_QUERY_MAX_GROUPS)
-			expect(r.groups[0]).toMatchObject({ key: 'k07', count: 3 })
-			// The total still covers every group, so it is larger than the returned groups sum.
-			expect(r.total.count).toBe(groupCount + 2)
+			const pages = await readAllPages(
+				{ scope: 'workspace', type: 'task', group_by: 'metadata.k' },
+				DATA_QUERY_PAGE_SIZE,
+			)
+			expect(pages).toHaveLength(3)
+			expect(pages.slice(0, -1).every((p) => p.groups_truncated)).toBe(true)
+			expect(pages.at(-1)?.groups_truncated).toBe(false)
+			const groups = pages.flatMap((p) => p.groups)
+			expect(groups).toHaveLength(groupCount)
+			expect(new Set(groups.map((g) => g.key)).size).toBe(groupCount)
+			expect(groups[0]).toMatchObject({ key: 'k007', count: 3 })
+			// Every page reports the total over every group, not over its own slice.
+			expect(pages.map((p) => p.total.count)).toEqual([122, 122, 122])
 		})
 
-		it('keeps the newest buckets when time buckets exceed the group cap', async () => {
+		it('keeps time buckets oldest first across pages', async () => {
 			const start = Date.UTC(2026, 0, 1)
-			await bulkInsertTasks(DATA_QUERY_MAX_GROUPS + 5, (i) => ({
-				createdAt: new Date(start + i * DAY_MS),
-			}))
-			const r = await result({ scope: 'workspace', type: 'task', group_by: 'created_at.day' })
-			expect(r.groups_truncated).toBe(true)
-			expect(r.groups).toHaveLength(DATA_QUERY_MAX_GROUPS)
-			const keys = r.groups.map((g) => g.key as string)
-			expect([...keys].sort()).toEqual(keys) // oldest first
-			expect(keys.at(-1)).toBe(
-				new Date(start + (DATA_QUERY_MAX_GROUPS + 4) * DAY_MS).toISOString().slice(0, 10),
+			await bulkInsertTasks(60, (i) => ({ createdAt: new Date(start + i * DAY_MS) }))
+			const pages = await readAllPages(
+				{ scope: 'workspace', type: 'task', group_by: 'created_at.day' },
+				25,
 			)
+			const keys = pages.flatMap((p) => p.groups.map((g) => g.key as string))
+			expect(keys).toHaveLength(60)
+			expect([...keys].sort()).toEqual(keys)
+			expect(keys[0]).toBe('2026-01-01')
+		})
+
+		it('cuts every page from one snapshot, so rows added mid-read change nothing', async () => {
+			await bulkInsertTasks(30, (i) => ({ metadata: { k: `k${String(i).padStart(2, '0')}` } }))
+			const spec: DataQuerySpec = { scope: 'workspace', type: 'task', group_by: 'metadata.k' }
+
+			const first = (await (await query(spec, workspaceId, '&limit=10')).json()) as DataQueryResult
+			expect(first.next_cursor).not.toBeNull()
+			await bulkInsertTasks(5, () => ({ metadata: { k: 'late' } }))
+			const second = (await (
+				await query(spec, workspaceId, `&limit=10&cursor=${first.next_cursor}`)
+			).json()) as DataQueryResult
+
+			expect(second.total.count).toBe(30)
+			expect(second.groups.some((g) => g.key === 'late')).toBe(false)
+
+			// A fresh first page does see them: the first page is never served from a snapshot.
+			const fresh = (await (await query(spec, workspaceId, '&limit=10')).json()) as DataQueryResult
+			expect(fresh.total.count).toBe(35)
+		})
+
+		it('rejects a cursor that is not one', async () => {
+			const res = await query({ scope: 'workspace', type: 'task' }, workspaceId, '&cursor=nope')
+			expect(res.status).toBe(400)
 		})
 	})
 

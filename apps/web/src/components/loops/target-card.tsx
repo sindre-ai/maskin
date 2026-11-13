@@ -1,5 +1,6 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { cn } from '@/lib/cn'
+import { formatFigure } from '@/lib/format-number'
 import type { ActorListItem, LoopSummary } from '@maskin/shared'
 
 /**
@@ -38,7 +39,7 @@ export function paceVerdict(target: LoopTarget): PaceVerdict {
 	const { actual, target: goal, pace_policy } = target
 	const isMissed = goal > 0 && actual <= 0
 	const ratio = goal !== 0 ? actual / goal : actual > 0 ? 1 : 0
-	const numbers = `${actual} of ${goal}`
+	const numbers = `${formatFigure(actual)} of ${formatFigure(goal)}`
 
 	if (isMissed) {
 		return {
@@ -90,7 +91,7 @@ export function TargetCard({ target, owner }: TargetCardProps) {
 		<div
 			data-testid="target-card"
 			className={cn(
-				'flex flex-col gap-2.5 rounded-2xl border border-border bg-card p-4',
+				'flex flex-col gap-2.5 rounded-xl border border-border bg-background px-[18px] py-3.5 shadow-xs',
 				'transition-colors duration-150 hover:border-border-strong',
 			)}
 		>
@@ -103,8 +104,8 @@ export function TargetCard({ target, owner }: TargetCardProps) {
 					<span
 						aria-label={verdict.description}
 						className={cn(
-							'inline-flex w-fit items-center rounded-full px-2 py-0.5',
-							'text-[11.5px] font-semibold',
+							'inline-flex h-[22px] w-fit items-center rounded-full px-2.5',
+							'text-[11.5px] font-bold',
 							verdict.pillClass,
 						)}
 					>
@@ -112,14 +113,18 @@ export function TargetCard({ target, owner }: TargetCardProps) {
 					</span>
 				</span>
 			</div>
-			<p className="text-[26px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
-				{target.actual} of {target.target}
+			<p className="text-[26px] font-bold leading-[1.05] tracking-tight text-foreground">
+				{formatFigure(target.actual)} of {formatFigure(target.target)}
 			</p>
-			<div aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-muted">
+			<div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-border">
 				<div
 					className={cn(
 						'h-full rounded-full',
-						verdict.label === 'Missed' ? 'bg-destructive' : 'bg-brand',
+						verdict.label === 'Missed'
+							? 'bg-destructive'
+							: verdict.label === 'Behind pace'
+								? 'bg-brand'
+								: 'bg-success',
 					)}
 					// Data-driven width: the one value a Tailwind class cannot carry.
 					style={{ width: `${percent}%` }}

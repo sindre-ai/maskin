@@ -26,23 +26,8 @@ public enum WatchDecisionOptions {
 	/// Whether "More" has anything the first screen does not already offer.
 	public static func hasMore(_ options: [DecisionOption]) -> Bool { listed(options).count > 1 }
 
-	/// The header's place in the pager: "1 of 3".
-	public static func position(_ index: Int, of total: Int) -> String { "\(index + 1) of \(total)" }
-
-	/// The reason line under the ask: the first sentence of the summary. A full stop inside a number
-	/// ("$2.4k") does not end it.
-	public static func reasonLine(_ summary: String) -> String? {
-		let text = WatchBriefingText.plain(summary).replacingOccurrences(of: "\n", with: " ")
-			.trimmingCharacters(in: .whitespaces)
-		guard !text.isEmpty else { return nil }
-		let characters = Array(text)
-		for (index, character) in characters.enumerated() where ".!?".contains(character) {
-			if index + 1 == characters.count || characters[index + 1].isWhitespace {
-				return String(characters[...index])
-			}
-		}
-		return text
-	}
+	/// The header's place in the pager: "1/3".
+	public static func position(_ index: Int, of total: Int) -> String { "\(index + 1)/\(total)" }
 
 	/// The offline page's header: "OFFLINE \u{00B7} UPDATED 12 MIN AGO".
 	public static func offlineHeader(updatedAt: Date, now: Date) -> String {

@@ -96,6 +96,27 @@ describe('useActors', () => {
 		expect(api.actors.list).toHaveBeenCalledWith(workspaceId)
 	})
 
+	it('returns actors A to Z by name, ignoring case and accents', async () => {
+		vi.mocked(api.actors.list).mockResolvedValue([
+			buildActorListItem({ id: 'actor-1', name: 'Workspace Coach', type: 'agent' }),
+			buildActorListItem({ id: 'actor-2', name: 'bookkeeper', type: 'agent' }),
+			buildActorListItem({ id: 'actor-3', name: 'Sebastian Krumhausen' }),
+			buildActorListItem({ id: 'actor-4', name: 'Émile Zola' }),
+			buildActorListItem({ id: 'actor-5', name: 'Chief of Staff', type: 'agent' }),
+		])
+
+		const { result } = renderHook(() => useActors(workspaceId), { wrapper: TestWrapper })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data?.map((a) => a.name)).toEqual([
+			'bookkeeper',
+			'Chief of Staff',
+			'Émile Zola',
+			'Sebastian Krumhausen',
+			'Workspace Coach',
+		])
+	})
+
 	it('exposes error when API rejects', async () => {
 		vi.mocked(api.actors.list).mockRejectedValue(new Error('Network error'))
 

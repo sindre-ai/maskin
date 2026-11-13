@@ -9,6 +9,11 @@ import { capturePosthogEvent } from './posthog'
 // weekly checks can't drift out of sync with the emit sites.
 export const INTEGRATION_CONNECTED = 'integration_connected'
 export const INTEGRATION_SYNC_COMPLETED = 'integration_sync_completed'
+export const INTEGRATION_TOOL_CALLED = 'integration_tool_called'
+export const INTEGRATION_CONNECT_STARTED = 'integration_connect_started'
+// Success event of the Teams transcripts bet. Properties are provider and ok only: never transcript
+// text, meeting titles or names.
+export const MEETING_TRANSCRIPT_LANDED = 'meeting_transcript_landed'
 
 // Auth path that produced the connect event. `oauth` covers both standard
 // oauth2 providers (the callback route) and `oauth2_custom` (GitHub App),
@@ -77,5 +82,71 @@ export async function trackIntegrationSyncCompleted(
 		records_written: p.recordsWritten,
 		sync_status: p.syncStatus,
 		is_backfill: p.isBackfill,
+	})
+}
+
+export interface IntegrationToolCalledProps {
+	provider: string
+	tool: string
+	outcome: 'success' | 'error'
+	errorCode: string | null
+	actorId: string
+	sessionId: string | null
+	workspaceId: string
+}
+
+/**
+ * One event per call to a tool on a Maskin-hosted integration MCP (first user: Deepdots). It
+ * measures use and success of the connection: which tools agents call, and whether the call
+ * worked.
+ *
+ * Privacy contract: the properties below are the whole payload. Never the arguments, search
+ * text, answer rows or error text; those can hold customer feedback. integration-events.test.ts
+ * asserts the exact key set, so adding a property fails that test on purpose.
+ *
+ * Best-effort per capturePosthogEvent: never throws.
+ */
+export async function trackIntegrationToolCalled(p: IntegrationToolCalledProps): Promise<void> {
+	await capturePosthogEvent(INTEGRATION_TOOL_CALLED, p.actorId, {
+		provider: p.provider,
+		tool: p.tool,
+		outcome: p.outcome,
+		error_code: p.errorCode,
+		actor_id: p.actorId,
+		session_id: p.sessionId,
+		workspace_id: p.workspaceId,
+	})
+}
+
+interface IntegrationConnectStartedProps {
+	provider: string
+	workspaceId: string
+	actorId: string
+}
+
+/**
+ * Fire `integration_connect_started` when the connect route hands back the vendor's sign-in
+ * address. Paired with `integration_connected` (the token landing), so finished over started
+ * is the sign-in completion rate for every provider. Not sampled (see event-budget).
+ */
+export async function trackIntegrationConnectStarted(
+	p: IntegrationConnectStartedProps,
+): Promise<void> {
+	await capturePosthogEvent(INTEGRATION_CONNECT_STARTED, p.actorId, {
+		provider: p.provider,
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		auth_type: 'oauth',
+	})
+}
+
+export async function trackMeetingTranscriptLanded(p: {
+	provider: string
+	actorId: string
+	ok: boolean
+}): Promise<void> {
+	await capturePosthogEvent(MEETING_TRANSCRIPT_LANDED, p.actorId, {
+		provider: p.provider,
+		ok: p.ok,
 	})
 }

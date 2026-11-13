@@ -15,6 +15,7 @@ import {
 	type TagSegment,
 	type TagValue,
 	isTagChip,
+	isTaggable,
 	pointAtTextOffset,
 	readTagDom,
 	tagLabel,
@@ -83,6 +84,8 @@ export interface TagInputProps {
 	className?: string
 	/** Padding for the text and the placeholder, so both start at the same spot. */
 	contentClassName?: string
+	/** Extra classes for the placeholder only, not for the typed text. */
+	placeholderClassName?: string
 	onChange: (value: TagValue) => void
 	/** Keys the input did not use itself (the picker, chips and Shift+Enter come first). */
 	onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void
@@ -110,6 +113,7 @@ export function TagInput({
 	autoFocus = false,
 	className,
 	contentClassName,
+	placeholderClassName,
 	onChange,
 	onKeyDown,
 	handleRef,
@@ -128,15 +132,13 @@ export function TagInput({
 	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
 	const pool = useMemo<MentionPickerActor[]>(
 		() =>
-			(workspaceActors ?? [])
-				.filter((a) => !a.isSystem)
-				.map((a) => ({
-					id: a.id,
-					name: a.name,
-					type: a.type,
-					description: a.description,
-					email: a.email,
-				})),
+			(workspaceActors ?? []).filter(isTaggable).map((a) => ({
+				id: a.id,
+				name: a.name,
+				type: a.type,
+				description: a.description,
+				email: a.email,
+			})),
 		[workspaceActors],
 	)
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
@@ -395,6 +397,7 @@ export function TagInput({
 						className={cn(
 							'pointer-events-none absolute inset-0 select-none text-muted-foreground',
 							contentClassName,
+							placeholderClassName,
 						)}
 					>
 						{placeholder}

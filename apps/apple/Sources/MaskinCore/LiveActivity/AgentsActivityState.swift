@@ -58,8 +58,9 @@ public struct WorkingAgent: Codable, Hashable, Sendable, Identifiable {
 		return trimmed.count > maxTopicLength ? String(trimmed.prefix(maxTopicLength - 1)) + "\u{2026}" : trimmed
 	}
 
-	/// Up to two letters for the avatar tile, the same rule as `ActorIdentity.initials` in
-	/// MaskinUI (which the Live Activity extension does not link).
+	/// Up to three letters for the avatar tile (the first three words, or a single all-caps word
+	/// like CTO; two for a two-word or other one-word name), the same
+	/// rule as `ActorIdentity.initials` in MaskinUI (which the Live Activity extension does not link).
 	public var initials: String { Self.initials(for: name) }
 
 	public static func initials(for name: String) -> String {
@@ -68,8 +69,11 @@ public struct WorkingAgent: Codable, Hashable, Sendable, Identifiable {
 		}.filter { !$0.isEmpty }
 		switch words.count {
 		case 0: return "?"
-		case 1: return String(words[0].prefix(2)).uppercased()
-		default: return (String(words[0].prefix(1)) + String(words[1].prefix(1))).uppercased()
+		case 1:
+			let word = words[0]
+			if word.count == 3, word.allSatisfy({ $0.isLetter && $0.isUppercase }) { return word }
+			return String(word.prefix(2)).uppercased()
+		default: return words.prefix(3).map { String($0.prefix(1)) }.joined().uppercased()
 		}
 	}
 

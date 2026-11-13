@@ -6,7 +6,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const SLUG = 'market-competitor-watch-loop'
 
-test.describe('Install a loop from one short page', () => {
+test.describe('Install a flow from one short page', () => {
 	test('a signed-out visitor is sent to sign-in with this page as the return path', async ({
 		browser,
 	}) => {
@@ -58,8 +58,8 @@ test.describe('Install a loop from one short page', () => {
 	}) => {
 		await page.goto('/install/no-such-loop')
 
-		await expect(page.getByText("We couldn't find that loop")).toBeVisible({ timeout: 20000 })
-		await expect(page.getByRole('link', { name: 'See all loops' })).toHaveAttribute(
+		await expect(page.getByText("We couldn't find that flow")).toBeVisible({ timeout: 20000 })
+		await expect(page.getByRole('link', { name: 'See all flows' })).toHaveAttribute(
 			'href',
 			'https://maskin.io/marketplace/',
 		)

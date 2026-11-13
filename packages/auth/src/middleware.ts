@@ -3,7 +3,7 @@ import { workspaceMembers } from '@maskin/db/schema'
 import { createApiError } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
-import { validateApiKey } from './api-keys'
+import { validateApiKeyWithKind } from './api-keys'
 import { createAuthCaches, resolveAuthCacheTtlMs } from './auth-cache'
 import { hashApiKey } from './key-hash'
 import { isMcpOAuthEnabled, isOAuthTokenPrefix } from './mcp-credential'
@@ -35,7 +35,7 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 		if (token.startsWith('ank_')) {
 			const result = await caches.apiKeys.get(
 				hashApiKey(token),
-				() => validateApiKey(db, token),
+				() => validateApiKeyWithKind(db, token),
 				(value) => value !== null,
 			)
 			if (!result) {
@@ -51,6 +51,8 @@ export function authMiddleware(db: Database, options: { cacheTtlMs?: number } = 
 			}
 			c.set('actorId', result.actorId)
 			c.set('actorType', result.type)
+			// Cached with the actor, so a route can refuse by kind of key without another query.
+			c.set('apiKeyKind', result.keyKind)
 
 			// Verify workspace membership when X-Workspace-Id header is present.
 			// By-ID routes also check membership via isWorkspaceMember() in workspace-auth.ts

@@ -17,10 +17,14 @@ import {
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
 	type WebAppTarget,
+	applyLoopView,
 	buildWebAppHref,
+	normalizeLoopViewName,
+	readLoopViews,
 	resolveWebAppBaseUrl,
 	slimForYouItems,
 	stripTrailingSlash,
+	toLoopViewsMetadata,
 } from '@maskin/shared'
 import {
 	RESOURCE_MIME_TYPE,
@@ -41,6 +45,7 @@ import {
 	paginateClientSide,
 	toSnapshotAt,
 } from './cursor.js'
+import { explainIgnoredUpdateKeys } from './explain-ignored-keys.js'
 import {
 	type IntegrationRow,
 	integrationSortKey,
@@ -55,7 +60,7 @@ import {
 	statusFilterParam,
 } from './list-contract.js'
 import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
-import { buildListPayload, listText } from './list-response.js'
+import { buildListPayload, listPageText, listText } from './list-response.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -88,13 +93,10 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import {
-	RUN_AGENT_DROPPED_KEYS,
-	TOOL_ALIAS_ARG_RENAMES,
-	TOOL_NAME_ALIASES,
-	type ToolNameAlias,
-} from './tool-aliases.js'
+import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
+import { compactTrigger } from './trigger-rows.js'
+import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
 
 export interface McpConfig {
 	apiBaseUrl: string
@@ -440,7 +442,7 @@ const LOOP_VIEW_CHECKLIST = [
 	'Opens with the loop outcome in one plain sentence and where it stands against it.',
 	'Three to five metrics at most, each with a value and unit, a comparison and its source.',
 	'Every number has a declared source in maskin-sources and an empty and an error state that shows the message.',
-	'No query is truncated (rows_truncated and groups_truncated false), or the view says its numbers are partial.',
+	'A table over many rows (every person, every task) scrolls or pages instead of drawing everything at once.',
 	'Says what needs a person now, if anything. Nothing that does not change a decision.',
 	'One self-contained file, no network calls, readable in light and dark.',
 ]
@@ -1390,6 +1392,11 @@ async function waitUntilSessionRunning(
 // (waiting for input, paused) or when the status checks keep failing. Sessions have
 // their own timeout, so none runs forever.
 const WAIT_POLL_MS = 5_000
+// How long a call waits for a session before it hands back "not finished yet". The server
+// ends a running session at 2 hours (a wall timeout), but nothing ends one that is still
+// queued or whose status never changes, so without this a wait could hold the call open for
+// good. Matches that 2 hour ceiling.
+const SESSION_WAIT_MAX_MS = 2 * 60 * 60 * 1000
 
 // Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
 // still going backs off so a long one is not ~130 requests against the API.
@@ -1508,16 +1515,11 @@ async function waitForObjectStatus(
  * What the caller reads when a handover did not start. A chat agent that only sees a
  * bare API error tends to tell the person it handed the work over anyway.
  */
-function sessionNotStartedResult(
-	config: McpConfig,
-	toolName: 'create_session' | 'create_sub_chat',
-	workspaceId: string | undefined,
-	err: unknown,
-) {
+function sessionNotStartedResult(config: McpConfig, workspaceId: string | undefined, err: unknown) {
 	const reason = err instanceof Error ? err.message : String(err)
-	console.error(`${toolName}: could not start the session`, err)
+	console.error('create_sub_chat: could not start the session', err)
 	return {
-		_meta: meta(toolName, config, workspaceId),
+		_meta: meta('create_sub_chat', config, workspaceId),
 		isError: true,
 		content: [
 			{
@@ -1541,72 +1543,73 @@ function handoffNote(session: { id: string; status?: string }, url?: unknown) {
 }
 
 /**
- * The `wait: true` path of `create_session`: start the session, then wait for it to
- * reach a terminal state and return `{ session, logs }`.
+ * Starts the sub-chat and returns straight away with its details. It never waits: the
+ * result is always sent back to the caller as a new turn when the sub-chat finishes, with
+ * no opt-out, so the caller can carry on meanwhile.
  */
-async function createSessionAndWait(
+async function createSubChat(
 	config: McpConfig,
-	args: z.infer<typeof tools.create_session.inputSchema>,
-	toolName: 'create_session' | 'create_sub_chat' = 'create_session',
+	args: z.infer<typeof tools.create_sub_chat.inputSchema>,
 ) {
-	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
-	// ignored, and it is never true on this create call (registered below instead).
+	// A caller that still sends `wait` or `notify_on_complete` is ignored: neither is a
+	// parameter, and the result is always sent back whatever the caller sent.
 	const {
 		workspace_id,
 		wait: _wait,
 		notify_on_complete: _ignored,
 		...createBody
-	} = args as typeof args & { notify_on_complete?: unknown }
-	const wsOpts = { workspaceId: workspace_id }
+	} = args as typeof args & { wait?: unknown; notify_on_complete?: unknown }
 
-	// 1. Create session. notify_on_complete is sent as false here: this call
-	// returns the result inline, so it is only registered (below) if the wait runs
-	// out. False, not omitted, because an omitted value defaults on for a helper
-	// started from a chat, and the waiting caller would get the result twice.
-	let session: { id: string; status: string }
+	let result: SessionRow
 	try {
-		session = (await apiCall(
+		result = (await apiCall(
 			config,
 			'POST',
 			'/api/sessions',
-			{ ...createBody, notify_on_complete: false },
-			wsOpts,
-		)) as { id: string; status: string }
+			{ ...createBody, notify_on_complete: true },
+			{ workspaceId: workspace_id },
+		)) as SessionRow
 	} catch (err) {
-		return sessionNotStartedResult(config, toolName, workspace_id, err)
+		return sessionNotStartedResult(config, workspace_id, err)
 	}
-
-	return waitForSessionResult(config, {
-		toolName,
-		workspaceId: workspace_id,
-		session,
-		registerReturn: true,
-	})
+	const wsId = workspace_id ?? config.defaultWorkspaceId
+	const enriched = await enrichSessionActorName(config, wsId, result)
+	const withUrl = wsId
+		? addUrl(enriched as Record<string, unknown>, config, wsId, {
+				kind: 'session',
+				id: enriched.id,
+				actorId: (enriched as { actorId?: string }).actorId,
+			})
+		: enriched
+	return {
+		_meta: meta('create_sub_chat', config, workspace_id),
+		content: [
+			{
+				type: 'text' as const,
+				text: JSON.stringify({
+					...withUrl,
+					handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+				}),
+			},
+		],
+	}
 }
 
 /**
  * Polls a session until it ends (or stops moving) and returns `{ session, logs, settled }`.
- * Shared by every tool that takes `wait`. `registerReturn` is for the one caller that
- * started the session itself: when the wait stops with the session still going, it asks
- * for the session's result to be sent back to that caller later.
+ * Shared by every tool that takes `wait`.
  */
 async function waitForSessionResult(
 	config: McpConfig,
 	opts: {
-		toolName:
-			| 'create_session'
-			| 'create_sub_chat'
-			| 'get_session'
-			| 'resume_session'
-			| 'send_session_message'
+		toolName: 'get_session' | 'resume_session' | 'send_session_message'
 		workspaceId: string | undefined
 		session: { id: string; status: string }
-		registerReturn?: boolean
 		/** The session was just read, so judge that reading before the first sleep. */
 		judgeFirst?: boolean
 	},
 ) {
-	const { toolName, workspaceId: workspace_id, session, registerReturn = false } = opts
+	const { toolName, workspaceId: workspace_id, session } = opts
 	const wsOpts = { workspaceId: workspace_id }
 	let sessionId = session.id
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
@@ -1622,11 +1625,12 @@ async function waitForSessionResult(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
-	let stoppedBecause: 'waiting_for_input' | 'paused' | undefined
+	let stoppedBecause: 'waiting_for_input' | 'paused' | 'wait_limit' | undefined
 	let pollFailures = 0
 	let pollError: string | undefined
 	let pollAttempt = 0
 	let judgeNow = opts.judgeFirst ?? false
+	const waitDeadline = Date.now() + SESSION_WAIT_MAX_MS
 	while (true) {
 		if (!judgeNow) {
 			await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(pollAttempt++)))
@@ -1662,47 +1666,16 @@ async function waitForSessionResult(
 			break
 		}
 		// A session parked on waiting_for_input, or paused, will not progress until
-		// someone acts on it, and with no time limit polling on would never end. Stop
+		// someone acts on it, so polling on would never end. Stop
 		// early but leave settled false: the session is not finished.
 		if (current.status === 'waiting_for_input' || current.status === 'paused') {
 			stoppedBecause = current.status
 			break
 		}
-	}
-
-	// The wait ended with the helper still going (it stopped on waiting_for_input or
-	// paused, or the status checks kept failing): ask for its result to be sent back
-	// later. Never on the settled path, where the caller gets it inline, and only for
-	// the caller that started the session.
-	// If the helper ended in the gap, the PATCH sends the return itself.
-	// The server says what became of it: 'registered' (still running, it will
-	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
-	// could not be sent, with the reason) or 'failed' (not registered at all).
-	let notifyOnComplete:
-		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
-		| undefined
-	if (!settled && registerReturn) {
-		try {
-			const patched = (await apiCall(
-				config,
-				'PATCH',
-				`/api/sessions/${sessionId}`,
-				{ notify_on_complete: true },
-				wsOpts,
-			)) as {
-				notify_on_complete?: 'registered' | 'delivered' | 'skipped'
-				notify_skip_reason?: string
-			}
-			notifyOnComplete = {
-				state: patched.notify_on_complete ?? 'registered',
-				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
-			}
-		} catch (err) {
-			console.error(`${toolName}: could not register notify_on_complete`, err)
-			notifyOnComplete = {
-				state: 'failed',
-				reason: err instanceof Error ? err.message : String(err),
-			}
+		// Still going after the longest wait: stop holding the call. Not finished.
+		if (Date.now() >= waitDeadline) {
+			stoppedBecause = 'wait_limit'
+			break
 		}
 	}
 
@@ -1723,10 +1696,12 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? 'The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.'
 			: stoppedBecause === 'paused'
 				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
-				: undefined
+				: stoppedBecause === 'wait_limit'
+					? 'The session has not finished after waiting 2 hours, so this call stopped waiting. That does not mean it failed. Check its latest status with get_session, and what it has done so far with get_session_logs (newest first) or get_chat_activity, before you decide what to do next. Stop it with stop_session if it should not go on.'
+					: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
@@ -1759,14 +1734,6 @@ async function waitForSessionResult(
 					...(stoppedBecause ? { stopped_because: stoppedBecause, message: stopMessage } : {}),
 					...(pollError ? { poll_error: pollError } : {}),
 					...(logsError ? { logs_error: logsError } : {}),
-					...(notifyOnComplete
-						? {
-								notify_on_complete: notifyOnComplete.state,
-								...(notifyOnComplete.reason
-									? { notify_on_complete_reason: notifyOnComplete.reason }
-									: {}),
-							}
-						: {}),
 				}),
 			},
 		],
@@ -2987,6 +2954,98 @@ interface RawTrigger {
 	createdAt?: string | null
 	updatedAt?: string | null
 	actionPrompt?: string | null
+	lastRunAt?: string | null
+}
+
+// list_triggers cuts a page when its rows pass this many characters, so the
+// whole response (rows are sent twice, as text and in the hero card) stays
+// under the response token cap and the client never has to drop rows itself.
+const LIST_TRIGGERS_MAX_ROW_CHARS = 48_000
+
+/** How many leading rows fit in `maxChars` of JSON. Always at least one. */
+function countRowsWithinBudget(rows: unknown[], maxChars: number): number {
+	let used = 0
+	for (let i = 0; i < rows.length; i++) {
+		used += JSON.stringify(rows[i]).length
+		if (used > maxChars) return Math.max(i, 1)
+	}
+	return rows.length
+}
+
+function triggerAgent(
+	trigger: RawTrigger,
+	actors: Map<string, HeroCardActor>,
+): { id: string | null; name: string | null } {
+	const id = trigger.targetActorId ?? trigger.target_actor_id ?? null
+	return { id, name: id ? (actors.get(id)?.name ?? null) : null }
+}
+
+/**
+ * The body POST /api/triggers takes. `run_at` becomes a one-time trigger (a
+ * "reminder" row: it fires once, then the runner disables it); otherwise the
+ * caller must give a type and config.
+ */
+function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<string, unknown> }>(
+	fields: T,
+	runAt: string | undefined,
+): T {
+	if (runAt === undefined) {
+		if (!fields.type || !fields.config) {
+			throw new Error(
+				'Give type and config for a recurring or event trigger, or run_at for a trigger that runs once.',
+			)
+		}
+		return fields
+	}
+	if (fields.type !== undefined || fields.config !== undefined) {
+		throw new Error('Give run_at, or type and config, not both.')
+	}
+	const at = new Date(runAt)
+	if (at.getTime() <= Date.now()) {
+		throw new Error(
+			`run_at ${runAt} is not in the future. Pick a later time, or use create_sub_chat to start the agent now.`,
+		)
+	}
+	return { ...fields, type: 'reminder', config: { scheduled_at: at.toISOString() } }
+}
+
+/**
+ * The body create_trigger and update_trigger return: the saved trigger in
+ * compact form, plus warnings that never block the save. The agent's other
+ * enabled triggers are read after the save; if that read fails the similar
+ * check is skipped and the rest still ships.
+ */
+async function triggerWriteResult(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	saved: RawTrigger,
+	checks: WarningChecks,
+): Promise<Record<string, unknown>> {
+	const agentId = saved.targetActorId ?? saved.target_actor_id ?? null
+	const actors = await resolveActors(config, agentId ? [agentId] : [], workspaceId)
+	let others: OtherTrigger[] = []
+	if (checks.similar && agentId) {
+		try {
+			const params = new URLSearchParams({
+				target_actor_id: agentId,
+				enabled: 'true',
+				limit: '100',
+			})
+			const list = await apiCall(config, 'GET', `/api/triggers?${params}`, undefined, {
+				workspaceId,
+			})
+			others = Array.isArray(list) ? (list as OtherTrigger[]) : []
+		} catch (err) {
+			console.error("[MCP] Could not read the agent's other triggers for warnings:", err)
+		}
+	}
+	const warnings = detectTriggerWarnings({ id: saved.id, trigger: saved, others, checks })
+	const wsId = saved.workspaceId ?? workspaceId ?? config.defaultWorkspaceId
+	const row: Record<string, unknown> = { ...compactTrigger(saved, triggerAgent(saved, actors)) }
+	return {
+		trigger: wsId ? addUrl(row, config, wsId, { kind: 'trigger', id: saved.id }) : row,
+		warnings,
+	}
 }
 
 function formatRelativeFuture(targetMs: number, nowMs: number): string {
@@ -3065,8 +3124,7 @@ function buildTriggerHeroCardObject(
 		driver,
 		contextLine: buildTriggerContextLine(trigger, nowMs),
 		// The action prompt is most of a row's size; compact rows leave it out.
-		...(compact ? {} : { actionPrompt: trigger.actionPrompt ?? null }),
-		config: trigger.config,
+		...(compact ? {} : { actionPrompt: trigger.actionPrompt ?? null, config: trigger.config }),
 	}
 }
 
@@ -3419,7 +3477,13 @@ async function listObjectsPage(
 		content: [
 			{
 				type: 'text' as const,
-				text: buildListContentText(rows),
+				text: listPageText({
+					key: 'objects',
+					rows,
+					limit: pagination.limit,
+					nextCursor,
+					total,
+				}),
 			},
 		],
 		structuredContent: {
@@ -3458,9 +3522,17 @@ async function listObjectsPage(
 }
 
 // Tools whose schema rejects a top-level argument name it does not know instead
-// of stripping it. Only tools where a dropped list reads as a finished write;
-// other tools keep stripping, since agents often send harmless extra keys.
-const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+// of stripping it, each with the closing sentence of the refusal. Only tools where a
+// dropped key reads as a finished call: a dropped list on a write, or a dropped filter
+// on query_data that returns a plausible but wrong total. Other tools keep stripping,
+// since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
+	['update_objects', 'Nothing was written.'],
+	[
+		'query_data',
+		'It takes no SQL. Example: query_data({ type: "task", filters: { status: "done" }, group_by: "created_at.day" }).',
+	],
+])
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
@@ -3549,7 +3621,11 @@ export function createMcpServer(config: McpConfig) {
 								}
 								return normalised.args
 							},
-							{ rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name) },
+							{
+								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
+								unknownKeysSuffix: REJECT_UNKNOWN_KEYS_TOOLS.get(name),
+								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
+							},
 						),
 					}
 				: baseDefinition
@@ -4070,7 +4146,7 @@ export function createMcpServer(config: McpConfig) {
 						idleIds.length > 0
 							? `no entry in updates (${idleIds.join(', ')}) has a field to change`
 							: 'it received no updates and no edges'
-					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Send real arrays, not JSON strings, and name the list updates (not objects). Nothing was written.`,
+					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Nothing was written.`,
 				)
 			}
 
@@ -4735,7 +4811,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'relationships',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -5986,6 +6068,25 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'delete_agent',
+		{
+			description: tools.delete_agent.description,
+			inputSchema: tools.delete_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(config, 'DELETE', `/api/actors/${args.id}`, undefined, {
+				workspaceId: args.workspace_id,
+			})
+			return {
+				_meta: meta('delete_agent', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_workspace_skill',
 		{
 			description: tools.delete_workspace_skill.description,
@@ -6031,6 +6132,7 @@ export function createMcpServer(config: McpConfig) {
 					name: args.name,
 					description: args.description,
 					...(args.kind !== undefined ? { kind: args.kind } : {}),
+					...(args.tags !== undefined ? { tags: args.tags } : {}),
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
@@ -6058,6 +6160,8 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
 			if (args.kind) params.set('kind', args.kind)
+			if (args.tags?.length) params.set('tags', args.tags.join(','))
+			if (args.tags_match) params.set('tags_match', args.tags_match)
 			params.set('limit', String(pagination.limit + 1))
 			params.set('snapshot_at', pagination.snapshotAt)
 			params.set('order', pagination.order)
@@ -6082,7 +6186,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'files',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6100,6 +6210,75 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'list_file_tags',
+		{
+			description: tools.list_file_tags.description,
+			inputSchema: tools.list_file_tags.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const tags = (await apiCall(config, 'GET', '/api/files/tags', undefined, {
+				workspaceId: wsId,
+			})) as Array<{ tag: string; count: number }>
+			return {
+				_meta: meta('list_file_tags', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(tags) }],
+				structuredContent: { tags },
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'rename_file_tag',
+		{
+			description: tools.rename_file_tag.description,
+			inputSchema: tools.rename_file_tag.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files/tags/rename',
+				{ from: args.from, to: args.to },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('rename_file_tag', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'merge_file_tags',
+		{
+			description: tools.merge_file_tags.description,
+			inputSchema: tools.merge_file_tags.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/files/tags/merge',
+				{ from: args.from, into: args.into },
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('merge_file_tags', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'get_file',
 		{
 			description: tools.get_file.description,
@@ -6108,7 +6287,8 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
-			const result = await apiCall(config, 'GET', `/api/files/${args.id}`, undefined, {
+			const fileQuery = args.format === 'text' ? '?format=text' : ''
+			const result = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
 				workspaceId: wsId,
 			})
 			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
@@ -6139,6 +6319,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'transcribe_file',
+		{
+			description: tools.transcribe_file.description,
+			inputSchema: tools.transcribe_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/transcriptions/files/${args.id}`,
+				args.language !== undefined ? { language: args.language } : {},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('transcribe_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_file',
 		{
 			description: tools.update_file.description,
@@ -6151,9 +6355,11 @@ export function createMcpServer(config: McpConfig) {
 			if (args.name !== undefined) body.name = args.name
 			if (args.description !== undefined) body.description = args.description
 			if (args.kind !== undefined) body.kind = args.kind
+			if (args.tags !== undefined) body.tags = args.tags
 			if (args.mime_type !== undefined) body.mime_type = args.mime_type
 			if (args.content !== undefined) body.content = args.content
 			if (args.encoding !== undefined) body.encoding = args.encoding
+			if (args.edits !== undefined) body.edits = args.edits
 			if (args.if_match !== undefined) body.if_match = args.if_match
 			const result = await apiCall(config, 'PATCH', `/api/files/${args.id}`, body, {
 				workspaceId: wsId,
@@ -6237,7 +6443,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'events',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					events: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6272,7 +6489,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'comments',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					comments: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6475,7 +6703,18 @@ export function createMcpServer(config: McpConfig) {
 					: null
 			return {
 				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'chats',
+							rows: chats,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					chats,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6905,32 +7144,26 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.triggers, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/triggers', body, {
+			const { workspace_id, run_at, ...fields } = args
+			const body = oneTimeOrScheduledBody(fields, run_at)
+			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
+			})) as RawTrigger
+			const result = await triggerWriteResult(config, workspace_id, saved, {
+				prompt: true,
+				config: true,
+				similar: saved.enabled,
 			})
-			const wsId =
-				(result as { workspaceId?: string }).workspaceId ??
-				workspace_id ??
-				config.defaultWorkspaceId
-			const triggerId = (result as { id?: string }).id
-			const withUrl =
-				wsId && triggerId
-					? addUrl(result as Record<string, unknown>, config, wsId, {
-							kind: 'trigger',
-							id: triggerId,
-						})
-					: result
 			return {
 				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
 
 	// The upstream signature accepts a raw shape; list_triggers passes its strict
 	// schema object so the SDK rejects unknown parameters, so the narrow type is
-	// spelled out here. Same cast as registerWrappedSchemaTool below.
+	// spelled out here.
 	const registerStrictSchemaTool = registerAppTool as unknown as (
 		s: typeof server,
 		name: string,
@@ -6973,6 +7206,7 @@ export function createMcpServer(config: McpConfig) {
 			if (args.agent_id) params.set('target_actor_id', args.agent_id)
 			if (args.status) params.set('enabled', String(args.status === 'enabled'))
 			if (args.q) params.set('q', args.q)
+			params.set('include_last_run', 'true')
 			const first = await apiCallWithResponse(config, 'GET', `/api/triggers?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
@@ -6999,24 +7233,43 @@ export function createMcpServer(config: McpConfig) {
 				pagination,
 				rawRows as Array<{ id: string; createdAt?: string | null }>,
 			)
-			const rows = trimmed as RawTrigger[]
-			const trimmedData = Array.isArray(data)
-				? (data as Array<Record<string, unknown>>).slice(0, rows.length).map((t) => {
-						if (!args.compact) return t
-						const { actionPrompt: _actionPrompt, ...rest } = t
-						return rest
-					})
-				: data
-			const ownerIds = rows
+			const compact = args.compact !== false
+			const allRows = trimmed as RawTrigger[]
+			const ownerIds = allRows
 				.map((t) => t.targetActorId)
 				.filter((v): v is string => typeof v === 'string')
 			const actors = await resolveActors(config, ownerIds, args.workspace_id)
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const now = new Date()
+			const shapeRow = (t: RawTrigger): Record<string, unknown> => {
+				const row: Record<string, unknown> = compact
+					? { ...compactTrigger(t, triggerAgent(t, actors), now) }
+					: { ...t }
+				return wsId
+					? addUrl(row, config, t.workspaceId ?? wsId, { kind: 'trigger', id: t.id })
+					: row
+			}
+			const shaped = allRows.map(shapeRow)
+			// A page that is too long for one response is cut here, with a cursor to the rest,
+			// so the caller sees the cut instead of the client silently dropping rows.
+			const keep = countRowsWithinBudget(shaped, LIST_TRIGGERS_MAX_ROW_CHARS)
+			const cut = keep < shaped.length
+			const lastKept = allRows[keep - 1]
+			const cutCursor =
+				cut && lastKept?.createdAt
+					? encodeCursor({
+							s: pagination.snapshotAt,
+							o: pagination.order,
+							k: { sortValue: lastKept.createdAt, id: lastKept.id },
+						})
+					: nextCursor
+			const rows = allRows.slice(0, keep)
 			const heroObjects = rows.map((t) =>
 				buildTriggerHeroCardObject(
 					t,
 					t.targetActorId ? (actors.get(t.targetActorId) ?? null) : null,
-					Date.now(),
-					args.compact,
+					now.getTime(),
+					compact,
 				),
 			)
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
@@ -7041,22 +7294,20 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: offset + heroObjects.length < totalCount,
 								},
 							}
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const enriched =
-				wsId && Array.isArray(trimmedData)
-					? (trimmedData as Array<Record<string, unknown>>).map((t) =>
-							addUrl(t, config, (t.workspaceId as string | undefined) ?? wsId, {
-								kind: 'trigger',
-								id: t.id as string,
-							}),
-						)
-					: trimmedData
 			const payload = buildListPayload({
 				key: 'triggers',
-				rows: Array.isArray(enriched) ? enriched : [],
+				rows: shaped.slice(0, keep),
 				limit: pagination.limit,
-				nextCursor,
+				nextCursor: cutCursor,
 				total: totalCount,
+				...(cut
+					? {
+							extra: {
+								truncated: true,
+								hint: `Showing ${keep} of the ${shaped.length} rows on this page because the full page is too long for one response. Pass next_cursor as cursor for the rest, or ask for a smaller limit.`,
+							},
+						}
+					: {}),
 			})
 			return {
 				_meta: uiMeta(
@@ -7071,8 +7322,49 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					heroCard,
 					page: payload.page,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
+					...(cutCursor ? { next_cursor: cutCursor } : {}),
 				},
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_trigger',
+		{
+			description: tools.get_trigger.description,
+			inputSchema: tools.get_trigger.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const trigger = (await apiCall(config, 'GET', `/api/triggers/${id}`, undefined, {
+				workspaceId: workspace_id,
+			})) as RawTrigger
+			const wsId = trigger.workspaceId ?? workspace_id ?? config.defaultWorkspaceId
+			const actors = await resolveActors(
+				config,
+				trigger.targetActorId ? [trigger.targetActorId] : [],
+				workspace_id,
+			)
+			const summary = compactTrigger(trigger, triggerAgent(trigger, actors))
+			// The short fields lead, then the full prompt and config, so a cut text still
+			// carries what the trigger is and when it runs.
+			const full = {
+				...summary,
+				actionPrompt: trigger.actionPrompt ?? null,
+				config: trigger.config,
+				createdAt: trigger.createdAt ?? null,
+				updatedAt: trigger.updatedAt ?? null,
+			}
+			return {
+				_meta: meta('get_trigger', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(wsId ? addUrl(full, config, wsId, { kind: 'trigger', id }) : full),
+					},
+				],
 			}
 		},
 	)
@@ -7087,19 +7379,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { id, workspace_id, ...body } = args
-			const result = await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
+			const saved = (await apiCall(config, 'PATCH', `/api/triggers/${id}`, body, {
 				workspaceId: workspace_id,
+			})) as RawTrigger
+			// Only warn about what this update touched, so a plain enable or rename of an old
+			// trigger does not repeat every old note.
+			const result = await triggerWriteResult(config, workspace_id, saved, {
+				prompt: body.action_prompt !== undefined,
+				config: body.config !== undefined,
+				similar:
+					saved.enabled &&
+					(body.name !== undefined ||
+						body.config !== undefined ||
+						body.target_actor_id !== undefined ||
+						body.enabled === true),
 			})
-			const wsId =
-				(result as { workspaceId?: string }).workspaceId ??
-				workspace_id ??
-				config.defaultWorkspaceId
-			const withUrl = wsId
-				? addUrl(result as Record<string, unknown>, config, wsId, { kind: 'trigger', id })
-				: result
 			return {
 				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -7766,7 +8063,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, loop_id, file_id } = args
+			const { workspace_id, loop_id, file_id, name } = args
+			const viewName = normalizeLoopViewName(name)
 			const loop = (await apiCall(config, 'GET', `/api/objects/${loop_id}`, undefined, {
 				workspaceId: workspace_id,
 			})) as { type?: string; metadata?: Record<string, unknown> | null }
@@ -7795,14 +8093,17 @@ export function createMcpServer(config: McpConfig) {
 					)
 				}
 			}
-			const current = loop.metadata?.view_file_id
-			const unchanged = (typeof current === 'string' ? current : null) === file_id
+			// Every pin is a named tab. A loop still on the single legacy id reads as one
+			// "Custom view" tab, so its first named pin moves it onto the tab list.
+			const before = readLoopViews(loop.metadata)
+			const views = applyLoopView(before, viewName, file_id)
+			const unchanged = JSON.stringify(before) === JSON.stringify(views)
 			if (!unchanged) {
 				await apiCall(
 					config,
 					'PATCH',
 					`/api/objects/${loop_id}`,
-					{ metadata: { view_file_id: file_id } },
+					{ metadata: { views: toLoopViewsMetadata(views), view_file_id: null } },
 					{ workspaceId: workspace_id },
 				)
 			}
@@ -7813,6 +8114,8 @@ export function createMcpServer(config: McpConfig) {
 						type: 'text' as const,
 						text: JSON.stringify({
 							loop_id,
+							view_name: viewName,
+							views: toLoopViewsMetadata(views),
 							view_file_id: file_id,
 							changed: !unchanged,
 							...(file_id === null ? {} : { checklist: LOOP_VIEW_CHECKLIST }),
@@ -7832,11 +8135,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, ...spec } = args
+			const { workspace_id, cursor, limit, ...spec } = args
+			const paging = [
+				limit === undefined ? '' : `&limit=${limit}`,
+				cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`,
+			].join('')
 			const result = await apiCall(
 				config,
 				'GET',
-				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}`,
+				`/api/data/query?spec=${encodeURIComponent(JSON.stringify(spec))}${paging}`,
 				undefined,
 				{ workspaceId: workspace_id },
 			)
@@ -8119,121 +8426,17 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	// create_sub_chat is the new name for create_session: one handler, two names, so
-	// prompts that still say create_session keep working.
-	for (const toolName of ['create_sub_chat', 'create_session'] as const) {
-		registerAppTool(
-			server,
-			toolName,
-			{
-				description: tools[toolName].description,
-				inputSchema: tools[toolName].inputSchema.shape,
-				_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-			},
-			async (args) => {
-				if (args.wait) return createSessionAndWait(config, args, toolName)
-
-				// `wait` never goes to the create route. The result is always sent back to
-				// the caller, with no opt-out: not waiting means not holding the call open,
-				// not never finding out how it went.
-				const { workspace_id, wait, ...rest } = args
-				const createBody = { ...rest, notify_on_complete: true }
-
-				let result: SessionRow
-				try {
-					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-						workspaceId: workspace_id,
-					})) as SessionRow
-				} catch (err) {
-					return sessionNotStartedResult(config, toolName, workspace_id, err)
-				}
-				const wsId = workspace_id ?? config.defaultWorkspaceId
-				const enriched = await enrichSessionActorName(config, wsId, result)
-				const withUrl = wsId
-					? addUrl(enriched as Record<string, unknown>, config, wsId, {
-							kind: 'session',
-							id: enriched.id,
-							actorId: (enriched as { actorId?: string }).actorId,
-						})
-					: enriched
-				return {
-					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
-					content: [
-						{
-							type: 'text' as const,
-							text: JSON.stringify({
-								...withUrl,
-								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
-							}),
-						},
-					],
-				}
-			},
-		)
-	}
-
-	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
-	// through the same wrapper as a real tool, so it gets the same tool_call row,
-	// size event, token cap and mutation event. The handler calls the wait path of
-	// create_session directly rather than the registered create_session handler,
-	// which would record a second tool_call row for one call.
-	//
-	// Argument mapping, derived from run_agent as it was before PR 1986:
-	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
-	//   workspace_id                                    filled from the default when absent
-	//   notify_on_complete                              accepted and ignored: create_session no longer
-	//                                                   takes it and registers the same fallback itself
-	//                                                   when the wait times out
-	//   config, poll_interval_seconds, timeout_seconds,
-	//   depends_on_session_ids                          no equivalent, dropped, names recorded
-	// The upstream signature accepts a raw shape; this tool passes a schema object
-	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
-	// here. It is still registered through the same wrapper as every other tool.
-	const registerWrappedSchemaTool = registerAppTool as unknown as (
-		s: typeof server,
-		name: string,
-		definition: {
-			description: string
-			inputSchema: z.ZodTypeAny
-			_meta: Record<string, unknown>
-		},
-		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
-	) => unknown
-	registerWrappedSchemaTool(
+	// create_sub_chat returns straight away; the result comes back to the caller as a new
+	// turn when the agent finishes (always on, see createSubChat).
+	registerAppTool(
 		server,
-		'run_agent',
+		'create_sub_chat',
 		{
-			description: tools.run_agent.description,
-			// The dropped key names are read in this preprocess step, before the
-			// schema strips them, and before validation, so a call that then fails
-			// validation is still counted. Same wrapper the alias rows use; this
-			// tool has no alias rows, so registerAppTool leaves the schema as given.
-			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
-				const sent =
-					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-						? (raw as Record<string, unknown>)
-						: {}
-				recordAliasUse(telemetrySink, telemetryTarget, {
-					tool_name: 'run_agent',
-					workspace_id: extractWorkspaceId(raw),
-					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
-					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
-					transport: config.transport,
-				})
-				return raw
-			}),
+			description: tools.create_sub_chat.description,
+			inputSchema: tools.create_sub_chat.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
-		async (args) => {
-			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
-			return createSessionAndWait(config, {
-				workspace_id: workspace_id ?? config.defaultWorkspaceId,
-				actor_id,
-				action_prompt,
-				spawned_by_message_id,
-				wait: true,
-			})
-		},
+		async (args) => createSubChat(config, args),
 	)
 
 	registerAppTool(
@@ -8461,9 +8664,11 @@ export function createMcpServer(config: McpConfig) {
 					'/api/integrations/resend/send',
 					{ object_id: args.object_id },
 					{ workspaceId: args.workspace_id },
-				)) as { email_id: string; from: string }
+				)) as { email_id: string; from: string; mode?: 'approved_draft' | 'direct' }
 				return reply(
-					`Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
+					sent.mode === 'direct'
+						? `Sent from ${sent.from}. Do not send it again.`
+						: `Sent from ${sent.from}: the email went out exactly as the person approved it. Do not send it again.`,
 				)
 			} catch (err) {
 				// The server words every refusal for the agent (what happened, what to do next),
@@ -10472,6 +10677,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_save_file',
+		{
+			description: tools.desktop_save_file.description,
+			inputSchema: tools.desktop_save_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/save-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_save_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

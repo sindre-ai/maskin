@@ -1,5 +1,17 @@
 import type { DataQuerySpec } from '@maskin/shared'
-import { BRIDGE_QUERY_MESSAGE, BRIDGE_RESULT_MESSAGE, VIEWER_DOC_SIZE_MESSAGE } from './mini-app'
+import {
+	BRIDGE_OPEN_MESSAGE,
+	BRIDGE_QUERY_MESSAGE,
+	BRIDGE_RESULT_MESSAGE,
+	VIEWER_DOC_SIZE_MESSAGE,
+} from './mini-app'
+import { UUID_RE } from './navigation'
+import {
+	LIST_REFUSED_MESSAGE,
+	type ListAnswer,
+	type ListSourceEntry,
+	type OpportunitiesListSource,
+} from './view-lists'
 
 // Host side of the loop-view data bridge (see the bridge section in mini-app.ts
 // for the frame side). Everything the sandboxed frame can make us do goes
@@ -8,7 +20,12 @@ import { BRIDGE_QUERY_MESSAGE, BRIDGE_RESULT_MESSAGE, VIEWER_DOC_SIZE_MESSAGE } 
 //     origin, so event.origin proves nothing);
 //   - nothing is answered once the frame is marked blocked (it navigated away);
 //   - only source names the view declared are run, with the viewer's own session
-//     (`run`), and the frame only ever gets the result back.
+//     (`run`), and the frame only ever gets the result back;
+//   - a named list (rows) is answered only when the host opts in with `allowLists`, and
+//     only from what the host chose to give (`listAnswer`), never by running anything
+//     on the frame's request. The loop page does not opt in;
+//   - an open message carries one object id and nothing else: it is used only if it is a
+//     UUID, and the host decides where that goes (never a web address from the frame).
 
 export interface BridgeHost {
 	/** The iframe's current window; compared against event.source. */
@@ -19,6 +36,14 @@ export interface BridgeHost {
 	sources: () => ReadonlyMap<string, DataQuerySpec>
 	/** Runs a declared query as the viewer. */
 	run: (spec: DataQuerySpec) => Promise<unknown>
+	/** Whether this host may answer list sources. The file viewer says yes; the loop page leaves it off and every list is refused. */
+	allowLists?: boolean
+	/** The list sources the view declared, by name. A `null` entry asked for something the app does not offer. */
+	listSources?: () => ReadonlyMap<string, ListSourceEntry>
+	/** What a list source is answered with right now. Must not fetch: rows exist only after the user's Refresh click. */
+	listAnswer?: (name: string, source: OpportunitiesListSource) => ListAnswer
+	/** Takes the viewer to this object's page. Only ever called with a UUID. */
+	onOpen?: (objectId: string) => void
 	post: (message: Record<string, unknown>) => void
 	onDocHeight: (height: number) => void
 	/** The view's content is wider than its frame: the width it needs. Optional; hosts that never scroll sideways skip it. */
@@ -70,12 +95,25 @@ export async function handleBridgeMessage(
 		}
 		return
 	}
+	if (data.type === BRIDGE_OPEN_MESSAGE) {
+		if (typeof data.id === 'string' && UUID_RE.test(data.id)) host.onOpen?.(data.id)
+		return
+	}
 	if (data.type !== BRIDGE_QUERY_MESSAGE) return
 	if (typeof data.id !== 'number' || typeof data.name !== 'string') return
 
 	const { id, name } = data
 	const spec = host.sources().get(name)
 	if (!spec) {
+		const list = host.listSources?.().get(name)
+		if (list !== undefined) {
+			if (!host.allowLists || list === null || !host.listAnswer) {
+				host.post({ type: BRIDGE_RESULT_MESSAGE, id, error: LIST_REFUSED_MESSAGE })
+				return
+			}
+			host.post({ type: BRIDGE_RESULT_MESSAGE, id, data: host.listAnswer(name, list) })
+			return
+		}
 		host.post({
 			type: BRIDGE_RESULT_MESSAGE,
 			id,

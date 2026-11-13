@@ -117,8 +117,7 @@ private struct LoopsContainer: View {
 		)
 		// Search is a button in the top bar that opens into a field and looks only through the
 		// flows on this page; it folds back into the button when dismissed.
-		.flowsSearch(text: $search, isPresented: $searchPresented)
-		.searchMinimized()
+		.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search flows")
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
@@ -127,7 +126,8 @@ private struct LoopsContainer: View {
 			actions: ShellActions(
 				new: { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
-				displayToggle: { showDisplay = true })
+				displayToggle: { showDisplay = true },
+				search: { searchPresented = true }, marketplace: { showMarketplace = true })
 		)
 		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }
 	}
@@ -228,12 +228,5 @@ struct FlowsDisplaySheet: View {
 					items: [.init(id: "summary", title: "Summary", isOn: $store.display.showsSummary)])
 			}
 		}
-	}
-}
-
-extension View {
-	/// Flows search: the system's collapsing search (iOS 26: a toolbar button that expands into the field).
-	fileprivate func flowsSearch(text: Binding<String>, isPresented: Binding<Bool>) -> some View {
-		searchable(text: text, isPresented: isPresented, prompt: "Search flows")
 	}
 }

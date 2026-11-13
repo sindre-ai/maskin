@@ -28,6 +28,7 @@ import {
 } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
+import { resolveCardFromAction } from '../services/card-resolution'
 import { relaunchChatSession } from '../services/chat-relaunch'
 import type { SessionManager } from '../services/session-manager'
 
@@ -703,6 +704,15 @@ app.openapi(allowFromChatRoute, (async (c) => {
 		return c.json(f.error, f.status)
 	}
 
+	await resolveCardFromAction(db, {
+		sessionId,
+		key: 'keychain_access_request',
+		integrationId: id,
+		byActorId: callerId,
+		at: new Date(),
+		outcome: 'done',
+	})
+
 	// The running session has no credential in its environment: stop it, and the next
 	// message starts a fresh one that does. Never fails the grant, which already committed.
 	const relaunch = await relaunchChatSession(
@@ -834,6 +844,15 @@ app.openapi(allowAccessRoute, (async (c) => {
 		const f = failure(outcome)
 		return c.json(f.error, f.status)
 	}
+	// An Allow on an agent that already had this much still answers the card.
+	await resolveCardFromAction(db, {
+		sessionId,
+		key: 'integration_access_request',
+		integrationId: id,
+		byActorId: callerId,
+		at: new Date(),
+		outcome: 'done',
+	})
 	if (outcome === 'unchanged') {
 		return c.json({ actorId: session.actorId, changed: false, relaunch: 'stopped' as const }, 200)
 	}

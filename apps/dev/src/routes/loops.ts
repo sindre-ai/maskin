@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	files,
 	objects,
 	relationships,
 	sessions,
@@ -15,9 +16,12 @@ import {
 	TERMINAL_BET_STATUSES,
 	findChange,
 	getChangesFromEventData,
+	listLoopBriefingsResponseSchema,
 	listLoopStepsResponseSchema,
 	listLoopsResponseSchema,
+	loopNextStepsResponseSchema,
 	loopTargetSchema,
+	normalizeTags,
 	readChanges,
 } from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
@@ -214,31 +218,66 @@ function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
 	return cleaned.length > 0 ? cleaned : null
 }
 
-/** Longest tag we show, and the most per loop: tags are short labels, not sentences. */
-const LOOP_TAG_MAX_LENGTH = 40
-const LOOP_TAG_MAX_COUNT = 10
-
 /**
- * Extract a loop's `metadata.tags`: the non-empty strings, trimmed, de-duplicated
- * (case-insensitively, first spelling wins) and capped. Anything else in the
- * array is dropped — same tolerance as the other metadata readers, a hand-edited
- * blob must not 500 the page.
+ * Everything the loop reads need to decide "is this member closed", for a set of loops:
+ * the per-type closed statuses, the `closed_when` rules, and the SQL predicate over the
+ * `r` (edge) and `o` (member) aliases. One builder so the loops list and the flow-page
+ * reads cannot disagree on what closed means.
  */
-function readLoopTags(meta: Record<string, unknown>): string[] {
-	const raw = meta.tags
-	if (!Array.isArray(raw)) return []
-	const seen = new Set<string>()
-	const tags: string[] = []
-	for (const entry of raw) {
-		if (typeof entry !== 'string') continue
-		const tag = entry.trim().slice(0, LOOP_TAG_MAX_LENGTH)
-		const key = tag.toLowerCase()
-		if (tag.length === 0 || seen.has(key)) continue
-		seen.add(key)
-		tags.push(tag)
-		if (tags.length >= LOOP_TAG_MAX_COUNT) break
+function buildClosedRules(loopRows: Array<{ id: string; metadata: unknown }>) {
+	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
+	const closedWhenByLoop = new Map<string, Record<string, ClosedWhenRule[]>>()
+	for (const l of loopRows) {
+		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
+		const override = readClosedStatuses(meta)
+		if (override) closedStatusOverridesByLoop.set(l.id, override)
+		const closedWhen = readClosedWhen(meta)
+		if (closedWhen) closedWhenByLoop.set(l.id, closedWhen)
 	}
-	return tags
+
+	const closedStatusesFor = (loopId: string, type: string): string[] =>
+		closedStatusOverridesByLoop.get(loopId)?.[type] ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
+	const isClosedByStatus = (loopId: string, type: string, status: string): boolean =>
+		closedStatusesFor(loopId, type).includes(status)
+
+	// "Is this member closed" as one SQL predicate over the `r` (edge) and `o`
+	// (member) aliases, built from each loop's own closed_statuses / closed_when
+	// (falling back to TERMINAL_STATUSES_BY_TYPE). Both the grouped count and
+	// the closed-member read below use it, so they cannot disagree. Statuses and
+	// rule values are bound parameters; rule field names are already restricted
+	// to SAFE_METADATA_FIELD_NAME_RE by readClosedWhen. A rule matches like
+	// matchesClosedWhen: the metadata value is that exact string.
+	const closedTerms: ReturnType<typeof sql>[] = []
+	for (const l of loopRows) {
+		const types = new Set([
+			...Object.keys(TERMINAL_STATUSES_BY_TYPE),
+			...Object.keys(closedStatusOverridesByLoop.get(l.id) ?? {}),
+			...Object.keys(closedWhenByLoop.get(l.id) ?? {}),
+		])
+		for (const type of types) {
+			const conditions: ReturnType<typeof sql>[] = []
+			const statuses = closedStatusesFor(l.id, type)
+			if (statuses.length > 0) {
+				conditions.push(
+					sql`o.status IN (${sql.join(
+						statuses.map((st) => sql`${st}`),
+						sql`, `,
+					)})`,
+				)
+			}
+			for (const rule of closedWhenByLoop.get(l.id)?.[type] ?? []) {
+				conditions.push(sql`o.metadata -> ${rule.field}::text = to_jsonb(${rule.value}::text)`)
+			}
+			if (conditions.length === 0) continue
+			closedTerms.push(
+				sql`(r.source_id = ${l.id}::uuid AND o.type = ${type} AND (${sql.join(conditions, sql` OR `)}))`,
+			)
+		}
+	}
+	const isClosedSql =
+		closedTerms.length > 0 ? sql`(${sql.join(closedTerms, sql` OR `)})` : sql`false`
+
+	return { closedStatusesFor, isClosedByStatus, closedWhenByLoop, isClosedSql }
 }
 
 const listLoopsQuerySchema = z.object({
@@ -318,57 +357,8 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// pointing at unknown ids).
 	const loopIdArray = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::uuid[]`)
 
-	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
-	const closedWhenByLoop = new Map<string, Record<string, ClosedWhenRule[]>>()
-	for (const l of loopRows) {
-		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
-		const override = readClosedStatuses(meta)
-		if (override) closedStatusOverridesByLoop.set(l.id, override)
-		const closedWhen = readClosedWhen(meta)
-		if (closedWhen) closedWhenByLoop.set(l.id, closedWhen)
-	}
-
-	const closedStatusesFor = (loopId: string, type: string): string[] =>
-		closedStatusOverridesByLoop.get(loopId)?.[type] ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
-	const isClosedByStatus = (loopId: string, type: string, status: string): boolean =>
-		closedStatusesFor(loopId, type).includes(status)
-
-	// "Is this member closed" as one SQL predicate over the `r` (edge) and `o`
-	// (member) aliases, built from each loop's own closed_statuses / closed_when
-	// (falling back to TERMINAL_STATUSES_BY_TYPE). Both the grouped count and
-	// the closed-member read below use it, so they cannot disagree. Statuses and
-	// rule values are bound parameters; rule field names are already restricted
-	// to SAFE_METADATA_FIELD_NAME_RE by readClosedWhen. A rule matches like
-	// matchesClosedWhen: the metadata value is that exact string.
-	const closedTerms: ReturnType<typeof sql>[] = []
-	for (const l of loopRows) {
-		const types = new Set([
-			...Object.keys(TERMINAL_STATUSES_BY_TYPE),
-			...Object.keys(closedStatusOverridesByLoop.get(l.id) ?? {}),
-			...Object.keys(closedWhenByLoop.get(l.id) ?? {}),
-		])
-		for (const type of types) {
-			const conditions: ReturnType<typeof sql>[] = []
-			const statuses = closedStatusesFor(l.id, type)
-			if (statuses.length > 0) {
-				conditions.push(
-					sql`o.status IN (${sql.join(
-						statuses.map((st) => sql`${st}`),
-						sql`, `,
-					)})`,
-				)
-			}
-			for (const rule of closedWhenByLoop.get(l.id)?.[type] ?? []) {
-				conditions.push(sql`o.metadata -> ${rule.field}::text = to_jsonb(${rule.value}::text)`)
-			}
-			if (conditions.length === 0) continue
-			closedTerms.push(
-				sql`(r.source_id = ${l.id}::uuid AND o.type = ${type} AND (${sql.join(conditions, sql` OR `)}))`,
-			)
-		}
-	}
-	const isClosedSql =
-		closedTerms.length > 0 ? sql`(${sql.join(closedTerms, sql` OR `)})` : sql`false`
+	const { closedStatusesFor, isClosedByStatus, closedWhenByLoop, isClosedSql } =
+		buildClosedRules(loopRows)
 
 	// Counts come from one grouped query: members bucketed by loop, closed or not,
 	// never one row per member. Loops can hold thousands of members.
@@ -606,7 +596,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 					? meta.close_condition
 					: null
 			const targets = readLoopTargets(meta)
-			const tags = readLoopTags(meta)
+			const tags = normalizeTags(meta.tags)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -951,5 +941,258 @@ app.openapi(loopStepsRoute, (async (c) => {
 
 	return c.json({ steps })
 }) as RouteHandler<typeof loopStepsRoute, Env>)
+
+/** Open members the Next steps tile lists; the full open count is `inProgressCount`. */
+const NEXT_STEP_ITEM_LIMIT = 10
+
+/** Briefing pages the Briefings tile lists. Matches the For you row. */
+const FLOW_BRIEFING_LIMIT = 24
+
+/**
+ * `GET /api/loops/:id/next-steps` — the flow page's Next steps tile, derived on read from
+ * what the flow already has, nothing stored. First the asks: steps with sessions in
+ * `waiting_for_input` (the same predicate as `/steps`, the list's `waitingCount` and the
+ * ask banner), most waiting first. Then the newest open members, using the flow's own
+ * closed rules so "open" matches `inProgressCount`.
+ */
+const loopNextStepsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/next-steps',
+	tags: ['loops'],
+	summary: 'Next steps for one loop: asks waiting first, then open members',
+	description:
+		'Returns `asks` (steps with sessions waiting on a person, most waiting first) and `items` (the newest open members of the loop, capped at 10). Both are empty for a loop with nothing to do, no steps, or an unknown id (a foreign loop returns empty without leaking existence).',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Next steps (may be empty)',
+			content: { 'application/json': { schema: loopNextStepsResponseSchema } },
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopNextStepsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ id: objects.id, metadata: objects.metadata })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+	if (!loop) return c.json({ asks: [], items: [] })
+
+	const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+	const raw = meta.trigger_ids
+	const triggerIds = Array.isArray(raw)
+		? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+
+	// Asks: steps with sessions waiting on a person.
+	const pendingRows =
+		triggerIds.length > 0
+			? await db
+					.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.workspaceId, workspaceId),
+							inArray(sessions.triggerId, triggerIds),
+							eq(sessions.status, 'waiting_for_input'),
+						),
+					)
+					.groupBy(sessions.triggerId)
+			: []
+	const pendingByTrigger = new Map<string, number>()
+	for (const r of pendingRows) {
+		if (r.triggerId && r.count > 0) pendingByTrigger.set(r.triggerId, r.count)
+	}
+
+	let asks: Array<{
+		triggerId: string
+		triggerName: string | null
+		agent: { id: string; name: string | null; description: string | null } | null
+		pendingCount: number
+	}> = []
+	if (pendingByTrigger.size > 0) {
+		const triggerRows = await db
+			.select({ id: triggers.id, name: triggers.name, targetActorId: triggers.targetActorId })
+			.from(triggers)
+			.where(
+				and(
+					eq(triggers.workspaceId, workspaceId),
+					inArray(triggers.id, [...pendingByTrigger.keys()]),
+				),
+			)
+		const triggerById = new Map(triggerRows.map((t) => [t.id, t]))
+		const agentIds = triggerRows.flatMap((t) => (t.targetActorId ? [t.targetActorId] : []))
+		const agentRows =
+			agentIds.length > 0
+				? await db
+						.select({ id: actors.id, name: actors.name, description: actors.description })
+						.from(actors)
+						.innerJoin(
+							workspaceMembers,
+							and(
+								eq(workspaceMembers.actorId, actors.id),
+								eq(workspaceMembers.workspaceId, workspaceId),
+							),
+						)
+						.where(inArray(actors.id, agentIds))
+				: []
+		const agentById = new Map(agentRows.map((a) => [a.id, a]))
+		// Spine order breaks ties between steps with the same number waiting.
+		asks = triggerIds
+			.flatMap((id, position) => {
+				const trigger = triggerById.get(id)
+				const pendingCount = pendingByTrigger.get(id)
+				if (!trigger || !pendingCount) return []
+				return [
+					{
+						position,
+						triggerId: id,
+						triggerName: trigger.name,
+						agent: trigger.targetActorId ? (agentById.get(trigger.targetActorId) ?? null) : null,
+						pendingCount,
+					},
+				]
+			})
+			.sort((a, b) => b.pendingCount - a.pendingCount || a.position - b.position)
+			.map(({ position: _position, ...ask }) => ask)
+	}
+
+	// Items: the newest open members. A NULL from a `closed_when` rule on a member without
+	// that field counts as open, the same way the grouped count in the list buckets it.
+	const { isClosedSql } = buildClosedRules([loop])
+	const openRows = await db.execute<{
+		id: string
+		type: string
+		title: string | null
+		status: string
+	}>(
+		sql`
+			SELECT o.id, o.type, o.title, o.status
+			FROM ${relationships} r
+			JOIN ${objects} o ON o.id = r.target_id
+			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+				AND r.source_id = ${loopId}::uuid
+				AND o.workspace_id = ${workspaceId}
+				AND ${isClosedSql} IS NOT TRUE
+			ORDER BY o.updated_at DESC, o.id
+			LIMIT ${NEXT_STEP_ITEM_LIMIT}
+		`,
+	)
+	const items = openRows.map((row) => ({
+		id: row.id,
+		type: row.type,
+		title: row.title,
+		status: row.status,
+	}))
+
+	return c.json({ asks, items })
+}) as RouteHandler<typeof loopNextStepsRoute, Env>)
+
+/**
+ * `GET /api/loops/:id/briefings` — the flow page's Briefings tile. A briefing is a file of
+ * kind `briefing` (the same marker For you reads), linked to a flow by an `attached` edge
+ * from the flow itself or from one of its members (`in_loop`), which is how an agent
+ * publishes what a flow produced. One query, newest first, each page once. When a page is
+ * attached to both the flow and a member, the flow wins as its source.
+ */
+const loopBriefingsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/briefings',
+	tags: ['loops'],
+	summary: 'Briefing pages attached to one loop or its members',
+	description:
+		'Returns the loop\'s briefing pages (files of kind "briefing" attached to the loop or to one of its members), newest first, each page once, capped at 24. Empty for a loop with none or an unknown id (a foreign loop returns empty without leaking existence).',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Briefing pages (may be empty)',
+			content: { 'application/json': { schema: listLoopBriefingsResponseSchema } },
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopBriefingsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ id: objects.id })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+	if (!loop) return c.json({ briefings: [] })
+
+	const rows = await db.execute<{
+		id: string
+		name: string
+		mime_type: string
+		updated_at: string | Date
+		source_id: string
+		source_title: string | null
+	}>(
+		sql`
+			SELECT * FROM (
+				SELECT DISTINCT ON (f.id)
+					f.id, f.name, f.mime_type, f.updated_at,
+					o.id AS source_id, o.title AS source_title
+				FROM ${files} f
+				JOIN ${relationships} r
+					ON r.target_id = f.id
+					AND r.target_type = 'file'
+					AND r.source_type = 'object'
+					AND r.type = 'attached'
+				JOIN ${objects} o ON o.id = r.source_id AND o.workspace_id = ${workspaceId}
+				WHERE f.workspace_id = ${workspaceId}
+					AND f.kind = 'briefing'
+					AND (
+						r.source_id = ${loopId}::uuid
+						OR r.source_id IN (
+							SELECT m.target_id FROM ${relationships} m
+							WHERE m.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
+								AND m.source_id = ${loopId}::uuid
+						)
+					)
+				ORDER BY f.id, (r.source_id = ${loopId}::uuid) DESC, r.created_at
+			) pages
+			ORDER BY updated_at DESC, id
+			LIMIT ${FLOW_BRIEFING_LIMIT}
+		`,
+	)
+
+	return c.json({
+		briefings: rows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			mimeType: row.mime_type,
+			updatedAt: new Date(row.updated_at).toISOString(),
+			sourceId: row.source_id,
+			sourceTitle: row.source_title,
+		})),
+	})
+}) as RouteHandler<typeof loopBriefingsRoute, Env>)
 
 export default app

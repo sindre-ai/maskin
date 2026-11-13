@@ -2,21 +2,27 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	type FileViewerZoomMode,
 	trackFileViewerPageNavigated,
 	trackFileViewerZoomUsed,
 } from '@/lib/analytics'
-import type { FileDetail } from '@/lib/api'
+import { type FileDetail, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { base64ToBytes, decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
+import { handleBridgeMessage } from '@/lib/loop-view-bridge'
 import {
+	ISOLATION_LOAD_MESSAGE,
 	VIEWER_DOC_SIZE_MESSAGE,
 	VIEWER_GOTO_PAGE_MESSAGE,
 	VIEWER_PAGE_MESSAGE,
 	VIEWER_WHEEL_MESSAGE,
+	prepareIsolatedViewHtml,
 	prepareViewerHtml,
+	readViewSources,
 } from '@/lib/mini-app'
+import type { ListSourceEntry } from '@/lib/view-lists'
 import {
 	type Size,
 	ZOOM_MAX,
@@ -34,6 +40,7 @@ import {
 	type ViewerVariantOverride,
 	resolveViewerVariant,
 } from '@/lib/viewer-detect'
+import { useNavigate } from '@tanstack/react-router'
 import {
 	AlertTriangle,
 	ChevronLeft,
@@ -56,6 +63,9 @@ import {
 	isPlainText,
 } from './file-body'
 import { ThumbnailRail } from './thumbnail-rail'
+import { ViewRefreshBar, useViewRefresh } from './view-refresh'
+
+const NO_LISTS: ReadonlyMap<string, ListSourceEntry> = new Map()
 
 // 8 seconds is the spec's `iframe-blocked` timeout: the sandboxed frame that
 // never posts a doc-size message (agent CSP that blocks the reporter, empty
@@ -242,6 +252,7 @@ function HtmlViewerStage({
 	pins?: StagePin[]
 	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
 }) {
+	const navigate = useNavigate()
 	const html = useMemo(() => fileText(file), [file])
 	// Variant resolution (viewer-detect.ts) decides which render path applies:
 	// `deck` gets a paging controller; `mockup` renders in a preset-sized frame
@@ -252,10 +263,34 @@ function HtmlViewerStage({
 	)
 	const isPaged = variant === 'deck'
 	const isMockup = variant === 'mockup'
-	const srcDoc = useMemo(() => prepareViewerHtml(html, { paged: isPaged }), [html, isPaged])
+	// Living views (flag living-view-refresh): a file that names lists in its maskin-sources
+	// block is shown through the data bridge, on the isolation frame (the same document the
+	// loop page builds), with a Refresh button above it. A deck keeps the paged document, so
+	// it never gets the bridge. With the flag off nothing here runs and the document is the
+	// one below, as before.
+	const livingViewFlag = useFeatureFlag('living-view-refresh')
+	const viewSources = useMemo(
+		() => (livingViewFlag ? readViewSources(html) : null),
+		[livingViewFlag, html],
+	)
+	const lists = viewSources?.ok ? viewSources.lists : NO_LISTS
+	const showRefreshBar = lists.size > 0
+	const bridged = showRefreshBar && !isPaged
+	const refresh = useViewRefresh(file.workspaceId, file.id, lists)
+	const srcDoc = useMemo(
+		() =>
+			bridged
+				? prepareIsolatedViewHtml(html, { forwardWheel: true })
+				: prepareViewerHtml(html, { paged: isPaged }),
+		[html, isPaged, bridged],
+	)
 
 	const viewportRef = useRef<HTMLDivElement>(null)
 	const iframeRef = useRef<HTMLIFrameElement>(null)
+	// A bridged view runs one frame inside the iframe we render, so its size and wheel
+	// messages come from that inner window rather than from the iframe itself.
+	const bridgedRef = useRef(bridged)
+	bridgedRef.current = bridged
 
 	// Natural document size reported by the injected doc-size reporter (see
 	// prepareViewerHtml in mini-app.ts). `null` = not yet reported, so the
@@ -302,7 +337,10 @@ function HtmlViewerStage({
 	useEffect(() => {
 		function onMessage(event: MessageEvent) {
 			const iframe = iframeRef.current
-			if (!iframe || event.source !== iframe.contentWindow) return
+			if (!iframe) return
+			const viewFrame = bridgedRef.current ? iframe.contentWindow?.frames[0] : undefined
+			if (event.source !== iframe.contentWindow && (!viewFrame || event.source !== viewFrame))
+				return
 			const data = event.data as {
 				type?: string
 				w?: number
@@ -346,6 +384,65 @@ function HtmlViewerStage({
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
 	}, [])
+
+	// The data bridge host for a living view (see loop-view-bridge.ts for what it will and
+	// will not answer). The viewer answers count sources as the loop page does, and list
+	// sources only from the rows the Refresh button fetched: it never fetches on a frame's
+	// request, on open or on a timer. A view that loads a second time has navigated itself
+	// away; that is a tripwire, not protection (see the header of mini-app.ts), so the stage
+	// stops answering it and shows the blocked tile.
+	const viewLoadsRef = useRef(0)
+	const viewBlockedRef = useRef(false)
+	const answerList = refresh.answer
+	// A layout effect, so the count is reset before the new frame can report its first load.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new document or a replaced frame starts with no loads
+	useLayoutEffect(() => {
+		viewLoadsRef.current = 0
+		viewBlockedRef.current = false
+	}, [srcDoc, refresh.generation])
+	useEffect(() => {
+		if (!bridged || !viewSources?.ok) return
+		const { sources, lists: declaredLists } = viewSources
+		const viewWindow = () => iframeRef.current?.contentWindow?.frames[0] ?? null
+		function onMessage(event: MessageEvent) {
+			const iframe = iframeRef.current
+			if (
+				iframe &&
+				event.source === iframe.contentWindow &&
+				(event.data as { type?: unknown } | null)?.type === ISOLATION_LOAD_MESSAGE
+			) {
+				viewLoadsRef.current += 1
+				if (viewLoadsRef.current > 1) {
+					viewBlockedRef.current = true
+					setBlocked(true)
+				}
+				return
+			}
+			void handleBridgeMessage(
+				{
+					frameWindow: viewWindow,
+					isBlocked: () => viewBlockedRef.current,
+					sources: () => sources,
+					allowLists: true,
+					listSources: () => declaredLists,
+					run: (spec) => api.data.query(file.workspaceId, spec),
+					listAnswer: (name, source) => answerList(name, source),
+					onOpen: (objectId) =>
+						navigate({
+							to: '/$workspaceId/objects/$objectId',
+							params: { workspaceId: file.workspaceId, objectId },
+						}),
+					post: (message) => viewWindow()?.postMessage(message, '*'),
+					// The stage sizes itself from the doc-size message in its own listener above.
+					onDocHeight: () => {},
+					onQueryError: () => {},
+				},
+				event,
+			)
+		}
+		window.addEventListener('message', onMessage)
+		return () => window.removeEventListener('message', onMessage)
+	}, [bridged, viewSources, file.workspaceId, answerList, navigate])
 
 	// Iframe-blocked timeout. Starts on mount / srcDoc change; cancelled the
 	// moment the first doc-size message lands (which is proof the reporter ran).
@@ -662,6 +759,13 @@ function HtmlViewerStage({
 				aria-label={`Viewer for ${file.name}`}
 				data-viewer-state={blocked ? 'iframe-blocked' : fitSize ? 'ready' : 'loading'}
 			>
+				{showRefreshBar && (
+					<ViewRefreshBar
+						refresh={refresh}
+						fileUpdatedAt={Date.parse(file.updatedAt) || null}
+						canRefresh={bridged && !blocked}
+					/>
+				)}
 				{blocked ? (
 					<IframeBlockedFallback file={file} />
 				) : (
@@ -715,6 +819,8 @@ function HtmlViewerStage({
 								}}
 							>
 								<iframe
+									// A Refresh replaces the frame so the view asks again and draws the new rows.
+									key={bridged ? refresh.generation : undefined}
 									ref={iframeRef}
 									title={`Preview of ${file.name}`}
 									srcDoc={srcDoc}

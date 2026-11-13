@@ -81,6 +81,36 @@ export const liveActivityTokenResponseSchema = z.object({
 	updated_at: z.string(),
 })
 
+/** Register the card of a run the person chose to follow (the opt-in "Following an agent" activity). */
+export const registerLiveActivityFollowSchema = z.object({
+	/** The `id` returned by POST /api/devices — the token's APNs environment comes from that row. */
+	device_id: z.string().uuid(),
+	/** The run being followed: the `sessionId` of the working banner the person tapped Follow on. */
+	session_id: z.string().uuid(),
+	/** The push token of the card the app just started (ActivityKit `pushTokenUpdates`). */
+	token: liveActivityTokenSchema,
+})
+
+export const liveActivityFollowResponseSchema = z.object({
+	id: z.string().uuid(),
+	device_id: z.string().uuid(),
+	session_id: z.string().uuid(),
+	workspace_id: z.string().uuid(),
+	updated_at: z.string(),
+})
+
+/**
+ * The ActivityKit `ContentState` of the opt-in follow card (`FollowActivityState`): a Codable
+ * contract. `doing` is the agent's latest step; `startedAt` is Swift reference seconds.
+ */
+export const liveActivityFollowContentStateSchema = z.object({
+	agentName: z.string(),
+	topic: z.string().optional(),
+	doing: z.string(),
+	startedAt: z.number(),
+	phase: z.enum(['following', 'finished']),
+})
+
 /** One row of the "Agents working" card: the Swift `WorkingAgent` Codable contract. */
 export const liveActivityWorkingAgentSchema = z.object({
 	id: z.string(),
@@ -107,6 +137,9 @@ export const liveActivityContentStateSchema = z.object({
 export type RegisterLiveActivityTokenInput = z.infer<typeof registerLiveActivityTokenSchema>
 export type LiveActivityTokenResponse = z.infer<typeof liveActivityTokenResponseSchema>
 export type LiveActivityContentState = z.infer<typeof liveActivityContentStateSchema>
+export type RegisterLiveActivityFollowInput = z.infer<typeof registerLiveActivityFollowSchema>
+export type LiveActivityFollowResponse = z.infer<typeof liveActivityFollowResponseSchema>
+export type LiveActivityFollowContentState = z.infer<typeof liveActivityFollowContentStateSchema>
 
 export type RegisterDeviceInput = z.infer<typeof registerDeviceSchema>
 export type UnregisterDeviceInput = z.infer<typeof unregisterDeviceSchema>

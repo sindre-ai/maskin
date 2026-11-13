@@ -26,21 +26,31 @@ export function Origin({
 	object,
 	relationships,
 	workspaceId,
+	variant = 'block',
+	expanded: controlledExpanded,
+	onToggle,
 }: {
 	object: Pick<ObjectResponse, 'id'>
 	relationships: RelationshipResponse[]
 	workspaceId: string
+	/** `text` is the quiet "Spawned by <name>, <age> ago" line the page draws on its meta row. The
+	 *  host owns the open state (`expanded`, `onToggle`) and draws the panel with `OriginPanel`. */
+	variant?: 'block' | 'text'
+	expanded?: boolean
+	onToggle?: () => void
 }) {
-	const lineage = useMemo(
-		() => resolveLineage(relationships, object.id),
-		[relationships, object.id],
-	)
-	const { data: actors } = useActors(workspaceId, { enabled: !!lineage })
-	const [expanded, setExpanded] = useState(false)
+	const { lineage, agent } = useOriginLineage(object, relationships, workspaceId)
+	const [ownExpanded, setOwnExpanded] = useState(false)
+	const expanded = controlledExpanded ?? ownExpanded
+	const toggle = onToggle ?? (() => setOwnExpanded((prev) => !prev))
 
 	if (!lineage) return null
 
-	const agent = actors?.find((a) => a.id === lineage.sessionActorId)
+	if (variant === 'text') {
+		return (
+			<OriginText lineage={lineage} agentName={agent?.name} expanded={expanded} onToggle={toggle} />
+		)
+	}
 
 	return (
 		<OriginBlock
@@ -49,9 +59,51 @@ export function Origin({
 			agentType={agent?.type}
 			workspaceId={workspaceId}
 			expanded={expanded}
-			onToggle={() => setExpanded((prev) => !prev)}
+			onToggle={toggle}
 		/>
 	)
+}
+
+/** The expanded Chat | Session card for the `text` variant, drawn below the meta row. */
+export function OriginPanel({
+	object,
+	relationships,
+	workspaceId,
+	expanded,
+	onToggle,
+}: {
+	object: Pick<ObjectResponse, 'id'>
+	relationships: RelationshipResponse[]
+	workspaceId: string
+	expanded: boolean
+	onToggle: () => void
+}) {
+	const { lineage, agent } = useOriginLineage(object, relationships, workspaceId)
+	if (!lineage || !expanded) return null
+	return (
+		<OriginBlock
+			lineage={lineage}
+			agentName={agent?.name}
+			agentType={agent?.type}
+			workspaceId={workspaceId}
+			expanded
+			onToggle={onToggle}
+		/>
+	)
+}
+
+function useOriginLineage(
+	object: Pick<ObjectResponse, 'id'>,
+	relationships: RelationshipResponse[],
+	workspaceId: string,
+) {
+	const lineage = useMemo(
+		() => resolveLineage(relationships, object.id),
+		[relationships, object.id],
+	)
+	const { data: actors } = useActors(workspaceId, { enabled: !!lineage })
+	const agent = actors?.find((a) => a.id === lineage?.sessionActorId)
+	return { lineage, agent }
 }
 
 interface Lineage {
@@ -118,6 +170,50 @@ function coerceMessageId(metadata: Record<string, unknown> | null | undefined): 
 	if (typeof raw === 'number' && Number.isFinite(raw)) return raw
 	if (typeof raw === 'string' && /^\d+$/.test(raw)) return Number(raw)
 	return null
+}
+
+function OriginText({
+	lineage,
+	agentName,
+	expanded,
+	onToggle,
+}: {
+	lineage: Lineage
+	agentName?: string
+	expanded: boolean
+	onToggle: () => void
+}) {
+	return (
+		<button
+			type="button"
+			aria-expanded={expanded}
+			aria-label="Show where this came from"
+			onClick={onToggle}
+			data-origin-text
+			className={cn(
+				'inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[12px] text-muted-foreground',
+				'transition-colors duration-180 ease-standard hover:bg-secondary hover:text-foreground',
+				'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+			)}
+		>
+			<span className="truncate">
+				Spawned by {agentName ?? 'an agent'}
+				{lineage.spawnedAt && (
+					<>
+						, <RelativeTime date={lineage.spawnedAt} className="inline" />
+					</>
+				)}
+			</span>
+			<ChevronDown
+				size={12}
+				aria-hidden
+				className={cn(
+					'shrink-0 transition-transform duration-180 ease-standard',
+					expanded && 'rotate-180',
+				)}
+			/>
+		</button>
+	)
 }
 
 function OriginBlock({

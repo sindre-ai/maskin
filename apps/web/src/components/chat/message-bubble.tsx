@@ -18,15 +18,18 @@ import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useConversation, useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
+import { useToggleReaction } from '@/hooks/use-message-reactions'
 import { useObject } from '@/hooks/use-objects'
 import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { isFailedReply } from '@/lib/failed-turns'
 import {
 	type GithubTarget,
 	type OwnCard,
@@ -39,7 +42,8 @@ import {
 	settingsChipText,
 	splitOwnLinks,
 } from '@/lib/linked-objects'
-import { type TagSegment, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
+import { hasMarkdownSyntax } from '@/lib/markdown-syntax'
+import { type TagSegment, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
@@ -70,8 +74,9 @@ import { KeychainRequestCard } from './keychain-request-card'
 import { McpServerRequestCard } from './mcp-server-request-card'
 import { type MessageAttachmentItem, MessageAttachments } from './message-attachments'
 import { MessageDivider } from './message-divider'
+import { ReactButton, ReactionChips } from './message-reactions'
 import { QuestionOptions } from './question-options'
-import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { type MessageSpawnInfo, SpawnChip } from './spawn-indicator'
 import { TagChip } from './tag-chip'
 import { useThreadsPane } from './threads-context'
 import { VoiceMessageMetaTag } from './voice-call-boundary'
@@ -104,6 +109,12 @@ interface MessageBubbleProps {
 	onRetried?: (message: MessageResponse) => void
 	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
 	onReplyInThread?: () => void
+	/**
+	 * Opens the edit card, as if the pencil was tapped (the up arrow in the empty message box).
+	 * A request that was already there when the bubble mounted does nothing, so an old one
+	 * cannot pop the card open when the message scrolls back into view.
+	 */
+	editRequestNonce?: number
 }
 
 // With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
@@ -131,10 +142,12 @@ export function MessageBubble({
 	updatedLinkedObjectIds,
 	onRetried,
 	onReplyInThread,
+	editRequestNonce,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const enterprise = useIsEnterpriseWorkspace()
 	const isOwn = message.actorId === actor?.id
+	const chatFormatting = useFeatureFlag('chat-formatting')
 	// Present only under the chat route, which owns the Threads pane. Without
 	// it the handoff falls back to the strip, whose rows link out instead.
 	const threadsPane = useThreadsPane()
@@ -159,6 +172,14 @@ export function MessageBubble({
 		() => (conversation?.participants ?? []).map((p) => p.actorId),
 		[conversation],
 	)
+	const handledEditNonceRef = useRef(editRequestNonce)
+	useEffect(() => {
+		if (editRequestNonce === undefined || editRequestNonce === handledEditNonceRef.current) return
+		handledEditNonceRef.current = editRequestNonce
+		if (!canAct || !canWrite) return
+		editMessage.reset()
+		setEditing(true)
+	}, [editRequestNonce, canAct, canWrite, editMessage.reset])
 	// Focus goes back to the pencil once the edit card closes, whether it saved or not.
 	const pencilRef = useRef<HTMLButtonElement | null>(null)
 	const wasEditing = useRef(false)
@@ -167,6 +188,18 @@ export function MessageBubble({
 		wasEditing.current = editing
 	}, [editing])
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
+	// Reacting is a write; a viewer keeps the button and the chips, switched off. Only a real,
+	// persisted message can be reacted to (not an optimistic bubble, not a system row).
+	const { toggle: toggleReaction } = useToggleReaction(message.conversationId, workspaceId)
+	// Not an optimistic bubble, a system row, a deleted message or an agent's failed-turn notice.
+	const canReact =
+		message.id > 0 && message.kind === 'message' && !message.deletedAt && !isFailedReply(message)
+	// A deleted message keeps no chips.
+	const reactions = message.deletedAt ? undefined : message.reactions
+	const onToggleReaction = (emoji: string) => toggleReaction(message.id, emoji)
+	// The picker is portaled out of the action row, so the row cannot count on focus-within or
+	// hover to stay visible while it is open.
+	const [reactionPickerOpen, setReactionPickerOpen] = useState(false)
 	const attachments = message.metadata?.attachments ?? []
 	// Resolve the file record for each attachment so the bubble renders the real
 	// filename — the metadata `name` is best-effort and older / MCP-posted
@@ -218,10 +251,7 @@ export function MessageBubble({
 	// text, and keeps the "You mentioned" row. Once any tag sits in the text the row is gone, so an
 	// id left over (a thread reply's default recipient) is not shown as a mention above words that
 	// tag someone else.
-	const tagActors = useMemo(
-		() => (workspaceActors ?? []).filter((a) => !a.isSystem),
-		[workspaceActors],
-	)
+	const tagActors = useMemo(() => (workspaceActors ?? []).filter(isTaggable), [workspaceActors])
 	const tagLabelOf = useMemo(() => {
 		const byId = new Map(tagActors.map((a) => [a.id, a]))
 		return (id: string) => {
@@ -243,10 +273,15 @@ export function MessageBubble({
 		}
 	}, [placedParts, mentions, tagLabelOf])
 
+	// Formatting you typed (bold, a list, a table) is drawn by the same renderer as everyone else's
+	// messages, so it is a block of its own and not a line of words to fit the bubble to.
+	const formatted =
+		chatFormatting && isOwn && !editing && !cardOnly && hasMarkdownSyntax(shownContent)
 	// Your own words with a bubble: its column shrinks to the widest line of text, and lifted
 	// attachments take the same width. Editing, a message with no text and a message with a card
 	// (which has its own width) keep the full layout.
-	const fitText = isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard
+	const fitText =
+		isOwn && !editing && message.content.length > 0 && !cardOnly && !holdsCard && !formatted
 	const { columnRef, plateRef, textRef } = useFitTextWidth({
 		enabled: fitText,
 		minWidth: attachments.length > 0 ? MIN_FIT_WIDTH : 0,
@@ -325,15 +360,12 @@ export function MessageBubble({
 					)}
 				>
 					{fitText && liftedAttachments ? (
-						<div className={cn('w-full', spawnInfo && 'pr-2')}>{liftedAttachments}</div>
+						<div className={'w-full'}>{liftedAttachments}</div>
 					) : (
 						liftedAttachments
 					)}
 					{hasPlate ? (
 						<>
-							{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
-				    (`pr-2`) and owns the absolute placement, so the bar sits flush
-				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
 									// While fitting, the column above carries the width cap. The edit card takes the row,
@@ -348,11 +380,9 @@ export function MessageBubble({
 												: holdsCard
 													? 'relative w-[min(520px,88%)]'
 													: 'relative max-w-[min(560px,80%)]',
-									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
 							>
-								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
 								<div
 									ref={plateRef}
 									className={
@@ -382,6 +412,28 @@ export function MessageBubble({
 											onSave={saveEdit}
 											onCancel={() => setEditing(false)}
 										/>
+									) : formatted ? (
+										<div className="min-w-0 break-words [&_li]:text-foreground [&_p]:text-[15px] [&_p]:leading-[1.4] [&_p]:text-foreground [&_.maskin-prose>:first-child]:mt-0 [&_.maskin-prose>:last-child]:mb-0 [&_table]:mb-0">
+											<MarkdownContent
+												content={shownContent}
+												size="sm"
+												mentionActors={tagActors}
+												taggedActorIds={mentions}
+												selfActorId={actor?.id ?? null}
+												linkedCards={{
+													workspaceId,
+													enterprise,
+													conversationId: message.conversationId,
+													agentId: message.actorId,
+													skipIds: shownLinkedObjectIds,
+													updatedIds: updatedLinkedObjectIds,
+													renderCard: renderLinkedCard,
+													renderChip: renderLinkedChip,
+													renderGithubChip: renderLinkedGithubChip,
+													renderSettingsChip: renderLinkedSettingsChip,
+												}}
+											/>
+										</div>
 									) : message.content.length > 0 ? (
 										// `break-words` is load-bearing next to the column's `min-w-0`:
 										// `min-w-0` bounds the box, this bounds the ink. Without it an
@@ -402,6 +454,13 @@ export function MessageBubble({
 					) : null}
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
+				<ReactionChips
+					reactions={reactions}
+					meId={actor?.id}
+					onToggle={onToggleReaction}
+					disabled={!canWrite}
+					className="justify-end"
+				/>
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
 				    ship gate asserts plain visibility at 375px. */}
@@ -435,6 +494,16 @@ export function MessageBubble({
 						>
 							<MessageSquareReply size={12} aria-hidden />
 						</button>
+					) : null}
+					{canReact && !editing ? (
+						<ViewerTooltip>
+							<ReactButton
+								reactions={reactions}
+								onToggle={onToggleReaction}
+								disabled={!canWrite}
+								onOpenChange={setReactionPickerOpen}
+							/>
+						</ViewerTooltip>
 					) : null}
 					{canAct && !editing ? (
 						<>
@@ -483,16 +552,9 @@ export function MessageBubble({
 				type={message.actorType ?? 'agent'}
 				id={message.actorId}
 				size="md"
-				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+				className="mt-0.5 size-[30px] shrink-0"
 			/>
-			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
-				{spawnInfo ? (
-					// S2 · agent-side messages can also spawn sessions (an agent that
-					// hands off work to a spawned session); render the same marker
-					// they'd see on their own bubble. Absolute-positioned in a gutter
-					// the column reserves, so it stays inside the column's box.
-					<SpawnBar className="absolute right-0 top-0 h-full" />
-				) : null}
+			<div className={'relative min-w-0 flex-1'}>
 				<div className="flex items-baseline gap-1.5">
 					{message.actorType === 'agent' && message.actorId ? (
 						<Link
@@ -555,6 +617,7 @@ export function MessageBubble({
 						questionMessageId={message.id}
 						question={message.metadata.question}
 						answered={questionAnswered}
+						threadRootId={message.threadRootId}
 					/>
 				) : null}
 				{/* An agent's connect_integration call, surfaced as a Connect card. Like
@@ -677,9 +740,19 @@ export function MessageBubble({
 					</div>
 				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
-				{canCopy || canReply ? (
+				<ReactionChips
+					reactions={reactions}
+					meId={actor?.id}
+					onToggle={onToggleReaction}
+					disabled={!canWrite}
+					className="mt-1.5"
+				/>
+				{canCopy || canReply || canReact ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100"
+						className={cn(
+							'mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100 any-pointer-coarse:opacity-100',
+							reactionPickerOpen && 'opacity-100',
+						)}
 						aria-label="Message actions"
 					>
 						{canCopy ? (
@@ -701,6 +774,16 @@ export function MessageBubble({
 							>
 								<MessageSquareReply size={12} aria-hidden />
 							</button>
+						) : null}
+						{canReact ? (
+							<ViewerTooltip>
+								<ReactButton
+									reactions={reactions}
+									onToggle={onToggleReaction}
+									disabled={!canWrite}
+									onOpenChange={setReactionPickerOpen}
+								/>
+							</ViewerTooltip>
 						) : null}
 						{canRetryAgent ? (
 							<ViewerTooltip>

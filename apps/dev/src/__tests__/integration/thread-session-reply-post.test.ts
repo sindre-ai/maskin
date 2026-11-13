@@ -180,6 +180,7 @@ describe('A thread session posting into the chat (Integration)', () => {
 		await vi.waitFor(() => expect(track).toHaveBeenCalledTimes(1))
 		expect(lastReported()).toMatchObject({
 			sessionThreadRootId: null,
+			// An interim post from a top-level turn stays on the main timeline.
 			replyThreadRootId: null,
 			originThreadRootId: null,
 			path: 'session',

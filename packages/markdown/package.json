@@ -29,6 +29,10 @@
 			"types": "./src/react/editor.tsx",
 			"default": "./dist/react/editor.js"
 		},
+		"./react/composer": {
+			"types": "./src/react/composer.tsx",
+			"default": "./dist/react/composer.js"
+		},
 		"./extensions": {
 			"types": "./src/extensions.ts",
 			"default": "./dist/extensions.js"
@@ -48,6 +52,10 @@
 		"./react/slash-command": {
 			"types": "./src/react/slash-command.ts",
 			"default": "./dist/react/slash-command.js"
+		},
+		"./react/emoji-suggestion": {
+			"types": "./src/react/emoji-suggestion.ts",
+			"default": "./dist/react/emoji-suggestion.js"
 		}
 	},
 	"scripts": {

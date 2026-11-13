@@ -71,6 +71,11 @@ public final class ChatComposerModel {
 	public var notice: String?
 	/// The message being replied to or edited, shown as a strip inside the bar (7-Chat §1).
 	public private(set) var quote: Quote?
+	/// Set by a chat host: a message over the cap is sent as a short body plus the full text as a
+	/// file (`takeLong`), instead of being blocked. Hosts that send something else (a comment) leave it off.
+	public var splitsLongMessages = false
+	/// The long message's file is uploading; Send stays off so it cannot go twice.
+	public private(set) var isSplitting = false
 
 	/// "Replying to Forge" / "Editing message" with the quoted text on one line.
 	public struct Quote: Equatable, Sendable {
@@ -130,20 +135,42 @@ public final class ChatComposerModel {
 
 	/// Text is required (the API rejects an empty message); every attachment must have settled.
 	public var canSend: Bool {
-		!trimmedText.isEmpty && !isOverLength && !isUploading && !hasFailedAttachment
+		!trimmedText.isEmpty && (!isOverLength || sendsAsFile) && !isUploading && !hasFailedAttachment
+			&& !isSplitting
+	}
+
+	/// Over the cap and able to go as a file: a chat host, an uploader, room for one more attachment,
+	/// and not an edit (the web blocks an over-long edit too).
+	public var sendsAsFile: Bool {
+		isOverLength && splitsLongMessages && uploader != nil && quote?.kind != .edit
+			&& attachments.count < ChatLimits.maxAttachments
 	}
 
 	/// Why Send is off, for an accessibility hint.
 	public var sendBlocker: String? {
+		if isSplitting { return "Uploading the full message" }
 		if isUploading { return "Waiting for attachments to upload" }
 		if hasFailedAttachment { return "Remove or retry the attachment that failed" }
-		if isOverLength { return "Message is too long" }
+		if isOverLength && !sendsAsFile { return "Message is too long" }
 		return nil
+	}
+
+	/// A plain line under the bar while the text is over the cap, so Send is never off or on
+	/// without a visible reason.
+	public var lengthNotice: String? {
+		guard isOverLength else { return nil }
+		let limit = ChatLimits.maxMessageLength.formatted(.number.locale(Locale(identifier: "en_US")))
+		if sendsAsFile { return "Over \(limit) characters. The full message will be attached as a file." }
+		if quote?.kind == .edit { return "An edited message can be at most \(limit) characters." }
+		if splitsLongMessages, uploader != nil {
+			return "Remove an attachment to send this as a file, or keep it under \(limit) characters."
+		}
+		return "A message can be at most \(limit) characters."
 	}
 
 	/// The message to send, and the composer cleared. Nil when `canSend` is false.
 	public func take() -> (text: String, metadata: ChatSendMetadata?)? {
-		guard canSend, quote?.kind != .edit else { return nil }
+		guard canSend, !isOverLength, quote?.kind != .edit else { return nil }
 		let metadata = ChatSendMetadata(
 			attachments: attachments.compactMap(\.ref),
 			mentions: Array(
@@ -154,6 +181,53 @@ public final class ChatComposerModel {
 		let result = (quoted + EmojiShortcodes.expand(trimmedText), metadata.isEmpty ? nil : metadata)
 		clear()
 		return result
+	}
+
+	/// `take()` for a message that fits, `takeLong()` for one that goes as a file.
+	public func takeForSend() async -> (text: String, metadata: ChatSendMetadata?)? {
+		isOverLength ? await takeLong() : take()
+	}
+
+	/// Like `take()` for text over the cap: uploads the full text as a .txt file and returns a short
+	/// body that points at it, with the file joined to the other attachments. The composer is cleared
+	/// only once the upload worked; if it fails or the text changed meanwhile, nothing is lost.
+	public func takeLong() async -> (text: String, metadata: ChatSendMetadata?)? {
+		guard sendsAsFile, canSend, let uploader else { return nil }
+		let full = EmojiShortcodes.expand(trimmedText)
+		let snapshot = text
+		// Shortcodes shrink the text, so it may fit after all: then there is no file.
+		let split = LongMessageSplit.make(full)
+		var fileRef: ChatAttachmentRef?
+		if let split {
+			guard let data = split.fileText.data(using: .utf8), data.count <= ChatLimits.maxFileBytes else {
+				notice = "This message is too large to send as a file (over 10 MB)."
+				return nil
+			}
+			isSplitting = true
+			defer { isSplitting = false }
+			do {
+				var uploaded = try await uploader.upload(name: split.fileName, mimeType: "text/plain", data: data)
+				uploaded.name = uploaded.name ?? split.fileName
+				uploaded.mimeType = uploaded.mimeType ?? "text/plain"
+				uploaded.sizeBytes = uploaded.sizeBytes ?? data.count
+				fileRef = uploaded
+			} catch {
+				notice = "Couldn't attach the full message. \(Self.reason(error))"
+				return nil
+			}
+			guard text == snapshot else {
+				notice = "The message changed while it was uploading. Send it again."
+				return nil
+			}
+		}
+		let metadata = ChatSendMetadata(
+			attachments: attachments.compactMap(\.ref) + [fileRef].compactMap { $0 },
+			mentions: Array(
+				mentions.map(\.id).filter { $0 != selfActorID }.prefix(ChatSendMetadata.maxMentions)),
+			quotedMessageId: quote?.kind == .reply ? quote?.quotedServerID : nil)
+		let quoted = quote.flatMap { $0.kind == .reply ? ChatQuote.make(author: $0.name, content: $0.text) : nil } ?? ""
+		clear()
+		return (quoted + (split?.body ?? full), metadata.isEmpty ? nil : metadata)
 	}
 
 	/// The edit to save, and the composer cleared. Nil unless an edit is open and has text.
@@ -228,6 +302,17 @@ public final class ChatComposerModel {
 		text = prompt
 		focusRequest += 1
 	}
+
+	/// A tapped starter prompt: an empty box takes it, a box with text keeps that and gets the prompt
+	/// after it, and the field takes focus. A tap never erases what the person typed (unlike `fill`,
+	/// which an intro's fill step uses to replace the box).
+	public func addStarter(_ prompt: String) {
+		text = StarterPrompts.inserting(prompt, into: text)
+		focusRequest += 1
+	}
+
+	/// Asks the field to take focus, so the keyboard stays up after something else was picked.
+	public func requestFocus() { focusRequest += 1 }
 
 	public func beginReply(author: String, content: String, serverID: Int? = nil) {
 		let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)

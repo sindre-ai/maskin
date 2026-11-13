@@ -20,6 +20,19 @@ export class InviteEmailSendError extends Error {
 	}
 }
 
+const DEFAULT_FROM_ADDRESS = 'notifications@maskin.io'
+const FROM_NAME = 'Maskin'
+
+/**
+ * The From header for every mail: EMAIL_FROM, or the default address. A bare address gets the
+ * display name Maskin so inboxes show "Maskin" instead of "notifications"; an address that
+ * already has a name ("Name <a@b.c>") is left alone.
+ */
+export function resolveFrom(env: NodeJS.ProcessEnv = process.env): string {
+	const configured = env.EMAIL_FROM?.trim() || DEFAULT_FROM_ADDRESS
+	return configured.includes('<') ? configured : `${FROM_NAME} <${configured}>`
+}
+
 function buildSubject(params: SendInviteEmailParams): string {
 	return `${params.inviterName} invited you to ${params.workspaceName} on Maskin`
 }
@@ -75,7 +88,7 @@ function escapeHtml(value: string): string {
 // accept-invite flow can be exercised end-to-end without a Resend account.
 export async function sendInviteEmail(params: SendInviteEmailParams): Promise<void> {
 	const apiKey = process.env.RESEND_API_KEY
-	const from = process.env.EMAIL_FROM ?? 'notifications@maskin.io'
+	const from = resolveFrom()
 	const subject = buildSubject(params)
 	const text = buildPlaintext(params)
 	const html = buildHtml(params)
@@ -239,4 +252,54 @@ export async function sendVoiceFollowupEmail(
 	})
 	if (error) throw new VoiceFollowupEmailSendError(error.name, error.message)
 	return { sent: true }
+}
+
+export interface SendEmailParams {
+	to: string
+	subject: string
+	text: string
+	html: string
+	/** Extra headers, e.g. List-Unsubscribe and List-Unsubscribe-Post. */
+	headers?: Record<string, string>
+}
+
+export class EmailSendError extends Error {
+	constructor(
+		public readonly providerErrorName: string,
+		public readonly providerMessage: string,
+	) {
+		super(`Email send failed: ${providerErrorName}`)
+		this.name = 'EmailSendError'
+	}
+}
+
+/** True when a Resend key is set, so a caller can skip instead of claiming work it cannot send. */
+export function isEmailConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+	return Boolean(env.RESEND_API_KEY)
+}
+
+/**
+ * Send one message through Resend. Click tracking is a domain setting and is deliberately not
+ * touched here. Returns false (and logs) when no key is set, true once Resend accepted it.
+ */
+export async function sendEmail(params: SendEmailParams): Promise<boolean> {
+	const apiKey = process.env.RESEND_API_KEY
+	const from = resolveFrom()
+	if (!apiKey) {
+		console.log('[email:dev-mode] sendEmail — RESEND_API_KEY is empty, not dispatching')
+		console.log(`  from: ${from}`)
+		console.log(`  subject: ${params.subject}`)
+		return false
+	}
+	const client = new Resend(apiKey)
+	const { error } = await client.emails.send({
+		from,
+		to: params.to,
+		subject: params.subject,
+		text: params.text,
+		html: params.html,
+		...(params.headers ? { headers: params.headers } : {}),
+	})
+	if (error) throw new EmailSendError(error.name, error.message)
+	return true
 }

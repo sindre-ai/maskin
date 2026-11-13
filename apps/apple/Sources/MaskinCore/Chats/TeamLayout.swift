@@ -409,6 +409,7 @@ public struct TeamLayout: Equatable, Sendable {
 			}
 		}
 		sections = sections.filter { !$0.rows.isEmpty }
+		if !query.isEmpty { sections = ranked(sections, query: query, me: me) }
 
 		let archivedMatches =
 			!query.isEmpty && input.chip == .all ? input.archived.filter { matches($0, query: query) } : []
@@ -566,6 +567,26 @@ public struct TeamLayout: Equatable, Sendable {
 		return conversation.others(excluding: me).first?.name ?? ChatPreviewText.plain(conversation.title)
 	}
 
+	/// A 1:1 conversation with its own title ("Q3 planning") keeps it; one titled after the other
+	/// person, or with the default "Alex, Relay" title, is shown as that person's name. A direct
+	/// message has no topic, so it is always shown as the other party's name.
+	public static func hasCustomTitle(_ c: ConversationSummary, me: String?) -> Bool {
+		guard !c.isGroupChat(excluding: me), !c.isDirect else { return false }
+		let names = c.others(excluding: me).map(\.name)
+		let title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)
+		return !title.isEmpty && title != ThreadLayout.defaultTitle(for: names) && !names.contains(title)
+	}
+
+	/// The title a team-list row actually shows. Previews compare the author against this.
+	public static func displayedTitle(of kind: RowKind, me: String?) -> String {
+		switch kind {
+		case .conversation(let c):
+			return hasCustomTitle(c, me: me) ? ChatPreviewText.plain(c.title) : title(of: c, me: me)
+		case .person(let p): return p.name
+		case .flow(let f): return f.name
+		}
+	}
+
 	private static func tileTitle(_ c: ConversationSummary, me: String?) -> String { title(of: c, me: me) }
 
 	private static func conversationRow(_ c: ConversationSummary) -> Row { Row(id: c.id, kind: .conversation(c)) }
@@ -598,6 +619,41 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	// MARK: Search
+
+	/// A search lists its matches as one list, best name match first and newest first within a
+	/// match, so a chat with someone named like the query is not buried under newer chats that only
+	/// contain those letters inside another word. Sections merge into "Results" unless only one is left.
+	private static func ranked(_ sections: [Section], query: String, me: String?) -> [Section] {
+		let rows = sections.flatMap(\.rows).enumerated()
+			.map { (offset: $0.offset, tier: searchTier($0.element, query: query, me: me), row: $0.element) }
+			.sorted { a, b in
+				if a.tier != b.tier { return a.tier < b.tier }
+				let da = a.row.activityDate ?? .distantPast, db = b.row.activityDate ?? .distantPast
+				return da != db ? da > db : a.offset < b.offset
+			}
+			.map(\.row)
+		if sections.isEmpty { return sections }
+		if var only = sections.first, sections.count == 1 {
+			only.rows = rows
+			return [only]
+		}
+		return [Section(id: "results", kind: .filtered, label: "Results", count: rows.count, rows: rows)]
+	}
+
+	/// Lower is better: 0 a whole word of a name, 1 a name that starts with the query, 2 and 3 other
+	/// name matches (`ActorSearch.rank`), 4 a hit only in the title or last message.
+	private static func searchTier(_ row: Row, query: String, me: String?) -> Int {
+		let names: [String]
+		switch row.kind {
+		case .conversation(let c): names = [displayedTitle(of: row.kind, me: me)] + c.others(excluding: me).map(\.name)
+		case .person(let p): names = [p.name]
+		case .flow(let f): names = [f.name]
+		}
+		return names.map { name -> Int in
+			if ActorSearch.isWholeWord(name: name, query: query) { return 0 }
+			return ActorSearch.rank(name: name, query: query).map { $0 + 1 } ?? 4
+		}.min() ?? 4
+	}
 
 	private static func matches(_ row: Row, query: String) -> Bool {
 		switch row.kind {
@@ -635,12 +691,6 @@ public enum NewConversationCopy {
 		let names = recipients.map { $0.kind == .agent ? $0.name : TeamLayout.firstName($0.name) }
 		if names.count <= 2 { return "Message " + names.joined(separator: " and ") }
 		return "Message \(names.prefix(2).joined(separator: ", ")) +\(names.count - 2)"
-	}
-
-	/// Shown with two or more recipients.
-	public static func groupNote(recipientCount: Int) -> String? {
-		guard recipientCount >= 2 else { return nil }
-		return "\(recipientCount + 1) in this conversation, including you. Everyone sees the whole thread."
 	}
 
 	/// Candidates for the To field, matched on name and role.

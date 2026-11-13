@@ -7,27 +7,36 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
 import { fitChips } from '@/lib/fit-chips'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Plus } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 
 export interface LoopTabItem {
 	value: string
 	label: string
 	count?: number
+	/** A hairline sits in the gap before this tab, setting it and the tabs after it apart. */
+	startsGroup?: boolean
 }
 
 // Gap between two tabs (`gap-6`), in px — the fold measures with it.
 const TAB_GAP = 24
 
-const TAB_CLASS =
-	'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pt-2 pb-3 text-[15px] font-semibold transition-colors duration-150'
+// Width held back at the row's right edge for the add button, in px.
+const ADD_WIDTH = 36
 
-function tabClass(active: boolean) {
+const GROUP_CLASS =
+	'relative before:absolute before:-left-3 before:top-1/2 before:h-[18px] before:w-px before:-translate-y-1/2 before:bg-border'
+
+const TAB_CLASS =
+	'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pt-2 pb-3 text-[15px] transition-colors duration-150'
+
+function tabClass(active: boolean, startsGroup = false) {
 	return cn(
 		TAB_CLASS,
+		startsGroup && GROUP_CLASS,
 		active
-			? 'border-foreground text-foreground'
-			: 'border-transparent text-muted-foreground hover:text-foreground',
+			? 'border-foreground font-bold text-foreground'
+			: 'border-transparent font-medium text-muted-foreground hover:text-foreground',
 	)
 }
 
@@ -40,10 +49,15 @@ export function LoopDetailTabs({
 	tabs,
 	value,
 	onChange,
+	onAdd,
+	addLabel = 'Add',
 }: {
 	tabs: LoopTabItem[]
 	value: string
 	onChange: (value: string) => void
+	/** Shows a "+" at the row's right edge. Omitted, no button is offered. */
+	onAdd?: () => void
+	addLabel?: string
 }) {
 	const rowRef = useRef<HTMLDivElement>(null)
 	const measureRef = useRef<HTMLDivElement>(null)
@@ -58,7 +72,7 @@ export function LoopDetailTabs({
 			if (!row || !measure) return
 			const chips = Array.from(measure.children) as HTMLElement[]
 			const more = chips.pop()
-			const available = row.clientWidth
+			const available = row.clientWidth - (onAdd ? ADD_WIDTH : 0)
 			if (available <= 0) {
 				setVisibleCount(tabs.length)
 				return
@@ -77,7 +91,7 @@ export function LoopDetailTabs({
 		observer.observe(row)
 		observer.observe(measure)
 		return () => observer.disconnect()
-	}, [tabs])
+	}, [tabs, onAdd])
 
 	const shown = tabs.slice(0, visibleCount)
 	const folded = tabs.slice(visibleCount)
@@ -93,7 +107,7 @@ export function LoopDetailTabs({
 						role="tab"
 						aria-selected={tab.value === value}
 						onClick={() => onChange(tab.value)}
-						className={tabClass(tab.value === value)}
+						className={tabClass(tab.value === value, tab.startsGroup)}
 					>
 						{tab.label}
 						{tab.count !== undefined && tab.count > 0 && (
@@ -128,6 +142,17 @@ export function LoopDetailTabs({
 					</DropdownMenu>
 				)}
 			</div>
+			{onAdd && (
+				<button
+					type="button"
+					onClick={onAdd}
+					aria-label={addLabel}
+					title={addLabel}
+					className="absolute right-0 top-1 flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<Plus size={16} aria-hidden="true" />
+				</button>
+			)}
 			{/* Off-screen copy of every tab plus a worst-case More, measured to decide the fold. */}
 			<div
 				ref={measureRef}
@@ -135,7 +160,7 @@ export function LoopDetailTabs({
 				className="pointer-events-none invisible absolute top-0 left-0 flex gap-6 px-1"
 			>
 				{tabs.map((tab) => (
-					<span key={tab.value} className={tabClass(false)}>
+					<span key={tab.value} className={tabClass(false, tab.startsGroup)}>
 						{tab.label}
 						{tab.count !== undefined && tab.count > 0 && (
 							<span className="text-[12px] font-bold tabular-nums">{tab.count}</span>

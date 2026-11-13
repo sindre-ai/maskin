@@ -205,12 +205,14 @@ public final class ConversationsStore {
 	/// The second line of a conversation's row. `draft` and `tick` come from the screen (the draft
 	/// store and the send queue live outside this store).
 	public func status(
-		for conversation: ConversationSummary, draft: String? = nil, tick: ConversationRowStatus.Tick? = nil
+		for conversation: ConversationSummary, draft: String? = nil, tick: ConversationRowStatus.Tick? = nil,
+		displayedTitle: String? = nil, me: String? = nil
 	) -> ConversationRowStatus {
 		let working = conversation.participants.filter { workingAgentIDs.contains($0.id) }
 		return ConversationRowStatus.make(
 			conversation: conversation, draft: draft, typing: typingConversationIDs.contains(conversation.id),
-			workingAgents: working.count, workingNames: working.map { TeamLayout.firstName($0.name) }, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id))
+			workingAgents: working.count, workingNames: working.map { TeamLayout.firstName($0.name) }, tick: tick, mentionsYou: mentionConversationIDs.contains(conversation.id),
+			displayedTitle: displayedTitle, me: me)
 	}
 
 	/// The filter menu only lists agents in the current list, so a filter on an agent that is no

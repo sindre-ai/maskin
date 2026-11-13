@@ -50,6 +50,44 @@ export const mimeTypeSchema = z
 export const fileKindSchema = z.enum(['briefing'])
 export type FileKind = z.infer<typeof fileKindSchema>
 
+// Free-form labels on a file, such as "b-roll" or "clip_type:b_roll" (a colon marks a
+// structured tag). Trimmed and lowercased on every write so "B-roll" and "b-roll" are one
+// tag; repeats within one list collapse to one.
+export const MAX_TAGS_PER_FILE = 20
+export const MAX_TAG_LENGTH = 60
+
+// No commas: the list filter takes tags as a comma-separated string, so a tag with a comma in
+// it could be stored but never searched for.
+export const fileTagSchema = z
+	.string()
+	.trim()
+	.toLowerCase()
+	.min(1)
+	.max(MAX_TAG_LENGTH)
+	.refine((tag) => !tag.includes(','), 'A tag cannot contain a comma')
+
+export const fileTagsSchema = z
+	.array(fileTagSchema)
+	.max(MAX_TAGS_PER_FILE)
+	.transform((tags) => [...new Set(tags)])
+
+/**
+ * Reads the `tags` filter of the files list: comma-separated, each tag trimmed and
+ * lowercased like on write, blanks and repeats dropped, at most MAX_TAGS_PER_FILE kept.
+ */
+export function parseFileTagFilter(raw: string | undefined): string[] {
+	if (!raw) return []
+	const tags = raw
+		.split(',')
+		.map((tag) => tag.trim().toLowerCase())
+		.filter((tag) => tag.length > 0)
+	return [...new Set(tags)].slice(0, MAX_TAGS_PER_FILE)
+}
+
+// "all": the file has every listed tag. "any": the file has at least one of them.
+export const fileTagMatchSchema = z.enum(['all', 'any'])
+export type FileTagMatch = z.infer<typeof fileTagMatchSchema>
+
 export const fileNameSchema = z.string().trim().min(1).max(255)
 
 export const fileEncodingSchema = z.enum(['base64', 'utf8'])
@@ -156,6 +194,7 @@ export const createFileSchema = z
 		name: fileNameSchema,
 		description: z.string().max(1000).nullable().optional(),
 		kind: fileKindSchema.nullable().optional(),
+		tags: fileTagsSchema.optional(),
 		mime_type: mimeTypeSchema,
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
@@ -166,14 +205,50 @@ export const createFileSchema = z
 
 export type CreateFileInput = z.infer<typeof createFileSchema>
 
+// -- Partial edits ------------------------------------------------------------
+// A text file is changed by naming the exact text to replace, instead of
+// re-sending the whole file. Each edit applies to the result of the one before.
+export const MAX_FILE_EDITS = 50
+export const MAX_FILE_EDIT_TEXT_CHARS = 200_000
+export const MAX_FILE_EDITS_TOTAL_CHARS = 1_000_000
+
+export const fileEditSchema = z.object({
+	old: z
+		.string()
+		.min(1)
+		.max(MAX_FILE_EDIT_TEXT_CHARS)
+		.describe('Exact text to replace. Must occur exactly once unless replace_all is true.'),
+	new: z.string().max(MAX_FILE_EDIT_TEXT_CHARS).describe('Replacement text. May be empty.'),
+	replace_all: z
+		.boolean()
+		.optional()
+		.describe('Replace every occurrence of old. Default false: old must match exactly once.'),
+})
+
+export type FileEdit = z.infer<typeof fileEditSchema>
+
+export const fileEditsSchema = z
+	.array(fileEditSchema)
+	.min(1)
+	.max(MAX_FILE_EDITS)
+	.refine(
+		(edits) =>
+			edits.reduce((n, e) => n + e.old.length + e.new.length, 0) <= MAX_FILE_EDITS_TOTAL_CHARS,
+		`Edits are too large in total (max ${MAX_FILE_EDITS_TOTAL_CHARS} characters of old and new text)`,
+	)
+
 export const updateFileSchema = z
 	.object({
 		name: fileNameSchema.optional(),
 		description: z.string().max(1000).nullable().optional(),
 		kind: fileKindSchema.nullable().optional(),
+		// Replaces the whole tag list; [] clears it. Omit to leave the tags as they are.
+		tags: fileTagsSchema.optional(),
 		mime_type: mimeTypeSchema.optional(),
 		content: z.string().optional(),
 		encoding: fileEncodingSchema.optional(),
+		// Partial edit of a text file; mutually exclusive with `content`.
+		edits: fileEditsSchema.optional(),
 		annotations: fileAnnotationsSchema.optional(),
 		// Optional version check: the content hash the caller last read. A
 		// mismatch with the stored hash is refused with 409 and nothing is
@@ -185,6 +260,20 @@ export const updateFileSchema = z
 		'At least one field must be provided',
 	)
 	.superRefine((data, ctx) => {
+		if (data.edits !== undefined && data.content !== undefined) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Pass either content (replace the whole file) or edits (change parts), not both',
+				path: ['edits'],
+			})
+		}
+		if (data.edits !== undefined && data.encoding === 'base64') {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'edits apply to text files; encoding base64 is not allowed with edits',
+				path: ['encoding'],
+			})
+		}
 		if (data.content === undefined) return
 		// Without mime_type the stored type isn't known here, so the general cap
 		// applies. Replacing a video's bytes needs mime_type in the same request.
@@ -199,6 +288,7 @@ export const fileListItemSchema = z.object({
 	name: z.string(),
 	description: z.string().nullable(),
 	kind: fileKindSchema.nullable(),
+	tags: z.array(z.string()),
 	mimeType: z.string(),
 	sizeBytes: z.number().int().nonnegative(),
 	storageKey: z.string(),
@@ -209,11 +299,47 @@ export const fileListItemSchema = z.object({
 
 export type FileListItem = z.infer<typeof fileListItemSchema>
 
+// GET /files/tags: every tag in use in the workspace and how many files carry it,
+// most-used first.
+export const fileTagCountSchema = z.object({
+	tag: z.string(),
+	count: z.number().int().positive(),
+})
+
+export type FileTagCount = z.infer<typeof fileTagCountSchema>
+
+// POST /files/tags/rename and /files/tags/merge. Both change a tag on every file in the
+// workspace at once. The names are trimmed and lowercased like tags on write.
+export const renameFileTagSchema = z.object({
+	from: fileTagSchema,
+	to: fileTagSchema,
+})
+
+export const mergeFileTagsSchema = z.object({
+	from: fileTagSchema,
+	into: fileTagSchema,
+})
+
+export const fileTagChangeResultSchema = z.object({
+	from: z.string(),
+	to: z.string(),
+	files_changed: z.number().int().nonnegative(),
+})
+
+export type FileTagChangeResult = z.infer<typeof fileTagChangeResultSchema>
+
+// GET /files/:id?format=text. `raw` (default) returns the stored bytes.
+export const fileReadFormatSchema = z.enum(['raw', 'text'])
+export type FileReadFormat = z.infer<typeof fileReadFormatSchema>
+
 export const fileDetailSchema = fileListItemSchema.extend({
 	content: z.string(),
 	encoding: fileEncodingSchema,
 	url: z.string().url(),
 	annotations: fileAnnotationsSchema.default([]),
+	// Present on a raw read of a large HTML file that is mostly embedded data:
+	// how to read it as text instead. Comes before `content` in the JSON.
+	readable_with: z.string().optional(),
 	// Current content hash, to be echoed as if_match on the next save. Null only
 	// for a row nobody has hashed yet; GET fills it in on first read.
 	contentHash: contentHashSchema.nullable().optional(),
@@ -223,6 +349,26 @@ export const fileDetailSchema = fileListItemSchema.extend({
 })
 
 export type FileDetail = z.infer<typeof fileDetailSchema>
+
+// Response of GET /files/:id?format=text for a text file: the words in the file
+// rather than its bytes. For HTML, `content_text` is markdown extracted from the
+// page and `extracted` is true; any other text file comes back unchanged
+// (`extracted` false). Non-text files ignore format=text and return fileDetailSchema.
+export const fileTextDetailSchema = fileListItemSchema.extend({
+	content_text: z.string(),
+	extracted: z.boolean(),
+	// HTML only.
+	title: z.string().nullable().optional(),
+	meta_description: z.string().nullable().optional(),
+	json_ld: z.array(z.unknown()).optional(),
+	// The object this file was derived from or relates to, when an edge says so.
+	source_object_id: z.string().uuid().optional(),
+	url: z.string().url(),
+	annotations: fileAnnotationsSchema.default([]),
+	contentHash: contentHashSchema.nullable().optional(),
+})
+
+export type FileTextDetail = z.infer<typeof fileTextDetailSchema>
 
 // -- Large files: direct-to-storage multipart upload ------------------------
 // 1. POST /files/uploads            → upload id + one presigned PUT URL per part
@@ -234,6 +380,7 @@ export const startFileUploadSchema = z.object({
 	name: fileNameSchema,
 	description: z.string().max(1000).nullable().optional(),
 	kind: fileKindSchema.nullable().optional(),
+	tags: fileTagsSchema.optional(),
 	mime_type: mimeTypeSchema,
 	size_bytes: z
 		.number()

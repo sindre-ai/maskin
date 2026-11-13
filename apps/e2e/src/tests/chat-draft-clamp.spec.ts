@@ -119,6 +119,60 @@ test.describe('Chat — a long draft is clamped and gated', () => {
 			await assertNoHorizontalOverflow(page, vp.label)
 		})
 
+		test(`a card settles on one button and never flips between two @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const long = await createDraft(account, 'Long flicker note', LONG_DRAFT)
+			const short = await createDraft(account, 'Short flicker note', SHORT_DRAFT)
+			const conversation = await chatWithAgentMessage(
+				account,
+				(ws) =>
+					`Long: [long](/${ws}/objects/${long.id})\n\nShort: [short](/${ws}/objects/${short.id})`,
+			)
+
+			// Record every button label that ever appears in the thread, from before the cards mount.
+			await page.addInitScript(() => {
+				const seen = new Set<string>()
+				;(window as unknown as { __labels: Set<string> }).__labels = seen
+				const scan = () => {
+					for (const card of document.querySelectorAll('[data-linked-card]')) {
+						const which = (card.textContent ?? '').includes('Line 1 of') ? 'long' : 'short'
+						for (const b of card.querySelectorAll('button')) {
+							const label = (b.textContent ?? '').trim()
+							if (label) seen.add(`${which}: ${label}`)
+						}
+					}
+				}
+				new MutationObserver(scan).observe(document, {
+					subtree: true,
+					childList: true,
+					characterData: true,
+				})
+			})
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread.locator('[data-linked-card]')).toHaveCount(2, { timeout: 10_000 })
+			await expect(thread.getByRole('button', { name: 'Read full draft to approve' })).toBeEnabled()
+			await expect(thread.getByRole('button', { name: 'Approve draft' })).toHaveCount(1)
+			await page.waitForTimeout(1500) // a render loop would still be flipping here
+
+			const labels = await page.evaluate(() =>
+				[...(window as unknown as { __labels: Set<string> }).__labels].sort(),
+			)
+			// The long card never showed Approve draft, and the short card never showed the gate.
+			expect(labels).not.toContain('long: Approve draft')
+			expect(labels).not.toContain('short: Read full draft to approve')
+			await expect(thread.getByRole('button', { name: 'Read full draft to approve' })).toHaveCount(
+				1,
+			)
+			const longCard = thread.locator('[data-linked-card]').filter({ hasText: 'Line 1 of' })
+			await expect(longCard.getByRole('button', { name: 'Approve draft' })).toHaveCount(0)
+			await assertNoHorizontalOverflow(page, vp.label)
+		})
+
 		test(`a draft of 12 lines or fewer is approvable at once @ ${vp.label}`, async ({
 			page,
 			account,

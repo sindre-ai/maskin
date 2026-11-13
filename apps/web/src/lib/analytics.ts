@@ -1,3 +1,11 @@
+import {
+	type FlowErrorCategory,
+	type FlowName,
+	type FlowStepName,
+	buildFlowErrorProps,
+	buildFlowStepProps,
+	createFlowClock,
+} from '@maskin/shared'
 import type { CaptureOptions } from 'posthog-js'
 import { getStoredActor } from './auth'
 import type { CardKind } from './foryou-card-kind'
@@ -93,10 +101,6 @@ export function trackAgentCreated(p: BaseProps & { entity_type: 'agent' }): void
 	trackEvent('agent_created', fillBase(p))
 }
 
-export function trackTriggerCreated(p: BaseProps & { entity_type: 'trigger' }): void {
-	trackEvent('trigger_created', fillBase(p))
-}
-
 // Success metric for the standalone-trigger detail bet: counts completed
 // standalone-trigger saves through the trigger detail screen per week.
 export function trackTriggerUpdated(p: BaseProps & { entity_type: 'trigger' }): void {
@@ -117,6 +121,55 @@ export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session'
 	trackEvent('agent_session_started', fillBase(p))
 }
 
+// A person who arrived through the button in a summary email (the link carries
+// `?surface=email`; the `surface` property itself stays `web` on every web event).
+// `email_return` is the success event of the summary email bet: it fires once per
+// browser session, on the first app_active or For You event of that arrival. The tag
+// is noted at module load because the router may rewrite the URL before the first
+// event. Never carries the address, the text or a title.
+const EMAIL_ARRIVAL_KEY = 'maskin-email-arrival'
+// Which part of the mail the button sat in (`&block=` on the link): the summary, a flow, or the
+// Marketplace pick. Anything else is dropped.
+const EMAIL_BLOCK_KEY = 'maskin-email-arrival-block'
+const EMAIL_BLOCKS = ['summary', 'flow', 'pick'] as const
+export type EmailReturnVia =
+	| 'app_active'
+	| 'foryou_card_shown'
+	| 'foryou_card_action'
+	| 'foryou_card_marked_read'
+
+function noteEmailArrival(search: string): void {
+	try {
+		const params = new URLSearchParams(search)
+		if (params.get('surface') !== 'email') return
+		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) === null) {
+			sessionStorage.setItem(EMAIL_ARRIVAL_KEY, 'pending')
+			const block = params.get('block')
+			if (EMAIL_BLOCKS.some((b) => b === block))
+				sessionStorage.setItem(EMAIL_BLOCK_KEY, block as string)
+		}
+	} catch {
+		// No storage: no arrival is recorded, which only means no email_return.
+	}
+}
+
+if (typeof window !== 'undefined') noteEmailArrival(window.location.search)
+
+// Returns true when it sent the event.
+export function trackEmailReturn(via: EmailReturnVia, search?: string): boolean {
+	let block: string | null = null
+	try {
+		if (search !== undefined) noteEmailArrival(search)
+		if (sessionStorage.getItem(EMAIL_ARRIVAL_KEY) !== 'pending') return false
+		sessionStorage.setItem(EMAIL_ARRIVAL_KEY, 'sent')
+		block = sessionStorage.getItem(EMAIL_BLOCK_KEY)
+	} catch {
+		return false
+	}
+	trackEvent('email_return', block ? { via, block } : { via })
+	return true
+}
+
 // The browser does not send agent_session_completed or trigger_fired: the
 // backend already reports completions (with trigger provenance), and the
 // browser copies were about half of all PostHog events, outside the backend
@@ -133,6 +186,7 @@ let appActiveDaySent = ''
 // this browser. `utc_day` is the same day format as the backend's
 // loop_active_day. Call it after identify so the event lands on the person.
 export function trackAppActive(now: Date = new Date()): boolean {
+	trackEmailReturn('app_active')
 	const utcDay = now.toISOString().slice(0, 10)
 	if (appActiveDaySent === utcDay) return false
 	appActiveDaySent = utcDay
@@ -306,6 +360,21 @@ export function trackMiniAppFileViewed(p: BaseProps & { entity_type: 'file' }): 
 	trackEvent('mini_app_file_viewed', fillBase(p))
 }
 
+// A person clicked Refresh on a view in the file viewer (bet Customizable app). It
+// counts clicks and scores nothing. `entity_id` is the file id; `list_names` are the
+// app's own list names (a fixed allow-list, never text from the file) joined with a
+// comma; ids, counts and booleans only.
+export function trackViewRefreshed(
+	p: BaseProps & { entity_type: 'file'; list_names: string; row_count: number; ok: boolean },
+): void {
+	trackEvent('view_refreshed', {
+		...fillBase(p),
+		list_names: p.list_names,
+		row_count: p.row_count,
+		ok: p.ok,
+	})
+}
+
 // Usage questions the weekly data pack could not answer. Each fires once per
 // open, with `workspace_id` / `actor_id` riding as super-properties, and carries
 // ids only: no titles, names or text.
@@ -359,10 +428,39 @@ export function trackAgentOpened(p: { entity_id: string }): void {
 export function trackChatFirstReplyReceived(p: {
 	entity_id: string
 	latency_ms: number | null
+	session_id?: string | null
 }): void {
 	trackEvent('chat_first_reply_received', {
 		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
 		latency_ms: p.latency_ms,
+		session_id: p.session_id ?? null,
+		feature_area: 'chats',
+	})
+}
+
+// The person pressed Stop on a reply that was still being written. `session_id` is the run
+// they stopped and `seconds_running` how long it had been going (null when its start is unknown).
+export function trackChatStopClicked(p: {
+	session_id: string
+	seconds_running: number | null
+}): void {
+	trackEvent('chat_stop_clicked', {
+		...fillBase({ entity_id: p.session_id, entity_type: 'session' }),
+		session_id: p.session_id,
+		seconds_running: p.seconds_running,
+		feature_area: 'chats',
+	})
+}
+
+// The person wrote again in a chat within 60 seconds of their last message, before any agent
+// answered. Derived on the page from the messages it already holds, not sent by the server.
+export function trackChatMessageResent(p: {
+	entity_id: string
+	seconds_since_previous: number
+}): void {
+	trackEvent('chat_message_resent', {
+		...fillBase({ entity_id: p.entity_id, entity_type: 'conversation' }),
+		seconds_since_previous: p.seconds_since_previous,
 		feature_area: 'chats',
 	})
 }
@@ -446,38 +544,6 @@ function detectPlatform(): 'ios' | 'web' {
 
 export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): void {
 	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
-}
-
-// Chat composer `/` unified picker — fires when a Reference row is committed
-// into the composer selection (either an object or a notification). The parent
-// bet's success metric pairs this with turn sends against the same session to
-// measure whether references travel through to a completed exchange, so
-// `object_type` is the row's own `type` column ('bet' | 'task' | 'insight' |
-// 'notification' | any custom object type) and rides alongside the standard
-// `entity_id`. `workspace_id` / `actor_id` come in via the PostHog
-// super-properties registered on workspace mount.
-export type ChatReferenceObjectType = 'notification' | (string & {})
-
-export function trackChatObjectReferenceCreated(p: {
-	entity_id: string
-	object_type: ChatReferenceObjectType
-}): void {
-	trackEvent('chat_object_reference_created', {
-		entity_id: p.entity_id,
-		object_type: p.object_type,
-		source: 'web',
-	})
-}
-
-// Fires when the `/` picker's Reference search endpoint fails. Paired at query
-// time with `chat_object_reference_created` to compute error-rate on the
-// picker; it carries the error name only, never the message. See the parent bet's "Retry works from the
-// error state" gate.
-export function trackChatSlashPickerError(p: { errorClass: string }): void {
-	trackEvent('chat_slash_picker_error', {
-		error_class: p.errorClass,
-		source: 'web',
-	})
 }
 
 // Fires every time the composer's `add_agent` reducer action lands — the `@`
@@ -667,21 +733,42 @@ export function deriveSidebarViewport(width: number): SidebarViewport {
 // weight never drift.
 
 export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }): void {
+	trackEmailReturn('foryou_card_shown')
 	trackEvent('foryou_card_shown', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 	})
 }
 
+// Whole seconds from when a card was raised (the ask's `created_at`) to now. `null` when
+// the card has no usable time, so the property is missing rather than a made-up number.
+export function secondsSince(
+	iso: string | null | undefined,
+	now: number = Date.now(),
+): number | null {
+	if (!iso) return null
+	const at = Date.parse(iso)
+	if (Number.isNaN(at)) return null
+	return Math.max(0, Math.round((now - at) / 1000))
+}
+
+// `seconds_to_action` runs from the card's creation to the tap, and `session_id` is the
+// run that wrote the ask (null for a card a person raised). Both are read off the card, so
+// neither needs a lookup.
 export function trackForyouCardAction(p: {
 	card_kind: CardKind
 	card_id: string
 	action_id: string
+	seconds_to_action?: number | null
+	session_id?: string | null
 }): void {
+	trackEmailReturn('foryou_card_action')
 	trackEvent('foryou_card_action', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 		action_id: p.action_id,
+		seconds_to_action: p.seconds_to_action ?? null,
+		session_id: p.session_id ?? null,
 	})
 }
 
@@ -691,6 +778,7 @@ export function trackForyouCardAction(p: {
 // the intent signal, and once per invocation (the server drops the card once
 // read, so there is no natural dedup boundary here — the surface itself is).
 export function trackForyouCardMarkedRead(p: { card_kind: CardKind; card_id: string }): void {
+	trackEmailReturn('foryou_card_marked_read')
 	trackEvent('foryou_card_marked_read', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
@@ -1014,4 +1102,42 @@ export function trackMarkReadClicked(p: { loop_id: string; unread_count: number 
 		entity_type: 'loop',
 		source: 'web',
 	})
+}
+
+// The two generic events for journeys with no screen of their own (see
+// `@maskin/shared` analytics-flows for the flow and step names). An unknown flow or
+// step fails the type check; `flow_error` takes a category from a fixed list, never
+// message text. `duration_ms` is the time since the previous step with the same
+// flow_id in this page load.
+const flowClock = createFlowClock()
+
+export function trackFlowStep<F extends FlowName>(p: {
+	flow: F
+	step: FlowStepName<F>
+	flowId: string
+}): void {
+	const props = buildFlowStepProps({
+		flow: p.flow,
+		step: p.step,
+		flowId: p.flowId,
+		surface: 'web',
+		durationMs: flowClock.tick(p.flowId),
+	})
+	if (props) trackEvent('flow_step', props)
+}
+
+export function trackFlowError<F extends FlowName>(p: {
+	flow: F
+	step: FlowStepName<F>
+	flowId: string
+	errorCategory: FlowErrorCategory
+}): void {
+	const props = buildFlowErrorProps({
+		flow: p.flow,
+		step: p.step,
+		flowId: p.flowId,
+		surface: 'web',
+		errorCategory: p.errorCategory,
+	})
+	if (props) trackEvent('flow_error', props)
 }

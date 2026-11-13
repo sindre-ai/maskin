@@ -249,6 +249,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 					}
 					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
 				}
+				.frame(maxWidth: ReadingColumn.maxWidth)
+				.frame(maxWidth: .infinity)
 				.animation(MaskinMotion.quick, value: ReferenceTrigger.find(in: composer.text) != nil)
 				.task(id: ReferenceTrigger.find(in: composer.text)?.query) { await searchReferences() }
 				// Clearing the quote strip in the composer also drops the thread target.
@@ -460,6 +462,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							.overlay(alignment: .bottom) { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
 					}
 				}
+				// A 720 pt reading column, centred, in regular width; full width on iPhone.
+				.frame(maxWidth: ReadingColumn.maxWidth)
+				.frame(maxWidth: .infinity)
 			}
 			.scrollDismissesKeyboard(.interactively)
 			.refreshable { await store.refresh() }
@@ -509,6 +514,10 @@ struct EditObjectSheet: View {
 	@Environment(\.dismiss) private var dismiss
 	@State private var title: String
 	@State private var content: String
+	/// Reads the text from the rich editor when it is the one on screen.
+	@State private var descriptionField = DescriptionEditorHandle()
+	@State private var saving = false
+	@State private var readFailed = false
 
 	init(object: WorkObject, save: @escaping (ObjectPatch) async -> Void) {
 		self.object = object
@@ -524,7 +533,7 @@ struct EditObjectSheet: View {
 					.lineLimit(1...3)
 					.maskinText(.title)
 				Divider()
-				MarkdownEditor(text: $content, placeholder: "Description")
+				DescriptionEditor(text: $content, handle: descriptionField)
 			}
 			.padding(.horizontal, MaskinSpace.s9)
 			.padding(.top, MaskinSpace.s5)
@@ -535,19 +544,38 @@ struct EditObjectSheet: View {
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
 				ToolbarItem(placement: .confirmationAction) {
-					Button("Save") {
-						let patch = ObjectPatch(
-							title: title.trimmingCharacters(in: .whitespacesAndNewlines) == (object.title ?? "")
-								? nil : title.trimmingCharacters(in: .whitespacesAndNewlines),
-							content: content == (object.content ?? "") ? nil : content)
-						dismiss()
-						Task { await save(patch) }
-					}
-					.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+					Button("Save") { Task { await commit() } }
+						.disabled(saving || descriptionField.isOpening || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 				}
 			}
 		}
 		.presentationDetents([.large])
+		.alert("Couldn't read the text", isPresented: $readFailed) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text("Nothing was saved. Try again.")
+		}
+	}
+
+	/// Sends the edit. With the rich editor the text is read from its page first, and nothing is
+	/// sent if the page cannot answer, so a failed read never saves the wrong text.
+	private func commit() async {
+		saving = true
+		var text = content
+		if let read = descriptionField.readMarkdown {
+			guard let markdown = await read() else {
+				saving = false
+				readFailed = true
+				return
+			}
+			text = markdown
+		}
+		let patch = ObjectPatch(
+			title: title.trimmingCharacters(in: .whitespacesAndNewlines) == (object.title ?? "")
+				? nil : title.trimmingCharacters(in: .whitespacesAndNewlines),
+			content: text == (object.content ?? "") ? nil : text)
+		dismiss()
+		await save(patch)
 	}
 }
 

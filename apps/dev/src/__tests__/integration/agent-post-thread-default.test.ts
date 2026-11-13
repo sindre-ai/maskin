@@ -59,10 +59,11 @@ function appFor(actorId: string, actorType: 'human' | 'agent') {
 type Msg = { id: number; threadRootId: number | null }
 
 /**
- * An agent's mid-turn post_conversation_message lands where the human is talking: in the thread
- * of the message that started the turn, the same lookup the end-of-turn reply uses.
+ * An agent's mid-turn post_conversation_message continues a thread a person started (the thread
+ * of the message that started the turn, the same lookup the end-of-turn reply uses) and never
+ * starts one: a turn started by a top-level message posts to the main timeline.
  */
-describe('Agent post defaults to the turn thread', () => {
+describe('Agent post continues the turn thread', () => {
 	let humanId: string
 	let agentId: string
 	let workspaceId: string
@@ -148,7 +149,7 @@ describe('Agent post defaults to the turn thread', () => {
 		expect(posted.threadRootId).toBe(rootId)
 	})
 
-	it('posts top-level when the turn was started by a top-level message', async () => {
+	it('posts to the main timeline when the turn was started by a top-level message', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, rootId)
 
@@ -157,6 +158,17 @@ describe('Agent post defaults to the turn thread', () => {
 			{ content: 'looking into it', session_id: session.id },
 		)
 		expect(posted.threadRootId).toBeNull()
+	})
+
+	it('still lets an agent start a thread explicitly with thread_root_id', async () => {
+		const session = await seedSession()
+		await startTurn(session.id, rootId)
+
+		const posted = await post(
+			{ id: agentId, type: 'agent' },
+			{ content: 'details', session_id: session.id, thread_root_id: rootId },
+		)
+		expect(posted.threadRootId).toBe(rootId)
 	})
 
 	it('posts top-level when the session has no tagged turn yet', async () => {
@@ -172,13 +184,18 @@ describe('Agent post defaults to the turn thread', () => {
 	it('follows the newest turn of a long-lived session', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, replyId)
-		await startTurn(session.id, rootId)
+		const otherRoot = await post({ id: humanId, type: 'human' }, { content: 'another topic' })
+		const newer = await post(
+			{ id: humanId, type: 'human' },
+			{ content: 'a new question', thread_root_id: otherRoot.id },
+		)
+		await startTurn(session.id, newer.id)
 
 		const posted = await post(
 			{ id: agentId, type: 'agent' },
 			{ content: 'looking into it', session_id: session.id },
 		)
-		expect(posted.threadRootId).toBeNull()
+		expect(posted.threadRootId).toBe(otherRoot.id)
 	})
 
 	it('lets an explicit thread_root_id win over the turn thread', async () => {

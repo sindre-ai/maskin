@@ -6,8 +6,8 @@ import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Check } from 'lucide-react'
-import { useId, useState } from 'react'
+import { Check, X } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 interface QuestionOptionsProps {
 	conversationId: string
@@ -17,6 +17,8 @@ interface QuestionOptionsProps {
 	question: MessageQuestion
 	/** A later message in the thread already answered this one. */
 	answered: boolean
+	/** The thread the question sits in. The answer goes there too, and shows in the main chat as the question does. */
+	threadRootId?: number | null
 	/** Sits at the right end of the action row, beside "Send answer". */
 	trailingAction?: React.ReactNode
 }
@@ -40,6 +42,7 @@ export function QuestionOptions({
 	questionMessageId,
 	question,
 	answered,
+	threadRootId,
 	trailingAction,
 }: QuestionOptionsProps) {
 	// question index -> chosen labels. Deliberately NOT keyed by header: nothing
@@ -54,6 +57,10 @@ export function QuestionOptions({
 	// Free-text reply, for when none of the options fit.
 	const [typing, setTyping] = useState(false)
 	const [typed, setTyped] = useState('')
+	// Opening the box moves the cursor into it; closing it with Esc hands focus back to the button that opened it.
+	const typeButtonRef = useRef<HTMLButtonElement>(null)
+	const typedRef = useRef<HTMLTextAreaElement>(null)
+	const returnFocus = useRef(false)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A helper another agent started is not in this chat, so its answer goes to
 	// the session itself, not to the chat's agents.
@@ -62,6 +69,15 @@ export function QuestionOptions({
 	const canWrite = useCanWrite()
 	const isPending = sendMessage.isPending || sendInput.isPending
 	const isError = sendMessage.isError || sendInput.isError
+
+	useEffect(() => {
+		if (typing) {
+			typedRef.current?.focus()
+		} else if (returnFocus.current) {
+			returnFocus.current = false
+			typeButtonRef.current?.focus()
+		}
+	}, [typing])
 
 	if (answered) return null
 
@@ -91,7 +107,11 @@ export function QuestionOptions({
 			})
 			return
 		}
-		sendMessage.mutate({ content, metadata: { question_answer: questionAnswer } })
+		sendMessage.mutate({
+			content,
+			metadata: { question_answer: questionAnswer },
+			...(threadRootId ? { thread_root_id: threadRootId, also_in_channel: true } : {}),
+		})
 	}
 
 	const submitTyped = () => {
@@ -104,6 +124,33 @@ export function QuestionOptions({
 			answers: [
 				{ header: question.questions[0]?.header ?? 'Question', selected: [text.slice(0, 200)] },
 			],
+		})
+	}
+
+	// Closing the card without answering. It goes the way an answer does, so the waiting agent or
+	// helper session hears that no answer is coming, and it records every question's header so
+	// every device sees the card gone. In the chat it is hidden, like a card button's nudge.
+	const dismiss = () => {
+		if (isPending) return
+		const content =
+			'I dismissed this question. No answer needed, carry on with your best judgement.'
+		const questionAnswer: MessageQuestionAnswer = {
+			question_message_id: questionMessageId,
+			answers: question.questions.map((q) => ({ header: q.header, selected: ['Dismissed'] })),
+		}
+		if (question.reply_to_session) {
+			sendInput.mutate({
+				id: question.session_id,
+				content,
+				question_answer: questionAnswer,
+				conversationId,
+			})
+			return
+		}
+		sendMessage.mutate({
+			content,
+			metadata: { hidden_from_chat: true, question_answer: questionAnswer },
+			...(threadRootId ? { thread_root_id: threadRootId, also_in_channel: true } : {}),
 		})
 	}
 
@@ -203,6 +250,7 @@ export function QuestionOptions({
 					    available rather than reading as a dead end. */}
 					{typing ? null : (
 						<Button
+							ref={typeButtonRef}
 							type="button"
 							variant="ghost"
 							size="sm"
@@ -214,15 +262,37 @@ export function QuestionOptions({
 						</Button>
 					)}
 				</ViewerTooltip>
-				{/* Read-only (opens the thread), so it stays usable for viewers. */}
-				{trailingAction ? <div className="ml-auto">{trailingAction}</div> : null}
+				<div className="ml-auto flex items-center gap-1">
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="size-7 text-muted-foreground hover:text-foreground"
+						aria-label="Dismiss question"
+						onClick={dismiss}
+						disabled={!canWrite || isPending}
+					>
+						<X size={14} aria-hidden />
+					</Button>
+					{/* Read-only (opens the thread), so it stays usable for viewers. */}
+					{trailingAction}
+				</div>
 			</div>
 			{typing ? (
 				<div className="flex items-end gap-2">
 					<Textarea
+						ref={typedRef}
 						value={typed}
 						onChange={(e) => setTyped(e.target.value)}
 						onKeyDown={(e) => {
+							if (e.key === 'Escape') {
+								// Only close the box; the card or thread around it stays open.
+								e.preventDefault()
+								e.stopPropagation()
+								returnFocus.current = true
+								setTyping(false)
+								return
+							}
 							if (e.key === 'Enter' && !e.shiftKey) {
 								e.preventDefault()
 								submitTyped()

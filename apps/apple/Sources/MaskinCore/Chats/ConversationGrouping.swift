@@ -7,6 +7,7 @@ public struct ConversationGroup: Identifiable, Equatable, Sendable {
 	public struct Key: Hashable, Sendable, RawRepresentable {
 		public var rawValue: String
 		public init(rawValue: String) { self.rawValue = rawValue }
+		public static let direct = Key(rawValue: "direct")
 		public static let pinned = Key(rawValue: "pinned")
 		public static let today = Key(rawValue: "today")
 		public static let yesterday = Key(rawValue: "yesterday")
@@ -22,7 +23,8 @@ public struct ConversationGroup: Identifiable, Equatable, Sendable {
 }
 
 public enum ConversationGrouping {
-	/// Pinned first, then by recency of `lastMessageAt ?? createdAt`: Today, Yesterday,
+	/// Direct messages first (one per person or agent, marked by `directPairKey`, never picked out
+	/// by title), then pinned, then by recency of `lastMessageAt ?? createdAt`: Today, Yesterday,
 	/// This week (the days before that), Last week, then one
 	/// bucket per month (with the year once it isn't the current one). Rows with no usable date
 	/// go to Earlier rather than vanishing. Empty buckets never exist; within one, most recent
@@ -39,10 +41,14 @@ public enum ConversationGrouping {
 				groups.append(ConversationGroup(key: key, label: label, items: [c]))
 			}
 		}
-		let dated = conversations.filter { !$0.pinned && $0.activityDate != nil }
+		let direct = conversations.filter(\.isDirect)
 			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
-		let pinned = conversations.filter(\.pinned)
+		let topical = conversations.filter { !$0.isDirect }
+		let dated = topical.filter { !$0.pinned && $0.activityDate != nil }
 			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
+		let pinned = topical.filter(\.pinned)
+			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
+		for c in direct { append(c, key: .direct, label: "Direct messages") }
 		for c in pinned { append(c, key: .pinned, label: "Pinned") }
 		for c in dated {
 			guard let date = c.activityDate else { continue }
@@ -61,7 +67,7 @@ public enum ConversationGrouping {
 					label: sameYear ? month : "\(month) \(parts.year ?? 0)")
 			}
 		}
-		let undated = conversations.filter { !$0.pinned && $0.activityDate == nil }
+		let undated = topical.filter { !$0.pinned && $0.activityDate == nil }
 		if !undated.isEmpty {
 			groups.append(ConversationGroup(key: .earlier, label: "Earlier", items: undated))
 		}

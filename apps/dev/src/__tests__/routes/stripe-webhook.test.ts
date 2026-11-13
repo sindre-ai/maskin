@@ -459,6 +459,34 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(update.settings.billing).toMatchObject({ plan: 'pro', status: 'past_due' })
 	})
 
+	it('leaves the plan alone when an auto top-up invoice is declined', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-topup-failed' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_topup_failed',
+			type: 'invoice.payment_failed',
+			data: {
+				object: {
+					customer: 'cus_y',
+					metadata: { workspace_id: workspaceId, kind: 'auto_top_up' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const workspaceUpdates = calls.updates.filter(
+			(u) => !!u && typeof u === 'object' && 'settings' in (u as Record<string, unknown>),
+		)
+		expect(workspaceUpdates).toHaveLength(0)
+	})
+
 	it('writes period_start and period_end on invoice.paid', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()

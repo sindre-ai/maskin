@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Speech to text on the Maskin server (`POST /api/transcriptions`), as a seam so dictation logic
 /// tests without a network.
@@ -27,6 +28,79 @@ public enum DictationLanguage {
 	}
 }
 
+/// A transcription request that got no answer within the time `PhraseTranscriptionQueue` allows.
+public struct TranscriptionTimeout: Error, Equatable, Sendable {
+	public init() {}
+}
+
+/// Why server dictation handed over to the phone's recogniser when the person did not ask for it.
+/// `note` is the plain-words line shown under the composer; `detail` goes in the log for a
+/// TestFlight session (a status code or a system error, never audio or text).
+public enum DictationFallback: Equatable, Sendable {
+	/// The app has no server dictation service wired in (`DictationBackend.service` is nil), so the
+	/// server was never tried. The real app sets it when its environment is built; previews and tests don't.
+	case serviceMissing
+	/// The microphone would not open for the server session.
+	case microphoneStart(String)
+	/// The audio engine reported a configuration change, which the server session treats as a loss.
+	case engineChanged
+	/// A transcription request failed: the HTTP status when the server answered, else the system error.
+	case request(status: Int?, detail: String)
+	/// The server did not answer in time.
+	case requestTimedOut
+	/// The session reached the server's length limit, so the phone carries on.
+	case timeLimit
+
+	/// The server answered for a phrase but found no words in it.
+	public static let emptyAnswerNote = "The server heard no words in the last phrase."
+	/// Done was pressed and nothing had been sent: no phrase ever sounded like speech.
+	public static let nothingSentNote = "No speech was picked up, so nothing was sent. Try speaking closer to the microphone."
+
+	public static func failed(_ error: Error) -> DictationFallback {
+		if error is TranscriptionTimeout { return .requestTimedOut }
+		if let error = error as? BackendDictationError {
+			return .request(status: error.status, detail: "HTTP \(error.status.map(String.init) ?? "unknown")")
+		}
+		let ns = error as NSError
+		return .request(status: nil, detail: "\(ns.domain) \(ns.code)")
+	}
+
+	public var note: String {
+		"Dictating on the phone (\(reason))"
+	}
+
+	public var detail: String {
+		switch self {
+		case .serviceMissing: return "no server dictation service configured"
+		case .microphoneStart(let message): return "microphone did not start: \(message)"
+		case .engineChanged: return "audio engine configuration changed"
+		case .request(_, let detail): return "request failed: \(detail)"
+		case .requestTimedOut: return "request timed out"
+		case .timeLimit: return "session time limit reached"
+		}
+	}
+
+	private var reason: String {
+		switch self {
+		case .serviceMissing: return "the app isn't connected to the server"
+		case .microphoneStart: return "the microphone didn't start"
+		case .engineChanged: return "the audio changed"
+		case .requestTimedOut: return "the server took too long"
+		case .timeLimit: return "the server's time limit for one dictation was reached"
+		case .request(let status, _):
+			guard let status else { return "no answer from the server" }
+			switch status {
+			case 429: return "the speech service is busy, \(status)"
+			case 400, 413: return "the recording was refused, \(status)"
+			case 500, 502, 503, 504: return "the speech service isn't answering, \(status)"
+			default: return "the server answered \(status)"
+			}
+		}
+	}
+
+	public static let log = Logger(subsystem: "io.maskin.app", category: "dictation")
+}
+
 /// Sends dictated phrases to the server as they close and hands the text back in speaking order,
 /// even when the requests finish out of order. After the first failed request nothing more is
 /// delivered (a later phrase would otherwise land after a gap) and `onFailure` fires once.
@@ -35,11 +109,18 @@ public final class PhraseTranscriptionQueue {
 	/// What has been delivered so far, phrases joined with spaces.
 	public private(set) var text = ""
 	public private(set) var hasFailed = false
+	/// How many phrases have been sent to the server.
+	public private(set) var submitted = 0
+	/// Whether the server's latest answer had no words in it. Set before `onPhraseDelivered` fires.
+	public private(set) var lastAnswerWasEmpty = false
+	/// Fires once per phrase the server answered for, in order, also when the answer was empty.
+	public var onPhraseDelivered: (@MainActor () -> Void)?
 
 	private let transcriber: any SpeechTranscribing
 	private let language: String?
 	private let onText: @MainActor (String) -> Void
 	private let onFailure: @MainActor (Error) -> Void
+	private let requestTimeout: Duration
 	private var requests: [Task<String, Error>] = []
 	private var tail: Task<Void, Never>?
 	private var cancelled = false
@@ -47,8 +128,10 @@ public final class PhraseTranscriptionQueue {
 	public init(
 		transcriber: any SpeechTranscribing, language: String?,
 		onText: @escaping @MainActor (String) -> Void,
-		onFailure: @escaping @MainActor (Error) -> Void
+		onFailure: @escaping @MainActor (Error) -> Void,
+		requestTimeout: Duration = .seconds(20)
 	) {
+		self.requestTimeout = requestTimeout
 		self.transcriber = transcriber
 		self.language = language
 		self.onText = onText
@@ -60,13 +143,41 @@ public final class PhraseTranscriptionQueue {
 		guard !cancelled, !hasFailed else { return }
 		let transcriber = transcriber
 		let language = language
-		let request = Task { try await transcriber.transcribe(wav: wav, language: language) }
+		let timeout = requestTimeout
+		submitted += 1
+		DictationFallback.log.info("dictation phrase \(self.submitted) sent: \(wav.count) bytes")
+		let number = submitted
+		let request = Task<String, Error> {
+			let started = ContinuousClock.now
+			let text = try await Self.transcribe(transcriber, wav: wav, language: language, timeout: timeout)
+			let took = started.duration(to: .now).description
+			DictationFallback.log.info(
+				"dictation phrase \(number) answered: \(text.count) characters after \(took, privacy: .public)")
+			return text
+		}
 		requests.append(request)
 		let previous = tail
 		tail = Task { [weak self] in
 			let result = await request.result
 			await previous?.value
 			self?.deliver(result)
+		}
+	}
+
+	/// One request, given up on after `timeout`. Without it a request that hangs keeps the session
+	/// silent until the URL session's own 60 seconds are up.
+	private nonisolated static func transcribe(
+		_ transcriber: any SpeechTranscribing, wav: Data, language: String?, timeout: Duration
+	) async throws -> String {
+		try await withThrowingTaskGroup(of: String.self) { group in
+			group.addTask { try await transcriber.transcribe(wav: wav, language: language) }
+			group.addTask {
+				try await Task.sleep(for: timeout)
+				throw TranscriptionTimeout()
+			}
+			guard let first = try await group.next() else { throw CancellationError() }
+			group.cancelAll()
+			return first
 		}
 	}
 
@@ -92,6 +203,8 @@ public final class PhraseTranscriptionQueue {
 		guard !cancelled, !hasFailed else { return }
 		switch result {
 		case .success(let phrase):
+			lastAnswerWasEmpty = phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+			onPhraseDelivered?()
 			let merged = DictationText.merge(base: text, transcript: phrase)
 			guard merged != text else { return }
 			text = merged

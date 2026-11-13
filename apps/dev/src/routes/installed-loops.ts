@@ -57,6 +57,7 @@ import {
 	rewriteWiring,
 	sourceItemIdOf,
 } from '../services/loop-provisioning'
+import { LoopVersionPusher } from '../services/loop-version-pusher'
 import {
 	type CapturedLiveSession,
 	captureLiveSessions,
@@ -859,6 +860,164 @@ app.openapi(forkLoopRoute, async (c) => {
 	)
 })
 
+// ── POST /api/installed-loops/:id/update ─────────────────────────────────────
+//
+// "Update now" for a locked install: runs the same re-provision the hourly
+// version pusher runs (LoopVersionPusher.pushLockedInstall) for this one
+// install, right away, attributed to the caller. There is no second update
+// path here, so the workspace's own credentials (the agents' llm_config keys,
+// integration credentials and status) are handled exactly as the cron handles
+// them. Forked installs are workspace-owned and refused with a 409. Already at
+// the catalog version is a 200 with `updated: false` and nothing written.
+
+const updateInstalledLoopResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	sourceLoopId: z.string().uuid(),
+	objectId: z.string().uuid().nullable(),
+	installedVersion: z.string(),
+	isLocked: z.boolean(),
+	updated: z.boolean(),
+	fromVersion: z.string(),
+	toVersion: z.string(),
+	message: z.string(),
+	items: z
+		.object({
+			adds: z.number(),
+			updates: z.number(),
+			removes: z.number(),
+			reuses: z.number(),
+		})
+		.nullable(),
+})
+
+const updateInstalledLoopRoute = createRoute({
+	method: 'post',
+	path: '/{id}/update',
+	'x-viewer-policy': 'writer',
+	tags: ['installed-loops'],
+	summary: 'Update a locked installed loop to the current catalog version now',
+	request: {
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			description: 'Install is at the catalog version (updated: false when it already was)',
+			content: { 'application/json': { schema: updateInstalledLoopResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Not allowed to edit loops in the install workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Installed loop not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Install is forked, so the workspace owns it and it cannot be updated',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Update failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateInstalledLoopRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const agentStorage = c.get('agentStorage')
+	const { id } = c.req.valid('param')
+
+	// By-id route: the workspace comes off the row, so check the caller's role
+	// against it before running anything.
+	const [install] = await db
+		.select({ workspaceId: installedLoops.workspaceId })
+		.from(installedLoops)
+		.where(eq(installedLoops.id, id))
+		.limit(1)
+	if (!install) {
+		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+	}
+	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
+	}
+
+	let result: Awaited<ReturnType<LoopVersionPusher['updateInstallNow']>>
+	try {
+		result = await new LoopVersionPusher(db, agentStorage).updateInstallNow(id, actorId)
+	} catch (err) {
+		logger.error('Installed loop update now failed', {
+			installedLoopId: id,
+			workspaceId: install.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'The update failed and nothing was changed. Try again.'),
+			500,
+		)
+	}
+
+	if (result.status === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+	}
+	if (result.status === 'forked') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'This loop was forked, so your workspace owns it and it does not follow the catalog. There is nothing to update.',
+			),
+			409,
+		)
+	}
+
+	const base = {
+		id: result.install.id,
+		workspaceId: result.install.workspaceId,
+		sourceLoopId: result.install.sourceLoopId,
+		objectId: result.install.objectId,
+		installedVersion: result.install.installedVersion,
+		isLocked: result.install.isLocked,
+	}
+	if (result.status === 'current') {
+		return c.json(
+			{
+				...base,
+				updated: false,
+				fromVersion: result.version,
+				toVersion: result.version,
+				message: `Already up to date at version ${result.version}.`,
+				items: null,
+			},
+			200,
+		)
+	}
+
+	logger.info('Installed loop updated on request', {
+		installedLoopId: result.install.id,
+		workspaceId: result.install.workspaceId,
+		fromVersion: result.fromVersion,
+		toVersion: result.toVersion,
+		items: result.items,
+	})
+	return c.json(
+		{
+			...base,
+			updated: true,
+			fromVersion: result.fromVersion,
+			toVersion: result.toVersion,
+			message: `Updated from version ${result.fromVersion} to ${result.toVersion}.`,
+			items: result.items,
+		},
+		200,
+	)
+})
+
 // ── DELETE /api/installed-loops/:id ──────────────────────────────────────────
 //
 // Remove an installed loop from the workspace.
@@ -1245,6 +1404,21 @@ app.openapi(uninstallLoopRoute, async (c) => {
 		deletedActorIds,
 		createWorkspaceDesktopService(db),
 	)
+
+	// The tx has committed, so a failure here cannot undo the delete: log it and
+	// carry on with the other agents. The actor ids are only known inside the tx,
+	// which is why this is not done up front the way DELETE /actors/:id does it.
+	for (const deletedActorId of deletedActorIds) {
+		try {
+			await agentStorage.deleteAllAgentFiles(deletedActorId, install.workspaceId)
+		} catch (err) {
+			logger.error('Failed to delete agent files from storage (orphan objects left)', {
+				workspaceId: install.workspaceId,
+				actorId: deletedActorId,
+				error: String(err),
+			})
+		}
+	}
 
 	for (const skillId of removedSkillIds) {
 		try {

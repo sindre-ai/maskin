@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -15,6 +16,7 @@ import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { registerTelnyxToolRouter } from './lib/integrations/providers/telnyx/tools'
+import { createHealthHandler } from './lib/health'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { registerVoiceCallHooks } from './lib/outreach/voice/call-hooks'
@@ -27,7 +29,9 @@ import {
 	ownershipCapErrorBody,
 	seatCapErrorBody,
 } from './lib/workspace-capacity'
+import { dbLoadShed, isExempt as isLoadSheddingExempt } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
+import { inFlightCap } from './middleware/in-flight-cap'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -36,6 +40,7 @@ import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
 import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
+import apiKeysRoutes from './routes/api-keys'
 import authRoutes from './routes/auth'
 import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
@@ -47,6 +52,8 @@ import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
+import emailPickRoutes from './routes/email-pick'
+import emailStopRoutes from './routes/email-stop'
 import eventsRoutes from './routes/events'
 import extensionsRoutes from './routes/extensions'
 import featureFlagsRoutes from './routes/feature-flags'
@@ -55,9 +62,12 @@ import fileProposalsRoutes from './routes/file-proposals'
 import filesRoutes from './routes/files'
 import forYouRoutes from './routes/for-you'
 import graphRoutes from './routes/graph'
+import guardrailsRoutes from './routes/guardrails'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsDeepdotsRoutes from './routes/integrations-deepdots'
+import integrationsDeepdotsMcpRoutes from './routes/integrations-deepdots-mcp'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
@@ -71,7 +81,6 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
-import integrationsSlackDirectChannelsRoutes from './routes/integrations-slack-direct-channels'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import integrationsTelnyxToolsRoutes from './routes/integrations-telnyx-tools'
 import integrationsTelnyxWebhookRoutes from './routes/integrations-telnyx-webhook'
@@ -86,6 +95,7 @@ import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationPreferencesRoutes from './routes/notification-preferences'
 import notificationsRoutes from './routes/notifications'
 import oauthRoutes from './routes/oauth'
+import oauthClientMetadataRoutes from './routes/oauth-client-metadata'
 import oauthDiscoveryRoutes from './routes/oauth-discovery'
 import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
@@ -93,12 +103,14 @@ import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import savedViewsRoutes from './routes/saved-views'
 import searchRoutes from './routes/search'
 import sendPermissionsRoutes from './routes/send-permissions'
 import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
+import telemetryClientRoutes from './routes/telemetry-client'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
@@ -132,12 +144,24 @@ export type Env = {
 	}
 }
 
+/**
+ * Per client (a hash of its credential), reads that run at once, reads allowed to wait, and how
+ * long they wait. The pool is 20 (DB_POOL_SIZE) and auth alone takes a connection per request, so
+ * 8 leaves room for others; a page that fires more than 8 reads at once just queues the rest for
+ * a moment.
+ */
+const CLIENT_MAX_IN_FLIGHT = 8
+const CLIENT_MAX_WAITING = 60
+const CLIENT_MAX_WAIT_MS = 10_000
+
 export interface AppDeps {
 	db: Database
 	notifyBridge: PgNotifyBridge
 	sessionManager: SessionManager
 	agentStorage: AgentStorageManager
 	storageProvider: StorageProvider
+	/** True while the database is backed up; turns on refusing reads. Omitted, nothing is refused. */
+	dbBackedUp?: () => boolean
 }
 
 export interface CreateAppOptions {
@@ -303,6 +327,54 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', requestTiming())
 
+	// Ahead of auth, so a refused read does not cost the database lookup auth would have made.
+	if (deps.dbBackedUp) {
+		let shedSinceLog = 0
+		let lastShedLogAt = 0
+		app.use(
+			'/api/*',
+			dbLoadShed(deps.dbBackedUp, () => {
+				shedSinceLog += 1
+				const now = Date.now()
+				if (now - lastShedLogAt < 10_000) return
+				logger.warn('Database backed up: refusing reads until it clears', {
+					refusedSinceLastLog: shedSinceLog,
+				})
+				lastShedLogAt = now
+				shedSinceLog = 0
+			}),
+		)
+	}
+
+	let capRefusedSinceLog = 0
+	let lastCapLogAt = 0
+	// One client may not hold the whole database pool. Reads only: a refused write is lost data.
+	// Keyed on a hash of the credential, read before auth so a capped request costs no lookup.
+	app.use(
+		'/api/*',
+		inFlightCap({
+			max: CLIENT_MAX_IN_FLIGHT,
+			maxWaiting: CLIENT_MAX_WAITING,
+			maxWaitMs: CLIENT_MAX_WAIT_MS,
+			skip: (c) => c.req.method !== 'GET' || isLoadSheddingExempt(c.req.path),
+			keyOf: (c) => {
+				const credential = c.req.header('Authorization') ?? c.req.header('Cookie')
+				if (!credential) return undefined
+				return createHash('sha256').update(credential).digest('hex').slice(0, 16)
+			},
+			onRefuse: () => {
+				capRefusedSinceLog += 1
+				const now = Date.now()
+				if (now - lastCapLogAt < 10_000) return
+				logger.warn('Client at its in-flight limit: refusing reads', {
+					refusedSinceLastLog: capRefusedSinceLog,
+				})
+				lastCapLogAt = now
+				capRefusedSinceLog = 0
+			},
+		}),
+	)
+
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('notifyBridge', notifyBridge)
@@ -312,9 +384,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		await next()
 	})
 
-	app.get('/api/health', (c) => {
-		return c.json({ status: 'ok', timestamp: new Date().toISOString() })
-	})
+	// Liveness: the process is up and answering. It never touches the database, so a database
+	// stall cannot make Docker/Coolify mark the container unhealthy and drop the whole site
+	// (a stalled pool is shed by dbLoadShed, and the site keeps answering). The database-aware
+	// check is /api/health/db, for monitoring.
+	app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
+	app.get('/api/health/db', createHealthHandler(db))
 
 	// Auth allowlist — each exemption has a distinct reason; do not tighten
 	// without checking the corresponding flow:
@@ -328,6 +403,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - POST /api/devices/unregister: a signed-out phone dropping its own push registration. It has
 	//     no API key after sign-out, so the device secret it registered with is the credential
 	//     (checked and rate limited per IP inside the handler; routes/devices.ts).
+	//   - GET and POST /api/email/stop: the stop link in a summary email. Opened signed out; the
+	//     signed token in the URL is the credential, checked in the handler.
+	//   - GET and POST /api/email/pick-dismiss: the "Not useful" link under a Marketplace pick.
+	//     Same: opened signed out, the signed token is the credential.
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - GET /api/integrations/{provider}/native-launch: same, for native connect
@@ -347,7 +426,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
 		const method = c.req.method
-		if (path === '/api/health' || path === '/api/openapi.json') return next()
+		if (path === '/api/health' || path === '/api/health/db' || path === '/api/openapi.json')
+			return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
 		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
@@ -359,6 +439,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			return next()
 		}
 		if (path === '/api/devices/unregister' && method === 'POST') return next()
+		// The stop link in a summary email, opened with nobody signed in. The signed token in the
+		// URL is the credential, checked in the handler (routes/email-stop.ts).
+		if (path === '/api/email/stop' && (method === 'GET' || method === 'POST')) return next()
+		// The "Not useful" link under a Marketplace pick, same: signed token (routes/email-pick.ts).
+		if (path === '/api/email/pick-dismiss' && (method === 'GET' || method === 'POST')) return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/internal/mcp-guard/report' && method === 'POST') return next()
@@ -459,6 +544,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/auth', authRoutes)
 	app.route('/api/device-auth', deviceAuthRoutes)
 	app.route('/api/account', accountRoutes)
+	app.route('/api/account/api-keys', apiKeysRoutes)
 	app.route('/api/actors', actorAvatarRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
@@ -479,6 +565,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// more specific prefix wins the trie — same ordering as Slack's below.
 	// Skjald's one-click connect has its own two routes under /skjald; mounted before the generic catch-all.
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
+	// Deepdots connects from an email and password form, not an OAuth redirect.
+	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -495,6 +583,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// folder watches list + stop for the Drive detail page; its own prefix, so the
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
+	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
@@ -507,9 +596,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/resend', integrationsResendRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
-	app.route('/api/integrations/slack/direct-post-channels', integrationsSlackDirectChannelsRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
+	app.route('/api/guardrails', guardrailsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.
@@ -533,6 +622,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/for-you', forYouRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
+	app.route('/api/email/stop', emailStopRoutes)
+	app.route('/api/email/pick-dismiss', emailPickRoutes)
 	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/web-push', webPushRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
@@ -551,7 +642,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// of /api, and refused for Claude's own (mat_) tokens.
 	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
+	app.route('/api/telemetry', telemetryClientRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
+	app.route('/api/saved-views', savedViewsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
 	app.route('/api/desktop', desktopRoutes)
 	// app.route('/api/desktop/teach', desktopTeachRoutes)
@@ -580,6 +673,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
+
+	// Client ID Metadata Document for Vercel's MCP sign-in. Public, and before the SPA fallthrough for
+	// the same reason as the discovery documents above.
+	app.route('/', oauthClientMetadataRoutes)
 
 	// The consent page is a web route (apps/web/src/routes/oauth.authorize.tsx), served by the SPA
 	// fallthrough below. A page with an Allow button is a clickjacking target, so it refuses to be

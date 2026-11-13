@@ -24,7 +24,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { sortByName } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AGENT_ACCESS_LABELS, requiresApprovalToAct } from '@maskin/shared'
+import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
@@ -59,6 +59,20 @@ export function summarizeAgentAccess(
 	const withAccess = grants.length - blocked
 	if (withAccess === 0) return 'No agents have access'
 	return `${withAccess} ${withAccess === 1 ? 'agent has' : 'agents have'} access`
+}
+
+/**
+ * The short chip on a collapsed integration card: what every agent gets, then how many
+ * agents differ ("Read", "Read & write · 2 exceptions").
+ */
+export function accessChipLabel(
+	defaultAccess: DefaultAgentAccess,
+	grants: Pick<AgentGrant, 'access'>[],
+): string {
+	const base = AGENT_ACCESS_LABELS[defaultAccess]
+	const exceptions = grants.filter((g) => g.access !== defaultAccess).length
+	if (exceptions === 0) return base
+	return `${base} · ${exceptions} ${exceptions === 1 ? 'exception' : 'exceptions'}`
 }
 
 /** What a newly added agent starts with: the step up from the default. */
@@ -259,13 +273,6 @@ export function AgentAccess({
 								</SelectContent>
 							</Select>
 						</ViewerTooltip>
-					)}
-
-					{requiresApprovalToAct(integration.provider) && (
-						<p className="text-xs text-muted-foreground">
-							Read & write lets an agent write drafts. Each email still waits for your approval in
-							the chat before it is sent.
-						</p>
 					)}
 
 					<p className="text-xs text-muted-foreground">
