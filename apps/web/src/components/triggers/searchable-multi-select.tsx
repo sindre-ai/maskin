@@ -1,12 +1,11 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
 	ResponsivePopover,
 	ResponsivePopoverContent,
 	ResponsivePopoverTrigger,
 } from '@/components/ui/responsive-popover'
-import { cn } from '@/lib/cn'
+import { Command } from 'cmdk'
 import { Check, ChevronDown, X } from 'lucide-react'
 import type * as React from 'react'
 import { useMemo, useState } from 'react'
@@ -110,46 +109,42 @@ export function SearchableMultiSelect({
 					</Button>
 				</ResponsivePopoverTrigger>
 				<ResponsivePopoverContent align="start" className="w-72 p-0" accessibleTitle={placeholder}>
-					<div className="border-b border-border p-2">
-						<Input
-							autoFocus
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-							placeholder={placeholder}
-							className="h-8"
-						/>
-					</div>
-					<div className="max-h-64 overflow-y-auto p-1">
-						{loading ? (
-							<div className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</div>
-						) : filtered.length === 0 ? (
-							<div className="px-2 py-1.5 text-xs text-muted-foreground">{emptyText}</div>
-						) : (
-							filtered.map((item) => {
-								const selected = selectedIds.includes(item.id)
-								return (
-									<button
+					<Command shouldFilter={false} label={placeholder}>
+						<div className="border-b border-border p-2">
+							<Command.Input
+								autoFocus
+								value={search}
+								onValueChange={setSearch}
+								placeholder={placeholder}
+								className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
+							/>
+						</div>
+						<Command.List className="max-h-64 overflow-y-auto p-1">
+							{loading ? (
+								<div className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</div>
+							) : filtered.length === 0 ? (
+								<div className="px-2 py-1.5 text-xs text-muted-foreground">{emptyText}</div>
+							) : (
+								filtered.map((item) => (
+									<Command.Item
 										key={item.id}
-										type="button"
-										onClick={() => toggle(item.id)}
-										className={cn(
-											'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
-											selected && 'bg-accent',
-										)}
+										value={item.id}
+										onSelect={() => toggle(item.id)}
+										className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm data-[selected=true]:bg-accent"
 									>
 										<div className="flex h-4 w-4 shrink-0 items-center justify-center">
-											{selected ? <Check size={14} /> : null}
+											{selectedIds.includes(item.id) ? <Check size={14} /> : null}
 										</div>
 										<span className="flex-1 truncate">{item.label}</span>
 										{item.hint && (
 											<span className="shrink-0 text-xs text-muted-foreground">{item.hint}</span>
 										)}
 										{trailing?.(item)}
-									</button>
-								)
-							})
-						)}
-					</div>
+									</Command.Item>
+								))
+							)}
+						</Command.List>
+					</Command>
 					{footer && (
 						<div className="border-t border-border px-2 py-1.5 text-xs text-muted-foreground">
 							{footer}

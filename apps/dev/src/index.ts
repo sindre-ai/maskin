@@ -70,6 +70,7 @@ import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
@@ -327,6 +328,10 @@ const gscSyncScheduler = new GscSyncScheduler(db)
 gscSyncScheduler.start()
 logger.info('GSC sync scheduler started')
 
+const microsoftSyncScheduler = new MicrosoftSyncScheduler(db)
+microsoftSyncScheduler.start()
+logger.info('Microsoft sync scheduler started')
+
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
@@ -382,7 +387,7 @@ briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
 // Summary email (one grouped mail a day). Own query, own claim; killswitch
-// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+// FEATURE_BRIEFING_EMAIL: in production only =1 sends, elsewhere =0 stops; the push is left alone.
 const briefingEmailScheduler = new BriefingEmailScheduler(db)
 briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.

@@ -60,7 +60,7 @@ import {
 	statusFilterParam,
 } from './list-contract.js'
 import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
-import { buildListPayload, listText } from './list-response.js'
+import { buildListPayload, listPageText, listText } from './list-response.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -3477,7 +3477,13 @@ async function listObjectsPage(
 		content: [
 			{
 				type: 'text' as const,
-				text: buildListContentText(rows),
+				text: listPageText({
+					key: 'objects',
+					rows,
+					limit: pagination.limit,
+					nextCursor,
+					total,
+				}),
 			},
 		],
 		structuredContent: {
@@ -3516,9 +3522,51 @@ async function listObjectsPage(
 }
 
 // Tools whose schema rejects a top-level argument name it does not know instead
-// of stripping it. Only tools where a dropped list reads as a finished write;
-// other tools keep stripping, since agents often send harmless extra keys.
-const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+// of stripping it, each with the closing sentence of the refusal (empty for reads, which
+// write nothing). Tools where a dropped list reads as a finished write, and the
+// relationship, graph and file reads, where a dropped filter returns unrelated
+// rows or a plausible but wrong total that look like an answer. Rolled out one tool at
+// a time, each after its extra-key counts in PostHog (mcp_tool_call arg_keys) were read.
+// Other tools keep stripping, since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
+	['update_objects', 'Nothing was written.'],
+	[
+		'query_data',
+		'It takes no SQL. Example: query_data({ type: "task", filters: { status: "done" }, group_by: "created_at.day" }).',
+	],
+	['list_relationships', ''],
+	['traverse_graph', ''],
+	['get_objects', ''],
+	['list_files', ''],
+	['get_file', ''],
+])
+
+// Misspellings agents really send (PostHog, 14 days to 12 Nov 2026), shown in the
+// error beside the unknown name.
+const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
+	list_relationships: { entity_id: 'object_id', offset: 'cursor' },
+	traverse_graph: {
+		start_id: 'object_id',
+		id: 'object_id',
+		depth: 'max_depth',
+		relationship_types: 'edge_type_allow_list',
+		types: 'edge_type_allow_list',
+	},
+	get_objects: {
+		include_content: 'include: ["content"]',
+		include_body: 'include: ["content"]',
+		include_metadata: 'include: ["metadata"]',
+		include_relationships: 'include: ["relationships"]',
+	},
+	list_files: { query: 'q', search: 'q' },
+	get_file: { file_id: 'id' },
+}
+
+// A list_relationships call with none of these would list every relationship in
+// the workspace, newest first, and look like an answer.
+const REQUIRE_ONE_OF: Record<string, readonly string[]> = {
+	list_relationships: ['object_id', 'source_id', 'target_id', 'type'],
+}
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
@@ -3568,7 +3616,8 @@ export function createMcpServer(config: McpConfig) {
 		// SDK validates arguments before our handler runs. A tool with no alias
 		// rows passes through untouched, so its tools/list entry is unchanged.
 		const definition =
-			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
+			baseDefinition?.inputSchema &&
+			(needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name) || name in REQUIRE_ONE_OF)
 				? {
 						...baseDefinition,
 						inputSchema: wrapInputSchema(
@@ -3609,7 +3658,10 @@ export function createMcpServer(config: McpConfig) {
 							},
 							{
 								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
+								unknownKeysSuffix: REJECT_UNKNOWN_KEYS_TOOLS.get(name),
 								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
+								hints: UNKNOWN_KEY_HINTS[name],
+								requireOneOf: REQUIRE_ONE_OF[name],
 							},
 						),
 					}
@@ -4796,7 +4848,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'relationships',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6115,6 +6173,8 @@ export function createMcpServer(config: McpConfig) {
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
+					...(args.conversation_id !== undefined ? { conversation_id: args.conversation_id } : {}),
+					...(args.object_id !== undefined ? { object_id: args.object_id } : {}),
 				},
 				{ workspaceId: wsId },
 			)
@@ -6135,6 +6195,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
+			if (args.conversation_id) {
+				const chatParams = new URLSearchParams()
+				if (args.type) chatParams.set('type', args.type)
+				if (args.uploaded_by) chatParams.set('uploaded_by', args.uploaded_by)
+				const chatQs = chatParams.toString()
+				const chatFiles = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${args.conversation_id}/files${chatQs ? `?${chatQs}` : ''}`,
+					undefined,
+					{ workspaceId: wsId },
+				)) as { files: unknown[]; total: number; omitted: number }
+				return {
+					_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: buildListContentText(chatFiles) }],
+					structuredContent: chatFiles,
+				}
+			}
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
@@ -6165,7 +6243,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'files',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6292,6 +6376,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'transcribe_file',
+		{
+			description: tools.transcribe_file.description,
+			inputSchema: tools.transcribe_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/transcriptions/files/${args.id}`,
+				args.language !== undefined ? { language: args.language } : {},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('transcribe_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_file',
 		{
 			description: tools.update_file.description,
@@ -6392,7 +6500,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'events',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					events: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6427,7 +6546,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'comments',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					comments: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6630,7 +6760,18 @@ export function createMcpServer(config: McpConfig) {
 					: null
 			return {
 				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'chats',
+							rows: chats,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					chats,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -10593,6 +10734,76 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_apply_settings',
+		{
+			description: tools.desktop_apply_settings.description,
+			inputSchema: tools.desktop_apply_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/apply-settings', args.agent_id),
+				{},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_apply_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_settings',
+		{
+			description: tools.desktop_settings.description,
+			inputSchema: tools.desktop_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				desktopPath('/api/desktop/settings', args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_save_file',
+		{
+			description: tools.desktop_save_file.description,
+			inputSchema: tools.desktop_save_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/save-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_save_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

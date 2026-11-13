@@ -56,6 +56,7 @@ const ALL_TOOL_NAMES = [
 	'rename_file_tag',
 	'merge_file_tags',
 	'get_file',
+	'transcribe_file',
 	'update_file',
 	'propose_file_changes',
 	'delete_file',
@@ -131,6 +132,9 @@ const ALL_TOOL_NAMES = [
 	'desktop_key',
 	'desktop_run',
 	'desktop_put_file',
+	'desktop_apply_settings',
+	'desktop_settings',
+	'desktop_save_file',
 	'desktop_expose_port',
 	'desktop_list_ports',
 	'desktop_close_port',
@@ -426,6 +430,14 @@ describe('traverse_graph schema', () => {
 			edge_type_allow_list: ['supersedes', 'contradicts'],
 		})
 		expect(result.edge_type_allow_list).toEqual(['supersedes', 'contradicts'])
+	})
+
+	it('accepts the edge types the platform writes itself', () => {
+		const result = schema.parse({
+			object_id: uuid,
+			edge_type_allow_list: ['attached', 'in_loop', 'produced_by', 'spawned'],
+		})
+		expect(result.edge_type_allow_list).toEqual(['attached', 'in_loop', 'produced_by', 'spawned'])
 	})
 
 	it('rejects an unknown edge type', () => {

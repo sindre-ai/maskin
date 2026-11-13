@@ -99,6 +99,47 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			}
 		})
 
+		test(`an insight linked inside a sentence gets a card under the message at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			// A fresh workspace has no event type (createObject answers 400), so the insight stands in.
+			const insight = await account.api.createObject(account.workspaceId, {
+				type: 'insight',
+				title: 'Webinar on product discovery',
+				status: 'new',
+				content: 'Public title: Product discovery with AI agents.',
+			})
+			const conversation = await chatWithAgentMessage(
+				account,
+				(ws) => `Filed: [the webinar](/${ws}/objects/${insight.id}), Wed 18 Nov, as planned.`,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+
+			const thread = page.getByTestId('thread-messages')
+			const card = thread.locator('[data-linked-card]')
+			// The link stays in the sentence; the card sits under it, folded to its title.
+			await expect(card).toBeVisible({ timeout: 10_000 })
+			await expect(card).toContainText('Webinar on product discovery')
+			await expect(thread.getByText('Product discovery with AI agents.')).toHaveCount(0)
+			// Opening it shows the text, which can be edited in place; an insight has nothing to approve.
+			await card.getByText('Webinar on product discovery').click()
+			await expect(thread.getByText('Product discovery with AI agents.')).toBeVisible()
+			await expect(thread.getByRole('button', { name: /Approve/ })).toHaveCount(0)
+			const overflow = await page.evaluate(
+				() => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			)
+			expect(overflow).toBeLessThanOrEqual(0)
+
+			for (const colorScheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme })
+				await expect(card).toBeVisible()
+			}
+		})
+
 		test(`a task in a list stays a link, so a long message does not grow into cards at ${vp.label}`, async ({
 			page,
 			account,
@@ -135,9 +176,9 @@ test.describe('Chat — a message that links to a draft shows what the draft say
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const contact = await account.api.createObject(account.workspaceId, {
-				type: 'insight',
+				type: 'contact',
 				title: 'Catja Nielsen',
-				status: 'new',
+				status: 'new_lead',
 				content: 'Head of operations at the merged company.',
 			})
 			const conversation = await chatWithAgentMessage(

@@ -184,14 +184,18 @@ describe('Agent post continues the turn thread', () => {
 	it('follows the newest turn of a long-lived session', async () => {
 		const session = await seedSession()
 		await startTurn(session.id, replyId)
-		const newer = await post({ id: humanId, type: 'human' }, { content: 'a new question' })
+		const otherRoot = await post({ id: humanId, type: 'human' }, { content: 'another topic' })
+		const newer = await post(
+			{ id: humanId, type: 'human' },
+			{ content: 'a new question', thread_root_id: otherRoot.id },
+		)
 		await startTurn(session.id, newer.id)
 
 		const posted = await post(
 			{ id: agentId, type: 'agent' },
 			{ content: 'looking into it', session_id: session.id },
 		)
-		expect(posted.threadRootId).toBe(newer.id)
+		expect(posted.threadRootId).toBe(otherRoot.id)
 	})
 
 	it('lets an explicit thread_root_id win over the turn thread', async () => {

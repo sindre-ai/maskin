@@ -160,8 +160,28 @@ export function AgentAccess({
 	// An agent set to what "All other agents" already get has nothing of its own to keep: its entry
 	// goes and it falls back into that group. For a key, Full access is the default's 'read'.
 	const changeAgent = (actorId: string, access: AgentGrantAccess) => {
+		if (busy) return
 		if (matchesDefault(defaultAccess, access, isKey)) removeGrant.mutate(actorId)
 		else setGrant.mutate({ actorId, access })
+	}
+
+	// A change while a save is running is ignored here, not by disabling the pickers: a disabled
+	// trigger drops focus to the page, so arrows, Enter and Esc stop working until the user tabs back.
+	const changeDefault = (access: DefaultAgentAccess) => {
+		if (busy) return
+		setDefault.mutate(access)
+	}
+
+	const addAgent = (actorId: string) => {
+		if (busy) return
+		setGrant.mutate({
+			actorId,
+			access: isKey
+				? defaultAccess === 'read'
+					? 'none'
+					: 'read_write'
+				: startingAccess(defaultAccess),
+		})
 	}
 
 	return (
@@ -196,8 +216,8 @@ export function AgentAccess({
 							<ViewerTooltip className="flex">
 								<Select
 									value={defaultAccess}
-									onValueChange={(v) => setDefault.mutate(v as DefaultAgentAccess)}
-									disabled={!canEdit || busy}
+									onValueChange={(v) => changeDefault(v as DefaultAgentAccess)}
+									disabled={!canEdit}
 								>
 									<SelectTrigger size="pill" aria-label="Access for all other agents">
 										<SelectValue />
@@ -224,7 +244,7 @@ export function AgentAccess({
 										<Select
 											value={isKey ? (access === 'none' ? 'none' : 'read_write') : access}
 											onValueChange={(v) => changeAgent(agent.id, v as AgentGrantAccess)}
-											disabled={!canEdit || busy}
+											disabled={!canEdit}
 										>
 											<SelectTrigger aria-label={`Access for ${agent.name}`} size="pill">
 												<SelectValue />
@@ -247,20 +267,7 @@ export function AgentAccess({
 
 					{(canEdit || !canWrite) && addable.length > 0 && (
 						<ViewerTooltip className="flex">
-							<Select
-								value=""
-								onValueChange={(actorId) =>
-									setGrant.mutate({
-										actorId,
-										access: isKey
-											? defaultAccess === 'read'
-												? 'none'
-												: 'read_write'
-											: startingAccess(defaultAccess),
-									})
-								}
-								disabled={!canWrite || busy}
-							>
+							<Select value="" onValueChange={addAgent} disabled={!canWrite}>
 								<SelectTrigger size="pill" aria-label="Add an agent">
 									<SelectValue placeholder="Add an agent…" />
 								</SelectTrigger>

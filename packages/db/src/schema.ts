@@ -2094,6 +2094,37 @@ export const workspaceCreditLedger = pgTable(
 	],
 )
 
+// ── Workspace AI Usage ──────────────────────────────────────────────────────
+// Plan spend on the Maskin-funded OpenRouter account that does not belong to a
+// session, such as `transcribe_file`. Plan usage is otherwise summed from
+// `sessions` rows (`getWorkspacePlanUsdCentsUsage`); that function adds this
+// table's `cost_usd` on top, so the cap check, the usage page and the prepaid
+// credit overage all count these calls without a fake session row.
+//
+// `cost_usd` is what OpenRouter reported for the request (`usage.cost`), never
+// an estimate. `actor_id` and `file_id` are `set null` so deleting an agent or a
+// file never deletes the spend it caused.
+export const workspaceAiUsage = pgTable(
+	'workspace_ai_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		// 'transcription'
+		kind: text('kind').notNull(),
+		// The provider model that served the call, for the usage breakdown.
+		model: text('model').notNull(),
+		costUsd: numeric('cost_usd', { precision: 12, scale: 6 }).notNull(),
+		// Seconds of audio sent for transcription.
+		audioSeconds: numeric('audio_seconds', { precision: 10, scale: 2 }),
+		fileId: uuid('file_id').references(() => files.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_ai_usage_workspace_created_idx').on(t.workspaceId, t.createdAt)],
+)
+
 // ── Idempotency Records ─────────────────────────────────────────────────────
 // Outbound-side idempotency ledger for the API's `Idempotency-Key` header.
 // Replaces the previous in-memory cache so that a session snapshot + replay
@@ -3228,9 +3259,12 @@ export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
 export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert
 
 // ── API route timing counts ─────────────────────────────────────────────────
-// One row per minute, per route, per server build, per sender: how many requests the API answered and how long
-// they took. Counts and sums only. No actor, workspace, URL or header is stored; the route is the
-// pattern (`/api/objects/:id`). Written by the once-a-minute timing flush
+// One row per minute, per route, per server build, per sender, per app build, per app release: how many requests the API
+// answered and how long they took. Counts and sums only. No actor, workspace, URL or free text is stored;
+// the route is the pattern (`/api/objects/:id`) and client_build is the iOS build number from
+// X-Client-Build (1 to 12 digits) and client_version is the release from X-Client-Version (digits and dots,
+// 1 to 12), each '' for web, agents and anything else. Written by the once-a-minute
+// timing flush
 // (apps/dev/src/lib/route-timing-store.ts) and deleted after 30 days, so the load per route can be
 // read over a week. `minute` is the minute the flush ran in; two replicas (or two flushes in one
 // minute) add into the same row.
@@ -3245,6 +3279,10 @@ export const apiRouteTimingMinutes = pgTable(
 		// Who sent the requests: ui, ios, mcp, other or none (no header). '' on rows written before
 		// this column existed, which stay in the all-traffic sum.
 		clientSource: text('client_source').notNull().default(''),
+		// iOS build number from X-Client-Build (1 to 12 digits); '' for web, agents and anything else.
+		clientBuild: text('client_build').notNull().default(''),
+		// iOS release from X-Client-Version (digits and dots, 1 to 12); '' for web, agents and anything else.
+		clientVersion: text('client_version').notNull().default(''),
 		requests: integer('requests').notNull(),
 		slowRequests: integer('slow_requests').notNull(),
 		errors5xx: integer('errors_5xx').notNull(),
@@ -3253,6 +3291,17 @@ export const apiRouteTimingMinutes = pgTable(
 		dbQueries: integer('db_queries').notNull(),
 	},
 	(t) => [
-		primaryKey({ columns: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource] }),
+		primaryKey({
+			columns: [
+				t.minute,
+				t.build,
+				t.method,
+				t.route,
+				t.stream,
+				t.clientSource,
+				t.clientBuild,
+				t.clientVersion,
+			],
+		}),
 	],
 )

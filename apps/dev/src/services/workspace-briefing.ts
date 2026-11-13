@@ -21,7 +21,9 @@ const EVERY_SESSION_GUIDANCE = `Do the work, don't describe it. If your next ste
 
 Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_sub_chat if you need the answer now. Ask a person only for the cases below.
 
-Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.
+Before you ask a person to upload something again, check the chat's file list ("Files in this chat" in your starting prompt, or list_files with conversation_id). Link what you create to what you worked from.
+
+Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now. Only when you can neither do it nor schedule it, say that it's still open and what is stopping you.
 
 Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.
 
@@ -61,7 +63,7 @@ export function buildWorkspaceStartupBlock(args: {
 This workspace works through bets — shaped, time-boxed outcomes.
 
 - Active bets are where in-flight work lives; closed bets carry verdicts that teach the next cycle.
-- Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
+- Dig deeper with \`get_objects\`, \`list_objects\` (pass \`q\` to search), \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 
 Whenever you mention something in Maskin, link it inline as a markdown link. The title or name is usually the best link text, but short wording that reads naturally, like \`[here]\`, is fine too. This goes for anything a person might want to open: an object, an agent, a trigger, a file, a settings page. It applies in chat replies, comments, notifications and descriptions alike. Use these URL formats (the link text is up to you) — do not guess the host, drop the workspace segment, or paste bare ids:
@@ -425,7 +427,7 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 		}
 		out.push('')
 		out.push(
-			`_Use \`get_objects\` with \`type: '${insightLabel.toLowerCase()}'\` for the full list._`,
+			`_Use \`list_objects\` with \`type: '${insightLabel.toLowerCase()}'\` for the full list._`,
 		)
 	}
 	out.push('')
@@ -433,9 +435,10 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 	out.push('## Digging deeper')
 	out.push('')
 	out.push('This briefing is a summary. Use the Maskin MCP tools to explore further:')
-	out.push('- `get_objects` — list objects by type/status/owner')
-	out.push('- `search_objects` — full-text search over titles and content')
-	out.push('- `get_object` — fetch an object by id with its relationships')
+	out.push(
+		'- `list_objects` — list objects by type/status/owner; pass `q` for a ranked text search',
+	)
+	out.push('- `get_objects` — fetch objects by id; `include` adds content, relationships and files')
 	out.push('- `list_relationships` — graph edges between objects')
 	out.push(
 		`- \`update_objects\` — update status, content, metadata (set \`metadata.verdict\` when closing a ${betLabel.toLowerCase()})`,

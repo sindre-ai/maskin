@@ -710,6 +710,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'set_loop_view',
 		'show_computer',
 		'stop_chat_agent',
+		'transcribe_file',
 		'update_file',
 		'update_notification',
 		'update_workspace_field',

@@ -100,6 +100,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/microsoft/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
 	// Per-actor push registration: it writes the caller's own device row and touches no
 	// workspace data, and a read-only viewer still wants their own notifications.
@@ -192,6 +193,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
 	[
 		'POST',
+		'/api/telemetry/client',
+		'Group E, telemetry: product analytics from the caller’s own phone, no workspace data written; a viewer’s usage counts too, and the workspace share-usage setting applies in the handler',
+	],
+	[
+		'POST',
 		'/api/account/delete',
 		'deleting your own account (App Store 5.1.1(v)) must work for every role, viewers included; it acts only on the caller, behind a password re-entry',
 	],
@@ -236,6 +242,7 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'/api/integrations/google-search-console/mcp',
 		'MCP endpoint, tools read as the workspace',
 	],
+	['POST', '/api/integrations/microsoft/mcp', 'MCP endpoint, tools read as the workspace'],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
 	[
 		'PUT',

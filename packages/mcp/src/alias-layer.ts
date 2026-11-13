@@ -130,7 +130,16 @@ export function needsNormalise(tool: string): boolean {
 export function wrapInputSchema(
 	input: z.ZodRawShape | z.ZodObject<z.ZodRawShape>,
 	normalise: (raw: unknown) => unknown,
-	opts: { rejectUnknownKeys?: boolean; explain?: (args: unknown) => string | null } = {},
+	opts: {
+		rejectUnknownKeys?: boolean
+		/** Closes the unknown-key refusal. Defaults to the write tools' "Nothing was written." */
+		unknownKeysSuffix?: string
+		explain?: (args: unknown) => string | null
+		/** Misspelling -> accepted name, shown beside the unknown name in the error. */
+		hints?: Readonly<Record<string, string>>
+		/** At least one of these names must be sent, or the call fails instead of listing everything. */
+		requireOneOf?: readonly string[]
+	} = {},
 ): z.ZodTypeAny {
 	const schema = input instanceof z.ZodType ? input : z.object(input)
 	const shape = input instanceof z.ZodType ? input.shape : input
@@ -140,9 +149,22 @@ export function wrapInputSchema(
 			const accepted = Object.keys(shape)
 			const unknown = Object.keys(args).filter((key) => !accepted.includes(key))
 			if (unknown.length > 0) {
+				const named = unknown.map((key) =>
+					opts.hints?.[key] ? `${key} (use ${opts.hints[key]})` : key,
+				)
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Accepted names: ${accepted.join(', ')}. Nothing was written.`,
+					message:
+						`Unrecognised argument name${unknown.length > 1 ? 's' : ''}: ${named.join(', ')}. Accepted names: ${accepted.join(', ')}. ${opts.unknownKeysSuffix ?? 'Nothing was written.'}`.trimEnd(),
+				})
+			}
+		}
+		const required = opts.requireOneOf
+		if (required?.length && isPlainObject(args)) {
+			if (!required.some((key) => (args as Record<string, unknown>)[key] !== undefined)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Pass at least one of: ${required.join(', ')}. With none of them the call would list the whole workspace.`,
 				})
 			}
 		}
