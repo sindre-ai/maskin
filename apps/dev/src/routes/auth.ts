@@ -1,5 +1,11 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { hashPassword, issueLoginKey, revokeActorKeys, verifyPassword } from '@maskin/auth'
+import {
+	evictApiKeyHash,
+	hashPassword,
+	issueLoginKey,
+	revokeActorKeys,
+	verifyPassword,
+} from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors } from '@maskin/db/schema'
 import { sendPasswordResetEmail } from '@maskin/email'
@@ -190,18 +196,22 @@ app.openapi(resetPasswordRoute, async (c) => {
 	}
 
 	const passwordHash = await hashPassword(body.password)
-	const actorId = await db.transaction(async (tx) => {
+	const result = await db.transaction(async (tx) => {
 		const id = await consumePasswordResetToken(tx, body.token)
 		if (!id) return null
 		await tx.update(actors).set({ passwordHash }).where(eq(actors.id, id))
 		// Same kinds a key rotation ends (routes/actors.ts): web and iOS logins and the primary
 		// key. Personal keys and agent session keys are left alone.
-		await revokeActorKeys(tx, id, ['primary', 'login', 'login_ios'])
-		return id
+		const revokedKeyHashes = await revokeActorKeys(tx, id, ['primary', 'login', 'login_ios'])
+		return { revokedKeyHashes }
 	})
-	if (!actorId) {
+	if (!result) {
 		return c.json(createApiError('BAD_REQUEST', 'This reset link is invalid or has expired'), 400)
 	}
+
+	// The eviction inside the transaction can be undone by a request that lands before the commit
+	// and caches the still-live key again. Evict once more now that the revocation is visible.
+	for (const keyHash of result.revokedKeyHashes) evictApiKeyHash(keyHash)
 
 	return c.json({ ok: true as const }, 200)
 })
