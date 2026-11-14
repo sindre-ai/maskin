@@ -47155,6 +47155,47 @@
 				}
 			}
 		},
+		"/api/conversations/unread-count": {
+			"get": {
+				"tags": [
+					"Conversations"
+				],
+				"summary": "Count the caller's unread chats",
+				"description": "Same visibility rules as `GET /` with `unread_only=true` (active, non-archived chats with a message from someone else past the caller's read cursor), but one count query and no hydration. Used for the sidebar badge.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Unread chat count",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"count": {
+											"type": "integer",
+											"minimum": 0
+										}
+									},
+									"required": [
+										"count"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/conversations/threads": {
 			"get": {
 				"tags": [

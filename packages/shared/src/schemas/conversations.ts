@@ -684,6 +684,11 @@ export const conversationListQuerySchema = z.object({
 	offset: z.coerce.number().int().min(0).default(0),
 })
 
+export const conversationUnreadCountResponseSchema = z.object({
+	/** Active, non-archived chats with at least one message from someone else past the caller's read cursor. */
+	count: z.number().int().min(0),
+})
+
 export const postMessageSchema = z
 	.object({
 		content: z
