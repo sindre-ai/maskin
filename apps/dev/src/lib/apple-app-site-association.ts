@@ -1,5 +1,5 @@
 // Associated-domains manifest for the native Apple app (bundle io.maskin.app).
-// Paths mirror the web routes the app can open; `/invite` carries `?token=`.
+// Paths mirror the web routes the app can open; `/invite` and `/reset-password` carry `?token=`.
 const TEAM_ID_RE = /^[A-Z0-9]{10}$/
 
 export function buildAppleAppSiteAssociation(teamId: string | undefined) {
@@ -11,6 +11,7 @@ export function buildAppleAppSiteAssociation(teamId: string | undefined) {
 					appIDs: [`${teamId}.io.maskin.app`],
 					components: [
 						{ '/': '/invite', '?': { token: '?*' } },
+						{ '/': '/reset-password', '?': { token: '?*' } },
 						{ '/': '/*/objects/*' },
 						{ '/': '/*/chats/*' },
 						{ '/': '/*/notifications' },

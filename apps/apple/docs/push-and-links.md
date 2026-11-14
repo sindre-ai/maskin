@@ -82,8 +82,8 @@ Apple does not follow redirects, and `app.maskin.io` has no DNS record. The back
 the JSON below is what that serves. Paths come from the web routes
 `/{workspaceId}/objects/{objectId}`, `/{workspaceId}/chats/{id}` and the workspace inbox
 `/{workspaceId}/notifications` (see `DeepLink.swift`), plus workspace invitations,
-`/invite?token=<raw>` (see `InviteLink.swift`); the `?token` query component means a bare `/invite` stays in
-the browser. The app ignores any other path, but listing only these keeps everything else opening in the browser.
+`/invite?token=<raw>` (see `InviteLink.swift`) and password-reset links, `/reset-password?token=<raw>` (see
+`PasswordResetLink.swift`); the `?token` query component means a bare `/invite` or `/reset-password` stays in the browser. The app ignores any other path, but listing only these keeps everything else opening in the browser.
 
 ```json
 {
@@ -93,6 +93,7 @@ the browser. The app ignores any other path, but listing only these keeps everyt
         "appIDs": ["TEAMID.io.maskin.app"],
         "components": [
           { "/": "/invite", "?": { "token": "?*" } },
+          { "/": "/reset-password", "?": { "token": "?*" } },
           { "/": "/*/objects/*" },
           { "/": "/*/chats/*" },
           { "/": "/*/notifications" }

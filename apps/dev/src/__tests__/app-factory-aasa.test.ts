@@ -25,12 +25,13 @@ describe('buildAppleAppSiteAssociation', () => {
 		expect(buildAppleAppSiteAssociation('abcdefghij')).toBeNull()
 	})
 
-	it('covers the invite path and the existing deep links', () => {
+	it('covers the invite and reset-password paths and the existing deep links', () => {
 		const aasa = buildAppleAppSiteAssociation('ABCDE12345')
 		const detail = aasa?.applinks.details[0]
 		expect(detail?.appIDs).toEqual(['ABCDE12345.io.maskin.app'])
 		expect(detail?.components.map((c) => c['/'])).toEqual([
 			'/invite',
+			'/reset-password',
 			'/*/objects/*',
 			'/*/chats/*',
 			'/*/notifications',
