@@ -32,7 +32,10 @@ PG_PORT="${PG_PORT:-5432}"
 PG_USER="${PG_USER:-postgres}"
 PG_DB="${PG_DB:-maskin}"
 S3_PORT="${S3_PORT:-8333}"
-S3_MASTER_PORT="${S3_MASTER_PORT:-9333}"
+# Not weed's stock 9333: agent sandboxes run cdp-retry-proxy.js (the Playwright
+# bridge) on 127.0.0.1:9333, so the master dies with "bind: address already in
+# use". weed also binds master.port + 10000 for gRPC (19433 here).
+S3_MASTER_PORT="${S3_MASTER_PORT:-9433}"
 S3_VOLUME_PORT="${S3_VOLUME_PORT:-8081}"
 S3_FILER_PORT="${S3_FILER_PORT:-8888}"
 
