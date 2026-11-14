@@ -3,12 +3,14 @@ import Observation
 
 /// Connected and available integrations for the selected workspace.
 ///
-/// Slack, GitHub and LinkedIn connect natively: `connect(providerID:)` asks the API for an install
+/// Every OAuth provider connects natively: `connect(providerID:)` asks the API for an install
 /// URL (sending `native_return_url = maskin://integrations/callback`), runs it in a system web
 /// authentication sheet, and reads the outcome off the redirect (`IntegrationConnectOutcome`).
 /// The server routes that sheet through its own launch endpoint so the OAuth state cookie lands in
-/// the sheet's browser, which is why the install URL must not be opened any other way. Other
-/// providers still finish in the web app (`supportsNativeConnect`).
+/// the sheet's browser, which is why the install URL must not be opened any other way. Providers
+/// that take a pasted key connect on an in-app form (`connectsWithKey`). The rest need a computer
+/// (`needsComputer`) and say so in the app. Nothing opens the web app, which would show the login
+/// page to a signed-out browser.
 ///
 /// Provider ids never reach a label: `displayName(for:)` resolves a slug to the provider's name
 /// (or the plain word "Integration"), and `accountLabel(for:)` shows an account only when the
@@ -59,10 +61,26 @@ public final class IntegrationsStore {
 	public private(set) var installationPicker: InstallationPicker?
 
 	/// Names for the native providers if the provider list hasn't loaded; never a slug.
-	private static let fallbackNames = ["slack": "Slack", "github": "GitHub", "linkedin-unipile": "LinkedIn"]
+	private static let fallbackNames = [
+		"airtable": "Airtable", "amplitude": "Amplitude", "atlassian": "Atlassian", "attio": "Attio",
+		"canva": "Canva", "clickup": "ClickUp", "deepdots": "Deepdots", "github": "GitHub",
+		"gmail": "Gmail", "google-calendar": "Google Calendar", "google-drive": "Google Drive",
+		"google-meet": "Google Meet", "google-search-console": "Google Search Console",
+		"linear": "Linear", "linkedin-unipile": "LinkedIn", "microsoft": "Microsoft", "miro": "Miro",
+		"mixpanel": "Mixpanel", "notion": "Notion", "posthog": "PostHog", "resend": "Resend",
+		"sentry": "Sentry", "skjald": "Skjald", "slack": "Slack", "stripe": "Stripe",
+		"ubersuggest": "Ubersuggest", "vercel": "Vercel", "webflow": "Webflow", "zapier": "Zapier",
+	]
 
-	/// Providers whose connect runs in the app's sheet.
-	public static let nativeConnectProviders: Set<String> = ["slack", "github", "linkedin-unipile"]
+	/// Providers whose connect runs in the app's sheet: every OAuth provider the server lists. The
+	/// server's generic connect route takes `native_return_url` for all of them. A provider the
+	/// server adds later is picked up from its auth type (`supportsNativeConnect`).
+	public static let nativeConnectProviders: Set<String> = [
+		"airtable", "amplitude", "atlassian", "attio", "canva", "clickup", "deepdots", "github",
+		"gmail", "google-calendar", "google-drive", "google-meet", "google-search-console", "linear",
+		"linkedin-unipile", "microsoft", "miro", "mixpanel", "notion", "sentry", "slack", "stripe",
+		"ubersuggest", "vercel", "webflow", "zapier",
+	]
 
 	@ObservationIgnored private let api: any IntegrationsAPI
 	@ObservationIgnored private let webAuth: (any WebAuthenticating)?
@@ -79,7 +97,30 @@ public final class IntegrationsStore {
 	public var isConnectInFlight: Bool { connectPhase != .idle }
 
 	public func supportsNativeConnect(_ providerID: String) -> Bool {
-		webAuth != nil && Self.nativeConnectProviders.contains(providerID)
+		webAuth != nil
+			&& (Self.nativeConnectProviders.contains(providerID)
+				|| provider(for: providerID)?.authKind == .oauth)
+	}
+
+	/// Providers that connect with a key pasted into the app (PostHog).
+	public func connectsWithKey(_ providerID: String) -> Bool {
+		provider(for: providerID)?.authKind == .apiKey
+	}
+
+	/// Providers whose setup has steps only a computer can do (Resend's DNS records, Skjald's
+	/// desktop app). The app says so instead of opening a page that needs a web sign-in.
+	public func needsComputer(_ providerID: String) -> Bool {
+		provider(for: providerID)?.authKind == .manual
+	}
+
+	/// Tells the person, in the app, that this provider is set up from a computer.
+	public func explainComputerOnly(_ providerID: String) {
+		connectNotice = IntegrationConnectCopy.needsComputer(connectName(providerID))
+	}
+
+	/// Whether a Connect tap on `providerID` does anything in the app.
+	public func canStartConnect(_ providerID: String) -> Bool {
+		supportsNativeConnect(providerID) || connectsWithKey(providerID) || needsComputer(providerID)
 	}
 
 	public var canManage: Bool { currentRole.canManage }
@@ -204,7 +245,7 @@ public final class IntegrationsStore {
 
 	// MARK: Native connect
 
-	private func connectName(_ providerID: String) -> String {
+	public func connectName(_ providerID: String) -> String {
 		provider(for: providerID)?.displayName ?? Self.fallbackNames[providerID] ?? "The integration"
 	}
 

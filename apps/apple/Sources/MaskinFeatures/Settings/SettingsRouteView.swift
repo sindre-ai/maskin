@@ -24,9 +24,7 @@ struct SettingsRouteView: View {
 		case .members:
 			MembersView(store: services.membersStore(), invitations: services.invitationsStore())
 		case .integrations:
-			IntegrationsView(
-				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"),
-				services: services)
+			IntegrationsView(store: services.integrationsStore(), services: services)
 		case .files: FilesListScreen(environment: environment)
 		case .skills: SkillsView(store: services.skillsStore())
 		case .objectTypes:

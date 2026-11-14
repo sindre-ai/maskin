@@ -96,6 +96,11 @@ struct SettingsServices {
 			canManage: role.canManage)
 	}
 
+	func connectWithKeyStore(providerID: String, providerName: String) -> ConnectWithKeyStore {
+		ConnectWithKeyStore(
+			providerID: providerID, providerName: providerName, api: APIIntegrationKeySource(http: http))
+	}
+
 	func addToolServerStore() -> AddToolServerStore {
 		AddToolServerStore(api: APIToolServersSource(http: http))
 	}
