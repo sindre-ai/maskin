@@ -12,8 +12,24 @@ struct ObjectSessionCopyTests {
 
 	@Test("names the session's agent, or says an agent")
 	func working() {
-		#expect(ObjectSessionCopy.workingTitle(agentName: "Developer") == "Developer is working")
-		#expect(ObjectSessionCopy.workingTitle(agentName: nil) == "An agent is working")
+		#expect(ObjectSessionCopy.thinkingTitle(agentName: "Developer") == "Developer is thinking")
+		#expect(ObjectSessionCopy.thinkingTitle(agentName: nil) == "An agent is thinking")
+	}
+
+	@Test("elapsed time reads in seconds, then minutes; nothing before the session starts")
+	func elapsed() {
+		let start = Date(timeIntervalSince1970: 1_000)
+		#expect(ObjectSessionCopy.elapsed(since: start, now: start.addingTimeInterval(12)) == "12s")
+		#expect(ObjectSessionCopy.elapsed(since: start, now: start.addingTimeInterval(65)) == "1m 5s")
+		#expect(ObjectSessionCopy.elapsed(since: start, now: start.addingTimeInterval(-3)) == "0s")
+		#expect(ObjectSessionCopy.elapsed(since: nil, now: start) == nil)
+	}
+
+	@Test("the question lead names who asks, as web does")
+	func askLead() {
+		#expect(ObjectSessionCopy.askLead(askedBy: "Forge") == "Forge asks:")
+		#expect(ObjectSessionCopy.askLead(askedBy: nil) == "Open question:")
+		#expect(ObjectSessionCopy.askLead(askedBy: "") == "Open question:")
 	}
 
 	@Test("failed card shows only for a failed session with nothing running")
@@ -31,11 +47,10 @@ struct ObjectSessionCopyTests {
 		#expect(ObjectSessionCopy.failedTitle(agentName: nil, reason: nil) == "The agent stopped")
 	}
 
-	@Test("origin row hides when nobody resolves")
+	@Test("origin text names the agent, or says an agent")
 	func origin() {
-		#expect(ObjectSessionCopy.originLine(starterName: "Sam", agentName: "Dev") == "Sam started this")
-		#expect(ObjectSessionCopy.originLine(starterName: nil, agentName: "Dev") == "Dev started this")
-		#expect(ObjectSessionCopy.originLine(starterName: nil, agentName: nil) == nil)
+		#expect(ObjectSessionCopy.spawnedBy(agentName: "Forge") == "Spawned by Forge")
+		#expect(ObjectSessionCopy.spawnedBy(agentName: nil) == "Spawned by an agent")
 	}
 }
 
@@ -79,5 +94,16 @@ struct ObjectComposerModeTests {
 	func placeholder() {
 		#expect(ObjectComposerMode.message.placeholder(commentPlaceholder: "Comment", agentName: "Dev") == "Message Dev")
 		#expect(ObjectComposerMode.comment.placeholder(commentPlaceholder: "Comment", agentName: "Dev") == "Comment")
+	}
+
+	@Test("the comment box and chip use web's words, shorter on a phone")
+	func commentBarCopy() {
+		#expect(ObjectComposerMode.commentPlaceholder(compact: false) == "Type / for commands or @ to mention")
+		#expect(ObjectComposerMode.commentPlaceholder(compact: true) == "Type / or @")
+		#expect(ObjectComposerMode.chipTitle(.comment, agentName: "Dev", compact: false) == "Comment")
+		#expect(ObjectComposerMode.chipTitle(.message, agentName: "Dev", compact: false) == "Message Dev")
+		#expect(ObjectComposerMode.chipTitle(.message, agentName: "Dev", compact: true) == "Message")
+		#expect(ObjectComposerMode.message.placeholder(commentPlaceholder: "c", agentName: "Dev", compact: true) == "Message")
+		#expect(ObjectComposerMode.message.placeholder(commentPlaceholder: "c", agentName: "Dev", compact: false) == "Message Dev")
 	}
 }

@@ -3,53 +3,69 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The top of an object page (`specs/8-Objects.md` → Object detail → Header): type glyph and
-/// name, the full title, one row of property chips that each open a picker, and when it was last
-/// touched. Properties live here, next to the title, not in a card further down.
+/// The top of an object page (`specs/8-Objects.md` → Object detail → Header), laid out as the web
+/// item page is: the title first, then one meta line (star, type, status, owner, priority, due,
+/// "Spawned by …"), then at most one thin line when an agent is working or asks a question.
+/// Properties live here, next to the title, not in a card further down.
 struct ObjectHeaderView: View {
+	@Environment(AppRuntime.self) private var appRuntime: AppRuntime?
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let store: ObjectDetailStore
 	let object: WorkObject
 	/// False renders the chips as plain faces (snapshots: `Menu` does not draw offscreen).
 	var interactiveChips = true
-	/// "Message" on the working card: takes the reader to the conversation. Hidden when `nil`.
-	var onMessage: (() -> Void)?
+	/// "Answer" on the question line: takes the reader to the comment bar. Hidden when `nil`.
+	var onAnswer: (() -> Void)?
 	var sessionActions = ObjectSessionActions.none
+	@State private var showsOrigin = false
+
+	/// The open question for the reader, from the same feed that fills "Needs you".
+	private var ask: ObjectAsk? {
+		guard let feed = appRuntime?.forYou.store,
+			let entry = feed.entries.first(where: { $0.id == object.id })
+		else { return nil }
+		return ObjectAsk(entry, senderName: feed.senderName(of: entry.card))
+	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			HStack(spacing: MaskinSpace.s3) {
-				Image(systemName: MaskinObjectType.glyph(for: object.type))
-					.maskinSymbol(MaskinFontSize.t16, weight: .medium)
-				Text(store.directory.typeName(object.type))
-					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
-			}
-			.foregroundStyle(MaskinColor.ink4)
-			.accessibilityElement(children: .combine)
-
 			Text(object.displayTitle)
 				.maskinText(.sheetTitle)
 				.foregroundStyle(MaskinColor.ink)
 				.fixedSize(horizontal: false, vertical: true)
 				.frame(maxWidth: .infinity, alignment: .leading)
-				.padding(.top, MaskinSpace.s4)
 				.accessibilityAddTraits(.isHeader)
 
 			if object.status == ObjectDetailStore.archivedStatus {
 				archivedBanner.padding(.top, MaskinSpace.s7)
 			}
 
-			ObjectHeaderChips(store: store, object: object, interactive: interactiveChips)
-				.padding(.top, MaskinSpace.s8)
+			ObjectHeaderChips(store: store, object: object, interactive: interactiveChips) {
+				starButton
+				typeLabel
+			} trailing: {
+				if let origin = store.origin { originButton(origin) }
+			}
+			.padding(.top, MaskinSpace.s4)
+
+			if showsOrigin, let origin = store.origin {
+				ObjectOriginPanel(origin: origin, actions: sessionActions)
+					.padding(.top, MaskinSpace.s3)
+			}
 
 			if object.hasActiveSession {
-				workingCard(activity: object.activeActivity, session: object.lastSession?.isLive == true ? object.lastSession : nil)
-					.padding(.top, MaskinSpace.s7)
+				workingLine(session: object.lastSession?.isLive == true ? object.lastSession : nil)
+					.padding(.top, MaskinSpace.s3)
 			} else if ObjectSessionCopy.showsFailed(object.lastSession, hasActiveSession: object.hasActiveSession),
 				let session = object.lastSession
 			{
 				FailedSessionBanner(
 					agentName: store.directory.name(for: session.agentID), session: session, actions: sessionActions
 				).padding(.top, MaskinSpace.s7)
+			}
+
+			if let ask {
+				askLine(ask).padding(.top, MaskinSpace.s3)
 			}
 
 			if let updated = object.updatedAt {
@@ -64,41 +80,114 @@ struct ObjectHeaderView: View {
 		}
 	}
 
-	/// "Forge is working" with what it is doing, and a way to message it.
-	private func workingCard(activity: String?, session: ObjectSession?) -> some View {
+	// MARK: Meta line
+
+	private var starButton: some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			Task { await store.toggleStar() }
+		} label: {
+			Image(systemName: object.isStarred ? "star.fill" : "star")
+				.maskinSymbol(MaskinFontSize.t16, weight: .medium)
+				.foregroundStyle(object.isStarred ? MaskinColor.sig : MaskinColor.ink4)
+				.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.accessibilityLabel(object.isStarred ? "Unstar" : "Star")
+	}
+
+	private var typeLabel: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			Image(systemName: MaskinObjectType.glyph(for: object.type))
+				.maskinSymbol(MaskinFontSize.t16, weight: .medium)
+			Text(store.directory.typeName(object.type))
+				.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: .semibold, relativeTo: .subheadline))
+		}
+		.foregroundStyle(MaskinColor.ink4)
+		.frame(minHeight: MaskinSpace.touchMin)
+		.accessibilityElement(children: .combine)
+	}
+
+	/// "Spawned by Forge, 2h ago ⌄": opens the chat and session it came from. Nothing without an origin.
+	private func originButton(_ origin: ObjectOrigin) -> some View {
+		Button {
+			withAnimation(reduceMotion ? nil : MaskinMotion.quick) { showsOrigin.toggle() }
+		} label: {
+			HStack(spacing: 0) {
+				Text(ObjectSessionCopy.spawnedBy(agentName: store.directory.name(for: origin.actorId)))
+				if let date = origin.spawnedAt {
+					Text(", ")
+					RelativeTime(date)
+				}
+				Image(systemName: "chevron.down").maskinSymbol(MaskinFontSize.t12, weight: .bold)
+					.rotationEffect(.degrees(showsOrigin ? 180 : 0))
+					.padding(.leading, MaskinSpace.s2)
+			}
+			.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
+			.foregroundStyle(MaskinColor.ink4)
+			.lineLimit(1)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+		.accessibilityLabel("Show where this came from")
+		.accessibilityAddTraits(showsOrigin ? .isSelected : [])
+	}
+
+	// MARK: Live lines
+
+	/// One thin line: "Forge is thinking · 12s", Watch and Stop.
+	private func workingLine(session: ObjectSession?) -> some View {
 		// The session's own agent, which may differ from the item's driver; unknown stays unnamed.
 		let name = session.flatMap { store.directory.name(for: $0.agentID) }
-		let title = ObjectSessionCopy.workingTitle(agentName: name)
-		return HStack(spacing: MaskinSpace.s6) {
+		let title = ObjectSessionCopy.thinkingTitle(agentName: name)
+		return HStack(spacing: MaskinSpace.s4) {
 			DetailWorkingBars()
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text(title)
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
-					.foregroundStyle(MaskinColor.ink)
-				Text(activity.flatMap { $0.isEmpty ? nil : $0 } ?? "Session running").lineLimit(1)
-					.font(MaskinTypeface.sans(MaskinFontSize.t13, relativeTo: .footnote))
-					.foregroundStyle(MaskinColor.ink4)
+			Text(title).fontWeight(.semibold).foregroundStyle(MaskinColor.ink2)
+				.lineLimit(1)
+			if let start = session?.startedAt {
+				TimelineView(.periodic(from: .now, by: 1)) { context in
+					Text("· \(ObjectSessionCopy.elapsed(since: start, now: context.date) ?? "")")
+						.monospacedDigit()
+				}
 			}
-			.frame(maxWidth: .infinity, alignment: .leading)
+			Spacer(minLength: 0)
 			Group {
 				if let session, let onWatch = sessionActions.onWatch {
 					Button("Watch") { onWatch(session) }.foregroundStyle(MaskinColor.sigInk)
-				}
-				if let onMessage {
-					Button("Message", action: onMessage).foregroundStyle(MaskinColor.ink)
 				}
 				if let session, let onStop = sessionActions.onStop {
 					Button("Stop") { onStop(session) }.foregroundStyle(MaskinColor.ink)
 				}
 			}
-			.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .semibold, relativeTo: .body))
+			.fontWeight(.semibold)
+			.buttonStyle(.plain)
 			.frame(minHeight: MaskinSpace.touchMin)
 		}
-		.padding(.horizontal, MaskinSpace.s8)
-		.padding(.vertical, MaskinSpace.s3)
-		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
+		.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+		.foregroundStyle(MaskinColor.ink4)
 		.accessibilityElement(children: .contain)
-		.accessibilityLabel(activity.map { "\(title): \($0)" } ?? title)
+		.accessibilityLabel(title)
+	}
+
+	/// One line: "Forge asks: <question>" and Answer; the question takes two lines at most.
+	private func askLine(_ ask: ObjectAsk) -> some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+			(Text(ObjectSessionCopy.askLead(askedBy: ask.askedBy) + " ").fontWeight(.bold) + Text(ask.text))
+				.lineLimit(2)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			if let onAnswer {
+				Button("Answer", action: onAnswer)
+					.fontWeight(.semibold)
+					.foregroundStyle(MaskinColor.sigInk)
+					.buttonStyle(.plain)
+					.frame(minHeight: MaskinSpace.touchMin)
+			}
+		}
+		.font(MaskinTypeface.sans(MaskinFontSize.t14, relativeTo: .subheadline))
+		.foregroundStyle(MaskinColor.sigInk)
+		.accessibilityElement(children: .combine)
 	}
 
 	private var archivedBanner: some View {
@@ -128,26 +217,33 @@ struct ObjectHeaderView: View {
 	}
 }
 
+/// Priority values offered when the workspace hasn't set one yet; a value already stored is
+/// shown as stored, whatever it is. Outside the chips view because a generic type cannot hold it.
+enum ObjectHeaderPriority {
+	static let options = ["urgent", "high", "medium", "low"]
+}
+
 /// Status · driver · priority · due, each a 32pt chip opening its picker; a `+` chip offers the
 /// properties not set yet. Every chip keeps a 44pt hit area around its 32pt face.
-struct ObjectHeaderChips: View {
+struct ObjectHeaderChips<Leading: View, Trailing: View>: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
 	/// False draws every chip's face without its menu (snapshots).
 	var interactive = true
+	/// Before the status chip (star, type) and after the last chip (origin), on the same line.
+	@ViewBuilder var leading: () -> Leading
+	@ViewBuilder var trailing: () -> Trailing
 	@State private var pickingDue = false
-
-	/// Priority values offered when the workspace hasn't set one yet; a value already stored is
-	/// shown as stored, whatever it is.
-	static let priorityOptions = ["urgent", "high", "medium", "low"]
 
 	var body: some View {
 		ChipFlow(spacing: MaskinSpace.s3) {
+			leading()
 			statusChip
 			driverChip
 			if let priority = store.priority { priorityChip(priority) }
 			if let due = store.dueDate { dueChip(due) }
 			if store.priority == nil || store.dueDate == nil { addChip }
+			trailing()
 		}
 		.sheet(isPresented: $pickingDue) {
 			DuePickerSheet(date: store.dueDate) { date in Task { await store.setDueDate(date) } }
@@ -240,7 +336,7 @@ struct ObjectHeaderChips: View {
 				PriorityBars(level: PriorityBars.level(for: priority))
 			}
 		} menu: {
-			ForEach(Self.priorityOptions, id: \.self) { option in
+			ForEach(ObjectHeaderPriority.options, id: \.self) { option in
 				Button {
 					MaskinHaptics.play(.selection)
 					Task { await store.setPriority(option) }
@@ -281,7 +377,7 @@ struct ObjectHeaderChips: View {
 		} menu: {
 			if store.priority == nil {
 				Menu("Set priority") {
-					ForEach(Self.priorityOptions, id: \.self) { option in
+					ForEach(ObjectHeaderPriority.options, id: \.self) { option in
 						Button(option.capitalized) { Task { await store.setPriority(option) } }
 					}
 				}
