@@ -2,6 +2,7 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	goAheadResponseSchema,
 	messagePlanSchema,
 	messageProposedEditSchema,
 	nextStepResponseSchema,
@@ -98,6 +99,10 @@ export const objectResponseSchema = z.object({
 	// null when it has none. Written through POST/PATCH /objects/{id}/next-step, never a field
 	// of the object itself.
 	next_step: nextStepResponseSchema.nullable().optional(),
+	// Detail endpoint only: the job's live go-ahead (a person's yes to keep going without asking
+	// for each step), null when there is none or the job is closed. Written through
+	// POST/DELETE /objects/{id}/go-ahead, never a field of the object itself.
+	go_ahead: goAheadResponseSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({

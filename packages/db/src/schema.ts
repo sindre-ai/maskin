@@ -1241,6 +1241,43 @@ export const nextStepSweepClaims = pgTable(
 	],
 )
 
+// One person's yes for one job: "keep going without asking me for each step". Own table, not
+// object metadata, so no writer of the object can edit it and an agent cannot grant itself the
+// yes. At most one live row per object (taken_back_at is null). It ends when the job closes; that
+// is read from the object's status, never stored. via: chat (a person's message, quoted by
+// message_id) or card (a person approved a card). No actor foreign key on taken_back_by: it is a
+// record. See 0152_job_go_aheads.sql.
+export const jobGoAheads = pgTable(
+	'job_go_aheads',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		grantedBy: uuid('granted_by')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		via: text('via').notNull(),
+		messageId: bigint('message_id', { mode: 'number' }).references(() => messages.id, {
+			onDelete: 'set null',
+		}),
+		recordedBy: uuid('recorded_by').notNull(),
+		grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+		takenBackAt: timestamp('taken_back_at', { withTimezone: true }),
+		takenBackBy: uuid('taken_back_by'),
+	},
+	(t) => [
+		uniqueIndex('job_go_aheads_one_live_per_object_idx')
+			.on(t.objectId)
+			.where(sql`${t.takenBackAt} is null`),
+		index('job_go_aheads_workspace_idx').on(t.workspaceId),
+		check('job_go_aheads_via_check', sql`${t.via} in ('chat', 'card')`),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
