@@ -799,7 +799,7 @@ export function SectionedChatList({
 							{newSectionAt >= groups.length ? newSectionButton : null}
 							<DragOverlay>
 								{dragging ? (
-									<div className="rounded-lg bg-background px-3 py-2 text-sm font-semibold shadow-lg">
+									<div className="w-fit max-w-xs truncate rounded-lg bg-background px-3 py-2 text-sm font-semibold shadow-lg">
 										{dragging.title}
 									</div>
 								) : null}

@@ -268,6 +268,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	return res.json()
 }
 
+/** A delete that answers 204 has no body for `request` to parse; that is success, not a failure. */
+function ignoreEmptyBody(error: unknown): void {
+	if (error instanceof SyntaxError) return
+	throw error
+}
+
 /**
  * XHR-based file upload that reports byte-level progress via onProgress.
  * fetch() does not expose upload progress; we use this only for file uploads
@@ -1719,7 +1725,9 @@ export const api = {
 				workspaceId,
 			}),
 		remove: (id: string, workspaceId: string) =>
-			request<void>(`/chat-sections/${id}`, { method: 'DELETE', workspaceId }),
+			request<void>(`/chat-sections/${id}`, { method: 'DELETE', workspaceId }).catch(
+				ignoreEmptyBody,
+			),
 		reorder: (workspaceId: string, ids: string[]) =>
 			request<ChatSectionsResponse>('/chat-sections/order', {
 				method: 'PUT',
@@ -1735,7 +1743,7 @@ export const api = {
 			request<void>(`/chat-sections/${id}/chats/${conversationId}`, {
 				method: 'DELETE',
 				workspaceId,
-			}),
+			}).catch(ignoreEmptyBody),
 	},
 	conversations: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
