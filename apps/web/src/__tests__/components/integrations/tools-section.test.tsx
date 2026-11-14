@@ -201,6 +201,15 @@ describe('ToolsSection', () => {
 		expect(screen.getByLabelText('Name')).toBeInTheDocument()
 	})
 
+	it('puts focus in Name when the add form opens and back on the button when it closes', async () => {
+		const user = userEvent.setup()
+		render(<ToolsSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('button', { name: /Add your own MCP server/ }))
+		expect(screen.getByLabelText('Name')).toHaveFocus()
+		await user.click(screen.getByRole('button', { name: 'Cancel' }))
+		expect(screen.getByRole('button', { name: /Add your own MCP server/ })).toHaveFocus()
+	})
+
 	it('lets a header point at a saved credential instead of pasting the secret', async () => {
 		const user = userEvent.setup()
 		integrations = [

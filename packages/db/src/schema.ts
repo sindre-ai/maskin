@@ -1036,6 +1036,29 @@ export const apiKeys = pgTable(
 )
 export type ApiKey = typeof apiKeys.$inferSelect
 
+// ── Password Reset Tokens ──────────────────────────────────────────────────
+
+/**
+ * One-time links for "Forgot password". token_hash is the hex SHA-256 of the token in the emailed
+ * link; the token itself is never stored. A row works while used_at is null and expires_at is in
+ * the future. A newer request deletes the actor's older unused rows (lib/password-reset).
+ */
+export const passwordResetTokens = pgTable(
+	'password_reset_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [index('password_reset_tokens_actor_idx').on(t.actorId)],
+)
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect
+
 // ── Comment Responder Claims ───────────────────────────────────────────────
 // One responder session per (comment event, actor). The thread-reply spawn and the
 // CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
@@ -2401,6 +2424,10 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// What the loop page needs beyond a title: entry condition, close condition, tags and
+	// starter targets (camelCase keys, see apps/dev/src/lib/marketplace-loops/loop-settings.ts).
+	// Null for a loop that ships none. Copied onto the installer's loop object.
+	loopSettings: jsonb('loop_settings'),
 	// Set by seedMarketplaceLoops when the slug is no longer in the code-defined seed list.
 	// A retired loop is hidden from the marketplace and refused for new installs, but the
 	// row stays so existing installs (installed_loops.source_loop_id) keep updating.
@@ -2416,7 +2443,7 @@ export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 //
 // Frozen snapshots of each element that ships with a published marketplace
 // loop. `source_item_id` is the original actor/trigger/skill/integration id in
-// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// the publishing workspace (for a `view`, a stable id minted for that tab) — kept so intra-loop wiring inside `item_snapshot`
 // (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
@@ -2437,7 +2464,7 @@ export const marketplaceLoopItems = pgTable(
 		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
 			'marketplace_loop_items_item_type_check',
-			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration', 'view')`,
 		),
 	],
 )

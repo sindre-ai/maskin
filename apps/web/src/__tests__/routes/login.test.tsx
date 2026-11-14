@@ -39,6 +39,11 @@ describe('LoginPage', () => {
 		expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
 	})
 
+	it('renders a Forgot password link', () => {
+		render(<LoginPage />)
+		expect(screen.getByText('Forgot password?')).toBeInTheDocument()
+	})
+
 	it('renders link to signup page', () => {
 		render(<LoginPage />)
 		expect(screen.getByText('Sign up')).toBeInTheDocument()

@@ -37,7 +37,7 @@ export const SplitButtonPrimary = forwardRef<
 			aria-label={ariaLabel ?? label}
 			disabled={disabled}
 			className={cn(
-				'h-8 gap-1.5 rounded-full rounded-r-none pr-2 pl-3.5 text-[13px] font-semibold',
+				'touch-hit relative h-8 gap-1.5 rounded-full rounded-r-none pr-2 pl-3.5 text-[13px] font-semibold',
 				className,
 			)}
 			{...rest}

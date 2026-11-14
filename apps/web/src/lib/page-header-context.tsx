@@ -55,6 +55,9 @@ interface PageHeaderState {
 	newMenuDisabled?: boolean
 	// Render flag for the shared nav: skip the <h1> (the page draws its own).
 	hideTitle?: boolean
+	// Below md the title keeps its own width and the buttons drop to a second line when they
+	// don't fit beside it, instead of the title shrinking to nothing (For you's greeting).
+	wrapActions?: boolean
 	// From md the shared bar and the scrolling title draw nothing at all (no New button
 	// either): the page owns its whole top edge. Below md the bar still renders.
 	hideBar?: boolean
@@ -77,6 +80,7 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setNewMenuPrimaryOverride: (override: NewMenuPrimaryOverride | undefined) => void
 	setNewMenuDisabled: (disabled: boolean | undefined) => void
 	setHideTitle: (hideTitle: boolean | undefined) => void
+	setWrapActions: (wrapActions: boolean | undefined) => void
 	setHideBar: (hideBar: boolean | undefined) => void
 	setGutter: (gutter: PageGutter | undefined) => void
 }
@@ -94,6 +98,7 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setNewMenuPrimaryOverride: () => {},
 	setNewMenuDisabled: () => {},
 	setHideTitle: () => {},
+	setWrapActions: () => {},
 	setHideBar: () => {},
 	setGutter: () => {},
 })
@@ -149,6 +154,10 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 		setState((prev) => ({ ...prev, hideTitle }))
 	}, [])
 
+	const setWrapActions = useCallback((wrapActions: boolean | undefined) => {
+		setState((prev) => ({ ...prev, wrapActions }))
+	}, [])
+
 	const setHideBar = useCallback((hideBar: boolean | undefined) => {
 		setState((prev) => ({ ...prev, hideBar }))
 	}, [])
@@ -173,6 +182,7 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setNewMenuPrimaryOverride,
 				setNewMenuDisabled,
 				setHideTitle,
+				setWrapActions,
 				setHideBar,
 				setGutter,
 			}}

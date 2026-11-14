@@ -83,19 +83,24 @@ export function useBriefings(workspaceId: string) {
 }
 
 /**
- * The briefing pages attached to a flow (an `in_loop` link from the flow to the file),
- * newest first. Only the files it is given are asked for, so a flow with none costs no call.
+ * The briefing pages for a flow, newest first by created date. Give it the files attached to the
+ * flow (an `in_loop` link from the flow to the file) and any files pinned as its views: the
+ * server keeps only those marked as briefings. Only the files it is given are asked for, so a
+ * flow with none costs no call.
  */
 export function useLoopBriefingPages(workspaceId: string, fileIds: readonly string[]) {
+	const ids = useMemo(() => [...new Set(fileIds)].sort(), [fileIds])
 	const list = useQuery({
-		queryKey: [
-			...queryKeys.files.all(workspaceId),
-			'loop-briefings',
-			[...fileIds].sort().join(','),
-		],
+		queryKey: [...queryKeys.files.all(workspaceId), 'loop-briefings', ids.join(',')],
 		queryFn: () =>
-			api.files.list(workspaceId, { ids: [...fileIds], kind: 'briefing', limit: fileIds.length }),
-		enabled: !!workspaceId && fileIds.length > 0,
+			api.files.list(workspaceId, { ids, kind: 'briefing', limit: Math.max(ids.length, 1) }),
+		enabled: !!workspaceId && ids.length > 0,
 	})
-	return useMemo(() => pickBriefingPages(list.data ?? []), [list.data])
+	return useMemo(
+		() =>
+			(list.data ?? [])
+				.filter((file) => file.mimeType === 'text/html')
+				.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+		[list.data],
+	)
 }

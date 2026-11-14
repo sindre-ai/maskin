@@ -38,7 +38,7 @@ vi.mock('tar-stream', () => ({
 	},
 }))
 
-import { ContainerManager } from '../../services/container-manager'
+import { ContainerManager, userTurnWithImages } from '../../services/container-manager'
 
 function makeStream(
 	overrides: Partial<{
@@ -378,6 +378,25 @@ describe('ContainerManager', () => {
 
 			expect(() => manager.detachStdin('session-3')).not.toThrow()
 			expect(manager.getStdinStream('session-3')).toBeUndefined()
+		})
+	})
+
+	describe('userTurnWithImages()', () => {
+		it('puts the text first and each image after it as a base64 content block', () => {
+			expect(
+				userTurnWithImages({ type: 'user', message: { role: 'user', content: 'Done.' } }, [
+					{ mediaType: 'image/jpeg', data: 'QUJD' },
+				]),
+			).toEqual({
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [
+						{ type: 'text', text: 'Done.' },
+						{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } },
+					],
+				},
+			})
 		})
 	})
 

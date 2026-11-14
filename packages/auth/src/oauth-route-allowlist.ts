@@ -222,6 +222,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 
 	// Skip authMiddleware (public, provider-signed or self-authenticating). A mat_ token never reaches the OAuth branch on these.
 	'POST /api/auth/login',
+	'POST /api/auth/forgot-password',
+	'POST /api/auth/reset-password',
 	'GET /api/health',
 	'GET /api/health/db',
 	'GET /api/integrations/:provider/callback',
