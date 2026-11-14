@@ -16,6 +16,40 @@ describe('FLOW_STEPS', () => {
 	})
 })
 
+describe('integration_connect', () => {
+	it('has the four connect steps, in order, and carries the provider when given', () => {
+		expect(FLOW_STEPS.integration_connect).toEqual([
+			'connect_started',
+			'redirected_out',
+			'returned',
+			'connected',
+		])
+		const base = {
+			flow: 'integration_connect',
+			step: 'returned',
+			flowId: 'f1',
+			surface: 'backend' as const,
+		}
+		expect(buildFlowStepProps({ ...base, durationMs: 3, provider: 'notion' })?.provider).toBe(
+			'notion',
+		)
+		expect(
+			buildFlowErrorProps({ ...base, errorCategory: 'timeout', provider: 'notion' })?.provider,
+		).toBe('notion')
+	})
+
+	it('leaves the provider key out when none is given', () => {
+		const props = buildFlowStepProps({
+			flow: 'integration_connect',
+			step: 'returned',
+			flowId: 'f1',
+			surface: 'backend',
+			durationMs: null,
+		})
+		expect(props).not.toHaveProperty('provider')
+	})
+})
+
 describe('buildFlowStepProps', () => {
 	it('returns exactly flow, step, flow_id, surface and duration_ms', () => {
 		expect(

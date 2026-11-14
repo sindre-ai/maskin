@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
@@ -13,6 +13,7 @@ import {
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import {
+	type FlowErrorCategory,
 	NATIVE_OAUTH_RETURN_URLS,
 	type NativeOAuthOutcome,
 	buildNativeOAuthReturnUrl,
@@ -25,6 +26,8 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
+import { trackFlowError, trackFlowStep } from '../lib/analytics/flow-events'
+import { trackConnectError, trackConnectStep } from '../lib/analytics/integration-connect-flow'
 import {
 	trackIntegrationConnectStarted,
 	trackIntegrationConnected,
@@ -959,13 +962,25 @@ app.openapi(connectRoute, (async (c) => {
 			return_to?: unknown
 		}
 		const apiKey = body.api_key
+		// The key-capture card in chat is one request: submit, then connected. No page of
+		// the provider's in between, so both steps come from here under a fresh flow_id.
+		const keyFlow = {
+			flow: 'integration_key_capture',
+			flowId: randomUUID(),
+			provider: providerName,
+			workspaceId,
+			actorId,
+		} as const
 		if (!apiKey) {
+			void trackFlowError({ ...keyFlow, step: 'key_submitted', errorCategory: 'validation' })
 			logger.warn(`api_key provider ${providerName} missing request body api_key`)
 			return c.json(
 				createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`),
 				400,
 			)
 		}
+
+		void trackFlowStep({ ...keyFlow, step: 'key_submitted' })
 
 		const credentials: StoredCredentials = { accessToken: apiKey }
 		const encryptedCredentials = encrypt(JSON.stringify(credentials))
@@ -1018,6 +1033,7 @@ app.openapi(connectRoute, (async (c) => {
 		}
 
 		if (!integrationId) {
+			void trackFlowError({ ...keyFlow, step: 'key_submitted', errorCategory: 'unknown' })
 			logger.error('api_key integration activation returned no id', {
 				provider: providerName,
 				workspaceId,
@@ -1047,6 +1063,7 @@ app.openapi(connectRoute, (async (c) => {
 			integrationId,
 			authType: 'api_key',
 		})
+		void trackFlowStep({ ...keyFlow, step: 'connected' })
 
 		// The client navigates to this URL once the key is saved. A caller that
 		// started from a chat passes `return_to` so the user stays in that chat.
@@ -1411,11 +1428,13 @@ app.openapi(connectRoute, (async (c) => {
 
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
+	const flow = { flowId: randomUUID(), provider: providerName, workspaceId, actorId }
 	const statePayload: OAuthStatePayload = {
 		workspaceId,
 		actorId,
 		ts: Date.now(),
 		nonce,
+		flowId: flow.flowId,
 		returnTo: sanitizeReturnPath(oauthBody.return_to, workspaceId),
 		...(nativeReturn ? { nativeReturn } : {}),
 		...(origin ? { origin } : {}),
@@ -1427,6 +1446,7 @@ app.openapi(connectRoute, (async (c) => {
 	}
 
 	const state = encodeState(statePayload)
+	trackConnectStep({ ...flow, step: 'connect_started' })
 
 	// GitHub only: "install on another org". The authorize URL below lists just
 	// the installations the user already has, so an org without the App can never
@@ -1487,6 +1507,11 @@ app.openapi(connectRoute, (async (c) => {
 				: await resolved.customAuth.getInstallUrl(state, redirectUri)
 		} catch (err) {
 			const upstream = err instanceof ProviderUnreachableError
+			trackConnectError({
+				...flow,
+				step: 'connect_started',
+				errorCategory: upstream ? 'provider_error' : 'unknown',
+			})
 			logger.error(`Failed to build install URL for provider ${providerName}`, {
 				workspaceId,
 				actorId,
@@ -1523,6 +1548,7 @@ app.openapi(connectRoute, (async (c) => {
 		} catch (err) {
 			// The app's client id is missing from the server settings. Say so instead of the
 			// generic unexpected-error 500, so the person knows it is not something they did.
+			trackConnectError({ ...flow, step: 'connect_started', errorCategory: 'unknown' })
 			logger.error(`Failed to build install URL for provider ${providerName}`, {
 				workspaceId,
 				actorId,
@@ -1544,6 +1570,7 @@ app.openapi(connectRoute, (async (c) => {
 	}
 
 	void trackIntegrationConnectStarted({ provider: providerName, workspaceId, actorId })
+	trackConnectStep({ ...flow, step: 'redirected_out' })
 
 	// Native: the cookie set above lands in the app's URL session, not in the
 	// web-auth browser that will finish the flow. Route that browser through our
@@ -1687,6 +1714,18 @@ app.openapi(callbackRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
 	}
 
+	// The person is back from the provider's page with a state we sealed. Every ending
+	// below reports against this step, on the flow_id the connect route put in the state.
+	const flow = {
+		flowId: stateData.flowId,
+		provider: providerName,
+		workspaceId: stateData.workspaceId,
+		actorId: stateData.actorId,
+	}
+	trackConnectStep({ ...flow, step: 'returned' })
+	const fail = (errorCategory: FlowErrorCategory) =>
+		trackConnectError({ ...flow, step: 'returned', errorCategory })
+
 	// Native-app flows end by redirecting to the app with an outcome rather than
 	// to the web UI or a bare JSON error the web-auth session would just display.
 	// The target was allowlisted when the state was minted and is sealed in it;
@@ -1703,6 +1742,7 @@ app.openapi(callbackRoute, (async (c) => {
 
 	// Check state age (max 10 minutes)
 	if (Date.now() - stateData.ts > 10 * 60 * 1000) {
+		fail('timeout')
 		if (native) return nativeEnd({ status: 'error', reason: 'state_expired' })
 		return c.json(
 			createApiError('BAD_REQUEST', 'State expired — please restart the connection flow'),
@@ -1720,6 +1760,7 @@ app.openapi(callbackRoute, (async (c) => {
 	// nothing.
 	const boundNonce = getCookie(c, oauthNonceCookieName(providerName))
 	if (boundNonce !== stateData.nonce) {
+		fail('auth_failed')
 		logger.warn('OAuth callback rejected — state not bound to this browser', {
 			provider: providerName,
 			workspaceId: stateData.workspaceId,
@@ -1751,6 +1792,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!pendingIntegration) {
+		fail('validation')
 		if (native) return nativeEnd({ status: 'error', reason: 'invalid_state' })
 		return c.json(createApiError('BAD_REQUEST', 'Invalid or already used state token'), 400)
 	}
@@ -1768,6 +1810,7 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (!member) {
+		fail('permission_denied')
 		if (native) return nativeEnd({ status: 'error', reason: 'not_member' })
 		return c.json(createApiError('FORBIDDEN', 'Actor is no longer a member of this workspace'), 400)
 	}
@@ -1777,6 +1820,7 @@ app.openapi(callbackRoute, (async (c) => {
 	// a native session gets told, so it can close instead of showing a bare error.
 	// The pending row is left for the TTL, exactly as an abandoned web flow is.
 	if (native && query.error && !query.code) {
+		fail('permission_denied')
 		clearOAuthNonceCookie(c, providerName)
 		return nativeEnd({ status: 'error', reason: 'denied' })
 	}
@@ -1788,6 +1832,7 @@ app.openapi(callbackRoute, (async (c) => {
 	// access_denied, keep the response below.
 	if (!native && !query.code && query.error === 'access_denied' && stateData.origin !== undefined) {
 		const origin = resolveOrigin(stateData.origin, providerName)
+		fail('permission_denied')
 		if (origin) {
 			logger.info('OAuth consent cancelled, returning to origin', {
 				provider: providerName,
@@ -1817,6 +1862,7 @@ app.openapi(callbackRoute, (async (c) => {
 		!query.code &&
 		/AADSTS(90094|65001|90095)|administrator/i.test(`${query.error_description ?? ''}`)
 	) {
+		fail('permission_denied')
 		clearOAuthNonceCookie(c, providerName)
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.redirect(
@@ -1833,6 +1879,7 @@ app.openapi(callbackRoute, (async (c) => {
 		} else if (resolved.config.auth.type === 'oauth2') {
 			const code = query.code
 			if (!code) {
+				fail(query.error === 'access_denied' ? 'permission_denied' : 'validation')
 				if (native) return nativeEnd({ status: 'error', reason: 'missing_code' })
 				return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
 			}
@@ -1863,6 +1910,7 @@ app.openapi(callbackRoute, (async (c) => {
 				actorId: stateData.actorId,
 				error: err.message,
 			})
+			fail('permission_denied')
 			clearOAuthNonceCookie(c, providerName)
 			if (native) return nativeEnd({ status: 'error', reason: 'installation_unauthorized' })
 			return c.json(
@@ -1873,6 +1921,7 @@ app.openapi(callbackRoute, (async (c) => {
 				400,
 			)
 		}
+		fail('provider_error')
 		logger.error(`OAuth callback token exchange failed for provider ${providerName}`, {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
@@ -2155,6 +2204,7 @@ app.openapi(callbackRoute, (async (c) => {
 				integrationId,
 				error: err instanceof Error ? err.message : String(err),
 			})
+			fail('provider_error')
 			// Mark the integration as failed so the user can retry. Don't 500 — let them
 			// see the error in the UI redirect query string.
 			await db
@@ -2195,6 +2245,10 @@ app.openapi(callbackRoute, (async (c) => {
 			authType: 'oauth',
 		})
 	}
+
+	// A reconnect onto a live row ends the journey too, so it is a step here and not
+	// only under isNewConnect above.
+	trackConnectStep({ ...flow, step: 'connected' })
 
 	// Back to where the user started the connect (an agent's Connect card in a
 	// chat), or the settings page when the flow began there. Re-checked even

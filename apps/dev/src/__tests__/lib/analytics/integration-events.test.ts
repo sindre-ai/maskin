@@ -10,10 +10,12 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 import {
 	INTEGRATION_CONNECTED,
 	INTEGRATION_CONNECT_STARTED,
+	INTEGRATION_DISCONNECTED,
 	INTEGRATION_SYNC_COMPLETED,
 	INTEGRATION_TOOL_CALLED,
 	trackIntegrationConnectStarted,
 	trackIntegrationConnected,
+	trackIntegrationDisconnected,
 	trackIntegrationSyncCompleted,
 	trackIntegrationToolCalled,
 } from '../../../lib/analytics/integration-events'
@@ -191,5 +193,25 @@ describe('trackIntegrationToolCalled', () => {
 			workspace_id: 'ws-1',
 		})
 		expect(INTEGRATION_TOOL_CALLED).toBe('integration_tool_called')
+	})
+})
+
+describe('trackIntegrationDisconnected', () => {
+	it('sends the provider, the ids and whole days connected, and nothing else', async () => {
+		await trackIntegrationDisconnected({
+			provider: 'notion',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			daysConnected: 12,
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(INTEGRATION_DISCONNECTED, 'actor-1', {
+			provider: 'notion',
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			days_connected: 12,
+		})
+		expect(INTEGRATION_DISCONNECTED).toBe('integration_disconnected')
 	})
 })

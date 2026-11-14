@@ -22,6 +22,8 @@ interface FlowEventBase<F extends FlowName> {
 	flow: F
 	step: FlowStepName<F>
 	flowId: string
+	/** Only for flows about one provider (the integration ones). */
+	provider?: string
 }
 
 /** One `flow_step`. Ids, names and a number only. Best-effort: never throws, so callers fire it without awaiting. */
@@ -34,6 +36,7 @@ export async function trackFlowStep<F extends FlowName>(
 		flowId: p.flowId,
 		surface: 'backend',
 		durationMs: p.durationMs !== undefined ? p.durationMs : flowClock.tick(p.flowId),
+		provider: p.provider,
 	})
 	if (!props) return
 	try {
@@ -57,6 +60,7 @@ export async function trackFlowError<F extends FlowName>(
 		flowId: p.flowId,
 		surface: 'backend',
 		errorCategory: p.errorCategory,
+		provider: p.provider,
 	})
 	if (!props) return
 	try {
