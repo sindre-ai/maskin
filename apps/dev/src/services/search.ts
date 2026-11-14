@@ -404,7 +404,7 @@ function statusRankExpression(pairs: PairRow[]): SQL {
 		const rank = STATUS_GROUP_RANK[getStatusGroup(pair.type, pair.status)]
 		byRank.set(rank, [...(byRank.get(rank) ?? []), pair])
 	}
-	if (byRank.size <= 1) return sql`0`
+	if (byRank.size <= 1) return sql`0::int`
 	const branches = [...byRank].map(([rank, group]) => {
 		const list = sql.join(
 			group.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
