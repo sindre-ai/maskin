@@ -68,6 +68,33 @@ public struct APIInviteRemote: InviteRemote {
 		}
 	}
 
+	public func signUpAndAccept(token: String, email: String, password: String, name: String?) async throws -> InviteSignUp {
+		let output: Operations.acceptInvite.Output
+		do {
+			// No credentials and no workspace header: the person has no account yet.
+			output = try await client(apiKey: nil).acceptInvite(
+				.init(path: .init(token: token), body: .json(.init(email: email, password: password, name: name))))
+		} catch {
+			throw InviteFailure.transport(error)
+		}
+		switch output {
+		case .created(let created):
+			do {
+				let body = try created.body.json
+				return InviteSignUp(
+					apiKey: body.actor.api_key, actorId: body.actor.id, name: body.actor.name,
+					email: body.actor.email, workspaceId: body.workspaceId)
+			} catch { throw InviteFailure.unreadable }
+		case .ok: throw InviteFailure.unreadable
+		case .badRequest: throw InviteFailure.status(400)
+		case .unauthorized: throw InviteFailure.sessionExpired
+		case .forbidden: throw InviteFailure.seatCap
+		case .notFound: throw InviteFailure.notFound
+		case .gone: throw InviteFailure.expired
+		case .undocumented(let status, _): throw InviteFailure.status(status)
+		}
+	}
+
 	/// The server sends ISO 8601, with or without fractional seconds.
 	static func parseDate(_ text: String) -> Date? {
 		let fractional = ISO8601DateFormatter()

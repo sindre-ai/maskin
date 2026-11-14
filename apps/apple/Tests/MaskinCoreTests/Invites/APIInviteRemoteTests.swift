@@ -81,6 +81,38 @@ struct APIInviteRemoteTests {
 		#expect(s.workspace == nil)
 	}
 
+	@Test("sign-up accept sends email, password and name with no key and no workspace header, and reads the new key")
+	func signUpAccept() async throws {
+		let r = remote(
+			status: 201,
+			json: """
+				{"actor":{"id":"33333333-3333-3333-3333-333333333333","type":"human","name":"Ada","email":"ada@example.com",
+				"description":null,"system_prompt":null,"llm_provider":null,"isSystem":false,"agentState":"idle",
+				"agentStateUpdatedAt":null,"createdAt":null,"updatedAt":null,"api_key":"ank_new"},
+				"workspaceId":"22222222-2222-2222-2222-222222222222"}
+				""")
+		let a = try await r.signUpAndAccept(token: "tok", email: "ada@example.com", password: "hunter22!", name: "Ada")
+		#expect(a.apiKey == "ank_new")
+		#expect(a.actorId == "33333333-3333-3333-3333-333333333333")
+		#expect(a.workspaceId == "22222222-2222-2222-2222-222222222222")
+		let s = try #require(seen.first)
+		#expect(s.path == "/api/invites/tok/accept")
+		#expect(s.method == "POST")
+		#expect(s.authorization == nil)
+		#expect(s.workspace == nil)
+	}
+
+	@Test("sign-up accept statuses map to the human cases")
+	func signUpAcceptErrors() async {
+		let envelope = #"{"error":{"code":"X","message":"x","details":[]}}"#
+		for (status, expected) in [(403, InviteFailure.seatCap), (404, .notFound), (409, .accountExists), (410, .expired)] {
+			let r = remote(status: status, json: envelope)
+			await #expect(throws: expected) {
+				try await r.signUpAndAccept(token: "tok", email: "a@b.co", password: "hunter22!", name: nil)
+			}
+		}
+	}
+
 	@Test("preview error statuses map to the human cases")
 	func previewErrors() async {
 		// Bodies are the shapes the backend sends (workspace-invitations.ts): `{status}` for 404/410,
