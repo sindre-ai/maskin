@@ -1,0 +1,45 @@
+name: MCP canary
+
+# Hourly modern-path probe of the production MCP endpoint (bet: Move the Maskin MCP
+# server to the 2026-07-28 spec and TypeScript SDK v2). No agent tokens: one connect
+# (pinned to 2026-07-28, no legacy fallback), one tools/list, one list_workspaces call,
+# sent with User-Agent maskin-probe/1 so the server labels it client = maskin_probe.
+#
+# Red before MODERN is switched on in production is expected (a pin never falls back).
+# The Won measure counts hours from the server-side mcp_tool_call event, not from this
+# job's status; this job only has to make a failure visible.
+on:
+  schedule:
+    # Minute 17: off the busy marks, so Actions cron delay hurts less.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install pinned v2 client
+        working-directory: .github/canary
+        run: npm ci --no-audit --no-fund
+
+      - name: Probe production /mcp on the modern path
+        working-directory: .github/canary
+        env:
+          MCP_URL: https://maskin.io/mcp
+          MASKIN_PROBE_WORKSPACE_ID: e2877e32-2c11-489e-96c8-a76200908ed4
+          MASKIN_PROBE_API_KEY: ${{ secrets.MASKIN_PROBE_API_KEY }}
+        run: node mcp-canary.mjs
