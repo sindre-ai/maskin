@@ -418,6 +418,49 @@ describe('GET /api/search against real Postgres', () => {
 			])
 		})
 
+		it('ranks open items above done ones and archived last when the match is the same', async () => {
+			// The done and archived ones are the newest, so only the status rule can put the open ones first.
+			const make = (status: string, minutesAgo: number) =>
+				buildObject({
+					workspaceId,
+					createdBy: actorId,
+					type: 'task',
+					status,
+					title: 'Quarterly report',
+					updatedAt: new Date(Date.now() - minutesAgo * 60_000),
+				})
+			const needsYou = make('in_review', 4)
+			const inProgress = make('in_progress', 3)
+			const done = make('done', 2)
+			const archived = make('discarded', 1)
+			await db.insert(objects).values([archived, done, inProgress, needsYou])
+
+			const res = await search({
+				q: 'quarterly report',
+				statuses: ['needs_you', 'in_progress', 'new', 'done', 'archived'],
+			})
+
+			expect(res.results.map((r) => r.id)).toEqual([
+				needsYou.id,
+				inProgress.id,
+				done.id,
+				archived.id,
+			])
+		})
+
+		it('lets a better title match beat an open status', async () => {
+			await seedObjects('task', 'in_progress', 1, () => 'Review of the quarterly numbers')
+			await seedObjects('task', 'done', 1, () => 'Quarterly review')
+
+			const res = await search({ q: 'quarterly' })
+
+			// Both hit a whole word, but the shorter title scores higher; status only breaks ties.
+			expect(res.results.map((r) => r.title)).toEqual([
+				'Quarterly review',
+				'Review of the quarterly numbers',
+			])
+		})
+
 		it('shares the rows across groups with per_group, and fills the room when a group is short', async () => {
 			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
 			await ensureWorkspaceMember(db, workspaceId, cpo.id)
@@ -742,7 +785,9 @@ describe('GET /api/search against real Postgres', () => {
 			.update(objects)
 			.set({ content: 'mentions kappa once' })
 			.where(eq(objects.title, 'unrelated'))
-		await seedObjects('task', 'todo', 1, () => 'kappa task')
+		// A read chat is in the done status group, so the task is done too: the group order is only
+		// seen when the match and the status group are the same.
+		await seedObjects('task', 'done', 1, () => 'kappa task')
 		await seedChat('kappa chat', [actorId])
 		const res = await search({ q: 'kappa' })
 		expect(res.results.map((r) => r.group)).toEqual(['chats', 'objects', 'objects'])
