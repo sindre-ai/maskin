@@ -19,6 +19,7 @@ import {
 } from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
 import { recordObjectApproval } from '../lib/object-delivery'
@@ -318,6 +319,14 @@ app.openapi(createCommentRoute, (async (c) => {
 	let decision = body.decision
 	if (body.decision) {
 		const violations = validateDecisionProse(body.decision)
+		const defaultIndex = body.decision.options.findIndex((option) => option.default_on_silence)
+		if (defaultIndex >= 0 && !isFlagEnabledForWorkspace(workspaceId, FLAGS.DECISION_DEFAULT)) {
+			violations.push({
+				path: `options.${defaultIndex}.default_on_silence`,
+				message:
+					'A default on silence is not switched on in this workspace. Drop default_on_silence and wait for the answer, or schedule your own check for the deadline.',
+			})
+		}
 		// A card that asks to change a status needs a button that does it, or it outlives the
 		// change. Checked here because it needs the object's status names.
 		const statusCheck =

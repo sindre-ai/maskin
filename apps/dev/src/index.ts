@@ -60,6 +60,7 @@ import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
+import { DecisionDefaultWake } from './services/decision-default-wake'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
 import { DriverWaker } from './services/driver-wake'
@@ -315,6 +316,11 @@ driverWaker.start()
 // workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
 const nextStepSweep = new NextStepSweep(db)
 nextStepSweep.start()
+
+// Carries out the default on silence of a decision card whose deadline passed with no answer.
+// Does nothing unless the workspace has the decision-default flag.
+const decisionDefaultWake = new DecisionDefaultWake(db)
+decisionDefaultWake.start()
 
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
@@ -632,6 +638,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	sessionDispatchQueue.stop()
 	driverWaker.stop()
 	nextStepSweep.stop()
+	decisionDefaultWake.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	oauthSweeper.stop()

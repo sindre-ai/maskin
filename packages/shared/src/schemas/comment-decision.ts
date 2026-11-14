@@ -97,6 +97,12 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			'Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.',
 		),
+	default_on_silence: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.',
+		),
 	set_status: z
 		.object({
 			status: z.string().min(1).describe('The status to put the object in, e.g. "active".'),
@@ -380,6 +386,8 @@ export function validateDecisionProse(
 		)
 	}
 
+	violations.push(...findDefaultOnSilenceViolations(decision))
+
 	const titleWords = words(decision.title)
 	if (titleWords.length < TITLE_MIN_WORDS || titleWords.length > TITLE_MAX_WORDS) {
 		add(
@@ -462,6 +470,60 @@ export function validateDecisionProse(
 		})
 	})
 
+	return violations
+}
+
+/** The option a card names as its default on silence, or null when it names none. */
+export function findDefaultOnSilenceOption(
+	decision: Pick<CommentDecision, 'options'> | null | undefined,
+): CommentDecisionOption | null {
+	return decision?.options.find((option) => option.default_on_silence) ?? null
+}
+
+/**
+ * The rules for a default on silence. It needs a deadline and one option, and it is refused on any
+ * card that could send, spend or delete: a person must say yes to those, so silence never does.
+ * The whole card is refused, not only the default option, so "Send" next to a harmless "Hold" with
+ * the default on "Hold" is still refused: the card exists to get a yes to the send.
+ */
+function findDefaultOnSilenceViolations(decision: CommentDecision): DecisionProseViolation[] {
+	const defaults = decision.options.flatMap((option, index) =>
+		option.default_on_silence ? [index] : [],
+	)
+	if (defaults.length === 0) return []
+	const path = `options.${defaults[0]}.default_on_silence`
+	const violations: DecisionProseViolation[] = []
+	if (defaults.length > 1) {
+		violations.push({
+			path,
+			message: `Only one option can be the default on silence, got ${defaults.length}. Keep it on the option you would take.`,
+		})
+	}
+	if (!decision.expires_at) {
+		violations.push({
+			path,
+			message:
+				'A default on silence needs expires_at: it happens when that time passes with no answer. Set expires_at, or drop default_on_silence.',
+		})
+	}
+	const chosen = decision.options[defaults[0] as number] as CommentDecisionOption
+	if (chosen.set_status) {
+		violations.push({
+			path,
+			message: `"${chosen.label}" moves a status, which a person decides. Put the default on an option that changes nothing, or drop default_on_silence.`,
+		})
+	}
+	if (
+		decision.options.some((option) => option.destructive || option.delete_agent) ||
+		decision.draft ||
+		decision.drafts?.length
+	) {
+		violations.push({
+			path,
+			message:
+				'A card that sends, spends or deletes never gets a default on silence: it has a destructive option, a delete_agent option or a draft. Drop default_on_silence and wait for the answer.',
+		})
+	}
 	return violations
 }
 

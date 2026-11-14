@@ -1,5 +1,9 @@
 import type { EventResponse } from '@/lib/api'
-import { type CommentDecision, parseCommentDecision } from '@maskin/shared'
+import {
+	type CommentDecision,
+	findDefaultOnSilenceOption,
+	parseCommentDecision,
+} from '@maskin/shared'
 
 /**
  * The decision a comment attached, or `null` if it asked for nothing.
@@ -43,4 +47,33 @@ export function legacyChipsOf(event: EventResponse): string[] {
 	const chips = (metadata as Record<string, unknown>).chips
 	if (!Array.isArray(chips)) return []
 	return chips.filter((chip): chip is string => typeof chip === 'string' && chip.trim().length > 0)
+}
+
+/**
+ * What happens if nobody answers: "If nobody answers by Fri 14:00, the default is "Hold"." Null
+ * when the card names no default or has no deadline. The card shows it so a person who does
+ * nothing is never surprised by what the agent then does.
+ */
+export function defaultOnSilenceLine(
+	decision:
+		| {
+				expires_at?: string
+				options: readonly { label: string; default_on_silence?: boolean }[]
+		  }
+		| null
+		| undefined,
+): string | null {
+	if (!decision?.expires_at) return null
+	const option = findDefaultOnSilenceOption(
+		decision as Parameters<typeof findDefaultOnSilenceOption>[0],
+	)
+	if (!option) return null
+	const when = new Date(decision.expires_at).toLocaleString(undefined, {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short',
+		hour: '2-digit',
+		minute: '2-digit',
+	})
+	return `If nobody answers by ${when}, the default is "${option.label}".`
 }

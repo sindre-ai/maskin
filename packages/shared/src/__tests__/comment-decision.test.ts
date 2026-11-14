@@ -3,6 +3,7 @@ import {
 	type CommentDecision,
 	type CommentDecisionOption,
 	commentDecisionSchema,
+	findDefaultOnSilenceOption,
 	findStatusActionViolations,
 	isDecisionExpired,
 	validateDecisionProse,
@@ -421,5 +422,84 @@ describe('expires_at', () => {
 		)
 		expect(isDecisionExpired(buildDecision(), now)).toBe(false)
 		expect(isDecisionExpired(null, now)).toBe(false)
+	})
+})
+
+describe('default_on_silence', () => {
+	const future = '2999-01-01T00:00:00Z'
+	const withDefault = (overrides: Partial<CommentDecision> = {}) => {
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		return buildDecision({
+			options: [{ ...first, default_on_silence: true }, second],
+			expires_at: future,
+			...overrides,
+		})
+	}
+
+	it('accepts one reversible default with a deadline', () => {
+		expect(validateDecisionProse(withDefault(), new Date('2026-11-02T12:00:00Z'))).toEqual([])
+		expect(findDefaultOnSilenceOption(withDefault())?.label).toBe('7-day window')
+	})
+
+	it('finds no default on a card without one', () => {
+		expect(findDefaultOnSilenceOption(buildDecision())).toBeNull()
+	})
+
+	it('needs a deadline', () => {
+		expect(violate(withDefault({ expires_at: undefined }))).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('allows only one default', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		const two = { ...decision, options: [first, { ...second, default_on_silence: true }] }
+		expect(violate(two)).toEqual(['options.0.default_on_silence'])
+	})
+
+	it('is refused on a destructive default', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		expect(violate({ ...decision, options: [{ ...first, destructive: true }, second] })).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('is refused when another option is destructive', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		expect(violate({ ...decision, options: [first, { ...second, destructive: true }] })).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('is refused when another option deletes an agent', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		const deleting = {
+			...second,
+			delete_agent: { actor_id: '3f2b8f0e-8a47-4a58-9a0b-1c2d3e4f5a6b' },
+		}
+		expect(violate({ ...decision, options: [first, deleting] })).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('is refused on a card with a draft', () => {
+		expect(
+			violate(withDefault({ draft: { object_id: '3f2b8f0e-8a47-4a58-9a0b-1c2d3e4f5a6b' } })),
+		).toEqual(['options.0.default_on_silence'])
+	})
+
+	it('is refused on an option that moves a status', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		expect(
+			violate({ ...decision, options: [{ ...first, set_status: { status: 'active' } }, second] }),
+		).toEqual(['options.0.default_on_silence'])
 	})
 })

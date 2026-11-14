@@ -2,7 +2,7 @@ import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { useCreateComment } from '@/hooks/use-events'
 import { secondsSince, trackForyouCardAction } from '@/lib/analytics'
 import type { EventResponse } from '@/lib/api'
-import { decisionOfEvent } from '@/lib/comment-decision'
+import { decisionOfEvent, defaultOnSilenceLine } from '@/lib/comment-decision'
 import { actionIdFromLabel } from '@/lib/foryou-card-kind'
 import { Check } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -109,7 +109,12 @@ export function CommentDecisionBlock({
 					{decision.ask}
 				</p>
 			)}
-			<DecisionOptions options={options} pendingId={pendingId} onChoose={choose} />
+			<DecisionOptions
+				options={options}
+				pendingId={pendingId}
+				onChoose={choose}
+				defaultLine={defaultOnSilenceLine(decision)}
+			/>
 		</div>
 	)
 }
