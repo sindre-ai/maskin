@@ -50,6 +50,7 @@ export function loopSettingsForInstall(settings: LoopSettings | null): Meta {
 
 // Metadata to merge into an existing install on a version push. A field is refreshed only when
 // the loop is still on the text it was installed with, or has none. An edited field is kept.
+// A field already on the new shipped text, with the shipped copy to match, is left alone.
 // A loop installed before settings existed has no shipped copy, so it only gets fields it lacks.
 // Targets only seed a loop that has none, since the loop's agents keep their actuals.
 export function loopSettingsPatch(settings: LoopSettings | null, current: Meta | null): Meta {
@@ -60,12 +61,14 @@ export function loopSettingsPatch(settings: LoopSettings | null, current: Meta |
 	const nextShipped: Meta = { ...shipped }
 	for (const [key, next] of Object.entries(textMetadata(settings))) {
 		const cur = meta[key]
+		const nextJson = JSON.stringify(next)
 		const untouched =
 			cur === undefined ||
 			cur === null ||
 			cur === '' ||
 			(key in shipped && JSON.stringify(cur) === JSON.stringify(shipped[key]))
 		if (!untouched) continue
+		if (JSON.stringify(cur) === nextJson && JSON.stringify(shipped[key]) === nextJson) continue
 		patch[key] = next
 		nextShipped[key] = next
 	}
