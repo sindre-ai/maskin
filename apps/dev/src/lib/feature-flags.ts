@@ -106,6 +106,15 @@ export const FLAGS = {
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
 	/**
+	 * Gates the 0 to 10 recommend question (bet
+	 * [Product analytics for web and iPhone](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c190a11a-ca7f-4927-8a39-4dc066b0f4f7)).
+	 * Frontend only: read once, in the workspace layout. Off means the browser never sends
+	 * nps_survey_due, which is the only thing that makes the PostHog survey appear. The survey
+	 * itself lives in PostHog (rating only, shown once, signed up 14+ days ago, not our team).
+	 * Retire once the question is on for everyone.
+	 */
+	NPS_SURVEY: 'nps-survey',
+	/**
 	 * Gates the item card beside a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
 	 * when a view asks to open an item, the loop page shows its card in a side panel, where the
 	 * person can change its status or approve it, instead of going to the object's page. Frontend

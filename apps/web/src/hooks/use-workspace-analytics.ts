@@ -1,4 +1,4 @@
-import { trackAppActive } from '@/lib/analytics'
+import { trackAppActive, trackNpsSurveyDue } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import { setFaroUser } from '@/lib/faro'
 import {
@@ -7,7 +7,7 @@ import {
 	setCapturingEnabled,
 	setWorkspaceGroup,
 } from '@/lib/posthog'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 interface WorkspaceAnalyticsInput {
 	workspaceId: string
@@ -19,6 +19,8 @@ interface WorkspaceAnalyticsInput {
 	createdAt: string | undefined
 	shareUsage: boolean
 	anonymizeWorkspace: boolean
+	/** The recommend question may be asked: its flag is on and the person is not on our team. */
+	npsSurveyDue?: boolean
 }
 
 /**
@@ -40,11 +42,18 @@ export function useWorkspaceAnalytics({
 	createdAt,
 	shareUsage,
 	anonymizeWorkspace,
+	npsSurveyDue = false,
 }: WorkspaceAnalyticsInput) {
+	// True once identify has finished for this workspace, so the recommend question's
+	// start event lands on the identified person and not on an anonymous one.
+	const [identified, setIdentified] = useState(false)
+
 	useEffect(() => {
 		if (!resolved) return
 		const actor = getStoredActor()
 		if (!actor) return
+		let cancelled = false
+		setIdentified(false)
 		registerWorkspaceProperties({
 			workspace_id: workspaceId,
 			actor_id: actor.id,
@@ -64,7 +73,18 @@ export function useWorkspaceAnalytics({
 			name: actor.name,
 			email: actor.email,
 		}).then(() => {
+			if (cancelled) return
 			if (shareUsage) trackAppActive()
+			setIdentified(true)
 		})
+		return () => {
+			cancelled = true
+		}
 	}, [resolved, workspaceId, isTeam, internal, paying, createdAt, shareUsage, anonymizeWorkspace])
+
+	// Its own effect, so the flag arriving after the first render does not send the
+	// group, identify and app_active again.
+	useEffect(() => {
+		if (identified && npsSurveyDue && shareUsage) trackNpsSurveyDue()
+	}, [identified, npsSurveyDue, shareUsage])
 }

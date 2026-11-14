@@ -200,6 +200,29 @@ export function trackAppActive(now: Date = new Date()): boolean {
 	return true
 }
 
+// Tells PostHog this browser's person may be asked the 0 to 10 recommend question.
+// The survey in PostHog starts on this event and decides the rest (signed up 14+ days
+// ago, not our team, shown once). One a day per browser, the same way as app_active,
+// so a person who already answered does not add an event to every page load. Carries
+// no properties: the answer is the rating alone. Call it after identify.
+const NPS_SURVEY_DUE_DAY_KEY = 'maskin-nps-survey-due-day'
+
+let npsSurveyDueDaySent = ''
+
+export function trackNpsSurveyDue(now: Date = new Date()): boolean {
+	const utcDay = now.toISOString().slice(0, 10)
+	if (npsSurveyDueDaySent === utcDay) return false
+	npsSurveyDueDaySent = utcDay
+	try {
+		if (localStorage.getItem(NPS_SURVEY_DUE_DAY_KEY) === utcDay) return false
+		localStorage.setItem(NPS_SURVEY_DUE_DAY_KEY, utcDay)
+	} catch {
+		// No storage: the in-memory record above still stops repeats this page load.
+	}
+	trackEvent('nps_survey_due')
+	return true
+}
+
 // Operator opened a chat with Maskin (Sindre, or a one-shot agent via the `/`
 // picker). Powers the founder-substitution measurement on the
 // `Chat — Maskin becomes the operator's default AI client` bet: counted against

@@ -41,6 +41,7 @@ import {
 	trackLoopViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
+	trackNpsSurveyDue,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectOpened,
@@ -410,6 +411,25 @@ describe('v1 taxonomy helpers', () => {
 		expect(trackAppActive(now)).toBe(true)
 		expect(trackAppActive(now)).toBe(false)
 		expect(capture).toHaveBeenCalledTimes(1)
+	})
+
+	it('nps_survey_due sends once per UTC day for the browser, with no properties', () => {
+		const capture = captureSpy()
+
+		expect(trackNpsSurveyDue(new Date('2026-11-20T08:00:00Z'))).toBe(true)
+		expect(trackNpsSurveyDue(new Date('2026-11-20T23:59:00Z'))).toBe(false)
+		expect(trackNpsSurveyDue(new Date('2026-11-21T00:01:00Z'))).toBe(true)
+
+		expect(capture).toHaveBeenCalledTimes(2)
+		expect(capture).toHaveBeenNthCalledWith(1, 'nps_survey_due', {})
+	})
+
+	it('nps_survey_due skips a day already stored by an earlier page load', () => {
+		const capture = captureSpy()
+		localStorage.setItem('maskin-nps-survey-due-day', '2026-11-22')
+
+		expect(trackNpsSurveyDue(new Date('2026-11-22T10:00:00Z'))).toBe(false)
+		expect(capture).not.toHaveBeenCalled()
 	})
 
 	it('relationship_created records the edge type as a custom prop', () => {
