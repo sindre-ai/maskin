@@ -8,6 +8,7 @@ import {
 import { HUMAN_MESSAGE_STYLE_SHORT, decideWakes } from '@maskin/shared'
 import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
 import { isHumanPaused } from '../lib/agent-pause'
+import { trackChatSessionSeeded } from '../lib/analytics/chat-session-events'
 import {
 	type AgentRoutingOutcome,
 	type GroupChatDelivery,
@@ -16,7 +17,13 @@ import {
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
 import { logger } from '../lib/logger'
-import { loadSiblingSessionsNote, loadThreadSeed, takeSessionDigests } from './chat-session-context'
+import {
+	loadChatFilesList,
+	loadSiblingSessionsNote,
+	loadThreadSeed,
+	takeSessionDigests,
+} from './chat-session-context'
+import { computerHandbackForMessage } from './computer-handback'
 import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
@@ -754,7 +761,29 @@ export async function deliverTurnToAgent(params: {
 	}
 	if (existing) {
 		try {
-			await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
+			// A Done on this agent's computer card: its next turn starts with a screenshot taken now.
+			const handback = await computerHandbackForMessage(db, {
+				workspaceId,
+				conversationId,
+				messageId,
+				agentId,
+			}).catch((err: unknown) => {
+				logger.warn('Could not check the turn for a computer handback', {
+					conversationId,
+					messageId,
+					error: String(err),
+				})
+				return null
+			})
+			if (handback) turnPayload.message.content += `\n\n${handback.note}`
+			await sessionManager.writeInput(
+				existing.id,
+				turnPayload,
+				undefined,
+				messageId,
+				undefined,
+				handback?.images,
+			)
 			return 'wrote_to_running_session'
 		} catch (err) {
 			logger.warn(
@@ -899,6 +928,10 @@ async function spawnOrJoinConversationSession(params: {
 		})
 	}
 
+	// The chat's files, rebuilt from the database on every fresh session: the history above is
+	// text only, so an upload from an early message would otherwise be out of sight.
+	const chatFiles = await loadChatFilesList(db, { conversationId, workspaceId })
+
 	try {
 		await startSession({
 			workspaceId,
@@ -915,6 +948,7 @@ async function spawnOrJoinConversationSession(params: {
 				groupWakeRule,
 				activeSessionsNote,
 				siblingSessionsNote,
+				filesNote: chatFiles.note,
 				threadRootId,
 			}),
 			config: {
@@ -957,6 +991,13 @@ async function spawnOrJoinConversationSession(params: {
 				})
 			}
 		}
+		void trackChatSessionSeeded({
+			workspaceId,
+			conversationId,
+			agentId,
+			threadRootId,
+			filesListedCount: chatFiles.listedCount,
+		})
 		return 'started_new_session'
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
@@ -1201,6 +1242,8 @@ function buildConversationReplyPrompt(ctx: {
 	activeSessionsNote: string
 	/** A thread session's note on the agent's other live sessions in this chat; '' for none. */
 	siblingSessionsNote: string
+	/** The chat's files from loadChatFilesList; '' for none. */
+	filesNote: string
 	threadRootId: number | null
 }): string {
 	return [
@@ -1217,6 +1260,7 @@ function buildConversationReplyPrompt(ctx: {
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
 		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
+		...(ctx.filesNote ? ['', ctx.filesNote] : []),
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,

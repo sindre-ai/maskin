@@ -4,6 +4,7 @@ import {
 	getActorHue,
 	getActorInitials,
 	getActorPlateStyle,
+	resolveActorInitials,
 } from '@/components/shared/actor-avatar'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -97,6 +98,22 @@ describe('getActorInitials', () => {
 	it('does not count a punctuation-only token as a word', () => {
 		expect(getActorInitials('Chief - Staff')).toBe('CS')
 		expect(getActorInitials('Linker (Sigrid) Lead')).toBe('LSL')
+	})
+})
+
+describe('resolveActorInitials', () => {
+	it('uses the chosen letters first, upper-cased', () => {
+		expect(resolveActorInitials('Developer', 'DEV')).toBe('DEV')
+		expect(resolveActorInitials('Developer', 'dev')).toBe('DEV')
+	})
+
+	it('falls back to the automatic rule when none are chosen', () => {
+		for (const none of [undefined, null, '', '  ']) {
+			expect(resolveActorInitials('Developer', none)).toBe('DE')
+			expect(resolveActorInitials('Chief of Staff', none)).toBe('COS')
+			expect(resolveActorInitials('CTO', none)).toBe('CTO')
+		}
+		expect(resolveActorInitials('Chief of Staff', null)).toBe(getActorInitials('Chief of Staff'))
 	})
 })
 
@@ -393,6 +410,41 @@ describe('ActorAvatar picture lookup', () => {
 		await waitFor(() => expect(listActors).toHaveBeenCalled())
 		expect(container.querySelector('img')).toBeNull()
 		expect(screen.getByText('AL')).toBeInTheDocument()
+	})
+
+	it('draws the letters the agent chose, from the workspace actors list', async () => {
+		listActors.mockResolvedValue([
+			buildActorListItem({ id: 'a-1', name: 'Developer', type: 'agent', initials: 'DEV' }),
+		])
+		render(<ActorAvatar name="Developer" type="agent" id="a-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(screen.getByText('DEV')).toBeInTheDocument())
+	})
+
+	it('keeps the automatic letters for an agent that chose none', async () => {
+		listActors.mockResolvedValue([
+			buildActorListItem({ id: 'a-1', name: 'Developer', type: 'agent', initials: null }),
+		])
+		render(<ActorAvatar name="Developer" type="agent" id="a-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(listActors).toHaveBeenCalled())
+		expect(screen.getByText('DE')).toBeInTheDocument()
+	})
+
+	it('uses initials the caller passes along with its own imageUrl', () => {
+		render(
+			<ActorAvatar
+				name="Developer"
+				type="agent"
+				id="a-1"
+				imageUrl="https://example.com/a.png"
+				initials="DEV"
+			/>,
+			{ wrapper: createWorkspaceWrapper() },
+		)
+		expect(screen.getByText('DEV')).toBeInTheDocument()
 	})
 
 	it('does not look anything up when the caller passes imageUrl', () => {

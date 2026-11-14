@@ -6,7 +6,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  *
  * Neither draws a background: content scrolls up under it and shows through, and the strip
  * lets clicks pass except on its own controls. At rest nothing sits under either, and
- * a thread stays pinned above its composer.
+ * a thread stays pinned above its composer. The item page's comment bar is the exception: it
+ * has a solid backing with a short fade, so body text never shows behind it.
  */
 
 type Account = {
@@ -177,7 +178,10 @@ const clear = (el: Element) => {
 
 test.describe('Floating composers — item, agent, reply pane and trial banner', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`the item comment composer is just the pill @ ${vp.label}`, async ({ page, account }) => {
+		test(`the item comment bar has a solid backing with a fade @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const item = await account.api.createObject(account.workspaceId, {
 				type: 'task',
@@ -190,7 +194,10 @@ test.describe('Floating composers — item, agent, reply pane and trial banner',
 			await expect(input).toBeVisible({ timeout: 15_000 })
 			const band = page.locator('div.sticky.bottom-0').filter({ has: input })
 			const style = await band.evaluate(clear)
-			expect(style).toEqual({ image: 'none', color: 'rgba(0, 0, 0, 0)', events: 'none' })
+			// The bar sits on a backing that fades in above it, so body text never shows behind it,
+			// and it takes clicks itself (it is not a click-through strip).
+			expect(style.image).toContain('linear-gradient')
+			expect(style.events).not.toBe('none')
 			await input.click({ trial: true })
 			expect(await overflow(page)).toBeLessThanOrEqual(0)
 		})
@@ -267,4 +274,26 @@ test.describe('Floating composers — item, agent, reply pane and trial banner',
 			)
 		})
 	}
+})
+
+test.describe('Screen title on a plain screen', () => {
+	test('the Flows heading shows above the solid bar at desktop width', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1440, height: 900 })
+		await page.goto(`/${account.workspaceId}/loops`)
+		const heading = page.getByRole('heading', { level: 1, name: 'Flows' })
+		await expect(heading).toBeVisible({ timeout: 15_000 })
+		// The bar is solid, so a title painted under it is "visible" to Playwright but not to a
+		// person. Let the bar take pointer events too, then the point at the heading's centre is
+		// the heading itself only when nothing is drawn over it.
+		const onTop = await heading.evaluate((el) => {
+			const bar = document.querySelector<HTMLElement>('main > header')
+			if (bar) bar.style.pointerEvents = 'auto'
+			const box = el.getBoundingClientRect()
+			return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === el
+		})
+		expect(onTop).toBe(true)
+	})
 })

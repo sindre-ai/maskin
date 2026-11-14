@@ -147,6 +147,13 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/auth/login`.
     /// - Remark: Generated from `#/paths//api/auth/login/post`.
     func post_sol_api_sol_auth_sol_login(_ input: Operations.post_sol_api_sol_auth_sol_login.Input) async throws -> Operations.post_sol_api_sol_auth_sol_login.Output
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    func post_sol_api_sol_auth_sol_forgot_hyphen_password(_ input: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input) async throws -> Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output
     /// List skills for an agent
     ///
     /// - Remark: HTTP `GET /api/actors/{actorId}/skills`.
@@ -266,6 +273,11 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/triggers`.
     /// - Remark: Generated from `#/paths//api/triggers/post`.
     func post_sol_api_sol_triggers(_ input: Operations.post_sol_api_sol_triggers.Input) async throws -> Operations.post_sol_api_sol_triggers.Output
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    func get_sol_api_sol_triggers_sol__lcub_id_rcub_(_ input: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -1064,6 +1076,21 @@ extension APIProtocol {
             body: body
         ))
     }
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    public func post_sol_api_sol_auth_sol_forgot_hyphen_password(
+        headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers = .init(),
+        body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output {
+        try await post_sol_api_sol_auth_sol_forgot_hyphen_password(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input(
+            headers: headers,
+            body: body
+        ))
+    }
     /// List skills for an agent
     ///
     /// - Remark: HTTP `GET /api/actors/{actorId}/skills`.
@@ -1375,6 +1402,19 @@ extension APIProtocol {
         try await post_sol_api_sol_triggers(Operations.post_sol_api_sol_triggers.Input(
             headers: headers,
             body: body
+        ))
+    }
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    public func get_sol_api_sol_triggers_sol__lcub_id_rcub_(
+        path: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output {
+        try await get_sol_api_sol_triggers_sol__lcub_id_rcub_(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers
         ))
     }
     /// Update a trigger

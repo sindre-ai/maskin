@@ -6471,6 +6471,23 @@ describe('tool handlers', () => {
 			expect(parsed.llm_config).toEqual({ provider: 'openai' })
 		})
 
+		it('sends starter_prompts on the PATCH body', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({ id: actorId, starter_prompts: ['What needs me today?'] }),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			await handler({ id: actorId, starter_prompts: ['What needs me today?'] })
+
+			expect(patchedBody).toMatchObject({ starter_prompts: ['What needs me today?'] })
+		})
+
 		it('adds the actor to a workspace when workspace_id is provided', async () => {
 			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
 			// A fresh object per test — the handler mutates the actor in place to

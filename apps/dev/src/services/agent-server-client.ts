@@ -110,9 +110,14 @@ export class AgentServerClient {
 	async sendInput(
 		sessionId: string,
 		payload: { type: string; message: { role: string; content: string } },
+		/** Shown to the agent with the turn; the agent-server builds the content blocks. */
+		images?: Array<{ mediaType: string; data: string }>,
 	): Promise<void> {
 		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, {
 			content: payload.message.content,
+			...(images && images.length > 0
+				? { images: images.map((i) => ({ media_type: i.mediaType, data: i.data })) }
+				: {}),
 		})
 	}
 

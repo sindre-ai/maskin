@@ -388,9 +388,6 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
-		// Event stream reconnect replay: "this workspace's events after id N, oldest first, 100 rows".
-		// Built CONCURRENTLY in migration 0137.
-		index('events_ws_id_idx').on(t.workspaceId, t.id),
 		// Session self-heal's "does this session already have its completion event?" probe,
 		// answered from the index alone. Built CONCURRENTLY in migration 0114.
 		index('events_session_entity_action_idx')
@@ -1038,6 +1035,29 @@ export const apiKeys = pgTable(
 	],
 )
 export type ApiKey = typeof apiKeys.$inferSelect
+
+// ── Password Reset Tokens ──────────────────────────────────────────────────
+
+/**
+ * One-time links for "Forgot password". token_hash is the hex SHA-256 of the token in the emailed
+ * link; the token itself is never stored. A row works while used_at is null and expires_at is in
+ * the future. A newer request deletes the actor's older unused rows (lib/password-reset).
+ */
+export const passwordResetTokens = pgTable(
+	'password_reset_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [index('password_reset_tokens_actor_idx').on(t.actorId)],
+)
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect
 
 // ── Comment Responder Claims ───────────────────────────────────────────────
 // One responder session per (comment event, actor). The thread-reply spawn and the
@@ -2399,6 +2419,10 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// What the loop page needs beyond a title: entry condition, close condition, tags and
+	// starter targets (camelCase keys, see apps/dev/src/lib/marketplace-loops/loop-settings.ts).
+	// Null for a loop that ships none. Copied onto the installer's loop object.
+	loopSettings: jsonb('loop_settings'),
 	// Set by seedMarketplaceLoops when the slug is no longer in the code-defined seed list.
 	// A retired loop is hidden from the marketplace and refused for new installs, but the
 	// row stays so existing installs (installed_loops.source_loop_id) keep updating.
@@ -2414,7 +2438,7 @@ export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 //
 // Frozen snapshots of each element that ships with a published marketplace
 // loop. `source_item_id` is the original actor/trigger/skill/integration id in
-// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// the publishing workspace (for a `view`, a stable id minted for that tab) — kept so intra-loop wiring inside `item_snapshot`
 // (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
@@ -2435,7 +2459,7 @@ export const marketplaceLoopItems = pgTable(
 		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
 			'marketplace_loop_items_item_type_check',
-			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration', 'view')`,
 		),
 	],
 )
@@ -3262,10 +3286,11 @@ export type DeviceAuthCode = typeof deviceAuthCodes.$inferSelect
 export type NewDeviceAuthCode = typeof deviceAuthCodes.$inferInsert
 
 // ── API route timing counts ─────────────────────────────────────────────────
-// One row per minute, per route, per server build, per sender, per app build: how many requests the API
+// One row per minute, per route, per server build, per sender, per app build, per app release: how many requests the API
 // answered and how long they took. Counts and sums only. No actor, workspace, URL or free text is stored;
 // the route is the pattern (`/api/objects/:id`) and client_build is the iOS build number from
-// X-Client-Build (1 to 12 digits) or '' for web, agents and anything else. Written by the once-a-minute
+// X-Client-Build (1 to 12 digits) and client_version is the release from X-Client-Version (digits and dots,
+// 1 to 12), each '' for web, agents and anything else. Written by the once-a-minute
 // timing flush
 // (apps/dev/src/lib/route-timing-store.ts) and deleted after 30 days, so the load per route can be
 // read over a week. `minute` is the minute the flush ran in; two replicas (or two flushes in one
@@ -3283,6 +3308,8 @@ export const apiRouteTimingMinutes = pgTable(
 		clientSource: text('client_source').notNull().default(''),
 		// iOS build number from X-Client-Build (1 to 12 digits); '' for web, agents and anything else.
 		clientBuild: text('client_build').notNull().default(''),
+		// iOS release from X-Client-Version (digits and dots, 1 to 12); '' for web, agents and anything else.
+		clientVersion: text('client_version').notNull().default(''),
 		requests: integer('requests').notNull(),
 		slowRequests: integer('slow_requests').notNull(),
 		errors5xx: integer('errors_5xx').notNull(),
@@ -3292,7 +3319,16 @@ export const apiRouteTimingMinutes = pgTable(
 	},
 	(t) => [
 		primaryKey({
-			columns: [t.minute, t.build, t.method, t.route, t.stream, t.clientSource, t.clientBuild],
+			columns: [
+				t.minute,
+				t.build,
+				t.method,
+				t.route,
+				t.stream,
+				t.clientSource,
+				t.clientBuild,
+				t.clientVersion,
+			],
 		}),
 	],
 )

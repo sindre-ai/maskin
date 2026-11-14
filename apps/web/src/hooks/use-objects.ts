@@ -30,7 +30,11 @@ import { queryKeys } from '../lib/query-keys'
 
 type CreateObjectInput = z.input<typeof createObjectSchema>
 // `chat` rides along on a status change made from a chat card (see LinkedObjectCard).
-type UpdateObjectInput = z.input<typeof updateObjectSchema> & { chat?: ChatCardRef }
+// `expected_status` makes the server refuse the write if the object has moved on (see api.ts).
+type UpdateObjectInput = z.input<typeof updateObjectSchema> & {
+	chat?: ChatCardRef
+	expected_status?: string
+}
 
 // Derives the `object_updated` event's `mutation_type` from a patch shape.
 // A patch that touches `status` is classified as a status change; everything
@@ -127,6 +131,9 @@ export function useObjectFacets(workspaceId: string, params: Record<string, stri
 		queryFn: () => api.objects.facets(workspaceId, params),
 		enabled: !!workspaceId,
 		placeholderData: keepPreviousData,
+		// Remounts and refocus within 10s reuse the counts. Mutations and SSE still
+		// refresh them: invalidateQueries ignores staleTime on active queries.
+		staleTime: 10_000,
 	})
 }
 

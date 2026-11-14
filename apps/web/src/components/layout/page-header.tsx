@@ -15,6 +15,7 @@ export function PageHeader({
 	newMenuPrimaryOverride,
 	newMenuDisabled,
 	hideTitle,
+	wrapActions,
 	hideBar,
 	gutter,
 }: {
@@ -52,6 +53,9 @@ export function PageHeader({
 	// that draws its own title. `title` is still published, so the crumb chain
 	// and document title keep working.
 	hideTitle?: boolean
+	// Below md, lets the buttons drop to a second line rather than the title shrinking to fit
+	// beside them — see PageHeaderContext.
+	wrapActions?: boolean
 	// From md the shared bar draws nothing (no title, no New button) — for a page that owns
 	// its whole top edge, as Chats does. Below md the bar still renders.
 	hideBar?: boolean
@@ -71,6 +75,7 @@ export function PageHeader({
 		setNewMenuPrimaryOverride,
 		setNewMenuDisabled,
 		setHideTitle,
+		setWrapActions,
 		setHideBar,
 		setGutter,
 	} = usePageHeader()
@@ -134,6 +139,11 @@ export function PageHeader({
 		setHideTitle(hideTitle)
 		return () => setHideTitle(undefined)
 	}, [hideTitle, setHideTitle])
+
+	useEffect(() => {
+		setWrapActions(wrapActions)
+		return () => setWrapActions(undefined)
+	}, [wrapActions, setWrapActions])
 
 	useEffect(() => {
 		setHideBar(hideBar)

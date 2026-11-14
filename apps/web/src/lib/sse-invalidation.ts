@@ -43,6 +43,10 @@ const LIST_REFETCH_MS = 5_000
 // queries on the server. A burst of relationship events (an agent wiring up a loop) used to
 // refetch every open graph once per event, so one trailing refetch per window is enough.
 const GRAPH_REFETCH_MS = 5_000
+// The Objects page facets are ~10 count queries on the server, and any object event used to
+// refetch them. Our own edits still refresh them at once (mutation onSuccess hooks invalidate
+// the whole objects prefix); only the SSE-driven path waits for the window to end.
+const FACETS_REFETCH_MS = 5_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -250,7 +254,17 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'task':
 		case 'loop':
 		case 'knowledge':
-			invalidate(queryClient, { queryKey: queryKeys.objects.all(workspaceId) })
+			// Everything under the objects prefix except the facets, which trail below.
+			invalidate(queryClient, {
+				queryKey: queryKeys.objects.all(workspaceId),
+				predicate: (query) => query.queryKey[2] !== 'facets',
+			})
+			scheduleTrailingRefetch(
+				queryClient,
+				`facets:${workspaceId}`,
+				{ queryKey: [...queryKeys.objects.all(workspaceId), 'facets'] },
+				FACETS_REFETCH_MS,
+			)
 			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
 			invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
 			if (event.entity_type === 'bet') {

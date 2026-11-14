@@ -19,6 +19,12 @@ const AVATAR_PALETTE = [
 	'bg-[var(--st-proposed-bg)] text-[var(--st-proposed-text)]',
 ] as const
 
+/** The letters to draw: the ones the agent chose when it has set any, else the automatic ones. */
+export function resolveActorInitials(name: string, chosen?: string | null): string {
+	const set = chosen?.trim()
+	return set ? set.toUpperCase() : getActorInitials(name)
+}
+
 /** Strip everything that is not a letter or digit so a bracketed qualifier
  *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. A single
  *  all-caps word of 3 letters (CTO, CPO, PMM) keeps all three; names of three
@@ -103,6 +109,9 @@ type ActorAvatarProps = {
 	onClick?: () => void
 	id?: string
 	imageUrl?: string
+	/** The letters the agent chose for itself (`initials` on the actor record). Set, they replace the
+	 *  automatic ones. A caller that passes its own `imageUrl` passes this too, because no lookup runs then. */
+	initials?: string | null
 	/** Composes a violet conic-gradient ring around the avatar, animating
 	 *  clockwise ~1.6s/rev; `prefers-reduced-motion: reduce` renders a static
 	 *  300° arc. Wired on the Objects list row to `object.active_session_state
@@ -118,10 +127,10 @@ type ActorAvatarProps = {
 }
 
 /**
- * Draws the actor's picture when it has one. Callers that already hold an
- * `avatar_url` pass it as `imageUrl`; every other call site that passes an
- * `id` gets it from the workspace actors list, so lists, chats and the sidebar
- * show pictures without each one threading the URL through. Outside a workspace
+ * Draws the actor's picture and chosen letters when it has them. Callers that already hold an
+ * `avatar_url` pass it as `imageUrl` (and `initials` with it); every other call site that passes an
+ * `id` gets both from the workspace actors list, so lists, chats and the sidebar
+ * show them without each one threading the values through. Outside a workspace
  * or query provider (stories, isolated tests) it draws initials only.
  */
 export function ActorAvatar(props: ActorAvatarProps) {
@@ -135,12 +144,15 @@ export function ActorAvatar(props: ActorAvatarProps) {
 
 // Same key, fetcher and staleTime as useActors, so this shares the list every other surface
 // loads and a mounting avatar does not refetch a list that is still fresh.
-function useActorAvatarUrl(id: string, workspaceId: string) {
+function useActorAvatarLook(id: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.actors.all(workspaceId),
 		queryFn: () => api.actors.list(workspaceId),
 		staleTime: ACTORS_STALE_MS,
-		select: (actors) => actors.find((actor) => actor.id === id)?.avatar_url ?? undefined,
+		select: (actors) => {
+			const actor = actors.find((candidate) => candidate.id === id)
+			return { imageUrl: actor?.avatar_url ?? undefined, initials: actor?.initials ?? undefined }
+		},
 	})
 }
 
@@ -148,8 +160,8 @@ function ActorAvatarWithLookup({
 	workspaceId,
 	...props
 }: ActorAvatarProps & { id: string; workspaceId: string }) {
-	const { data: imageUrl } = useActorAvatarUrl(props.id, workspaceId)
-	return <ActorAvatarView {...props} imageUrl={imageUrl} />
+	const { data } = useActorAvatarLook(props.id, workspaceId)
+	return <ActorAvatarView {...props} imageUrl={data?.imageUrl} initials={data?.initials} />
 }
 
 function ActorAvatarView({
@@ -160,6 +172,7 @@ function ActorAvatarView({
 	onClick,
 	id,
 	imageUrl,
+	initials: chosenInitials,
 	working = false,
 	tile = false,
 	status,
@@ -169,7 +182,7 @@ function ActorAvatarView({
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
 	const imageFailed = imageUrl != null && failedUrl === imageUrl
 
-	const initials = getActorInitials(name)
+	const initials = resolveActorInitials(name, chosenInitials)
 	// Three letters (CTO, PMM) get a smaller glyph so the widest ones still sit inside the plate.
 	const threeLetters = initials.length === 3
 	const sizeClasses = {
@@ -297,7 +310,8 @@ export function ActorPictureOverlay({ id }: { id: string }) {
 }
 
 function ActorPictureOverlayWithLookup({ id, workspaceId }: { id: string; workspaceId: string }) {
-	const { data: imageUrl } = useActorAvatarUrl(id, workspaceId)
+	const { data } = useActorAvatarLook(id, workspaceId)
+	const imageUrl = data?.imageUrl
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
 	if (!imageUrl || failedUrl === imageUrl) return null
 	return (

@@ -227,6 +227,16 @@ actor FakeListAPI: ConversationsAPI {
 	func setFailList(_ v: Bool) { failList = v }
 
 	var listFilters: [String] = []
+	/// The `hideQuiet` flag of each list request, in order.
+	var hideQuietFlags: [Bool] = []
+
+	func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		hideQuietFlags.append(hideQuiet)
+		return try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, limit: limit, offset: offset)
+	}
 
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int) async throws
 		-> ConversationPage

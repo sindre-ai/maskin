@@ -11,7 +11,7 @@
 -- minute per route, 30 days) and not on the hot-tables list (see packages/db/MIGRATIONS.md); a
 -- failed write there is logged and never fails a request. Both statements run in one go, so a
 -- flush that lands in between waits for the key and then upserts into the new one.
--- Down: drizzle/down/0146_api_route_timing_client_build_down.sql.
+-- Down: drizzle/down/0149_api_route_timing_client_build_down.sql.
 
 ALTER TABLE "api_route_timing_minutes" ADD COLUMN IF NOT EXISTS "client_build" text DEFAULT '' NOT NULL;
 --> statement-breakpoint

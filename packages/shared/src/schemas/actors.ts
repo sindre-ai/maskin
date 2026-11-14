@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { actorInitialsSchema } from './actor-initials'
 import { type FirstStep, firstStepSchema } from './first-steps'
 import { mcpServerSchema } from './sessions'
 import { starterPromptListSchema } from './starter-prompts'
@@ -68,6 +69,16 @@ export const loginSchema = z.object({
 	password: z.string().min(1),
 })
 
+export const forgotPasswordSchema = z.object({
+	email: z.string().email(),
+})
+
+export const resetPasswordSchema = z.object({
+	token: z.string().min(1).max(200),
+	// Same floor as signup (createActorSchema).
+	password: z.string().min(8),
+})
+
 export const updateActorSchema = z.object({
 	name: z.string().min(1).optional(),
 	email: z.string().email().optional(),
@@ -88,6 +99,9 @@ export const updateActorSchema = z.object({
 	// Agents only. One-tap openers offered in a new chat with this agent; each is the chip label and
 	// the exact text sent. Up to 4, 60 characters each. Replaces the whole list; [] clears it.
 	starter_prompts: starterPromptListSchema.optional(),
+	// Agents only. The 1 to 3 letters on the agent's avatar, saved upper case. An empty string or null
+	// clears it and the letters go back to being worked out from the name.
+	initials: actorInitialsSchema.nullable().optional(),
 })
 
 export const actorParamsSchema = z.object({
@@ -136,6 +150,8 @@ export const actorResponseSchema = z.object({
 	tags: z.array(z.string()).optional(),
 	// Projected from actors.metadata->'starter_prompts'; agents only, empty when none.
 	starter_prompts: z.array(z.string()).optional(),
+	// Projected from actors.metadata->>'initials'; null when the agent has not chosen any.
+	initials: z.string().nullable().optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>
@@ -169,6 +185,8 @@ export const actorListItemSchema = z.object({
 	tags: z.array(z.string()).optional(),
 	// Projected from actors.metadata->'starter_prompts'; agents only, empty when none.
 	starter_prompts: z.array(z.string()).optional(),
+	// Projected from actors.metadata->>'initials'; null when the actor has not chosen any.
+	initials: z.string().nullable().optional(),
 	workspaces: z
 		.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() }))
 		.optional(),

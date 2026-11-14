@@ -51,6 +51,7 @@ import {
 	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useId,
@@ -194,6 +195,10 @@ export interface ComposerProps {
 	/** When set, a Call button for this agent sits beside the mic. Callers pass it
 	 *  only when exactly one agent is addressed (a multi-agent call is v2). */
 	callAgent?: VoiceCallAgent | null
+	/** Sits first inside the bar, before the + menu (the item page's Comment / Message chip). */
+	leading?: ReactNode
+	/** Draws the + menu after the box instead of before it, so Tab reaches the box first. */
+	attachAtEnd?: boolean
 	/**
 	 * Asks the composer to replace its draft with `text` (when given), then focus
 	 * with the caret at the end. With `append` the text goes after the draft instead
@@ -333,6 +338,8 @@ export function Composer({
 	secretRestarting,
 	vaultModeBlocked,
 	callAgent,
+	leading,
+	attachAtEnd = false,
 	fillRequest,
 	inlineTags: inlineTagsProp = false,
 	richText = false,
@@ -1124,6 +1131,47 @@ export function Composer({
 		[inlineTags, selection, tagIds],
 	)
 
+	// + opens the attach menu. It keeps a 44 px target on touch widths.
+	const attachMenu = (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button
+					type="button"
+					size="icon"
+					variant="ghost"
+					className="shrink-0 rounded-full text-muted-foreground max-md:size-11"
+					disabled={disabled}
+					aria-label="Attach file"
+				>
+					<Plus size={20} aria-hidden />
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent
+				align="start"
+				side="top"
+				onCloseAutoFocus={(e) => {
+					e.preventDefault()
+					focusInput()
+				}}
+			>
+				<DropdownMenuItem onSelect={() => photoInputRef.current?.click()}>
+					<Image aria-hidden /> Photo
+				</DropdownMenuItem>
+				<DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+					<FileText aria-hidden /> File
+				</DropdownMenuItem>
+				<DropdownMenuItem onSelect={startMention}>
+					<AtSign aria-hidden /> Person or agent
+				</DropdownMenuItem>
+				{richText ? (
+					<DropdownMenuItem onSelect={() => setShowFormatting(!showFormatting)}>
+						<Type aria-hidden /> {showFormatting ? 'Hide formatting' : 'Show formatting'}
+					</DropdownMenuItem>
+				) : null}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+
 	return (
 		<div
 			className={cn(
@@ -1131,7 +1179,7 @@ export function Composer({
 				!alignStart && 'mx-auto',
 				// The secret and vault cards keep a box of their own; the bar is the box otherwise.
 				(secretFlow || vaultFlow) &&
-					'rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
+					'rounded-2xl border border-control bg-card px-3 py-2.5 shadow-sm',
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>
@@ -1301,48 +1349,12 @@ export function Composer({
 						onDrop={handleDrop}
 						className={cn(
 							// shadow-md: the bar floats over the page, so it lifts off the content behind it.
-							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 shadow-md inset-ring inset-ring-input max-md:p-1',
+							'flex items-end gap-1.5 rounded-3xl bg-card p-1.5 shadow-md inset-ring inset-ring-input focus-within:inset-ring-border-strong max-md:p-1',
 							dropTargeted && 'outline-2 outline-dashed outline-ring',
 						)}
 					>
-						{/* + opens the attach menu. It keeps a 44 px target on touch widths. */}
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<Button
-									type="button"
-									size="icon"
-									variant="ghost"
-									className="shrink-0 rounded-full text-muted-foreground max-md:size-11"
-									disabled={disabled}
-									aria-label="Attach file"
-								>
-									<Plus size={20} aria-hidden />
-								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent
-								align="start"
-								side="top"
-								onCloseAutoFocus={(e) => {
-									e.preventDefault()
-									focusInput()
-								}}
-							>
-								<DropdownMenuItem onSelect={() => photoInputRef.current?.click()}>
-									<Image aria-hidden /> Photo
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
-									<FileText aria-hidden /> File
-								</DropdownMenuItem>
-								<DropdownMenuItem onSelect={startMention}>
-									<AtSign aria-hidden /> Person or agent
-								</DropdownMenuItem>
-								{richText ? (
-									<DropdownMenuItem onSelect={() => setShowFormatting(!showFormatting)}>
-										<Type aria-hidden /> {showFormatting ? 'Hide formatting' : 'Show formatting'}
-									</DropdownMenuItem>
-								) : null}
-							</DropdownMenuContent>
-						</DropdownMenu>
+						{leading}
+						{!attachAtEnd && attachMenu}
 						{richText ? (
 							// Paste is caught on the wrapper first: a secret or a file must not reach the editor.
 							<div
@@ -1433,6 +1445,7 @@ export function Composer({
 								aria-expanded={mentionTrigger !== null || undefined}
 							/>
 						)}
+						{attachAtEnd && attachMenu}
 						{callAgent ? (
 							<span className="inline-flex shrink-0 self-center">
 								<AgentCallButton agent={callAgent} variant="composer" shortcut={false} />

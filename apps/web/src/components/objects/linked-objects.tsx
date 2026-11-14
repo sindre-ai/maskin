@@ -31,7 +31,7 @@ import type {
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Plus } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { DataTableControls } from './data-table/data-table-controls'
@@ -118,6 +118,10 @@ export function LinkedObjectsView({
 	const [activeFilter, setActiveFilter] = useState<string>('all')
 	const [addLinkKind, setAddLinkKind] = useState<'object' | 'file' | null>(null)
 	const canWrite = useCanWrite()
+	const addButtonRef = useRef<HTMLButtonElement | null>(null)
+	// Set when a menu item opens the picker so the menu's own close-focus
+	// (back to the `+` button) doesn't steal focus from the search field.
+	const pickerOpenedFromMenuRef = useRef(false)
 
 	// External open trigger (file-detail's `Link to item` button). Watching
 	// the nonce (not the kind) so the same-kind click retriggers.
@@ -232,6 +236,7 @@ export function LinkedObjectsView({
 					<ViewerTooltip>
 						<DropdownMenuTrigger asChild>
 							<Button
+								ref={addButtonRef}
 								variant="ghost"
 								size="icon"
 								className="h-8 w-8"
@@ -243,19 +248,38 @@ export function LinkedObjectsView({
 							</Button>
 						</DropdownMenuTrigger>
 					</ViewerTooltip>
-					<DropdownMenuContent align="end" className="min-w-[180px]">
+					<DropdownMenuContent
+						align="end"
+						className="min-w-[180px]"
+						onCloseAutoFocus={(e) => {
+							if (pickerOpenedFromMenuRef.current) {
+								e.preventDefault()
+								pickerOpenedFromMenuRef.current = false
+							}
+						}}
+					>
 						{/* Keyboard hints "O" / "F" match Designer §7 — the picker
 						  itself also intercepts O/F to jump between tabs. On
 						  file-detail the primary CTA is `Link to item`, so the
 						  menu's leading item flips accordingly. */}
-						<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.primary.kind ?? 'object')}>
+						<DropdownMenuItem
+							onSelect={() => {
+								pickerOpenedFromMenuRef.current = true
+								openLinkTo(menuLabels?.primary.kind ?? 'object')
+							}}
+						>
 							<span className="flex-1">{menuLabels?.primary.label ?? 'Link to item'}</span>
 							<span className="ml-3 font-mono text-[10px] text-muted-foreground">
 								{(menuLabels?.primary.kind ?? 'object') === 'object' ? 'O' : 'F'}
 							</span>
 						</DropdownMenuItem>
 						{menuLabels?.secondary !== null && (
-							<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.secondary?.kind ?? 'file')}>
+							<DropdownMenuItem
+								onSelect={() => {
+									pickerOpenedFromMenuRef.current = true
+									openLinkTo(menuLabels?.secondary?.kind ?? 'file')
+								}}
+							>
 								<span className="flex-1">{menuLabels?.secondary?.label ?? 'Link to file'}</span>
 								<span className="ml-3 font-mono text-[10px] text-muted-foreground">
 									{(menuLabels?.secondary?.kind ?? 'file') === 'file' ? 'F' : 'O'}
@@ -275,6 +299,7 @@ export function LinkedObjectsView({
 					relationshipTypes={relationshipTypes}
 					existingRelationships={existingRelationships}
 					defaultKind={addLinkKind}
+					returnFocusRef={addButtonRef}
 					onCreateRelationship={onCreateRelationship}
 					onClose={() => setAddLinkKind(null)}
 				/>
@@ -563,6 +588,7 @@ export function AddLinkForm({
 	existingRelationships,
 	defaultRelationshipType,
 	defaultKind,
+	returnFocusRef,
 	onCreateRelationship,
 	onClose,
 }: {
@@ -576,6 +602,9 @@ export function AddLinkForm({
 	/** Which picker tab opens by default. Files → default relation-type
 	 *  becomes `attached` per Designer spec §4. */
 	defaultKind?: PickerTab | 'object' | 'file'
+	/** Fallback for where focus goes when the form closes, used when the
+	 *  element that had focus on open is gone by then (a menu item). */
+	returnFocusRef?: RefObject<HTMLElement | null>
 	onCreateRelationship: (data: CreateRelationshipInput, context?: { targetTitle?: string }) => void
 	onClose: () => void
 }) {
@@ -604,6 +633,20 @@ export function AddLinkForm({
 	// once per pause, not once per keystroke.
 	const [announcement, setAnnouncement] = useState('')
 	const searchInputRef = useRef<HTMLInputElement | null>(null)
+
+	// Move focus into the search field on open and hand it back to the opener
+	// on close (Esc, successful link or the Cancel button). A menu item is gone
+	// by close time, so fall back to `returnFocusRef` when the opener is.
+	useEffect(() => {
+		const opener = document.activeElement
+		searchInputRef.current?.focus()
+		return () => {
+			const openerStillThere =
+				opener instanceof HTMLElement && opener !== document.body && opener.isConnected
+			const target = openerStillThere ? opener : returnFocusRef?.current
+			if (target instanceof HTMLElement && target.isConnected) target.focus()
+		}
+	}, [returnFocusRef])
 
 	const existingIds = useMemo(
 		() => new Set(existingRelationships.flatMap((r) => [r.sourceId, r.targetId])),
@@ -690,6 +733,15 @@ export function AddLinkForm({
 		[objectType, objectId, relType, onCreateRelationship, onClose],
 	)
 
+	const listboxId = `addlink-listbox-${tab}`
+
+	// Arrow-key nav only: scroll the row into view so it never sits hidden in
+	// the short list. Mouse hover sets the index directly and must not scroll.
+	const moveActive = (next: number) => {
+		setActiveIndex(next)
+		document.getElementById(`${listboxId}-opt-${next}`)?.scrollIntoView({ block: 'nearest' })
+	}
+
 	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
 		// Tab-jump shortcuts. Guard with Meta/Alt so 'o' or 'f' typed into the
 		// search input still work as text; the shortcuts fire only when the
@@ -706,12 +758,12 @@ export function AddLinkForm({
 		}
 		if (e.key === 'ArrowDown') {
 			e.preventDefault()
-			setActiveIndex((i) => Math.min(rowsCount - 1, i + 1))
+			moveActive(Math.min(rowsCount - 1, activeIndex + 1))
 			return
 		}
 		if (e.key === 'ArrowUp') {
 			e.preventDefault()
-			setActiveIndex((i) => Math.max(0, i - 1))
+			moveActive(Math.max(0, activeIndex - 1))
 			return
 		}
 		if (e.key === 'Enter') {
@@ -728,8 +780,6 @@ export function AddLinkForm({
 			onClose()
 		}
 	}
-
-	const listboxId = `addlink-listbox-${tab}`
 
 	return (
 		<div className="rounded border border-border bg-card p-3 space-y-2 mb-3">

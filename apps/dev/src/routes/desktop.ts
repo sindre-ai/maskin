@@ -27,6 +27,13 @@ import {
 	buildSaveFileCommand,
 	mimeTypeForFileName,
 } from '../lib/desktop-save-file-command'
+import {
+	DESKTOP_SETTINGS_VERSION,
+	KEYFILE_NEEDS_CHROMIUM_RESTART,
+	buildApplySettingsCommand,
+	buildReadSettingsCommand,
+	parseKeyValueLines,
+} from '../lib/desktop-settings'
 import { signDesktopTicket } from '../lib/desktop-ticket'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -745,6 +752,240 @@ app.openapi(
 			folder: c.req.valid('json').folder,
 		}) as never,
 )
+
+// Keeping a running computer's settings current. A computer keeps the image it was created
+// from until it is deleted and re-opened, and that wipes its saved logins, so a setting baked
+// into the image (the file chooser's size) never reaches a computer that already exists. These
+// two routes send a server-built command through the same exec path put-file uses: one
+// rewrites a fixed list of user settings files (lib/desktop-settings.ts), one only reads.
+
+const SETTINGS_COMMAND_TIMEOUT_S = 30
+
+const applySettingsResultSchema = z.object({
+	settings_version: z
+		.number()
+		.int()
+		.openapi({ description: 'The settings version now on the computer' }),
+	changed: z.boolean().openapi({
+		description: 'False when the computer already had these settings, so nothing was written',
+	}),
+	chromium_restart_needed: z.boolean().openapi({
+		description:
+			'True when a setting only takes effect after Chromium restarts. Nothing is restarted for you: a restart closes the open pages.',
+	}),
+})
+
+const applySettingsRoute = createRoute({
+	method: 'post',
+	path: '/apply-settings',
+	'x-viewer-policy': 'writer',
+	tags: ['Desktop'],
+	summary: "Bring a running computer's settings files up to date",
+	description:
+		"Rewrites a fixed list of user settings files on the computer (the file chooser's size and position) without deleting it, so saved logins and open pages stay. Nothing outside that list is touched. Running it again changes nothing. Starts the computer if needed.",
+	request: { headers: workspaceIdHeader, query: agentQuery },
+	responses: {
+		200: {
+			description: 'The computer has the current settings',
+			content: { 'application/json': { schema: applySettingsResultSchema } },
+		},
+		...controlResponses,
+	},
+})
+
+const readSettingsResultSchema = z.object({
+	status: z.enum(['running', 'suspended']),
+	current_settings_version: z
+		.number()
+		.int()
+		.openapi({ description: 'The version apply-settings would write' }),
+	settings_version: z.number().int().nullable().openapi({
+		description: 'The version on the computer. Null: apply-settings has never run on it.',
+	}),
+	image_tag: z.string().nullable().openapi({
+		description:
+			'The image the computer was created from. Null: it was built before images carried a tag, or the computer is asleep.',
+	}),
+	chooser_size: z.string().nullable(),
+	chooser_position: z.string().nullable(),
+	disk_total_mb: z.number().int().nullable(),
+	disk_free_mb: z.number().int().nullable(),
+	snapshots: z
+		.object({ enabled: z.boolean(), idle_minutes: z.number().int().nullable() })
+		.nullable()
+		.openapi({
+			description:
+				'Whether an idle computer is suspended to a snapshot, and after how many minutes. Null: the host did not say.',
+		}),
+	new_computer_image: z.string().nullable().openapi({
+		description: 'The image a new computer on this host is created from, not what this one runs',
+	}),
+})
+
+const readSettingsRoute = createRoute({
+	method: 'get',
+	path: '/settings',
+	tags: ['Desktop'],
+	summary: "Read a computer's image tag, settings version, free disk and snapshot setting",
+	description:
+		'Read only: writes nothing and does not start the computer. A computer that is asleep answers with what the host knows and nulls for the rest, because reading the rest would wake it.',
+	request: { headers: workspaceIdHeader, query: agentQuery },
+	responses: {
+		200: {
+			description: 'What the computer and its host report',
+			content: { 'application/json': { schema: readSettingsResultSchema } },
+		},
+		...controlResponses,
+	},
+})
+
+/** Runs one fixed command on the computer. The answer is the parsed exec result, or the response to send instead. */
+async function runSettingsCommand(
+	c: Ctx,
+	scope: { workspaceId: string; agentId: string },
+	command: string,
+	what: string,
+) {
+	let result: Awaited<ReturnType<WorkspaceDesktopService['control']>>
+	try {
+		result = await serviceFor(c as never).control(scope.workspaceId, scope.agentId, 'exec', {
+			command,
+			timeout_s: SETTINGS_COMMAND_TIMEOUT_S,
+		})
+	} catch (err) {
+		logger.error(`desktop ${what} failed`, { ...scope, error: String(err) })
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
+	}
+	if (!result) return c.json(createApiError('NOT_FOUND', 'No desktop could be started'), 404)
+	if (result.status !== 200) return c.json(result.body, result.status)
+	const exec = desktopExecResultSchema.safeParse(result.body)
+	if (!exec.success) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop gave an unexpected answer'), 502)
+	}
+	if (exec.data.timed_out || exec.data.exit_code !== 0) {
+		logger.warn(`desktop ${what} command failed`, {
+			...scope,
+			exitCode: exec.data.exit_code,
+			timedOut: exec.data.timed_out,
+		})
+		return c.json(
+			createApiError(
+				'INTERNAL_ERROR',
+				exec.data.timed_out
+					? 'The computer took too long and the command was stopped'
+					: `The computer could not run it: ${exec.data.stderr.trim().slice(0, 500) || 'no error text'}`,
+			),
+			502,
+		)
+	}
+	return exec.data
+}
+
+async function applySettings(c: Ctx) {
+	const gated = await gate(c)
+	if (isResponse(gated)) return gated
+	const { workspaceId, actorId, agentId } = gated
+
+	const ran = await runSettingsCommand(
+		c,
+		{ workspaceId, agentId },
+		buildApplySettingsCommand(),
+		'apply-settings',
+	)
+	if (ran instanceof Response) return ran
+
+	const out = parseKeyValueLines(ran.stdout)
+	const version = Number(out.settings_version)
+	if (version !== DESKTOP_SETTINGS_VERSION) {
+		logger.error('desktop apply-settings answered with an unexpected version', {
+			workspaceId,
+			agentId,
+			got: out.settings_version,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop gave an unexpected answer'), 502)
+	}
+	const changed = out.keyfile_changed === '1' || out.marker_changed === '1'
+
+	await recordEvent(c.get('db') as Database, {
+		workspaceId,
+		actorId,
+		action: 'updated',
+		entityType: 'workspace_desktop',
+		entityId: workspaceId,
+		data: {
+			agent_id: agentId,
+			control: 'apply_settings',
+			settings_version: version,
+			changed,
+		},
+	}).catch((err) => logger.warn('desktop apply-settings event failed', { error: String(err) }))
+	c.header('Cache-Control', 'no-store')
+	return c.json(
+		{
+			settings_version: version,
+			changed,
+			chromium_restart_needed: KEYFILE_NEEDS_CHROMIUM_RESTART,
+		},
+		200,
+	)
+}
+
+async function readSettings(c: Ctx) {
+	const gated = await gate(c)
+	if (isResponse(gated)) return gated
+	const { workspaceId, agentId } = gated
+
+	// Looked up, not ensured: a read must not create a computer or wake a sleeping one.
+	const located = await serviceFor(c as never)
+		.locate(workspaceId, agentId)
+		.catch((err) => {
+			logger.warn('desktop settings lookup failed', { workspaceId, agentId, error: String(err) })
+			return null
+		})
+	if (!located) {
+		return c.json(createApiError('NOT_FOUND', 'This agent has no computer yet'), 404)
+	}
+
+	const status = located.status === 'suspended' ? 'suspended' : 'running'
+	let reported: Record<string, string> = {}
+	if (status === 'running') {
+		const ran = await runSettingsCommand(
+			c,
+			{ workspaceId, agentId },
+			buildReadSettingsCommand(),
+			'read-settings',
+		)
+		if (ran instanceof Response) return ran
+		reported = parseKeyValueLines(ran.stdout)
+	}
+	const text = (key: string) => reported[key] || null
+	const whole = (key: string) => {
+		const n = Number.parseInt(reported[key] ?? '', 10)
+		return Number.isFinite(n) ? n : null
+	}
+	const snapshots = located.host?.snapshots
+	c.header('Cache-Control', 'no-store')
+	return c.json(
+		{
+			status,
+			current_settings_version: DESKTOP_SETTINGS_VERSION,
+			settings_version: whole('settings_version'),
+			image_tag: text('image_tag'),
+			chooser_size: text('chooser_size'),
+			chooser_position: text('chooser_position'),
+			disk_total_mb: whole('disk_total_mb'),
+			disk_free_mb: whole('disk_free_mb'),
+			snapshots: snapshots
+				? { enabled: snapshots.enabled, idle_minutes: snapshots.idleMinutes }
+				: null,
+			new_computer_image: located.host?.newComputerImage ?? null,
+		},
+		200,
+	)
+}
+
+app.openapi(applySettingsRoute, (c) => applySettings(c as unknown as Ctx) as never)
+app.openapi(readSettingsRoute, (c) => readSettings(c as unknown as Ctx) as never)
 
 // Saving a file from the agent's computer into the workspace: the mirror of put-file. The
 // computer sends the bytes straight to one short-lived storage URL the server signed for a

@@ -61,10 +61,10 @@ describe('OverviewPane tabs', () => {
 		expect(screen.getByText('linked body')).toBeInTheDocument()
 	})
 
-	it('offers Sessions, Items and Computers', () => {
+	it('offers Background sessions, Items and Computers', () => {
 		render(<OverviewPane {...props} linkedItems={[...props.linkedItems]} tab="threads" />)
 		expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual([
-			'Sessions',
+			'Background sessions',
 			'Items',
 			'Computers',
 		])

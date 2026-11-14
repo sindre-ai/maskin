@@ -3,9 +3,11 @@ import {
 	classifyBannerResult,
 	classifyCreditExhaustion,
 	classifySessionExit,
+	classifyUnclassifiedExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
 	isCreditBalanceLowText,
+	unclassifiedFingerprint,
 } from '../../lib/credit-classifier'
 
 describe('classifyCreditExhaustion', () => {
@@ -481,5 +483,55 @@ describe('isCreditBalanceLowText', () => {
 		expect(isCreditBalanceLowText("You've hit your weekly limit")).toBe(false)
 		expect(isCreditBalanceLowText('Request rejected (429)')).toBe(false)
 		expect(isCreditBalanceLowText('')).toBe(false)
+	})
+})
+
+describe('classifyUnclassifiedExit', () => {
+	it('saves the last line the run printed as the verbatim output', () => {
+		expect(classifyUnclassifiedExit('starting\nworking\nSegmentation fault\n')).toEqual({
+			provider: 'unknown',
+			reason_code: 'unclassified',
+			human_message: 'The session ended with an error nothing recognised',
+			http_status: null,
+			reset_at: null,
+			verbatim_output: 'Segmentation fault',
+		})
+	})
+
+	it('prefers the final result text over the raw JSON line', () => {
+		const tail = `${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Tool exploded' })}\n`
+		expect(classifyUnclassifiedExit(tail).verbatim_output).toBe('Tool exploded')
+	})
+
+	it('cuts the line to 300 characters and blanks key-shaped strings', () => {
+		const long = classifyUnclassifiedExit(`${'x'.repeat(500)}\n`)
+		expect(long.verbatim_output).toHaveLength(300)
+		const keyed = classifyUnclassifiedExit(
+			'auth failed for ank_abcdef1234567890 and ghp_abcdefgh12345678\n',
+		)
+		expect(keyed.verbatim_output).not.toContain('ank_abcdef')
+		expect(keyed.verbatim_output).not.toContain('ghp_abcdefgh')
+	})
+
+	it('has no verbatim output for an empty tail', () => {
+		expect(classifyUnclassifiedExit('').verbatim_output).toBeNull()
+	})
+})
+
+describe('unclassifiedFingerprint', () => {
+	it('gives the same key to deaths that differ only in numbers and ids', () => {
+		const a = unclassifiedFingerprint(
+			'Worker 12 died at 14:03 (run 3f2a9c1e-0000-4000-8000-123456789abc)',
+		)
+		const b = unclassifiedFingerprint(
+			'worker 7 died at 09:45 (run aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb)',
+		)
+		expect(a).toBe(b)
+	})
+
+	it('gives different keys to different lines', () => {
+		expect(unclassifiedFingerprint('Segmentation fault')).not.toBe(
+			unclassifiedFingerprint('Out of memory'),
+		)
 	})
 })

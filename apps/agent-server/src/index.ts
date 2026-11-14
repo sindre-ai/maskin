@@ -93,6 +93,27 @@ const SESSION_SKILL_MANIFEST_ENTRY_SCHEMA = z.object({
 		.max(MAX_MANIFEST_FILES_PER_SKILL),
 })
 
+// Images on a user turn (the screenshot sent when a person hands a computer back). A network-input
+// floor: few, of a known type, and of bounded size, so a stolen bearer token cannot push bulk bytes
+// through the input queue.
+const TURN_IMAGES_SCHEMA = z
+	.array(
+		z.object({
+			media_type: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+			data: z
+				.string()
+				.max(8 * 1024 * 1024)
+				.regex(/^[A-Za-z0-9+/]+={0,2}$/, 'data must be base64'),
+		}),
+	)
+	.max(4)
+
+function parseTurnImages(raw: unknown): z.infer<typeof TURN_IMAGES_SCHEMA> | 'invalid' {
+	if (raw === undefined) return []
+	const parsed = TURN_IMAGES_SCHEMA.safeParse(raw)
+	return parsed.success ? parsed.data : 'invalid'
+}
+
 const SESSION_REQUEST_SCHEMA = z.object({
 	sessionId: z
 		.string()
@@ -1067,7 +1088,11 @@ export function buildApp(deps: AppDeps): Hono {
 			if (!desktop) return c.json({ error: 'not_found' }, 404)
 			// Reports `suspended` rather than waking it: a status poll must not undo
 			// the idle suspend. Opening the stream or PUT-ing the desktop wakes it.
-			return c.json({ status: desktop.status, password: desktop.password })
+			return c.json({
+				status: desktop.status,
+				password: desktop.password,
+				host: desktops.hostInfo(),
+			})
 		})
 
 		app.delete('/desktops/:workspaceId/:agentId', async (c) => {
@@ -1409,9 +1434,25 @@ export function buildApp(deps: AppDeps): Hono {
 		) {
 			return c.json({ error: 'Missing content field' }, 400)
 		}
+		const images = parseTurnImages((body as Record<string, unknown>).images)
+		if (images === 'invalid') return c.json({ error: 'Invalid images field' }, 400)
+		const text = (body as Record<string, unknown>).content as string
 		const payload = {
 			type: 'user',
-			message: { role: 'user', content: (body as Record<string, unknown>).content as string },
+			message: {
+				role: 'user',
+				// Images ride after the text as content blocks, the form the CLI reads.
+				content:
+					images.length > 0
+						? [
+								{ type: 'text', text },
+								...images.map((image) => ({
+									type: 'image',
+									source: { type: 'base64', media_type: image.media_type, data: image.data },
+								})),
+							]
+						: text,
+			},
 		}
 		const seq = await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
 		stallTracker.turnEnqueued(id, seq)

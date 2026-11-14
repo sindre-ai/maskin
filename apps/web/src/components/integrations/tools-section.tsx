@@ -19,7 +19,7 @@ import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { AGENT_ACCESS_LABELS } from '@maskin/shared'
 import { FileJson, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 function errorText(err: unknown): string {
 	if (err instanceof ApiError) return err.message
@@ -76,6 +76,17 @@ export function ToolsSection({
 	const [editingId, setEditingId] = useState<string | null>(null)
 	const [importOpen, setImportOpen] = useState(false)
 	const [importError, setImportError] = useState<string | null>(null)
+	// What gets focus back after a form closes: 'add' for the add button, else the server id whose
+	// pencil opened the edit form. Both controls unmount while the form is open.
+	const [focusReturn, setFocusReturn] = useState<string | null>(null)
+	const addButtonRef = useRef<HTMLButtonElement>(null)
+
+	useEffect(() => {
+		if (focusReturn === 'add' && !adding) {
+			addButtonRef.current?.focus()
+			setFocusReturn(null)
+		}
+	}, [focusReturn, adding])
 
 	const needle = query.trim().toLowerCase()
 	const servers = matchingToolServers(integrations, needle)
@@ -84,7 +95,15 @@ export function ToolsSection({
 
 	const handleCreate = (name: string, server: CustomMcpServerSpec) => {
 		if (!canWrite) return
-		create.mutate({ name, server }, { onSuccess: () => setAdding(false) })
+		create.mutate(
+			{ name, server },
+			{
+				onSuccess: () => {
+					setFocusReturn('add')
+					setAdding(false)
+				},
+			},
+		)
 	}
 
 	const handleImport = async (imported: Record<string, CustomMcpServerSpec>) => {
@@ -125,7 +144,10 @@ export function ToolsSection({
 						key={server.id}
 						workspaceId={workspaceId}
 						row={server}
-						onDone={() => setEditingId(null)}
+						onDone={() => {
+							setFocusReturn(server.id)
+							setEditingId(null)
+						}}
 					/>
 				) : (
 					<ServerRow
@@ -133,6 +155,8 @@ export function ToolsSection({
 						row={server}
 						workspaceId={workspaceId}
 						onEdit={() => setEditingId(server.id)}
+						restoreFocus={focusReturn === server.id}
+						onFocusRestored={() => setFocusReturn(null)}
 					/>
 				),
 			)}
@@ -144,6 +168,7 @@ export function ToolsSection({
 					onSave={handleCreate}
 					onCancel={() => {
 						create.reset()
+						setFocusReturn('add')
 						setAdding(false)
 					}}
 				/>
@@ -153,6 +178,7 @@ export function ToolsSection({
 				<div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-[18px]">
 					<ViewerTooltip className="min-w-0 flex-1 basis-60">
 						<button
+							ref={addButtonRef}
 							type="button"
 							disabled={!canWrite}
 							onClick={() => setAdding(true)}
@@ -204,20 +230,48 @@ function ServerRow({
 	row,
 	workspaceId,
 	onEdit,
+	restoreFocus,
+	onFocusRestored,
 }: {
 	row: IntegrationResponse
 	workspaceId: string
 	onEdit: () => void
+	/** The edit form for this row just closed: put focus back on the pencil that opened it. */
+	restoreFocus: boolean
+	onFocusRestored: () => void
 }) {
 	const { workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const remove = useRemoveCustomMcpServer(workspaceId)
 	const [confirmDelete, setConfirmDelete] = useState(false)
+	const binRef = useRef<HTMLButtonElement>(null)
+	const cancelRef = useRef<HTMLButtonElement>(null)
+	const returnFocus = useRef(false)
+	const editButtonRef = useRef<HTMLButtonElement>(null)
 	const me = getStoredActor()
 	const canEdit =
 		me?.type === 'human' &&
 		(row.createdBy === me.id || workspace.role === 'owner' || workspace.role === 'admin')
 	const name = row.displayName ?? 'Tool server'
+
+	// The bin button and the confirm group replace each other, so focus is moved by hand:
+	// to Cancel (the safe choice) when asking, back to the bin button when the ask is dropped.
+	useEffect(() => {
+		if (confirmDelete) cancelRef.current?.focus()
+		else if (returnFocus.current) binRef.current?.focus()
+		returnFocus.current = false
+	}, [confirmDelete])
+
+	const cancelDelete = () => {
+		returnFocus.current = true
+		setConfirmDelete(false)
+	}
+
+	useEffect(() => {
+		if (!restoreFocus) return
+		editButtonRef.current?.focus()
+		onFocusRestored()
+	}, [restoreFocus, onFocusRestored])
 
 	return (
 		<ProviderCard
@@ -226,10 +280,19 @@ function ServerRow({
 			subtitle={describeServer(row)}
 			tone="connected"
 			status={{ tone: 'ok', label: 'Active' }}
+			// The pencil lives in the opened section, so the row comes back open to take focus.
+			defaultOpen={restoreFocus}
 			actions={
 				canEdit &&
 				(confirmDelete ? (
-					<div className="flex shrink-0 items-center gap-1">
+					<div
+						className="flex shrink-0 items-center gap-1"
+						onKeyDown={(e) => {
+							if (e.key !== 'Escape') return
+							e.stopPropagation()
+							cancelDelete()
+						}}
+					>
 						<ViewerTooltip>
 							<Button
 								size="sm"
@@ -240,7 +303,7 @@ function ServerRow({
 								Remove
 							</Button>
 						</ViewerTooltip>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+						<Button ref={cancelRef} size="sm" variant="ghost" onClick={cancelDelete}>
 							Cancel
 						</Button>
 					</div>
@@ -248,6 +311,7 @@ function ServerRow({
 					<div className="flex shrink-0 items-center gap-1">
 						<ViewerTooltip>
 							<Button
+								ref={editButtonRef}
 								size="icon"
 								variant="ghost"
 								className="text-muted-foreground"
@@ -260,6 +324,7 @@ function ServerRow({
 						</ViewerTooltip>
 						<ViewerTooltip>
 							<Button
+								ref={binRef}
 								size="icon"
 								variant="ghost"
 								className="text-muted-foreground hover:text-error"

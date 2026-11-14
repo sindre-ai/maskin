@@ -265,6 +265,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	}
 
 	reportServerOk()
+	// 204 No Content has no body to parse; `res.json()` would throw on it and a call
+	// that worked would look failed.
+	if (res.status === 204) return undefined as T
 	return res.json()
 }
 
@@ -629,6 +632,10 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+		forgotPassword: (email: string) =>
+			request<{ ok: true }>('/auth/forgot-password', { method: 'POST', body: { email } }),
+		resetPassword: (data: { token: string; password: string }) =>
+			request<{ ok: true }>('/auth/reset-password', { method: 'POST', body: data }),
 	},
 
 	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These
@@ -2275,6 +2282,8 @@ export interface UpdateObjectInput {
 	driver?: string | null
 	/** A status change made from a chat card: the server tells the agent behind it. */
 	chat?: ChatCardRef
+	/** Apply only if the object is still in this status; if it moved on, nothing is written and the answer is a 409. */
+	expected_status?: string
 }
 
 /** The chat a card sits in and the agent whose message holds it. */

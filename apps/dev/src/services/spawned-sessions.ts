@@ -8,6 +8,11 @@ import {
 } from '@maskin/db/schema'
 import { and, desc, eq, gt, inArray, isNull, lt, or } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import {
+	type SessionAnchor,
+	isCachedConversationParticipant,
+	sessionAnchorCache,
+} from '../lib/session-frame-cache'
 
 /**
  * Sub-session delegation strip (bet/444b-handed-off-strip).
@@ -192,32 +197,71 @@ export async function loadSessionStateChangeFrame(
 	db: Database,
 	opts: { sessionId: string; workspaceId: string; actorId: string },
 ): Promise<SessionStateChangedPayload | null> {
-	const [row] = await db
-		.select({
-			id: sessions.id,
-			workspaceId: sessions.workspaceId,
-			status: sessions.status,
-			durationMs: sessions.durationMs,
-			result: sessions.result,
-			currentActivity: sessions.currentActivity,
-			dependsOnSessionIds: sessions.dependsOnSessionIds,
-			spawnedByMessageId: sessions.spawnedByMessageId,
-			conversationId: messages.conversationId,
-		})
-		.from(sessions)
-		// Same anchor-message join as the embed: the conversation comes from the
-		// message the session was handed off from, not `sessions.conversation_id`.
-		.leftJoin(messages, eq(messages.id, sessions.spawnedByMessageId))
-		.where(eq(sessions.id, opts.sessionId))
-		.limit(1)
+	// Which conversation a session belongs to never depends on the caller and does not change, so
+	// it is cached for a short while; the state below and the participant check are not.
+	const cached = sessionAnchorCache.get(opts.sessionId)
+	const stateColumns = {
+		id: sessions.id,
+		status: sessions.status,
+		durationMs: sessions.durationMs,
+		result: sessions.result,
+		currentActivity: sessions.currentActivity,
+		dependsOnSessionIds: sessions.dependsOnSessionIds,
+	}
 
-	if (!row) return null
-	if (row.workspaceId !== opts.workspaceId) return null
+	let anchor: SessionAnchor
+	let row: {
+		id: string
+		status: typeof sessions.$inferSelect.status
+		durationMs: number | null
+		result: unknown
+		currentActivity: string | null
+		dependsOnSessionIds: string[] | null
+	}
+	if (cached) {
+		anchor = cached
+		// Refuse before touching the DB again when the cached anchor already rules the caller out.
+		if (anchor.workspaceId !== opts.workspaceId) return null
+		if (anchor.spawnedByMessageId === null || anchor.conversationId === null) return null
+		const [state] = await db
+			.select(stateColumns)
+			.from(sessions)
+			.where(eq(sessions.id, opts.sessionId))
+			.limit(1)
+		if (!state) return null
+		row = state
+	} else {
+		const [full] = await db
+			.select({
+				...stateColumns,
+				workspaceId: sessions.workspaceId,
+				spawnedByMessageId: sessions.spawnedByMessageId,
+				conversationId: messages.conversationId,
+			})
+			.from(sessions)
+			// Same anchor-message join as the embed: the conversation comes from the
+			// message the session was handed off from, not `sessions.conversation_id`.
+			.leftJoin(messages, eq(messages.id, sessions.spawnedByMessageId))
+			.where(eq(sessions.id, opts.sessionId))
+			.limit(1)
+		if (!full) return null
+		anchor = {
+			workspaceId: full.workspaceId,
+			spawnedByMessageId: full.spawnedByMessageId,
+			conversationId: full.conversationId,
+		}
+		// An unanchored session gets its anchor message later; caching it now would keep refusing the
+		// live frames for the rest of the TTL once the agent anchors it.
+		if (anchor.spawnedByMessageId !== null) sessionAnchorCache.set(opts.sessionId, anchor)
+		row = full
+	}
+
+	if (anchor.workspaceId !== opts.workspaceId) return null
 	// Only sub-sessions are in scope — a tool-call or standalone session has no
 	// delegation strip and must not broadcast its prompt or state.
-	if (row.spawnedByMessageId === null || row.conversationId === null) return null
+	if (anchor.spawnedByMessageId === null || anchor.conversationId === null) return null
 
-	const entitled = await isConversationParticipant(db, row.conversationId, opts.actorId)
+	const entitled = await isCachedConversationParticipant(db, anchor.conversationId, opts.actorId)
 	if (!entitled) return null
 
 	return {

@@ -9,6 +9,6 @@
 -- `events` is written on every mutation, so the build is CONCURRENTLY and alone in its file
 -- (see packages/db/MIGRATIONS.md Rule 1). IF NOT EXISTS lets a retry pass after an interrupted build;
 -- drop an INVALID leftover first.
--- Down: drizzle/down/0137_events_ws_id_idx_down.sql.
+-- Down: drizzle/down/0153_events_ws_id_idx_down.sql.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "events_ws_id_idx"
   ON "events" USING btree ("workspace_id", "id");
