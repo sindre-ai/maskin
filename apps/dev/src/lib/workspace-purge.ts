@@ -106,6 +106,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'agent_skills',
 	'api_keys',
 	'blocked_tool_calls',
+	'chat_section_items',
+	'chat_sections',
 	'comment_responder_claims',
 	'conversation_participants',
 	'conversation_pending_turns',

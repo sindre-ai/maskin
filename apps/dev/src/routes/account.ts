@@ -10,6 +10,8 @@ import type { Database } from '@maskin/db'
 import {
 	actors,
 	apiKeys,
+	chatSectionItems,
+	chatSections,
 	deviceAuthCodes,
 	deviceTokens,
 	forYouDismissals,
@@ -221,6 +223,9 @@ app.openapi(deleteRoute, async (c) => {
 		// Personal data (timezone, quiet hours, briefing state); the actor row stays, so its cascade never fires.
 		await tx.delete(notificationPreferences).where(eq(notificationPreferences.actorId, actorId))
 		await tx.delete(userDisplaySettings).where(eq(userDisplaySettings.actorId, actorId))
+		// Their chat list sections and which chats sit in them: free-text names, private to the person.
+		await tx.delete(chatSectionItems).where(eq(chatSectionItems.actorId, actorId))
+		await tx.delete(chatSections).where(eq(chatSections.actorId, actorId))
 		await tx.delete(slackUserLinks).where(eq(slackUserLinks.actorId, actorId))
 		// The actor row is kept, so its ON DELETE CASCADE never fires. These hold APNs tokens and
 		// device sign-ins of the person: left behind, a Live Activity or push could still reach their

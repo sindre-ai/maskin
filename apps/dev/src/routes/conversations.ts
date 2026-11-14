@@ -38,7 +38,6 @@ import {
 	isNotNull,
 	isNull,
 	lt,
-	ne,
 	not,
 	or,
 	sql,
@@ -72,9 +71,15 @@ import { serialize } from '../lib/serialize'
 import { serializeMessage } from '../lib/serialize-message'
 import { forgetConversationParticipants } from '../lib/session-frame-cache'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
-import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
+import { quietViewCondition, visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
+import { loadSectionIdsByConversation } from '../services/chat-sections'
 import { shareReplyDigest } from '../services/chat-session-context'
+import {
+	loadChatSignals,
+	unreadChatCondition,
+	waitingOnYouCondition,
+} from '../services/chat-unread'
 import {
 	attachedFileIds,
 	insertConversationMessage,
@@ -192,6 +197,31 @@ async function loadWorkingActorsByConversation(
 	return byConversation
 }
 
+/**
+ * The chats of the caller's where an agent has an open turn right now: one query for the live
+ * sessions in their chats, then the same open-turn check the list rows use.
+ */
+async function loadRunningConversationIds(
+	db: Database,
+	workspaceId: string,
+	callerId: string,
+): Promise<string[]> {
+	const live = await db
+		.selectDistinct({ conversationId: sessions.conversationId })
+		.from(sessions)
+		.innerJoin(
+			conversationParticipants,
+			and(
+				eq(conversationParticipants.conversationId, sessions.conversationId),
+				eq(conversationParticipants.actorId, callerId),
+				isNull(conversationParticipants.leftAt),
+			),
+		)
+		.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.status, LIVE_STATUSES)))
+	const ids = live.flatMap((r) => (r.conversationId ? [r.conversationId] : []))
+	return [...(await loadWorkingActorsByConversation(db, ids)).keys()]
+}
+
 type SnippetRow = {
 	conversationId: string
 	snippet: string
@@ -305,34 +335,14 @@ async function loadWorkspaceMemberIds(
 	return new Set(rows.map((r) => r.actorId))
 }
 
+/** The badge number per chat (see chat-unread.ts for what counts), for the detail routes. */
 async function loadUnreadCounts(
 	db: Database,
 	callerId: string,
 	conversationIds: string[],
 ): Promise<Map<string, number>> {
-	if (conversationIds.length === 0) return new Map()
-	const rows = await db
-		.select({
-			conversationId: messages.conversationId,
-			unreadCount: sql<number>`count(*)::int`,
-		})
-		.from(messages)
-		.innerJoin(
-			conversationParticipants,
-			and(
-				eq(conversationParticipants.conversationId, messages.conversationId),
-				eq(conversationParticipants.actorId, callerId),
-			),
-		)
-		.where(
-			and(
-				inArray(messages.conversationId, conversationIds),
-				ne(messages.actorId, callerId),
-				sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
-			),
-		)
-		.groupBy(messages.conversationId)
-	return new Map(rows.map((r) => [r.conversationId, r.unreadCount]))
+	const signals = await loadChatSignals(db, callerId, conversationIds)
+	return new Map([...signals].map(([id, entry]) => [id, entry.unreadCount]))
 }
 
 /**
@@ -552,12 +562,14 @@ async function conversationDetailForCaller(
 		conversation.id,
 	)
 	const roomKinds = await loadRoomKinds(db, [conversation])
+	const sectionIds = await loadSectionIdsByConversation(db, callerId, [conversation.id])
 	return {
 		...serialize(conversation),
 		roomKind: roomKinds.get(conversation.id) ?? null,
 		title: directChatTitleForViewer(conversation, participants ?? [], callerId),
 		pinned: mine?.pinned ?? false,
 		archived: mine?.archived ?? false,
+		sectionId: sectionIds.get(conversation.id) ?? null,
 		unread_count: 0,
 		last_read_message_id: mine?.lastReadMessageId ?? null,
 		participants: participants ?? [],
@@ -844,6 +856,7 @@ app.openapi(createConversationRoute, (async (c) => {
 			title: directChatTitleForViewer(conversation, createdParticipants, callerId),
 			pinned: false,
 			archived: false,
+			sectionId: null,
 			unread_count: 0,
 			last_read_message_id: null,
 			participants: createdParticipants,
@@ -911,18 +924,28 @@ app.openapi(listConversationsRoute, (async (c) => {
 			)`,
 		)
 	}
-	// Table names (not Drizzle column refs) inside the correlated subquery —
-	// interpolating column objects here renders unqualified and silently
-	// binds to the inner `messages` alias for names both tables share (see
-	// known-pitfalls.md's correlated-subquery entry).
-	const hasUnread = sql`EXISTS (
-		SELECT 1 FROM messages m
-		WHERE m.conversation_id = conversations.id
-			AND m.actor_id != ${callerId}
-			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
-	)`
+	// Table names (not Drizzle column refs) inside the correlated subqueries (chat-unread.ts) —
+	// interpolating column objects here renders unqualified and silently binds to the inner
+	// alias for names both tables share (see known-pitfalls.md's correlated-subquery entry).
+	const unreadScope = {
+		callerId,
+		conversationId: sql`conversations.id`,
+		lastRead: sql`conversation_participants.last_read_message_id`,
+	}
+	const hasUnread = unreadChatCondition(unreadScope)
 	if (query.unread_only) conditions.push(hasUnread)
-	if (query.hide_quiet) conditions.push(visibleInDefaultListCondition(hasUnread))
+	// Chats with an agent running never go quiet, and Running lists exactly them.
+	const runningIds =
+		query.hide_quiet || query.view === 'quiet' || query.view === 'running'
+			? await loadRunningConversationIds(db, workspaceId, callerId)
+			: []
+	const quietArgs = { callerId, unread: hasUnread, runningIds }
+	if (query.hide_quiet) conditions.push(visibleInDefaultListCondition(quietArgs))
+	if (query.view === 'waiting') conditions.push(waitingOnYouCondition(unreadScope))
+	if (query.view === 'running') {
+		conditions.push(runningIds.length > 0 ? inArray(conversations.id, runningIds) : sql`false`)
+	}
+	if (query.view === 'quiet') conditions.push(quietViewCondition(quietArgs))
 	if (query.scope) {
 		// Rooms are always listed in full too: a room never leaves the list for being quiet.
 		const isRoom = sql`(
@@ -963,44 +986,22 @@ app.openapi(listConversationsRoute, (async (c) => {
 
 	const [
 		participantsByConversation,
-		unreadRows,
+		signalsByConversation,
 		snippetByConversation,
 		workingByConversation,
 		roomKinds,
+		sectionIds,
 	] = await Promise.all([
 		loadParticipantsByConversation(db, conversationIds),
-		conversationIds.length === 0
-			? Promise.resolve([])
-			: db
-					.select({
-						conversationId: messages.conversationId,
-						unreadCount: sql<number>`count(*)::int`,
-					})
-					.from(messages)
-					.innerJoin(
-						conversationParticipants,
-						and(
-							eq(conversationParticipants.conversationId, messages.conversationId),
-							eq(conversationParticipants.actorId, callerId),
-						),
-					)
-					.where(
-						and(
-							inArray(messages.conversationId, conversationIds),
-							ne(messages.actorId, callerId),
-							sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
-						),
-					)
-					.groupBy(messages.conversationId),
+		loadChatSignals(db, callerId, conversationIds),
 		loadLatestSnippets(db, conversationIds),
 		loadWorkingActorsByConversation(db, conversationIds),
 		loadRoomKinds(
 			db,
 			page.map((r) => r.conversation),
 		),
+		loadSectionIdsByConversation(db, callerId, conversationIds),
 	])
-
-	const unreadByConversation = new Map(unreadRows.map((r) => [r.conversationId, r.unreadCount]))
 
 	return c.json({
 		conversations: page.map((r) => ({
@@ -1013,13 +1014,18 @@ app.openapi(listConversationsRoute, (async (c) => {
 			),
 			pinned: r.participant.pinned,
 			archived: r.participant.archived,
-			unread_count: unreadByConversation.get(r.conversation.id) ?? 0,
+			unread_count: signalsByConversation.get(r.conversation.id)?.unreadCount ?? 0,
+			mentions_unread: signalsByConversation.get(r.conversation.id)?.mentionsUnread ?? 0,
+			open_cards: signalsByConversation.get(r.conversation.id)?.openCards ?? 0,
+			card_text: signalsByConversation.get(r.conversation.id)?.cardText ?? null,
+			sectionId: sectionIds.get(r.conversation.id) ?? null,
 			snippet: snippetByConversation.get(r.conversation.id)?.snippet ?? null,
 			snippet_actor_id: snippetByConversation.get(r.conversation.id)?.snippetActorId ?? null,
 			snippet_actor_name: snippetByConversation.get(r.conversation.id)?.snippetActorName ?? null,
 			snippet_is_caller: snippetByConversation.get(r.conversation.id)?.snippetActorId === callerId,
 			participants: participantsByConversation.get(r.conversation.id) ?? [],
 			working_actor_ids: workingByConversation.get(r.conversation.id) ?? [],
+			agent_running: (workingByConversation.get(r.conversation.id) ?? []).length > 0,
 		})) as z.infer<typeof conversationListItemResponseSchema>[],
 		has_more: hasMore,
 	})
@@ -1176,11 +1182,13 @@ app.openapi(getConversationRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
-	const [participantsByConversation, unreadByConversation, roomKinds] = await Promise.all([
-		loadParticipantsByConversation(db, [id]),
-		loadUnreadCounts(db, callerId, [id]),
-		loadRoomKinds(db, [row.conversation]),
-	])
+	const [participantsByConversation, unreadByConversation, roomKinds, sectionIds] =
+		await Promise.all([
+			loadParticipantsByConversation(db, [id]),
+			loadUnreadCounts(db, callerId, [id]),
+			loadRoomKinds(db, [row.conversation]),
+			loadSectionIdsByConversation(db, callerId, [id]),
+		])
 	return c.json({
 		...serialize(row.conversation),
 		roomKind: roomKinds.get(id) ?? null,
@@ -1191,6 +1199,7 @@ app.openapi(getConversationRoute, (async (c) => {
 		),
 		pinned: row.participant.pinned,
 		archived: row.participant.archived,
+		sectionId: sectionIds.get(id) ?? null,
 		unread_count: unreadByConversation.get(id) ?? 0,
 		last_read_message_id: row.participant.lastReadMessageId ?? null,
 		participants: participantsByConversation.get(id) ?? [],
@@ -1438,16 +1447,19 @@ app.openapi(updateConversationRoute, (async (c) => {
 		},
 	})
 
-	const [participantsByConversation, unreadByConversation, roomKinds] = await Promise.all([
-		loadParticipantsByConversation(db, [id]),
-		loadUnreadCounts(db, callerId, [id]),
-		loadRoomKinds(db, [updated]),
-	])
+	const [participantsByConversation, unreadByConversation, roomKinds, sectionIds] =
+		await Promise.all([
+			loadParticipantsByConversation(db, [id]),
+			loadUnreadCounts(db, callerId, [id]),
+			loadRoomKinds(db, [updated]),
+			loadSectionIdsByConversation(db, callerId, [id]),
+		])
 	return c.json({
 		...serialize(updated),
 		roomKind: roomKinds.get(id) ?? null,
 		pinned: row.participant.pinned,
 		archived: row.participant.archived,
+		sectionId: sectionIds.get(id) ?? null,
 		unread_count: unreadByConversation.get(id) ?? 0,
 		last_read_message_id: row.participant.lastReadMessageId ?? null,
 		participants: participantsByConversation.get(id) ?? [],

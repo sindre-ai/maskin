@@ -427,6 +427,28 @@ export const conversationListItemResponseSchema = z.object({
 	// Agents with an open turn in this chat right now (not merely a live session — a chat
 	// session stays running between turns). The list row shows them as working.
 	working_actor_ids: z.array(z.string().uuid()),
+	// The caller's own section this chat sits in, or null. Personal: nobody else sees it.
+	sectionId: z.string().uuid().nullable(),
+	// Unread messages that mention the caller. unread_count is the badge number: these plus
+	// open_cards, or every unread message in a direct chat with an agent.
+	mentions_unread: z.number(),
+	// Open cards for the caller in this chat (an agent's question, a request for a key, an
+	// access, a server or a computer) that nobody has answered, newer than 14 days.
+	open_cards: z.number(),
+	// One line about the newest open card, or null when there is none.
+	card_text: z.string().nullable(),
+	// True when an agent has an open turn in this chat right now.
+	agent_running: z.boolean(),
+})
+
+export const chatSectionResponseSchema = z.object({
+	id: z.string().uuid(),
+	name: z.string(),
+	// 0-based, in the order the person arranged their sections.
+	position: z.number().int(),
+	collapsed: z.boolean(),
+	// The chats in the section the caller can still see, newest message first.
+	conversationIds: z.array(z.string().uuid()),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
@@ -436,6 +458,10 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
+		mentions_unread: true,
+		open_cards: true,
+		card_text: true,
+		agent_running: true,
 	})
 	.extend({
 		last_read_message_id: z.number().nullable(),

@@ -1,31 +1,46 @@
 import { type SQL, sql } from 'drizzle-orm'
 
-/** A topic chat with nobody writing for this many days leaves the default chat list. */
-export const QUIET_CHAT_DAYS = 14
+/**
+ * A topic chat with nobody writing for this many days is quiet. One value for everything that
+ * decides it: the default list leaves quiet chats out and the Quiet view lists them.
+ */
+export const QUIET_CHAT_DAYS = 7
+
+type QuietArgs = {
+	/** The person the list is for: their sections keep a chat out of Quiet. */
+	callerId: string
+	/** The unread rule for one chat (unreadChatCondition), so a chat waiting on the person never goes Quiet. */
+	unread: SQL
+	/** Chats where an agent has an open turn right now. They never go Quiet. */
+	runningIds: string[]
+}
 
 /**
- * The listing rules behind the chat list's `hide_quiet` filter. Nothing is stored or
- * archived: a chat that matches is only left out of that list, stays in search, and
- * comes back by itself when a new message moves its last_message_at.
+ * The listing rules behind the chat list's `hide_quiet` filter and its Quiet view. Nothing is
+ * stored or archived: a chat that matches is only left out of the default list, stays in the Quiet
+ * view and in search, and comes back by itself when a new message moves its last_message_at.
  *
  * Chat kind is worked out from who is in it, never stored: the direct message (DM) is the
  * chat with a direct_pair_key; more than two people is a group; any other chat is a topic
  * chat. A chat about an object or a flow (subject_id set) counts as a group chat, which
- * these rules never touch. Neither do people-only chats, pinned chats, unread chats or rooms
- * (is_room): a free-form room has at most two people and no subject, so it would otherwise
- * read as a quiet topic chat.
+ * these rules never touch. Neither do people-only chats.
  *
- * Hidden:
- * - a DM with an agent that has no message yet;
+ * Quiet (left out of the default list, listed in the Quiet view):
  * - a DM or topic chat with a retired agent (description starts with RETIRED, the same
  *   marker as isRetiredAgent in default-heartbeat.ts);
  * - a topic chat with an agent whose last message is older than QUIET_CHAT_DAYS.
+ *
+ * Never quiet, whatever the rules above say: pinned chats, rooms (is_room), chats the person put
+ * in one of their sections, chats with an agent running, and unread chats (see chat-unread.ts).
+ *
+ * Also left out of the default list, and in no view: a DM with an agent that has no message yet.
+ * It has nothing to show, and every agent keeps its own row in the list.
  *
  * Table names (not Drizzle column refs) inside the subqueries, for the same reason as the
  * unread subquery in the list route: a column object renders unqualified and can bind to
  * the inner alias.
  */
-export function visibleInDefaultListCondition(hasUnread: SQL): SQL {
+function quietRules({ callerId, unread, runningIds }: QuietArgs) {
 	const activeParticipants = sql`(
 		SELECT count(*) FROM conversation_participants p
 		WHERE p.conversation_id = conversations.id AND p.left_at IS NULL
@@ -52,15 +67,42 @@ export function visibleInDefaultListCondition(hasUnread: SQL): SQL {
 	)`
 	const quietCutoff = sql`now() - interval '${sql.raw(String(QUIET_CHAT_DAYS))} days'`
 
-	const hidden = sql`(
-		(${isDirect} AND ${hasAgent} AND (NOT ${hasMessage} OR ${hasRetiredAgent}))
+	const inSection = sql`EXISTS (
+		SELECT 1 FROM chat_section_items csi
+		WHERE csi.conversation_id = conversations.id AND csi.actor_id = ${callerId}
+	)`
+	const running =
+		runningIds.length === 0
+			? sql`false`
+			: sql`conversations.id IN (${sql.join(
+					runningIds.map((id) => sql`${id}::uuid`),
+					sql`, `,
+				)})`
+
+	const exempt = sql`(
+		conversation_participants.pinned
+		OR conversations.is_room
+		OR ${unread}
+		OR ${inSection}
+		OR ${running}
+	)`
+	const quiet = sql`(
+		(${isDirect} AND ${hasAgent} AND ${hasRetiredAgent})
 		OR (${isTopic} AND ${hasRetiredAgent})
 		OR (${isTopic} AND ${hasAgent} AND conversations.last_message_at < ${quietCutoff})
 	)`
-	return sql`(
-		conversation_participants.pinned
-		OR conversations.is_room
-		OR ${hasUnread}
-		OR NOT ${hidden}
-	)`
+	const emptyAgentDirect = sql`(${isDirect} AND ${hasAgent} AND NOT ${hasMessage})`
+	return { exempt, quiet, emptyAgentDirect }
+}
+
+/** The default list (hide_quiet): everything except quiet chats and empty DMs with agents. */
+export function visibleInDefaultListCondition(args: QuietArgs): SQL {
+	const { exempt, quiet, emptyAgentDirect } = quietRules(args)
+	return sql`(${exempt} OR NOT (${quiet} OR ${emptyAgentDirect}))`
+}
+
+/** The Quiet view: the chats the default list leaves out for being quiet, not the empty DMs. */
+export function quietViewCondition(args: QuietArgs): SQL {
+	const { exempt, quiet } = quietRules(args)
+	return sql`(NOT ${exempt} AND ${quiet})`
 }

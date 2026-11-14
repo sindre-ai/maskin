@@ -89,10 +89,12 @@ describe('GET /api/search against real Postgres', () => {
 		return chat
 	}
 
-	async function say(conversationId: string, from: string, content: string) {
+	// A chat is unread for someone when a message mentions them (see chat-unread.ts), so tests that
+	// need an unread chat pass the people the message mentions.
+	async function say(conversationId: string, from: string, content: string, mentions?: string[]) {
 		const [row] = await db
 			.insert(messages)
-			.values({ conversationId, actorId: from, content })
+			.values({ conversationId, actorId: from, content, metadata: mentions ? { mentions } : null })
 			.returning()
 		await db
 			.update(conversations)
@@ -356,7 +358,7 @@ describe('GET /api/search against real Postgres', () => {
 			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
 			await ensureWorkspaceMember(db, workspaceId, cpo.id)
 			const unread = await seedChat('', [actorId, cpo.id])
-			await say(unread.id, cpo.id, 'a note for you')
+			await say(unread.id, cpo.id, 'a note for you', [actorId])
 			const read = await seedChat('', [actorId, cpo.id])
 			await say(read.id, actorId, 'my own message')
 			await tick()
@@ -700,7 +702,7 @@ describe('GET /api/search against real Postgres', () => {
 
 	it('derives chat status from the callers read position', async () => {
 		const chat = await seedChat('status chat', [actorId, otherUserId])
-		const message = await say(chat.id, otherUserId, 'hello')
+		const message = await say(chat.id, otherUserId, 'hello', [actorId])
 
 		const unread = (await search({ q: 'status chat' })).results[0]
 		expect([unread?.status, unread?.statusGroup]).toEqual(['unread', 'new'])
@@ -1007,7 +1009,7 @@ describe('GET /api/search against real Postgres', () => {
 		it('works out a chat unread flag for the matched chats only', async () => {
 			await seedChat('Poison chat', [actorId])
 			const hit = await seedChat('Gizmo chat', [actorId])
-			await say(hit.id, otherUserId, 'hello')
+			await say(hit.id, otherUserId, 'hello', [actorId])
 			const chats = SEARCH_SOURCES.find((s) => s.key === 'chats') as (typeof SEARCH_SOURCES)[number]
 			const sources = SEARCH_SOURCES.map((source) =>
 				source.key === 'chats'
