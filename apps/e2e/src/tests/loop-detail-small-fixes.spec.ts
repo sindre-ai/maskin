@@ -66,8 +66,8 @@ test.describe('Loop detail — post-ship small defects', () => {
 			await expect(page.getByRole('heading', { name: 'Chart fallback loop' })).toBeVisible({
 				timeout: 20000,
 			})
-			// Comments live on the Activity tab.
-			await page.getByRole('tab', { name: 'Activity' }).click()
+			// Comments live on the Room tab.
+			await page.getByRole('tab', { name: 'Room' }).click()
 
 			// AC: a real error state replaces the raw parser message. The rendered
 			// copy uses a typographic apostrophe ("Couldn’t"), so the assertion
@@ -102,8 +102,8 @@ test.describe('Loop detail — post-ship small defects', () => {
 			await expect(page.getByRole('heading', { name: 'Empty chart loop' })).toBeVisible({
 				timeout: 20000,
 			})
-			// Comments live on the Activity tab.
-			await page.getByRole('tab', { name: 'Activity' }).click()
+			// Comments live on the Room tab.
+			await page.getByRole('tab', { name: 'Room' }).click()
 
 			// The comment is present…
 			await expect(page.getByText('Nothing to chart yet:')).toBeVisible({ timeout: 10000 })
@@ -135,8 +135,8 @@ test.describe('Loop detail — post-ship small defects', () => {
 			await expect(page.getByRole('heading', { name: 'Folding loop' })).toBeVisible({
 				timeout: 20000,
 			})
-			// Comments live on the Activity tab.
-			await page.getByRole('tab', { name: 'Activity' }).click()
+			// Comments live on the Room tab.
+			await page.getByRole('tab', { name: 'Room' }).click()
 
 			// AC: the three consecutive updates collapse behind a single pill.
 			const foldToggle = page.getByRole('button', { name: /\d+ agent updates/ })

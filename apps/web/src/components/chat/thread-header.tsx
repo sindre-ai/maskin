@@ -15,7 +15,11 @@ import {
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
-import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
+import {
+	useMakeConversationAFlow,
+	useUpdateConversation,
+	useUpdateConversationMe,
+} from '@/hooks/use-conversations'
 import { useLoop } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
@@ -31,12 +35,14 @@ import {
 	ArrowLeft,
 	Copy,
 	EyeOff,
+	Hash,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
 	PanelRight,
 	Pencil,
 	Pin,
+	Repeat,
 	X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -76,6 +82,7 @@ export function ThreadHeader({
 	const { wide } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
+	const makeFlow = useMakeConversationAFlow(workspaceId)
 	const loopId = conversation?.loop_id ?? null
 	// Call mounts only for a thread with exactly one agent participant: a
 	// multi-agent call is v2, and with two agents there is no single agent for
@@ -344,6 +351,34 @@ export function ThreadHeader({
 						<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
 						<span>{conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}</span>
 					</DropdownMenuItem>
+					{conversation.directPairKey ||
+					conversation.roomKind === 'flow' ? null : conversation.roomKind === 'free' ? (
+						<>
+							<DropdownMenuItem
+								onSelect={() => makeFlow.mutate({ id: conversationId, title: conversation.title })}
+							>
+								<Repeat size={14} />
+								<span>Make this a flow</span>
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onSelect={() =>
+									updateConversation.mutate({ id: conversationId, data: { room: false } })
+								}
+							>
+								<Hash size={14} />
+								<span>Turn back into a chat</span>
+							</DropdownMenuItem>
+						</>
+					) : (
+						<DropdownMenuItem
+							onSelect={() =>
+								updateConversation.mutate({ id: conversationId, data: { room: true } })
+							}
+						>
+							<Hash size={14} />
+							<span>Make this a room</span>
+						</DropdownMenuItem>
+					)}
 					<DropdownMenuItem onSelect={handleMarkUnread}>
 						<EyeOff size={14} />
 						<span>Mark as unread</span>

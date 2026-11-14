@@ -29,6 +29,8 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	/// The comment this one answers (`data.parentEventId` on a stored event). Activity nests it
 	/// under that parent.
 	public var parentEventId: Int?
+	/// For a comment the server wrote down from a chat message (`data.metadata.via_chat`): that message's id.
+	public var viaChatMessageID: Int?
 	/// Actor ids tagged in an unsent comment, kept so a retry mentions the same people.
 	var mentions: [String] = []
 	/// Objects linked from the comment with `/`: ids, resolved to titles by the store.
@@ -488,6 +490,12 @@ public final class ObjectDetailStore {
 		}
 	}
 
+	/// `data.metadata.via_chat.message_id` of a comment mirrored from a chat message.
+	static func viaChatMessageID(in data: JSONValue?) -> Int? {
+		guard case .number(let n)? = data?["metadata"]?["via_chat"]?["message_id"] else { return nil }
+		return Int(n)
+	}
+
 	static func attachmentIDs(in data: JSONValue?) -> [String] {
 		guard case .array(let values)? = data?["attachmentFileIds"] else { return [] }
 		return values.compactMap(\.stringValue).filter { !$0.isEmpty }
@@ -502,6 +510,7 @@ public final class ObjectDetailStore {
 				delivery: .sent, eventId: event.id, refs: ReferenceTrigger.ids(in: event.data?["metadata"]),
 				attachments: Self.attachmentIDs(in: event.data))
 			item.parentEventId = Self.parentEventId(in: event.data)
+			item.viaChatMessageID = Self.viaChatMessageID(in: event.data)
 			item.taskIds = CommentTasks.ids(in: event.data)
 			item.decision = CommentDecision.parse(event.data?["decision"])
 			return item

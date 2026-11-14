@@ -26,13 +26,33 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func list(
 		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
 	) async throws -> ConversationPage {
+		try await fetchList(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+			limit: limit, offset: offset, flowID: nil)
+	}
+
+	/// A flow's room: the one chat whose subject is the flow (a flow is an object of type loop).
+	public func flowConversation(flowID: String, archived: Bool) async throws -> ConversationSummary? {
+		try await fetchList(
+			archived: archived, pinnedOnly: false, unreadOnly: false, hideQuiet: false, limit: 1, offset: 0,
+			flowID: flowID
+		).conversations.first
+	}
+
+	private func fetchList(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int,
+		flowID: String?
+	) async throws -> ConversationPage {
+		let subjectType: Operations.get_sol_api_sol_conversations.Input.Query.subject_typePayload? =
+			flowID == nil ? nil : .object
 		let output = try await client.get_sol_api_sol_conversations(
 			.init(
 				// The server parses `?archived=false` with `z.coerce.boolean()`, which reads the string
 				// "false" as true and returns the ARCHIVED list. Omit it for the default (active) list.
 				query: .init(
 					pinned: pinnedOnly ? true : nil, archived: archived ? true : nil,
-					unread_only: unreadOnly ? true : nil, hide_quiet: hideQuiet ? true : nil,
+					unread_only: unreadOnly ? true : nil, subject_type: subjectType, subject_id: flowID,
+					hide_quiet: hideQuiet ? true : nil,
 					limit: min(limit, ChatLimits.maxConversationsPage), offset: offset),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		switch output {
@@ -48,7 +68,9 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 						directPairKey: row.directPairKey,
 						participants: row.participants.map {
 							ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
-						})
+						},
+						roomKind: Self.roomKind(row.roomKind?.rawValue),
+						flowID: row.roomKind?.rawValue == RoomKind.flow.rawValue ? row.subjectId : nil)
 				},
 				hasMore: body.has_more)
 		default:
@@ -81,12 +103,71 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			initialMetadata: nil, idempotencyKey: idempotencyKey)
 	}
 
+	public func createFlowRoom(
+		flowID: String, title: String, participantIDs: [String], initialMessage: String,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		try await post(
+			title: title, participantIDs: participantIDs, direct: false, initialMessage: initialMessage,
+			initialMetadata: initialMetadata, idempotencyKey: idempotencyKey, flowID: flowID)
+	}
+
+	/// `room: true`: a named chat the list keeps in its Rooms group.
+	public func createRoom(
+		title: String, participantIDs: [String], initialMessage: String?,
+		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ConversationSummary {
+		try await post(
+			title: title, participantIDs: participantIDs, direct: false, room: true,
+			initialMessage: initialMessage, initialMetadata: initialMetadata, idempotencyKey: idempotencyKey)
+	}
+
+	public func setRoom(conversationID: String, isRoom: Bool) async throws {
+		let output = try await client.patch_sol_api_sol_conversations_sol__lcub_id_rcub_(
+			.init(
+				path: .init(id: conversationID),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(.init(room: isRoom))))
+		guard case .ok = output else {
+			throw ChatsError(isRoom ? "Couldn't make this a room." : "Couldn't turn this back into a chat.")
+		}
+	}
+
+	/// A new paused flow, then the room's chat set as the flow's chat. If the second step fails the
+	/// flow is removed again, so a refusal leaves nothing behind.
+	public func makeFlow(conversationID: String, title: String, idempotencyKey: String) async throws
+		-> String
+	{
+		let created = try await IdempotencyKey.bind(idempotencyKey) {
+			try await client.post_sol_api_sol_objects(
+				.init(
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+					body: .json(.init(_type: "loop", title: title, status: "paused"))))
+		}
+		guard case .created(let made) = created else { throw ChatsError("Couldn't make this a flow.") }
+		let flowID = try made.body.json.id
+		let output = try await client.patch_sol_api_sol_conversations_sol__lcub_id_rcub_(
+			.init(
+				path: .init(id: conversationID),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(.init(subject: .init(_type: .object, id: flowID)))))
+		guard case .ok = output else {
+			_ = try? await client.delete_sol_api_sol_objects_sol__lcub_id_rcub_(.init(path: .init(id: flowID)))
+			throw ChatsError("Couldn't make this a flow.")
+		}
+		return flowID
+	}
+
+	private static func roomKind(_ raw: String?) -> RoomKind? { raw.flatMap(RoomKind.init(rawValue:)) }
+
 	/// Without `direct` the server always makes a new topical chat (201). With it, the server gets or
 	/// creates the one direct message with the other participant: 200 when it exists, 201 when new.
 	private func post(
-		title: String, participantIDs: [String], direct: Bool, initialMessage: String?,
-		initialMetadata: ChatSendMetadata?, idempotencyKey: String
+		title: String, participantIDs: [String], direct: Bool, room: Bool = false,
+		initialMessage: String?, initialMetadata: ChatSendMetadata?, idempotencyKey: String,
+		flowID: String? = nil
 	) async throws -> ConversationSummary {
+		let subject = flowID.map { Subject(_type: .object, id: $0) }
 		// Same round-trip as `send`: ChatSendMetadata already uses the API's exact keys.
 		let wireMetadata = try initialMetadata.flatMap { value -> InitialMetadata? in
 			guard !value.isEmpty else { return nil }
@@ -98,7 +179,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
 					body: .json(
 						.init(
-							title: title, participant_actor_ids: participantIDs, direct: direct ? true : nil,
+							subject: subject, title: title, participant_actor_ids: participantIDs,
+							direct: direct ? true : nil, room: room ? true : nil,
 							initial_message: initialMessage, initial_message_metadata: wireMetadata))))
 		}
 		switch output {
@@ -179,10 +261,11 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			return ConversationSummary(
 				id: row.id, title: row.title, lastMessageAt: ChatDates.parse(row.lastMessageAt),
 				createdAt: ChatDates.parse(row.createdAt), pinned: row.pinned, archived: row.archived,
-				unreadCount: Int(row.unread_count),
+				unreadCount: Int(row.unread_count), directPairKey: row.directPairKey,
 				participants: row.participants.map {
 					ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
-				}, lastReadMessageID: row.last_read_message_id.map(Int.init))
+				}, lastReadMessageID: row.last_read_message_id.map(Int.init),
+				roomKind: Self.roomKind(row.roomKind?.rawValue))
 		default:
 			throw ChatsError("Couldn't open this conversation.")
 		}
@@ -387,6 +470,8 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}
 	}
+
+	private typealias Subject = Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.subjectPayload
 
 	private typealias InitialMetadata = Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload
 		.initial_message_metadataPayload

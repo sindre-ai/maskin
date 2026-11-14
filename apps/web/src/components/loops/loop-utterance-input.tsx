@@ -3,11 +3,11 @@ import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { LoopSummary } from '@/lib/api'
-import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
+import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useNavigate } from '@tanstack/react-router'
-import { forwardRef, useCallback } from 'react'
+import { forwardRef, useCallback, useReducer } from 'react'
 
 /**
  * "Change by talking" composer, sticky at the bottom of the loop reader column
@@ -29,23 +29,36 @@ export const LoopUtteranceInput = forwardRef<
 		 *  Returning false hands off to a chat with the loop attached, which is the
 		 *  only path for loops that carry no plan snapshot. */
 		onUtterance?: (utterance: string) => boolean
+		/** Posts the words to the flow's room, with the people and agents tagged with @.
+		 *  Given, it takes the place of the hand-off to a new chat. */
+		onPost?: (utterance: string, mentions: string[]) => Promise<void>
 	}
->(function LoopUtteranceInput({ loop, children, placeholder, listening, onUtterance }, ref) {
+>(function LoopUtteranceInput(
+	{ loop, children, placeholder, listening, onUtterance, onPost },
+	ref,
+) {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
+	// Who the words tag with @, so a post to the room can reach them.
+	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 
 	const submit = useCallback(
 		async (utterance: string) => {
 			if (!canWrite) return
 			if (onUtterance?.(utterance)) return
+			if (onPost) {
+				await onPost(utterance, selection.agents)
+				dispatchSelection({ type: 'clear_all' })
+				return
+			}
 			navigate({
 				to: '/$workspaceId/chats/new',
 				params: { workspaceId },
 				search: { objectId: loop.id, objectTitle: loop.name ?? undefined, objectType: 'loop' },
 			})
 		},
-		[navigate, workspaceId, loop.id, loop.name, onUtterance, canWrite],
+		[navigate, workspaceId, loop.id, loop.name, onUtterance, onPost, selection.agents, canWrite],
 	)
 
 	return (
@@ -79,8 +92,9 @@ export const LoopUtteranceInput = forwardRef<
 								? (placeholder ?? 'Say what should change about this flow')
 								: VIEWER_READ_ONLY_MESSAGE
 						}
-						selection={EMPTY_CHAT_SELECTION}
-						onRemoveAgent={() => {}}
+						selection={selection}
+						onDispatchSelection={dispatchSelection}
+						onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
 						onRemoveObject={() => {}}
 						onRemoveNotification={() => {}}
 						onRemoveFile={() => {}}

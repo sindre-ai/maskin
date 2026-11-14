@@ -210,9 +210,9 @@ final class ScreenTourTests: XCTestCase {
 			for flow in ["Webinars", "Renewals", "Pipeline", "Outreach"] where exactText(flow).exists {
 				if tap(exactText(flow), "flow-detail") {
 					if capture("05-flow-detail", expect: ["Setup", "Briefings", "Performance"]),
-						tap(exactText("Activity"), "flow-activity", wait: 3)
+						tap(exactText("Room"), "flow-room", wait: 3)
 					{
-						capture("05b-flow-activity", expect: ["Activity"])
+						capture("05b-flow-room", expect: ["Room"])
 					}
 				}
 				break

@@ -16,7 +16,9 @@ private func ago(hours: Double) -> Date { now.addingTimeInterval(-hours * 3600) 
 
 private func layout(_ conversations: [ConversationSummary], query: String = "") -> TeamLayout {
 	TeamLayout.build(
-		TeamLayout.Input(conversations: conversations, query: query, currentActorID: "me", now: now, calendar: cal))
+		TeamLayout.Input(
+			conversations: conversations, options: TeamDisplayOptions(grouping: .byTime), query: query,
+			currentActorID: "me", now: now, calendar: cal))
 }
 
 @MainActor
@@ -48,6 +50,42 @@ struct ChatListTrackingTests {
 		#expect(
 			list.chatListPlace(of: "read", searching: false) == ChatListTracking.Place(source: .list, section: .recent, position: 3))
 		#expect(list.chatListPlace(of: "missing", searching: false) == nil)
+	}
+
+	@Test("a row in the Rooms section reads as room, ahead of the rows below it")
+	func rooms() {
+		var free = chatConvo("free", last: ago(hours: 30))
+		free.roomKind = .free
+		var flowRoom = chatConvo("flow", last: ago(hours: 2), unread: 1, snippet: "hello")
+		flowRoom.roomKind = .flow
+		flowRoom.flowID = "flow-1"
+		let list = layout([flowRoom, free, chatConvo("plain", last: ago(hours: 3))])
+		#expect(
+			list.chatListPlace(of: "flow", searching: false) == ChatListTracking.Place(source: .list, section: .room, position: 1))
+		#expect(
+			list.chatListPlace(of: "free", searching: false) == ChatListTracking.Place(source: .list, section: .room, position: 2))
+		#expect(list.chatListPlace(of: "plain", searching: false)?.section == .recent)
+		#expect(list.chatListPlace(of: "plain", searching: false)?.position == 3)
+	}
+
+	@Test("in the Agents view a row reads as agent, and a chat folded under an agent shares its row's place")
+	func agentRows() {
+		let scout = ChatParticipant(id: "scout", name: "Scout", kind: .agent)
+		let list = TeamLayout.build(
+			TeamLayout.Input(
+				conversations: [
+					chatConvo("pin", last: ago(hours: 1), pinned: true),
+					chatConvo("a1", last: ago(hours: 2)),
+					chatConvo("a2", last: ago(hours: 3)),
+					chatConvo("solo", last: ago(hours: 4), participants: [chatMe, scout]),
+				],
+				currentActorID: "me", now: now, calendar: cal))
+		#expect(
+			list.chatListPlace(of: "pin", searching: false) == ChatListTracking.Place(source: .list, section: .pinned, position: 1))
+		#expect(list.chatListPlace(of: "a1", searching: false)?.section == .agent)
+		#expect(list.chatListPlace(of: "a1", searching: false)?.position == 2)
+		#expect(list.chatListPlace(of: "a2", searching: false)?.position == 2)
+		#expect(list.chatListPlace(of: "solo", searching: false)?.position == 3)
 	}
 
 	@Test("while a search is on, any row opened is a search open")

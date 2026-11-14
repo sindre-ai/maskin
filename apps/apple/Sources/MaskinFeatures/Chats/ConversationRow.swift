@@ -68,9 +68,13 @@ struct TeamRow: View {
 	private var avatar: some View {
 		switch row.kind {
 		case .conversation(let c):
-			ConversationAvatar(
-				participants: c.others(excluding: currentActorID), size: ConversationRow.avatarSize,
-				working: c.participants.contains { workingAgentIDs.contains($0.id) })
+			if let kind = c.roomKind {
+				RoomTile(kind: kind, size: ConversationRow.avatarSize)
+			} else {
+				ConversationAvatar(
+					participants: c.others(excluding: currentActorID), size: ConversationRow.avatarSize,
+					working: c.participants.contains { workingAgentIDs.contains($0.id) })
+			}
 		case .person(let p):
 			ConversationAvatar(
 				participants: p.participants, size: ConversationRow.avatarSize,
@@ -121,6 +125,9 @@ struct TeamRow: View {
 
 	private var accessibilityLabel: String {
 		var parts = [title]
+		if case .conversation(let c) = row.kind, let kind = c.roomKind {
+			parts.append(kind == .flow ? "Flow room" : "Room")
+		}
 		if let role { parts.append(role) }
 		if let subtitle { parts.append(subtitle) }
 		parts.append(status.accessibilityText)
@@ -234,6 +241,24 @@ struct FlowTile: View {
 			.frame(width: size, height: size)
 			.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: size * 0.35, style: .continuous))
 			.accessibilityHidden(true)
+	}
+}
+
+/// A room's square tile: arrows for a flow's room (the Flows symbol), # for one a person made.
+struct RoomTile: View {
+	var kind: RoomKind
+	var size: CGFloat = ConversationRow.avatarSize
+	var body: some View {
+		if kind == .flow {
+			FlowTile(size: size)
+		} else {
+			Image(systemName: "number")
+				.maskinSymbol(size * 0.46, weight: .medium)
+				.foregroundStyle(MaskinColor.sigInk)
+				.frame(width: size, height: size)
+				.background(MaskinColor.sigTint, in: RoundedRectangle(cornerRadius: size * 0.35, style: .continuous))
+				.accessibilityHidden(true)
+		}
 	}
 }
 

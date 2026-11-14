@@ -12,21 +12,21 @@ struct LoopDetailTabTests {
 	func none() {
 		#expect(
 			LoopDetailTab.tabs(views: [], hasBriefings: false).map(\.title)
-				== ["Overview", "Performance", "Items", "Activity", "Setup"])
+				== ["Overview", "Performance", "Items", "Room", "Setup"])
 	}
 
 	@Test("each view is a tab after the fixed tabs, in order")
 	func order() {
 		#expect(
 			LoopDetailTab.tabs(views: [results, health], hasBriefings: false).map(\.title)
-				== ["Overview", "Performance", "Items", "Activity", "Setup", "Results", "Pipeline health"])
+				== ["Overview", "Performance", "Items", "Room", "Setup", "Results", "Pipeline health"])
 	}
 
 	@Test("Briefings joins after Performance once the flow has one")
 	func briefings() {
 		#expect(
 			LoopDetailTab.tabs(views: [results], hasBriefings: true).map(\.title)
-				== ["Overview", "Performance", "Briefings", "Items", "Activity", "Setup", "Results"])
+				== ["Overview", "Performance", "Briefings", "Items", "Room", "Setup", "Results"])
 	}
 
 	@Test("two views with one name are two tabs")

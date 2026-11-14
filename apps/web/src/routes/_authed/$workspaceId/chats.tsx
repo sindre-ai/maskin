@@ -1,6 +1,8 @@
+import { ChatListViewSwitch } from '@/components/chat/chat-list-view-switch'
 import type { ChatsFilter } from '@/components/chat/chats-filter-menu'
 import { ConversationList, ConversationListHeader } from '@/components/chat/conversation-list'
 import { PageHeader } from '@/components/layout/page-header'
+import { useChatListView } from '@/hooks/use-chat-list-view'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -71,6 +73,7 @@ function ChatsLayout() {
 	const listAside = onCall && narrowForCall
 	const navigate = useNavigate()
 	const [query, setQuery] = useState('')
+	const { view, setView } = useChatListView()
 	const matches = useMatches()
 	const { filter = 'all', wide } = Route.useSearch()
 	const leafMatch = matches[matches.length - 1]
@@ -135,10 +138,19 @@ function ChatsLayout() {
 				query={query}
 				onQueryChange={setQuery}
 			/>
+			{/* The other filters are single lists of their own; the views only shape the full list. */}
+			{filter === 'all' ? (
+				<ChatListViewSwitch
+					value={view}
+					onChange={setView}
+					className="mb-2 ml-4 lg:ml-7 max-md:mt-0 md:-mt-1"
+				/>
+			) : null}
 			<ConversationList
 				workspaceId={workspaceId}
 				filter={filter}
 				query={query}
+				view={view}
 				hideStartLink={isDraft}
 			/>
 		</>

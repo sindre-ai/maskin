@@ -335,6 +335,13 @@ export function Header() {
 				    (mockup 925–946 puts it at `order:10`). */}
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					onNewRoom={() =>
+						navigate({
+							to: '/$workspaceId/chats/new',
+							params: { workspaceId },
+							search: { room: true },
+						})
+					}
 					primaryKind="chat"
 					primaryOverride={newMenuPrimaryOverride}
 					disabled={newMenuDisabled}
@@ -445,6 +452,13 @@ export function Header() {
 				{actions}
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					onNewRoom={() =>
+						navigate({
+							to: '/$workspaceId/chats/new',
+							params: { workspaceId },
+							search: { room: true },
+						})
+					}
 					hideObjectSection={isObjectDetail}
 					primaryKind="chat"
 					primaryOverride={newMenuPrimaryOverride}

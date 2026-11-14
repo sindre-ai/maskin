@@ -11,7 +11,9 @@ export const QUIET_CHAT_DAYS = 14
  * Chat kind is worked out from who is in it, never stored: the direct message (DM) is the
  * chat with a direct_pair_key; more than two people is a group; any other chat is a topic
  * chat. A chat about an object or a flow (subject_id set) counts as a group chat, which
- * these rules never touch. Neither do people-only chats, pinned chats or unread chats.
+ * these rules never touch. Neither do people-only chats, pinned chats, unread chats or rooms
+ * (is_room): a free-form room has at most two people and no subject, so it would otherwise
+ * read as a quiet topic chat.
  *
  * Hidden:
  * - a DM with an agent that has no message yet;
@@ -57,6 +59,7 @@ export function visibleInDefaultListCondition(hasUnread: SQL): SQL {
 	)`
 	return sql`(
 		conversation_participants.pinned
+		OR conversations.is_room
 		OR ${hasUnread}
 		OR NOT ${hidden}
 	)`

@@ -45668,6 +45668,9 @@
 									"direct": {
 										"type": "boolean"
 									},
+									"room": {
+										"type": "boolean"
+									},
 									"initial_message": {
 										"type": "string",
 										"maxLength": 8000
@@ -46538,6 +46541,22 @@
 												"type": "string"
 											}
 										},
+										"directPairKey": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"roomKind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"free",
+												"flow"
+											]
+										},
 										"lastMessageAt": {
 											"type": [
 												"string",
@@ -46618,6 +46637,8 @@
 										"subjectId",
 										"createdBy",
 										"tags",
+										"directPairKey",
+										"roomKind",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -46676,6 +46697,22 @@
 												"type": "string"
 											}
 										},
+										"directPairKey": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"roomKind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"free",
+												"flow"
+											]
+										},
 										"lastMessageAt": {
 											"type": [
 												"string",
@@ -46756,6 +46793,8 @@
 										"subjectId",
 										"createdBy",
 										"tags",
+										"directPairKey",
+										"roomKind",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -47021,6 +47060,16 @@
 															"null"
 														]
 													},
+													"roomKind": {
+														"type": [
+															"string",
+															"null"
+														],
+														"enum": [
+															"free",
+															"flow"
+														]
+													},
 													"lastMessageAt": {
 														"type": [
 															"string",
@@ -47125,6 +47174,7 @@
 													"createdBy",
 													"tags",
 													"directPairKey",
+													"roomKind",
 													"lastMessageAt",
 													"createdAt",
 													"updatedAt",
@@ -47791,6 +47841,22 @@
 												"type": "string"
 											}
 										},
+										"directPairKey": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"roomKind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"free",
+												"flow"
+											]
+										},
 										"lastMessageAt": {
 											"type": [
 												"string",
@@ -47871,6 +47937,8 @@
 										"subjectId",
 										"createdBy",
 										"tags",
+										"directPairKey",
+										"roomKind",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",
@@ -47948,7 +48016,7 @@
 				"tags": [
 					"Conversations"
 				],
-				"summary": "Rename a conversation or change its tags",
+				"summary": "Rename a conversation, change its tags, make it a room, or make it about a flow",
 				"parameters": [
 					{
 						"schema": {
@@ -47988,6 +48056,29 @@
 											"maxLength": 40
 										},
 										"maxItems": 10
+									},
+									"room": {
+										"type": "boolean"
+									},
+									"subject": {
+										"type": "object",
+										"properties": {
+											"type": {
+												"type": "string",
+												"enum": [
+													"object",
+													"loop"
+												]
+											},
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											}
+										},
+										"required": [
+											"type",
+											"id"
+										]
 									}
 								}
 							}
@@ -48039,6 +48130,22 @@
 											"items": {
 												"type": "string"
 											}
+										},
+										"directPairKey": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"roomKind": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"free",
+												"flow"
+											]
 										},
 										"lastMessageAt": {
 											"type": [
@@ -48120,6 +48227,8 @@
 										"subjectId",
 										"createdBy",
 										"tags",
+										"directPairKey",
+										"roomKind",
 										"lastMessageAt",
 										"createdAt",
 										"updatedAt",

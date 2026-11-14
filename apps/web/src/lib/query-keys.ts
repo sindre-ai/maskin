@@ -44,6 +44,9 @@ export const queryKeys = {
 			['conversations', workspaceId, 'listInfinite', filters] as const,
 		listInfinitePrefix: (workspaceId: string) =>
 			['conversations', workspaceId, 'listInfinite'] as const,
+		// The chat a flow page's room is built on, found by its subject.
+		flowRoom: (workspaceId: string, flowId: string) =>
+			['conversations', workspaceId, 'flowRoom', flowId] as const,
 		detail: (id: string) => ['conversations', 'detail', id] as const,
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,

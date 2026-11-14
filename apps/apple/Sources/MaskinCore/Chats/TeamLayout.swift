@@ -50,18 +50,19 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 		public var label: String { self == .sections ? "Grouped" : "Single list" }
 	}
 	public enum Grouping: String, Codable, CaseIterable, Sendable {
-		case byTime, byPerson, newestFirst
+		case byTime, byPerson, newestFirst, byAgent
 		public var label: String {
 			switch self {
 			case .byTime: "By date"
 			case .byPerson: "By person"
 			case .newestFirst: "Newest first"
+			case .byAgent: "Agents"
 			}
 		}
 	}
 
 	public var layout: Layout = .sections
-	public var grouping: Grouping = .byTime
+	public var grouping: Grouping = .byAgent
 	public var showsFilterChips = false
 	/// The sheet's Filters row: only conversations with something unread.
 	public var unreadOnly = false
@@ -70,7 +71,7 @@ public struct TeamDisplayOptions: Codable, Equatable, Sendable {
 	public var showsWorkingLine = true
 
 	public init(
-		layout: Layout = .sections, grouping: Grouping = .byTime, showsFilterChips: Bool = false,
+		layout: Layout = .sections, grouping: Grouping = .byAgent, showsFilterChips: Bool = false,
 		unreadOnly: Bool = false, showsPreview: Bool = true, showsWorkingLine: Bool = true
 	) {
 		self.layout = layout
@@ -224,7 +225,7 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	public struct Section: Identifiable, Equatable, Sendable {
-		public enum Kind: Equatable, Sendable { case working, unread, flows, people, time, all, filtered }
+		public enum Kind: Equatable, Sendable { case rooms, working, unread, flows, people, time, all, filtered }
 		public var id: String
 		public var kind: Kind
 		public var label: String
@@ -356,15 +357,28 @@ public struct TeamLayout: Equatable, Sendable {
 			case .unread: return tile.unreadCount > 0
 			// The Pinned chip lists the pinned chats as rows (below), not as tiles above them.
 			case .groups, .pinned: return false
-			case .flows: if case .flow = tile.kind { return true } else { return false }
+			case .flows:
+				switch tile.kind {
+				case .flow: return true
+				case .conversation(let c): return c.roomKind == .flow
+				}
 			case .people, .agents:
 				guard case .conversation(let c) = tile.kind else { return false }
 				return kind(of: c, me: me) == (input.chip == .people ? .person : .agent)
 			}
 		}
 
-		let unpinned = active.filter { !$0.pinned }
-		let flows = input.flowRooms.filter { !pinnedFlowKeys.contains($0.pinKey) }
+		// A quiet flow room leaves the list; a search still finds it (see `isRoomListed`).
+		let unpinned = active.filter { c in
+			!c.pinned
+				&& (!query.isEmpty
+					|| isRoomListed(c, now: input.now, calendar: input.calendar, workingAgentIDs: input.workingAgentIDs))
+		}
+		// A flow that has a room is that room's row, not a second Flows row.
+		let roomFlowIDs = Set(active.compactMap { $0.roomKind == .flow ? $0.flowID : nil })
+		let flows = input.flowRooms.filter {
+			!pinnedFlowKeys.contains($0.pinKey) && !roomFlowIDs.contains($0.id)
+		}
 		// The Unread chip counts unread rows, not messages, and never the pinned tiles (they have their own badge).
 		let totalUnread = unpinned.filter { $0.unreadCount > 0 }.count + flows.filter { $0.unreadCount > 0 }.count
 
@@ -389,14 +403,16 @@ public struct TeamLayout: Equatable, Sendable {
 			sections = [Section(id: "pinned", kind: .filtered, label: "Pinned", count: rows.count, rows: rows)]
 		case .people, .agents:
 			let wanted: ParticipantKind = input.chip == .people ? .person : .agent
-			let rows = personRows(unpinned.filter { kind(of: $0, me: me) == wanted }, me: me)
+			// A room is named after itself, not after the person in it, so it never folds into a person row.
+			let rows = personRows(unpinned.filter { !$0.isRoom && kind(of: $0, me: me) == wanted }, me: me)
 			sections = [
 				Section(id: "kind", kind: .filtered, label: input.chip.label, count: rows.count, rows: rows)
 			]
 		case .groups:
 			sections = timeSections(unpinned.filter { kind(of: $0, me: me) == .group }, input: input)
 		case .flows:
-			let rows = byRecency(flows.map(flowRow))
+			let rows = byRecency(
+				flows.map(flowRow) + unpinned.filter { $0.roomKind == .flow }.map(conversationRow))
 			sections = [Section(id: "flows", kind: .flows, label: "Flows", count: rows.count, rows: rows)]
 		}
 		if !query.isEmpty {
@@ -438,14 +454,26 @@ public struct TeamLayout: Equatable, Sendable {
 	private static func sectioned(
 		_ conversations: [ConversationSummary], flows: [TeamFlowRoom], input: Input, isFiltering: Bool
 	) -> [Section] {
+		if input.options.grouping == .byAgent {
+			return agentSections(conversations, flows: flows, input: input, isFiltering: isFiltering)
+		}
 		var sections: [Section] = []
 		let me = input.currentActorID
 
-		// WORKING first: each conversation lives in the first section it fits, so it never repeats
+		// ROOMS first, above everything: each chat is placed once, and a room never goes to the
+		// quiet-chat rule or a person row.
+		let roomRows = byRecency(conversations.filter(\.isRoom).map(conversationRow))
+		if !roomRows.isEmpty {
+			sections.append(
+				Section(id: "rooms", kind: .rooms, label: "Rooms", count: roomRows.count, rows: roomRows))
+		}
+		let nonRoom = conversations.filter { !$0.isRoom }
+
+		// WORKING next: each conversation lives in the first section it fits, so it never repeats
 		// below in UNREAD or the time groups. An unread chat is not "needing you" on its own.
-		let working = conversations.filter { isWorking($0, workingAgentIDs: input.workingAgentIDs) }
+		let working = nonRoom.filter { isWorking($0, workingAgentIDs: input.workingAgentIDs) }
 		let placed = Set(working.map(\.id))
-		let conversations = conversations.filter { !placed.contains($0.id) }
+		let conversations = nonRoom.filter { !placed.contains($0.id) }
 		if !working.isEmpty {
 			sections.append(
 				Section(
@@ -458,7 +486,7 @@ public struct TeamLayout: Equatable, Sendable {
 		let unreadRows: [Row]
 		switch input.options.grouping {
 		case .byPerson: unreadRows = personRows(unreadConversations, me: me)
-		case .byTime, .newestFirst: unreadRows = unreadConversations.map(conversationRow)
+		case .byTime, .newestFirst, .byAgent: unreadRows = unreadConversations.map(conversationRow)
 		}
 		let unread = byRecency(unreadRows + flows.filter { $0.unreadCount > 0 }.map(flowRow))
 		if !unread.isEmpty {
@@ -483,7 +511,7 @@ public struct TeamLayout: Equatable, Sendable {
 		// Everything read, by the chosen grouping.
 		let read = conversations.filter { !$0.isUnread }
 		switch input.options.grouping {
-		case .byTime:
+		case .byTime, .byAgent:
 			sections += timeSections(read, input: input)
 		case .byPerson:
 			let rows = personRows(read, me: me)
@@ -509,6 +537,63 @@ public struct TeamLayout: Equatable, Sendable {
 			}
 		}
 		return sections
+	}
+
+	/// The Agents view: the flows, then one row per agent with its chats folded under it, newest
+	/// activity first. There is no WORKING or UNREAD section: an agent row sums its chats' unread
+	/// and shows its working line, so a chat is never listed twice.
+	private static func agentSections(
+		_ conversations: [ConversationSummary], flows: [TeamFlowRoom], input: Input, isFiltering: Bool
+	) -> [Section] {
+		var sections: [Section] = []
+		// ROOMS first, as in the other views: a room is named after itself, so it never folds under an agent.
+		let roomRows = byRecency(conversations.filter(\.isRoom).map(conversationRow))
+		if !roomRows.isEmpty {
+			sections.append(
+				Section(id: "rooms", kind: .rooms, label: "Rooms", count: roomRows.count, rows: roomRows))
+		}
+		let conversations = conversations.filter { !$0.isRoom }
+		let restFlows = byRecency(flows.map(flowRow))
+		if !restFlows.isEmpty {
+			let open = isFiltering || input.expandedSectionIDs.contains("flows")
+			let capped = open ? restFlows : Array(restFlows.prefix(sectionCap))
+			sections.append(
+				Section(
+					id: "flows", kind: .flows, label: "Flows", count: restFlows.count, rows: capped,
+					moreLabel: capped.count < restFlows.count ? "All \(restFlows.count) flows" : nil,
+					canCollapse: !isFiltering && open && restFlows.count > sectionCap))
+		}
+		let rows = agentRows(conversations, me: input.currentActorID)
+		if !rows.isEmpty {
+			sections.append(Section(id: "agents", kind: .people, label: "Agents", count: rows.count, rows: rows))
+		}
+		return sections
+	}
+
+	/// An agent with several conversations is one person row (its chats fold under it); an agent's
+	/// only chat, a group chat and a chat with a person are rows of their own, all by recency.
+	static func agentRows(_ conversations: [ConversationSummary], me: String?) -> [Row] {
+		let rows = ConversationGrouping.people(conversations, currentActorID: me).flatMap { person -> [Row] in
+			if person.kind == .agent, person.hasSeveral {
+				return [Row(id: "person:\(person.id)", kind: .person(person))]
+			}
+			return person.conversations.map(conversationRow)
+		}
+		return byRecency(rows)
+	}
+
+	/// A flow's room shows only with a message in the last 14 days, unread or working (pinned ones are
+	/// tiles); a flow with no messages is hidden like an empty direct message. A room a person made
+	/// always shows, and every other chat is not this rule's business.
+	public static func isRoomListed(
+		_ c: ConversationSummary, now: Date, calendar: Calendar, workingAgentIDs: Set<String>
+	) -> Bool {
+		guard c.roomKind == .flow else { return true }
+		guard c.snippet != nil else { return false }
+		if c.isUnread || isWorking(c, workingAgentIDs: workingAgentIDs) { return true }
+		guard let last = c.lastMessageAt else { return false }
+		let quiet = calendar.date(byAdding: .day, value: -14, to: now) ?? now
+		return last > quiet
 	}
 
 	/// An agent in the conversation is running right now.
@@ -548,6 +633,12 @@ public struct TeamLayout: Equatable, Sendable {
 		return .person
 	}
 
+	/// What a chat is called under its agent: a direct message has no topic, so it is named for what
+	/// it is; any other chat keeps its title.
+	public static func chatLabel(_ conversation: ConversationSummary) -> String {
+		conversation.isDirect ? "Direct message" : ChatPreviewText.plain(conversation.title)
+	}
+
 	/// "{n} people · {first names}" for a group row's second line.
 	public static func groupLine(_ conversation: ConversationSummary, me: String?) -> String {
 		let rest = conversation.others(excluding: me)
@@ -563,7 +654,7 @@ public struct TeamLayout: Equatable, Sendable {
 
 	/// A 1:1 row is named after the other party; a group after its title.
 	public static func title(of conversation: ConversationSummary, me: String?) -> String {
-		if conversation.isGroupChat(excluding: me) { return ChatPreviewText.plain(conversation.title) }
+		if conversation.isRoom || conversation.isGroupChat(excluding: me) { return ChatPreviewText.plain(conversation.title) }
 		return conversation.others(excluding: me).first?.name ?? ChatPreviewText.plain(conversation.title)
 	}
 
@@ -571,6 +662,7 @@ public struct TeamLayout: Equatable, Sendable {
 	/// person, or with the default "Alex, Relay" title, is shown as that person's name. A direct
 	/// message has no topic, so it is always shown as the other party's name.
 	public static func hasCustomTitle(_ c: ConversationSummary, me: String?) -> Bool {
+		if c.isRoom { return true }
 		guard !c.isGroupChat(excluding: me), !c.isDirect else { return false }
 		let names = c.others(excluding: me).map(\.name)
 		let title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)

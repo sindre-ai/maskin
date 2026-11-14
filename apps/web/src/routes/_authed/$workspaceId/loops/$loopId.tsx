@@ -42,6 +42,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFlowRoom } from '@/hooks/use-flow-room'
 import { useLoadFailed } from '@/hooks/use-load-failed'
 import {
 	useLoop,
@@ -207,7 +208,7 @@ function LoopDetailRoute() {
 	const hasBriefings = briefingPages.length > 0
 	const activeTab =
 		tab === 'overview' ||
-		['items', 'activity', 'setup'].includes(tab) ||
+		['items', 'room', 'setup'].includes(tab) ||
 		activeView ||
 		(tab === 'briefings' && hasBriefings)
 			? tab
@@ -379,6 +380,27 @@ function LoopDetailRoute() {
 		}
 		return undefined
 	}, [driverId, loopAgentIds, actors])
+
+	// The flow's room: its chat, read beside the flow's old comments and events on the Room tab.
+	// Posts from the page's composer go to that chat.
+	const room = useFlowRoom(
+		workspaceId,
+		{ id: loopId, name: loop?.name ?? null },
+		{ agentId: viewBuilder?.id ?? null, active: activeTab === 'room' },
+	)
+	const handleRoomPost = useCallback(
+		async (utterance: string, mentions: string[]) => {
+			try {
+				await room.post(utterance, mentions)
+			} catch (err) {
+				// The composer keeps the words when the send throws.
+				toast.error('Could not send your message')
+				throw err
+			}
+			setTab('room')
+		},
+		[room.post],
+	)
 
 	// "+" next to the views: ask the flow's driver for a new one, in a chat about this flow.
 	const handleNewView = useCallback(() => {
@@ -856,7 +878,7 @@ function LoopDetailRoute() {
 								startsGroup: hasBriefings || viewTabs.length > 0,
 							},
 							{ value: 'items', label: 'Items', count: childIds.length },
-							{ value: 'activity', label: 'Activity' },
+							{ value: 'room', label: 'Room' },
 							{ value: 'setup', label: 'Setup' },
 						]}
 						value={activeTab}
@@ -970,7 +992,7 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{activeTab === 'activity' && object && (
+				{activeTab === 'room' && object && (
 					<div role="tabpanel" className="mt-8">
 						{activityFailed && (
 							<LoopBlockError
@@ -983,6 +1005,15 @@ function LoopDetailRoute() {
 							object={object}
 							loopUnread={{ loopId }}
 							additionalEvents={activityEvents}
+							room={{
+								messages: room.messages,
+								isLoading: room.isLoading,
+								isError: room.isError,
+								onRetry: room.refetch,
+								hasEarlier: room.hasEarlier,
+								loadingEarlier: room.loadingEarlier,
+								onLoadEarlier: room.loadEarlier,
+							}}
 						/>
 					</div>
 				)}
@@ -1028,9 +1059,15 @@ function LoopDetailRoute() {
 					ref={composerRef}
 					loop={loop}
 					placeholder={
-						driver ? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}` : undefined
+						activeTab === 'room'
+							? 'Message the room'
+							: driver
+								? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}`
+								: undefined
 					}
-					onUtterance={handleUtterance}
+					// In the room every word is a message; elsewhere a plan edit is read first.
+					onUtterance={activeTab === 'room' ? undefined : handleUtterance}
+					onPost={handleRoomPost}
 				>
 					{proposedEdit && (
 						<LoopProposedEdit

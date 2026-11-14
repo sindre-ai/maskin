@@ -552,8 +552,8 @@ export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }
 // How the chat list is used, for the Chat list rework bet. Two events, categories only: never a chat
 // title, the search text or a chat id. `source` is `list` for a row opened from the list as it stands
 // and `search` for a row opened from the list search's results (then `section` is `search` too).
-// `section` is the list section the row sat in. The values agent and room are set by the rows that
-// add them; until then direct messages and every dated group read as `recent`.
+// `section` is the list section the row sat in: agent for the Agents view's rows (a chat folded
+// under an agent reports its agent row's place), recent for the flat list.
 export type ChatListSection = 'pinned' | 'unread' | 'agent' | 'recent' | 'room' | 'search'
 export type ChatListOpenSource = 'list' | 'search'
 

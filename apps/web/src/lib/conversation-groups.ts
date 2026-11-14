@@ -1,8 +1,16 @@
 import type { ConversationListItemResponse } from '@/lib/api'
+import type { ConversationListEntry } from '@/lib/conversation-agent-rows'
 
 /** Midnight of `d` in the viewer's local timezone, as epoch ms. */
 export function startOfDay(d: Date): number {
 	return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+/** When a chat was last active, as epoch ms. A missing or unparseable time sorts last. */
+export function activityMs(c: ConversationListItemResponse): number {
+	const raw = c.lastMessageAt ?? c.createdAt
+	const ms = raw ? new Date(raw).getTime() : Number.NaN
+	return Number.isNaN(ms) ? 0 : ms
 }
 
 export interface ConversationGroup {
@@ -10,10 +18,33 @@ export interface ConversationGroup {
 	key: string
 	/** Rendered as an `.eyebrow` mono uppercase label. */
 	label: string
+	/** Every chat in the group. */
 	items: ConversationListItemResponse[]
+	/** What the group draws when it is not one row per chat (the Agents view folds an agent's
+	 *  chats into one row). The header counts these. */
+	entries?: ConversationListEntry[]
 }
 
-export type ConversationGroupMode = 'default' | 'archived' | 'search' | 'unread'
+/** A flow's room stays in the list this long after its last message, unless it is unread, pinned or working. */
+const FLOW_ROOM_QUIET_DAYS = 14
+
+/**
+ * Whether a room belongs in the Rooms group. A free-form room always does: a person made it on
+ * purpose and it never leaves for being quiet. A flow's room shows only with a message in the
+ * last 14 days, unread, working or pinned, and a flow with no messages is hidden like an empty
+ * direct message. A hidden room is still found by search.
+ */
+export function isRoomListed(c: ConversationListItemResponse, now: Date = new Date()): boolean {
+	if (c.roomKind === 'free') return true
+	if (c.roomKind !== 'flow') return false
+	// The row has no message count; the preview is empty exactly when nobody has written yet.
+	if (c.snippet === null) return false
+	if (c.unread_count > 0 || c.pinned || c.working_actor_ids.length > 0) return true
+	const last = c.lastMessageAt ? new Date(c.lastMessageAt).getTime() : Number.NaN
+	return !Number.isNaN(last) && now.getTime() - last < FLOW_ROOM_QUIET_DAYS * 86_400_000
+}
+
+export type ConversationGroupMode = 'default' | 'archived' | 'search' | 'unread' | 'recent'
 
 interface GroupOptions {
 	/** `archived` collapses everything into one ARCHIVED group, `search` into
@@ -29,9 +60,10 @@ interface GroupOptions {
  * `lastMessageAt ?? createdAt`. Empty groups are dropped so the rail never
  * shows a bare header.
  *
- * A direct message (DM) is a chat marked with `directPairKey`, never one picked
+ * Rooms come before all of them (see isRoomListed). A direct message (DM) is a chat marked with `directPairKey`, never one picked
  * out by its title or its two participants: a topical chat with one agent has
- * both too. The archived and search lists stay flat.
+ * both too. The archived and search lists stay flat. `recent` is the Recent view: one
+ * newest-first list, pinned on top, direct messages in the time buckets like any other chat.
  */
 export function groupConversations(
 	conversations: ConversationListItemResponse[],
@@ -47,9 +79,19 @@ export function groupConversations(
 		return [{ key: 'results', label, items: conversations }]
 	}
 
-	// One pinned row per person or agent, above everything else. Each chat is placed once.
-	const direct = conversations.filter((c) => c.directPairKey)
-	const topical = conversations.filter((c) => !c.directPairKey)
+	// Rooms sit above everything else, a quiet flow's room is left out of the list, and each chat
+	// is placed once. Then one pinned row per person or agent.
+	const roomGroup: ConversationGroup = {
+		key: 'rooms',
+		label: 'Rooms',
+		items: conversations.filter((c) => isRoomListed(c, now)),
+	}
+	const rest = conversations.filter((c) => !c.roomKind)
+	const recent = mode === 'recent'
+	const direct = recent ? [] : rest.filter((c) => c.directPairKey)
+	const topical = recent
+		? [...rest].sort((a, b) => activityMs(b) - activityMs(a))
+		: rest.filter((c) => !c.directPairKey)
 	const directGroup: ConversationGroup = {
 		key: 'direct',
 		label: 'Direct messages',
@@ -61,6 +103,7 @@ export function groupConversations(
 		const pinned = topical.filter((c) => c.pinned)
 		const rest = topical.filter((c) => !c.pinned)
 		return [
+			roomGroup,
 			directGroup,
 			{ key: 'pinned', label: 'Pinned', items: pinned },
 			{ key: 'unread', label: 'Unread', items: rest.filter((c) => c.unread_count > 0) },
@@ -105,6 +148,7 @@ export function groupConversations(
 		['earlier', 'Earlier'],
 	]
 	return [
+		roomGroup,
 		directGroup,
 		...order.map(
 			([key, label]): ConversationGroup => ({

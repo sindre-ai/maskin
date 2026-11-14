@@ -282,7 +282,7 @@ struct ConversationListView: View {
 				var status = store.status(
 					for: p.latest, displayedTitle: TeamLayout.displayedTitle(of: row.kind, me: currentActorID),
 					me: currentActorID)
-				status.preview = "\(p.conversations.count) conversations · \(ChatPreviewText.plain(p.latest.title))"
+				status.preview = "\(p.conversations.count) chats · \(TeamLayout.chatLabel(p.latest))"
 				return status
 			}
 			return store.status(
@@ -331,7 +331,26 @@ struct ConversationListView: View {
 			archive: { archive([c.id]) },
 			delete: { deleteTarget = DeleteTarget(id: c.id, title: TeamLayout.title(of: c, me: currentActorID), conversationIDs: [c.id]) },
 			more: { menuTarget = TeamRowMenuTarget(id: c.id, title: TeamLayout.title(of: c, me: currentActorID), actions: actions(for: c)) },
-			select: { picking.enter(selecting: c.id) })
+			select: { picking.enter(selecting: c.id) },
+			roomActions: roomActions(for: c))
+	}
+
+	/// "Make this a room" on an ordinary chat; "Make this a flow" and "Turn back into a chat" on a
+	/// room a person made. A direct message and a flow's own room have none.
+	private func roomActions(for c: ConversationSummary) -> [TeamRowActions.RoomAction] {
+		guard !c.isDirect else { return [] }
+		if c.roomKind == nil {
+			return [
+				.init(title: "Make this a room", symbol: "number") { Task { await store.setRoom(c.id, true) } }
+			]
+		}
+		guard c.roomKind == .free else { return [] }
+		return [
+			.init(title: "Make this a flow", symbol: "arrow.triangle.2.circlepath") {
+				Task { await store.makeFlow(c.id) }
+			},
+			.init(title: "Turn back into a chat", symbol: "number") { Task { await store.setRoom(c.id, false) } },
+		]
 	}
 
 	private func actions(for p: TeamPerson) -> TeamRowActions {
@@ -437,6 +456,10 @@ struct ConversationListView: View {
 	/// The active chats: filter chips, the Pinned rows, then the day or person sections.
 	@ViewBuilder
 	private func activeContent(layout: TeamLayout, now: Date) -> some View {
+			if store.displayOptions.isSectioned, !layout.isFiltering, !picking.isActive {
+				TeamListViewSwitch(selection: $store.displayOptions.listView)
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+			}
 			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
 				TeamFilterChips(
 					chip: $store.chip, unreadCount: layout.unreadCount,
@@ -645,7 +668,7 @@ struct TeamConversationRow: View {
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s4) {
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				Text(ChatPreviewText.plain(conversation.title))
+				Text(TeamLayout.chatLabel(conversation))
 					.maskinText(.body)
 					.fontWeight(conversation.isUnread ? .bold : .semibold)
 					.foregroundStyle(MaskinColor.ink)

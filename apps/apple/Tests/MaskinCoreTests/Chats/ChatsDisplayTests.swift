@@ -21,6 +21,26 @@ struct ChatsDisplayTests {
 		#expect(options.layout == .oneList && options.isCustomised)
 	}
 
+	@Test("the Agents / Recent switch is the Agents grouping or the flat newest-first one, and Agents is the default")
+	func listView() {
+		var options = TeamDisplayOptions.default
+		#expect(options.listView == .agents && options.grouping == .byAgent)
+		options.listView = .recent
+		#expect(options.grouping == .newestFirst && options.isCustomised)
+		options.listView = .agents
+		#expect(!options.isCustomised)
+		options.grouping = .byTime
+		#expect(options.listView == .recent, "any other grouping reads as Recent")
+	}
+
+	@Test("choices saved before Agents existed keep their grouping, and a record with none reads by date")
+	func decodesGrouping() throws {
+		let none = try JSONDecoder().decode(TeamDisplayOptions.self, from: Data(#"{"layout":"sections"}"#.utf8))
+		#expect(none.grouping == .byTime)
+		let saved = try JSONDecoder().decode(TeamDisplayOptions.self, from: Data(#"{"grouping":"byTime"}"#.utf8))
+		#expect(saved.listView == .recent)
+	}
+
 	@Test("the Unread filter wins over the chip row")
 	func effectiveChip() {
 		var options = TeamDisplayOptions.default

@@ -49523,6 +49523,13 @@ public enum Operations {
                             public var tags: [Swift.String]
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/directPairKey`.
                             public var directPairKey: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/roomKind`.
+                            @frozen public enum roomKindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case free = "free"
+                                case flow = "flow"
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/roomKind`.
+                            public var roomKind: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.roomKindPayload?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/lastMessageAt`.
                             public var lastMessageAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/GET/responses/200/content/json/conversationsPayload/createdAt`.
@@ -49601,6 +49608,7 @@ public enum Operations {
                             ///   - createdBy:
                             ///   - tags:
                             ///   - directPairKey:
+                            ///   - roomKind:
                             ///   - lastMessageAt:
                             ///   - createdAt:
                             ///   - updatedAt:
@@ -49622,6 +49630,7 @@ public enum Operations {
                                 createdBy: Swift.String,
                                 tags: [Swift.String],
                                 directPairKey: Swift.String? = nil,
+                                roomKind: Operations.get_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.conversationsPayloadPayload.roomKindPayload? = nil,
                                 lastMessageAt: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
                                 updatedAt: Swift.String? = nil,
@@ -49643,6 +49652,7 @@ public enum Operations {
                                 self.createdBy = createdBy
                                 self.tags = tags
                                 self.directPairKey = directPairKey
+                                self.roomKind = roomKind
                                 self.lastMessageAt = lastMessageAt
                                 self.createdAt = createdAt
                                 self.updatedAt = updatedAt
@@ -49665,6 +49675,7 @@ public enum Operations {
                                 case createdBy
                                 case tags
                                 case directPairKey
+                                case roomKind
                                 case lastMessageAt
                                 case createdAt
                                 case updatedAt
@@ -49847,6 +49858,8 @@ public enum Operations {
                     public var participant_actor_ids: [Swift.String]
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/direct`.
                     public var direct: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/room`.
+                    public var room: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message`.
                     public var initial_message: Swift.String?
                     /// - Remark: Generated from `#/paths/api/conversations/POST/requestBody/json/initial_message_metadata`.
@@ -51078,6 +51091,7 @@ public enum Operations {
                     ///   - title:
                     ///   - participant_actor_ids:
                     ///   - direct:
+                    ///   - room:
                     ///   - initial_message:
                     ///   - initial_message_metadata:
                     public init(
@@ -51085,6 +51099,7 @@ public enum Operations {
                         title: Swift.String,
                         participant_actor_ids: [Swift.String],
                         direct: Swift.Bool? = nil,
+                        room: Swift.Bool? = nil,
                         initial_message: Swift.String? = nil,
                         initial_message_metadata: Operations.post_sol_api_sol_conversations.Input.Body.jsonPayload.initial_message_metadataPayload? = nil
                     ) {
@@ -51092,6 +51107,7 @@ public enum Operations {
                         self.title = title
                         self.participant_actor_ids = participant_actor_ids
                         self.direct = direct
+                        self.room = room
                         self.initial_message = initial_message
                         self.initial_message_metadata = initial_message_metadata
                     }
@@ -51100,6 +51116,7 @@ public enum Operations {
                         case title
                         case participant_actor_ids
                         case direct
+                        case room
                         case initial_message
                         case initial_message_metadata
                     }
@@ -51146,6 +51163,15 @@ public enum Operations {
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/tags`.
                         public var tags: [Swift.String]
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/directPairKey`.
+                        public var directPairKey: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/roomKind`.
+                        @frozen public enum roomKindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case free = "free"
+                            case flow = "flow"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/roomKind`.
+                        public var roomKind: Operations.post_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.roomKindPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/200/content/json/createdAt`.
@@ -51215,6 +51241,8 @@ public enum Operations {
                         ///   - subjectId:
                         ///   - createdBy:
                         ///   - tags:
+                        ///   - directPairKey:
+                        ///   - roomKind:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -51231,6 +51259,8 @@ public enum Operations {
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
                             tags: [Swift.String],
+                            directPairKey: Swift.String? = nil,
+                            roomKind: Operations.post_sol_api_sol_conversations.Output.Ok.Body.jsonPayload.roomKindPayload? = nil,
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -51247,6 +51277,8 @@ public enum Operations {
                             self.subjectId = subjectId
                             self.createdBy = createdBy
                             self.tags = tags
+                            self.directPairKey = directPairKey
+                            self.roomKind = roomKind
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -51264,6 +51296,8 @@ public enum Operations {
                             case subjectId
                             case createdBy
                             case tags
+                            case directPairKey
+                            case roomKind
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -51346,6 +51380,15 @@ public enum Operations {
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/tags`.
                         public var tags: [Swift.String]
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/directPairKey`.
+                        public var directPairKey: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/roomKind`.
+                        @frozen public enum roomKindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case free = "free"
+                            case flow = "flow"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/roomKind`.
+                        public var roomKind: Operations.post_sol_api_sol_conversations.Output.Created.Body.jsonPayload.roomKindPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/POST/responses/201/content/json/createdAt`.
@@ -51415,6 +51458,8 @@ public enum Operations {
                         ///   - subjectId:
                         ///   - createdBy:
                         ///   - tags:
+                        ///   - directPairKey:
+                        ///   - roomKind:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -51431,6 +51476,8 @@ public enum Operations {
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
                             tags: [Swift.String],
+                            directPairKey: Swift.String? = nil,
+                            roomKind: Operations.post_sol_api_sol_conversations.Output.Created.Body.jsonPayload.roomKindPayload? = nil,
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -51447,6 +51494,8 @@ public enum Operations {
                             self.subjectId = subjectId
                             self.createdBy = createdBy
                             self.tags = tags
+                            self.directPairKey = directPairKey
+                            self.roomKind = roomKind
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -51464,6 +51513,8 @@ public enum Operations {
                             case subjectId
                             case createdBy
                             case tags
+                            case directPairKey
+                            case roomKind
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -52794,6 +52845,15 @@ public enum Operations {
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/tags`.
                         public var tags: [Swift.String]
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/directPairKey`.
+                        public var directPairKey: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/roomKind`.
+                        @frozen public enum roomKindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case free = "free"
+                            case flow = "flow"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/roomKind`.
+                        public var roomKind: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.roomKindPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/GET/responses/200/content/json/createdAt`.
@@ -52863,6 +52923,8 @@ public enum Operations {
                         ///   - subjectId:
                         ///   - createdBy:
                         ///   - tags:
+                        ///   - directPairKey:
+                        ///   - roomKind:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -52879,6 +52941,8 @@ public enum Operations {
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
                             tags: [Swift.String],
+                            directPairKey: Swift.String? = nil,
+                            roomKind: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.roomKindPayload? = nil,
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -52895,6 +52959,8 @@ public enum Operations {
                             self.subjectId = subjectId
                             self.createdBy = createdBy
                             self.tags = tags
+                            self.directPairKey = directPairKey
+                            self.roomKind = roomKind
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -52912,6 +52978,8 @@ public enum Operations {
                             case subjectId
                             case createdBy
                             case tags
+                            case directPairKey
+                            case roomKind
                             case lastMessageAt
                             case createdAt
                             case updatedAt
@@ -53139,7 +53207,7 @@ public enum Operations {
             }
         }
     }
-    /// Rename a conversation or change its tags
+    /// Rename a conversation, change its tags, make it a room, or make it about a flow
     ///
     /// - Remark: HTTP `PATCH /api/conversations/{id}`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/patch`.
@@ -53186,21 +53254,61 @@ public enum Operations {
                     public var title: Swift.String?
                     /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/tags`.
                     public var tags: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/room`.
+                    public var room: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/subject`.
+                    public struct subjectPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/subject/type`.
+                        @frozen public enum _typePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case object = "object"
+                            case loop = "loop"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/subject/type`.
+                        public var _type: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Input.Body.jsonPayload.subjectPayload._typePayload
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/subject/id`.
+                        public var id: Swift.String
+                        /// Creates a new `subjectPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - _type:
+                        ///   - id:
+                        public init(
+                            _type: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Input.Body.jsonPayload.subjectPayload._typePayload,
+                            id: Swift.String
+                        ) {
+                            self._type = _type
+                            self.id = id
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case _type = "type"
+                            case id
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/json/subject`.
+                    public var subject: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Input.Body.jsonPayload.subjectPayload?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
                     ///   - title:
                     ///   - tags:
+                    ///   - room:
+                    ///   - subject:
                     public init(
                         title: Swift.String? = nil,
-                        tags: [Swift.String]? = nil
+                        tags: [Swift.String]? = nil,
+                        room: Swift.Bool? = nil,
+                        subject: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Input.Body.jsonPayload.subjectPayload? = nil
                     ) {
                         self.title = title
                         self.tags = tags
+                        self.room = room
+                        self.subject = subject
                     }
                     public enum CodingKeys: String, CodingKey {
                         case title
                         case tags
+                        case room
+                        case subject
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/requestBody/content/application\/json`.
@@ -53248,6 +53356,15 @@ public enum Operations {
                         public var createdBy: Swift.String
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/tags`.
                         public var tags: [Swift.String]
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/directPairKey`.
+                        public var directPairKey: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/roomKind`.
+                        @frozen public enum roomKindPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case free = "free"
+                            case flow = "flow"
+                        }
+                        /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/roomKind`.
+                        public var roomKind: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.roomKindPayload?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/lastMessageAt`.
                         public var lastMessageAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/PATCH/responses/200/content/json/createdAt`.
@@ -53317,6 +53434,8 @@ public enum Operations {
                         ///   - subjectId:
                         ///   - createdBy:
                         ///   - tags:
+                        ///   - directPairKey:
+                        ///   - roomKind:
                         ///   - lastMessageAt:
                         ///   - createdAt:
                         ///   - updatedAt:
@@ -53333,6 +53452,8 @@ public enum Operations {
                             subjectId: Swift.String? = nil,
                             createdBy: Swift.String,
                             tags: [Swift.String],
+                            directPairKey: Swift.String? = nil,
+                            roomKind: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.roomKindPayload? = nil,
                             lastMessageAt: Swift.String? = nil,
                             createdAt: Swift.String? = nil,
                             updatedAt: Swift.String? = nil,
@@ -53349,6 +53470,8 @@ public enum Operations {
                             self.subjectId = subjectId
                             self.createdBy = createdBy
                             self.tags = tags
+                            self.directPairKey = directPairKey
+                            self.roomKind = roomKind
                             self.lastMessageAt = lastMessageAt
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
@@ -53366,6 +53489,8 @@ public enum Operations {
                             case subjectId
                             case createdBy
                             case tags
+                            case directPairKey
+                            case roomKind
                             case lastMessageAt
                             case createdAt
                             case updatedAt

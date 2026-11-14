@@ -88,7 +88,7 @@ describe('ConversationList', () => {
 		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
 	})
 
-	it('renders the group rail and closes the list with the end-of-history line when there is no next page', async () => {
+	it('renders the Agents group and closes the list with the end-of-history line when there is no next page', async () => {
 		vi.mocked(api.conversations.list).mockResolvedValue({
 			conversations: [
 				buildConversation({ id: 'a', title: 'Billing retries' }),
@@ -98,7 +98,7 @@ describe('ConversationList', () => {
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(await screen.findByText('Earlier')).toBeInTheDocument()
+		expect(await screen.findByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText("That's the whole history — 2 in this workspace.")).toBeInTheDocument()
 		// The scroll affordance never renders alongside the closing line.
 		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()
@@ -118,10 +118,9 @@ describe('ConversationList', () => {
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(await screen.findByRole('button', { name: /Unread\s*1/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Direct messages\s*3/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Pinned\s*1/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Earlier\s*1/ })).toBeInTheDocument()
+		// Pinned chats lead; every other chat here is a plain row (no agent in the fixtures).
+		expect(await screen.findByRole('button', { name: /Pinned\s*1/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Agents\s*5/ })).toBeInTheDocument()
 		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
 		expect(calls).toContainEqual(expect.objectContaining({ scope: 'recent', limit: '20' }))
 		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', offset: '100' }))
@@ -130,7 +129,7 @@ describe('ConversationList', () => {
 	it('asks the server to leave out empty agent DMs, retired agents and quiet topic chats', async () => {
 		mockScopedList({ recent: [buildConversation({ id: 'a' })] })
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
-		await screen.findByText('Earlier')
+		await screen.findByText('Agents')
 
 		const calls = vi.mocked(api.conversations.list).mock.calls.map(([, q]) => q)
 		expect(calls).toContainEqual(expect.objectContaining({ scope: 'priority', hide_quiet: 'true' }))
@@ -389,7 +388,7 @@ describe('ConversationList', () => {
 })
 
 describe('ConversationList collapse', () => {
-	it('hides every direct message row when the Direct messages group is collapsed', async () => {
+	it('hides every row when the Agents group is collapsed', async () => {
 		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
 		vi.mocked(api.conversations.list).mockResolvedValue({
 			conversations: Array.from({ length: 21 }, (_, i) =>
@@ -398,7 +397,7 @@ describe('ConversationList collapse', () => {
 			has_more: false,
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
-		const header = await screen.findByRole('button', { name: /Direct messages/ })
+		const header = await screen.findByRole('button', { name: /Agents/ })
 		expect(screen.getAllByRole('link')).toHaveLength(21)
 		await userEvent.click(header)
 		expect(screen.queryAllByRole('link')).toHaveLength(0)
@@ -429,7 +428,7 @@ describe('ConversationList collapse', () => {
 			recentHasMore: true,
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
-		await userEvent.click(await screen.findByRole('button', { name: /Direct messages/ }))
+		await userEvent.click(await screen.findByRole('button', { name: /Agents/ }))
 		for (const fire of live) fire()
 		expect(vi.mocked(api.conversations.list).mock.calls.some(([, q]) => q?.offset === '20')).toBe(
 			false,
@@ -516,7 +515,7 @@ describe('ConversationList collapse', () => {
 			},
 		)
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
-		const header = await screen.findByRole('button', { name: /Direct messages/ })
+		const header = await screen.findByRole('button', { name: /Agents/ })
 		await act(async () => {
 			for (const fire of live) fire()
 		})
@@ -536,25 +535,86 @@ describe('ConversationList collapse', () => {
 			mockScopedList({
 				priority: [
 					buildConversation({ id: 'p', title: 'Pinned one', pinned: true }),
-					buildConversation({ id: 'u', title: 'Unread one', unread_count: 2 }),
+					buildConversation({
+						id: 'u',
+						title: 'Unread one',
+						unread_count: 2,
+						lastMessageAt: '2026-11-01T10:00:00Z',
+					}),
 				],
-				recent: [buildConversation({ id: 'r', title: 'Recent one' })],
+				recent: [
+					buildConversation({
+						id: 'r',
+						title: 'Recent one',
+						lastMessageAt: '2026-11-02T10:00:00Z',
+					}),
+				],
 			})
 			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 			await userEvent.click(await screen.findByText('Unread one'))
 			await userEvent.click(screen.getByText('Recent one'))
+			await userEvent.click(screen.getByText('Pinned one'))
 
+			// Pinned chats lead the Agents view; the rows under them are placed newest first.
 			expect(trackOpened).toHaveBeenNthCalledWith(1, {
 				source: 'list',
-				section: 'unread',
-				position: 2,
+				section: 'agent',
+				position: 3,
 			})
 			expect(trackOpened).toHaveBeenNthCalledWith(2, {
 				source: 'list',
-				section: 'recent',
-				position: 3,
+				section: 'agent',
+				position: 2,
 			})
+			expect(trackOpened).toHaveBeenNthCalledWith(3, {
+				source: 'list',
+				section: 'pinned',
+				position: 1,
+			})
+		})
+
+		it('reports a row of the Recent view as section recent', async () => {
+			mockScopedList({
+				priority: [buildConversation({ id: 'p', title: 'Pinned one', pinned: true })],
+				recent: [buildConversation({ id: 'r', title: 'Recent one' })],
+			})
+			render(<ConversationList workspaceId="ws-1" view="recent" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Recent one'))
+
+			expect(trackOpened).toHaveBeenCalledWith({ source: 'list', section: 'recent', position: 2 })
+		})
+
+		it('reports an agent row and a chat folded under it with the same place', async () => {
+			mockScopedList({
+				priority: [],
+				recent: [
+					agentChat('a', { id: 'cto', name: 'CTO' }, { title: 'Search ranking' }),
+					agentChat('b', { id: 'cto', name: 'CTO' }, { title: 'Dictation retry' }),
+				],
+			})
+			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByRole('button', { name: /Unfold 2 chats with CTO/ }))
+			await userEvent.click(screen.getByText('Dictation retry'))
+
+			expect(trackOpened).toHaveBeenCalledWith({ source: 'list', section: 'agent', position: 1 })
+		})
+
+		it('reports a row opened from the Rooms group as section room', async () => {
+			mockScopedList({
+				priority: [
+					buildConversation({ id: 'w', title: 'Weekly planning', roomKind: 'free' }),
+					buildConversation({ id: 'u', title: 'Unread one', unread_count: 2 }),
+				],
+				recent: [],
+			})
+			render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+			await userEvent.click(await screen.findByText('Weekly planning'))
+
+			expect(trackOpened).toHaveBeenCalledWith({ source: 'list', section: 'room', position: 1 })
 		})
 	})
 })
@@ -684,5 +744,94 @@ describe('ConversationList search', () => {
 				vi.useRealTimers()
 			}
 		})
+	})
+})
+
+function agentChat(
+	id: string,
+	agent: { id: string; name: string },
+	overrides: Partial<ConversationListItemResponse> = {},
+): ConversationListItemResponse {
+	const person = (actorId: string, actorName: string, actorType: 'human' | 'agent') => ({
+		actorId,
+		actorName,
+		actorType,
+		joinedAt: null,
+		addedBy: null,
+	})
+	return buildConversation({
+		id,
+		title: `Chat ${id}`,
+		participants: [person('me', 'Me', 'human'), person(agent.id, agent.name, 'agent')],
+		...overrides,
+	})
+}
+
+describe('ConversationList agent rows', () => {
+	const cto = { id: 'cto', name: 'CTO' }
+	const researcher = { id: 'res', name: 'Researcher' }
+
+	beforeEach(() => {
+		vi.mocked(api.conversations.list).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockReset()
+		vi.mocked(api.conversations.replyThreads).mockResolvedValue({ threads: [] } as never)
+	})
+
+	it('folds an agent with several chats into one row and shows an agent with one chat as a plain row', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [
+				agentChat('a', cto, { title: 'Search ranking', unread_count: 2 }),
+				agentChat('b', cto, { title: 'Dictation retry', unread_count: 1 }),
+				agentChat('c', researcher, { title: 'Three tools compared' }),
+			],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('2 chats · Search ranking')).toBeInTheDocument()
+		// Unread is summed over the agent's chats.
+		expect(screen.getByRole('img', { name: '3 unread' })).toBeInTheDocument()
+		// The agent's chats stay folded until the chevron opens them.
+		expect(screen.queryByText('Dictation retry')).not.toBeInTheDocument()
+		// An agent with one chat is a plain row: its chat title, no fold.
+		expect(screen.getByText('Three tools compared')).toBeInTheDocument()
+		expect(screen.getAllByTestId('agent-row')).toHaveLength(1)
+		expect(screen.getByRole('button', { name: /Agents\s*2/ })).toBeInTheDocument()
+	})
+
+	it('unfolds an agent row with its chats and names the direct message for what it is', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [
+				agentChat('a', cto, { title: 'Search ranking' }),
+				agentChat('dm', cto, { title: 'CTO', directPairKey: 'pair-cto' }),
+			],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await userEvent.click(await screen.findByRole('button', { name: /Unfold 2 chats with CTO/ }))
+
+		expect(screen.getByText('Direct message')).toBeInTheDocument()
+		expect(screen.getAllByText('Search ranking').length).toBeGreaterThan(0)
+		expect(screen.getByRole('button', { name: /Fold 2 chats with CTO/ })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		)
+	})
+
+	it('lists chats flat and newest first in the Recent view', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [
+				agentChat('a', cto, { title: 'Search ranking' }),
+				agentChat('b', cto, { title: 'Dictation retry' }),
+			],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" view="recent" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByRole('button', { name: /Today\s*2/ })).toBeInTheDocument()
+		expect(screen.queryByTestId('agent-row')).not.toBeInTheDocument()
+		expect(screen.getByText('Search ranking')).toBeInTheDocument()
+		expect(screen.getByText('Dictation retry')).toBeInTheDocument()
 	})
 })
