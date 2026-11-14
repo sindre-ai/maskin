@@ -6,11 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	trackObjectOpened: vi.fn(),
 	trackLoopResultOpened: vi.fn(),
+	trackFirstResultOpened: vi.fn(),
 }))
 
 vi.mock('@/lib/analytics', () => ({
 	trackObjectOpened: mocks.trackObjectOpened,
 	trackLoopResultOpened: mocks.trackLoopResultOpened,
+	trackFirstResultOpened: mocks.trackFirstResultOpened,
 }))
 
 const object = { id: 'o-1', type: 'insight', createdBy: 'agent-1' }
@@ -68,6 +70,7 @@ describe('useObjectOpenedEvent', () => {
 	it('sends loop_result_opened with the run when an agent made an item in a flow', () => {
 		renderHook(() => useObjectOpenedEvent(object, [producedBy, inLoop], actors))
 
+		expect(mocks.trackFirstResultOpened).toHaveBeenCalledTimes(1)
 		expect(mocks.trackLoopResultOpened).toHaveBeenCalledTimes(1)
 		expect(mocks.trackLoopResultOpened).toHaveBeenCalledWith({
 			entity_id: 'o-1',
@@ -88,6 +91,7 @@ describe('useObjectOpenedEvent', () => {
 			created_by_actor_type: 'human',
 		})
 		expect(mocks.trackLoopResultOpened).not.toHaveBeenCalled()
+		expect(mocks.trackFirstResultOpened).not.toHaveBeenCalled()
 	})
 
 	it('falls back to unknown when the maker is not in the actor list', () => {
