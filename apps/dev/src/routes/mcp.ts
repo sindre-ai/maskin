@@ -28,6 +28,7 @@ import {
 	captureMcpToolCall,
 	normalizeActorType,
 } from '../lib/analytics/mcp-tool-calls'
+import { classifyMcpToolError } from '../lib/analytics/mcp-tool-error-class'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -770,7 +771,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					errorClass: unpaired
 						? 'no-response'
 						: error
-							? (classifyMcpError(error) ?? 'unclassified')
+							? (classifyMcpError(error) ?? classifyMcpToolError(error) ?? 'unclassified')
 							: null,
 					durationMs,
 					responseBytes,
