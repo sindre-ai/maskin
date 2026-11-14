@@ -3110,6 +3110,48 @@ export const liveActivityFollows = pgTable(
 )
 
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+// ── Trial cards (bet "A card to start a 7-day trial", task T2) ──────────────
+//
+// One row per plain-entry card that has started a free trial, keyed by the Stripe card
+// fingerprint. The unique index is what refuses a second trial on the same card, even when two
+// requests race. Wallet cards (Apple Pay, Google Pay) are never stored: their fingerprint comes
+// from a device number. workspace_id is SET NULL on workspace delete so the card stays used.
+export const trialCards = pgTable(
+	'trial_cards',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fingerprint: text('fingerprint').notNull(),
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_cards_fingerprint_uniq').on(t.fingerprint)],
+)
+
+export type TrialCard = typeof trialCards.$inferSelect
+
+// ── Trial promo codes (bet "A card to start a 7-day trial", task "Promo code on the start-trial page") ──
+//
+// A code starts the trial with no card, for `trial_days` days. Stored upper case. `redemptions` is raised by one
+// conditional UPDATE inside the transaction that starts the trial, so `max_redemptions` holds even
+// when two requests race. No code is created by the app; a person adds rows by hand.
+export const trialPromoCodes = pgTable(
+	'trial_promo_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		code: text('code').notNull(),
+		maxRedemptions: integer('max_redemptions').notNull(),
+		redemptions: integer('redemptions').notNull().default(0),
+		// How long the trial lasts for a person who starts it with this code. A code gives 14 unless set otherwise.
+		trialDays: integer('trial_days').notNull().default(14),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		active: boolean('active').notNull().default(true),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_promo_codes_code_uniq').on(t.code)],
+)
+
+export type TrialPromoCode = typeof trialPromoCodes.$inferSelect
+
 export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 

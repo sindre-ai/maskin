@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
-import { workspaceSettingsSchema } from '@maskin/shared'
+import { isPaidPlan, workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { maybeAutoTopUp } from './auto-top-up'
@@ -192,7 +192,7 @@ export async function debitCreditForSession(params: {
 }): Promise<void> {
 	const { db, workspaceId, sessionId, actorId, wsSettings } = params
 	const billing = wsSettings.billing
-	if (billing?.plan !== 'pro' && billing?.plan !== 'team') return
+	if (!billing || !isPaidPlan(billing.plan)) return
 	if (!canUseCreditBalance(billing.plan, billing)) return
 	if (await isEnterpriseWorkspace(db, workspaceId)) return
 

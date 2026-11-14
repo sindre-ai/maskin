@@ -14,6 +14,7 @@ const DEFAULT_DAILY_CAP = 2_500
 // Events the product questions depend on. Never sampled, never capped.
 const TIER1_EXACT = new Set([
 	'agent_session_started',
+	'plan_limit_reached',
 	'chat_session_started',
 	'chat_session_seeded',
 	'integration_connect_started',
@@ -21,7 +22,14 @@ const TIER1_EXACT = new Set([
 	'meeting_transcript_landed',
 	'notification_sent',
 ])
-const TIER1_PREFIXES = ['foryou_card_', 'signup_', 'workspace_', 'checkout_', 'support_item_']
+const TIER1_PREFIXES = [
+	'foryou_card_',
+	'signup_',
+	'workspace_',
+	'checkout_',
+	'trial_',
+	'support_item_',
+]
 
 // Fraction of events sent. 0 drops the event. Sampled events carry
 // `sample_rate`, so a count is read as `count / sample_rate`.

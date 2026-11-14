@@ -1,8 +1,14 @@
 import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { CreateSessionInput, MessageCardAnswer, MessageQuestionAnswer } from '@/lib/api'
+import type {
+	BillingUsageResponse,
+	CreateSessionInput,
+	MessageCardAnswer,
+	MessageQuestionAnswer,
+} from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import { trialStateOf } from '@/lib/trial'
 import { isViewerRefusal } from '@/lib/workspace-role'
 import {
 	useInfiniteQuery,
@@ -81,9 +87,16 @@ export function useCreateSession(workspaceId: string) {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.sessions.byActor(workspaceId, data.actor_id),
 			})
+			// The billing read is cached by the sidebar and banners; when it has not loaded the
+			// event goes out without plan and trial_state rather than waiting on it.
+			const billing = queryClient.getQueryData<BillingUsageResponse>(
+				queryKeys.billing.usage(workspaceId),
+			)
 			trackAgentSessionStarted({
 				entity_id: result.id,
 				entity_type: 'session',
+				plan: billing?.plan,
+				trial_state: trialStateOf(billing) ?? undefined,
 			})
 		},
 	})

@@ -16,7 +16,7 @@ import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { createHealthHandler } from './lib/health'
-import { PlanCapExceededError } from './lib/llm-routing'
+import { PlanCapExceededError, TrialNotStartedError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
 import { requestTiming } from './lib/request-timing'
@@ -217,6 +217,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	options.onNodeWebSocket?.(nodeWebSocket)
 
 	app.onError((err, c) => {
+		if (err instanceof TrialNotStartedError) {
+			logger.warn('Trial not started', { plan: err.plan })
+			return c.json(
+				{ error: { code: ApiErrorCode.TRIAL_NOT_STARTED, message: err.message, plan: err.plan } },
+				402,
+			)
+		}
 		if (err instanceof PlanCapExceededError) {
 			logger.warn('Plan cap exceeded', {
 				plan: err.plan,

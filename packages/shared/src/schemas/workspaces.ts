@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { dailyBudgetSchema } from './daily-budget'
+import { storedDailyBudgetSchema } from './daily-budget'
 import { LOOP_STATUSES } from './objects'
 
 const fieldDefinitionSchema = z.object({
@@ -182,7 +182,7 @@ export const workspaceSettingsSchema = z.object({
 			small_fast_model: z.string().nullable().optional(),
 		})
 		.optional(),
-	// Maskin-funded LLM subscription. When `plan` is `pro` or `team` the
+	// Maskin-funded LLM subscription. When `plan` is `starter`, `pro`, `team` or `ultra` the
 	// session routes through Maskin's OpenRouter account (Deepseek v4 Flash),
 	// and usage is attributed to the current billing period via
 	// `sessions.config.llm_route = 'maskin_plan'`. Mutually exclusive with
@@ -194,7 +194,7 @@ export const workspaceSettingsSchema = z.object({
 	// `PLAN_CAP_EXCEEDED` error so the frontend can show a reset ETA.
 	billing: z
 		.object({
-			plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
+			plan: z.enum(['trial', 'starter', 'pro', 'team', 'ultra', 'enterprise']),
 			stripe_customer_id: z.string().nullable().optional(),
 			stripe_subscription_id: z.string().nullable().optional(),
 			period_start: z.number().nullable().optional(),
@@ -204,6 +204,15 @@ export const workspaceSettingsSchema = z.object({
 			// cap (and the usage compared against it) is tracked in actual dollar
 			// cost rather than a token count — see lib/llm-routing.ts.
 			hard_cap_usd_cents: z.number().nullable().optional(),
+			// Card-at-sign-up trial (bet "A card to start a 7-day trial"). Absent on every workspace
+			// that did not go through the card step. `awaiting_card`: signed up, no card yet, so no
+			// session starts. `started`: the card is saved and the 7 days run (period_start /
+			// period_end hold the window). `trial_wallet` records how the card was entered.
+			trial_state: z.enum(['awaiting_card', 'started']).optional(),
+			trial_wallet: z.enum(['apple_pay', 'google_pay', 'other', 'none']).optional(),
+			// Set when the trial started with a promo code instead of a card: the id of the row in
+			// trial_promo_codes (never the code text). Such a workspace has no card, so no trial_wallet.
+			trial_promo_code_id: z.string().uuid().optional(),
 			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
 			// Prepaid usage-credits balance, in USD cents. Depletes as
 			// `maskin_plan` usage crosses the plan's included cap
@@ -233,7 +242,7 @@ export const workspaceSettingsSchema = z.object({
 	// The one daily spend target (bet A daily token budget, slice 1a). Absent means
 	// off. Written only by PUT /api/billing/daily-budget, which owns the owner check
 	// and the dollar-unit gate; PATCH /api/workspaces/:id rejects it.
-	daily_budget: dailyBudgetSchema.optional(),
+	daily_budget: storedDailyBudgetSchema.optional(),
 	// Voice v1 (bet 16bd0042). Absent means transcripts persist; only an explicit
 	// `persist_transcripts: false` opts the workspace out (no transcript rows,
 	// no audio blob). Deliberately no default so existing workspaces' stored

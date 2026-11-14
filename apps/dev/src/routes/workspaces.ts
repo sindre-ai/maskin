@@ -38,6 +38,7 @@ import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-ki
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
+import { newWorkspaceNeedsCard } from '../lib/trial-card'
 import type { WorkspaceSettings } from '../lib/types'
 import {
 	isWorkspaceHumanAdminOrOwner,
@@ -218,6 +219,9 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			name: body.name,
 			ownerActorId: actorId,
 			settings: body.settings,
+			// Same card step as sign-up (bet "A card to start a 7-day trial"), so a second workspace
+			// is not a way round it. Off unless the sign-up switch is on.
+			awaitingCard: await newWorkspaceNeedsCard(db, actorId, c.get('actorType')),
 		})
 	} catch (err) {
 		// Returned here rather than thrown to `createApp`'s `onError`: this

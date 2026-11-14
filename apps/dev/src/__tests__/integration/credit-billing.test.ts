@@ -133,6 +133,72 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		).resolves.toBeUndefined()
 	})
 
+	// The five plans in kroner: no stored hard_cap_usd_cents, so the cap is the
+	// plan's own included amount (Starter 20 kr = 286 cents, Ultra 300 kr = 4286
+	// cents at 7 kr per dollar). Over that limit a workspace keeps starting
+	// sessions only while it holds credit; nothing new can be bought, but a
+	// balance that exists is still spent.
+	describe.each([
+		{ plan: 'starter', capCents: 286, overCost: '3.00', underCost: '2.00' },
+		{ plan: 'ultra', capCents: 4_286, overCost: '50.00', underCost: '40.00' },
+	] as const)('$plan plan over its kroner limit', ({ plan, capCents, overCost, underCost }) => {
+		async function seedUsage(totalCostUsd: string) {
+			await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'completed',
+				config: { llm_route: 'maskin_plan' },
+				totalCostUsd,
+				inputTokens: 0,
+				outputTokens: 0,
+				createdAt: new Date(PERIOD_START_SEC * 1000 + 1000),
+			})
+		}
+
+		function planSettings(overrides: Partial<NonNullable<WorkspaceSettings['billing']>>) {
+			// No stored cap: checkPlanCap must fall back to the plan's kroner cap.
+			return billingSettings({ plan, hard_cap_usd_cents: undefined, ...overrides })
+		}
+
+		it('hard-blocks once usage reaches the plan cap and there is no credit', async () => {
+			await seedUsage(overCost)
+			const wsSettings = planSettings({ credit_balance_cents: 0 })
+			expect(canUseCreditBalance(plan, wsSettings.billing)).toBe(false)
+			await expect(
+				checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
+			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan, cap: capCents })
+		})
+
+		it('keeps letting sessions start while it holds credit, then blocks when the credit is gone', async () => {
+			await seedUsage(overCost)
+			const withCredit = planSettings({ credit_balance_cents: 500 })
+			expect(canUseCreditBalance(plan, withCredit.billing)).toBe(true)
+			await expect(
+				checkPlanCap({ db, workspaceId, wsSettings: withCredit, enterprise: false }),
+			).resolves.toBeUndefined()
+
+			const spent = planSettings({ credit_balance_cents: 0 })
+			await expect(
+				checkPlanCap({ db, workspaceId, wsSettings: spent, enterprise: false }),
+			).rejects.toThrow(PlanCapExceededError)
+		})
+
+		it('hard-blocks past_due even with credit on file', async () => {
+			await seedUsage(overCost)
+			const wsSettings = planSettings({ credit_balance_cents: 500, status: 'past_due' })
+			expect(canUseCreditBalance(plan, wsSettings.billing)).toBe(false)
+			await expect(
+				checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
+			).rejects.toThrow(PlanCapExceededError)
+		})
+
+		it('does not block under the plan cap, with or without credit', async () => {
+			await seedUsage(underCost)
+			const wsSettings = planSettings({ credit_balance_cents: 0 })
+			await expect(
+				checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
+			).resolves.toBeUndefined()
+		})
+	})
+
 	describe('enterprise allowlist bypass', () => {
 		const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 
@@ -494,6 +560,44 @@ describe('debitCreditForSession (Integration)', () => {
 		// its own $5 only. The $5 written off during A stays forgiven.
 		expect((afterB.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_500)
 	})
+	it.each([
+		['starter', 286, '3.00', 14],
+		['ultra', 4_286, '43.00', 14],
+	])('debits a %s workspace for cost over its cap', async (plan, capCents, cost, over) => {
+		const ws = await insertWorkspace(db, actorId, {
+			enterpriseGranted: false,
+			settings: {
+				billing: {
+					plan,
+					status: 'active',
+					hard_cap_usd_cents: capCents,
+					period_start: PERIOD_START_SEC,
+					stripe_customer_id: 'cus_test',
+					credit_balance_cents: 10_000,
+				},
+			},
+		})
+		if (!ws) throw new Error('workspace insert failed')
+		workspaceId = ws.id
+		const session = await seedSessionWithCost(cost)
+
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: session.id,
+			actorId,
+			wsSettings: billingSettings({
+				plan: plan as 'starter' | 'ultra',
+				hard_cap_usd_cents: capCents,
+				credit_balance_cents: 10_000,
+			}),
+		})
+
+		const [after] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!after) throw new Error('workspace not found')
+		expect((after.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(10_000 - over)
+	})
+
 	it('bills each segment of a paused-then-resumed session, not just the first', async () => {
 		// Regression (migration 0064): `debitCreditIfApplicable` runs on PAUSE as
 		// well as on completion, but the ledger's idempotency key was

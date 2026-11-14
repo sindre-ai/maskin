@@ -2,21 +2,26 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import {
+	ApiErrorCode,
+	type BillingPlan,
 	CREDIT_TOPUP_MAX_USD,
 	CREDIT_TOPUP_MIN_USD,
+	PAID_PLANS,
 	autoTopUpResponseSchema,
 	autoTopUpRuleSchema,
 	dailyBudgetResponseSchema,
 	setDailyBudgetSchema,
+	storedDailyBudgetSchema,
+	toPercentBudget,
 	usdCentsToApproxDkk,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
-import { AUTO_TOP_UP_EVENT } from '../lib/auto-top-up'
+import { AUTO_TOP_UP_EVENT, autoTopUpClosedForPlans } from '../lib/auto-top-up'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
 import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
-import { evaluateDollarUnit, readZeroCostDays } from '../lib/daily-budget'
+import { resolveWorkspaceCapCents } from '../lib/daily-budget'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -31,17 +36,30 @@ import {
 	hasActivePaidPlan,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
 	CREDIT_TOPUP_BOUNDS_MINOR,
-	type MaskinCreditsCurrency,
 	createCheckoutSession,
-	createCreditCheckoutSession,
 	getStripeClient,
 	readStripeEnv,
 } from '../lib/stripe'
+import {
+	TrialCardAlreadyUsedError,
+	TrialCardError,
+	createTrialSetup,
+	startTrial,
+} from '../lib/trial-card'
+import {
+	TrialPromoCodeInvalidError,
+	hitPromoRateLimit,
+	promoCodeTrialDays,
+	startTrialWithPromo,
+} from '../lib/trial-promo'
+import { extractClientIp } from '../lib/trusted-proxy'
 import type { WorkspaceSettings } from '../lib/types'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+import { startChiefOfStaffWelcome } from '../services/workspace-bootstrap'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -55,21 +73,8 @@ import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/
  * `readStripeEnv`, which throws when Stripe is unconfigured) because
  * `/api/billing/usage` must keep serving usage regardless.
  */
-function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'enterprise'): number | null {
+function planHardCapFallback(plan: BillingPlan): number | null {
 	return resolvePlanCapCents(plan)
-}
-
-/**
- * Whether POST /credits/checkout can succeed. Mirrors the route's own gates
- * (Stripe configured, top-up Price set) but reads defensively, since
- * `/api/billing/usage` must keep serving usage when Stripe is unconfigured.
- */
-function isCreditTopupAvailable(): boolean {
-	try {
-		return readStripeEnv().priceCreditsCustom !== null
-	} catch {
-		return false
-	}
 }
 
 type Env = {
@@ -85,7 +90,7 @@ type Env = {
 const app = new OpenAPIHono<Env>()
 
 const checkoutBodySchema = z.object({
-	plan: z.enum(['pro', 'team']),
+	plan: z.enum(PAID_PLANS),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 })
@@ -144,7 +149,7 @@ const linkedinIdentityAddonSchema = z
 	.nullable()
 
 const usageResponseSchema = z.object({
-	plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
+	plan: z.enum(['trial', ...PAID_PLANS, 'enterprise']),
 	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
 	// Actual dollar cost incurred this period, in USD cents — not a token
 	// count, since different agents can run different models with different
@@ -156,12 +161,15 @@ const usageResponseSchema = z.object({
 	stripe_customer_id: z.string().nullable(),
 	stripe_subscription_id: z.string().nullable(),
 	// Prepaid usage-credits balance, in USD cents. Only meaningful for
-	// pro/team — see `lib/credit-billing.ts`.
+	// paid plans — see `lib/credit-billing.ts`. No new balance can be bought.
 	credit_balance_cents: z.number().int().nonnegative(),
-	// True only when the top-up Price env is set and Stripe is configured, i.e. when
-	// POST /credits/checkout can succeed. The web app hides Buy usage credits otherwise.
+	// Always false now: the top-up is closed (see POST /credits/checkout). Kept so
+	// older clients, which hide Buy usage credits on false, keep working.
 	credit_topup_available: z.boolean(),
 	linkedin_identity_addon: linkedinIdentityAddonSchema,
+	// Card-at-sign-up trial: null on every workspace that did not go through the card step.
+	// awaiting_card means no session starts until a card is saved; started means the 7 days run.
+	trial_state: z.enum(['awaiting_card', 'started']).nullable(),
 })
 
 const usageRoute = createRoute({
@@ -394,12 +402,16 @@ async function readBillingUsage(db: Database, workspaceId: string) {
 		usd_cents_used: usdCentsUsed,
 		hard_cap_usd_cents: hardCapCents,
 		period_start: periodStartSec,
-		period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
+		// No trial clock until the card is down: a workspace waiting for its card has no end date,
+		// and the 30 day rolling fallback would show "30 days left" for a trial that has not begun.
+		period_resets_in_ms:
+			plan === 'enterprise' || billing?.trial_state === 'awaiting_card' ? null : resetsIn,
 		stripe_customer_id: billing?.stripe_customer_id ?? null,
 		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 		credit_balance_cents: creditBalanceCents,
-		credit_topup_available: isCreditTopupAvailable(),
+		credit_topup_available: false,
 		linkedin_identity_addon: linkedinIdentityAddon,
+		trial_state: billing?.trial_state ?? null,
 	}
 }
 
@@ -591,6 +603,338 @@ app.openapi(checkoutRoute, async (c) => {
 	}
 })
 
+// ── Card step: save a card for the 7-day trial, no charge ────────────────────────────────────────
+// A workspace that signed up through the card step (trial-card-percent flag) waits for a card.
+// setup hands the browser a Stripe card-setup secret and the public key; start reads the finished
+// setup back from Stripe, refuses a plain card that already had a trial, and starts the 7 days.
+
+const trialSetupResponseSchema = z.object({
+	client_secret: z.string(),
+	publishable_key: z.string(),
+})
+
+// Exactly one of the two: a finished card setup, or a promo code. The handler checks that, so the
+// schema stays a plain object.
+const trialStartBodySchema = z.object({
+	setup_intent_id: z.string().min(1).max(255).optional(),
+	promo_code: z.string().min(1).max(100).optional(),
+})
+
+const trialPromoCheckBodySchema = z.object({
+	code: z.string().min(1).max(100),
+})
+
+const trialPromoCheckResponseSchema = z.object({
+	// One answer for a wrong, expired, switched-off or used-up code, so a guess learns nothing.
+	valid: z.boolean(),
+	// Days the trial lasts with this code, for the page to say; null when the code is not valid.
+	// Only wording: the length is read again on the server when the trial starts.
+	trial_days: z.number().int().positive().nullable(),
+})
+
+const trialStartResponseSchema = z.object({
+	trial_state: z.literal('started'),
+	// Unix seconds.
+	trial_ends_at: z.number().int().nullable(),
+})
+
+const trialSetupRoute = createRoute({
+	method: 'post',
+	path: '/trial/setup',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary: 'Start a Stripe card setup (no charge) for a workspace waiting for its trial card',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Secret for the browser card form',
+			content: { 'application/json': { schema: trialSetupResponseSchema } },
+		},
+		400: {
+			description: 'The card setup is not finished or does not belong to this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description:
+				'The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe is not configured or failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const trialStartRoute = createRoute({
+	method: 'post',
+	path: '/trial/start',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary:
+		"Start the trial from a finished card setup (7 days), or from a promo code with no card (the code's length)",
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: trialStartBodySchema } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'The trial has started',
+			content: { 'application/json': { schema: trialStartResponseSchema } },
+		},
+		400: {
+			description: 'The card setup is not finished or does not belong to this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description:
+				'The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: {
+			description: 'Too many promo code tries',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe is not configured or failed',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+const trialPromoCheckRoute = createRoute({
+	method: 'post',
+	path: '/trial/promo/check',
+	'x-viewer-policy': 'writer',
+	tags: ['billing'],
+	summary: 'Check a promo code for the trial. Looks only; nothing is used up.',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: trialPromoCheckBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Whether the code could start a trial with no card right now',
+			content: { 'application/json': { schema: trialPromoCheckResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human workspace admin or owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The workspace is not waiting for a card',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: {
+			description: 'Too many promo code tries',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+// Same gate as checkout: authMiddleware only proves membership, and a card binds the workspace to
+// a payer, so a human admin or owner does it. Agent keys never reach the payment surface.
+const TRIAL_FORBIDDEN_MESSAGE = 'Only workspace owners/admins can manage billing'
+
+// What a failed card step means for the caller. Kept apart from c.json so each handler answers
+// with a status the route declares.
+function trialFailure(err: unknown) {
+	if (err instanceof TrialCardAlreadyUsedError) {
+		return {
+			status: 409 as const,
+			body: {
+				error: {
+					code: ApiErrorCode.TRIAL_CARD_ALREADY_USED,
+					message: err.message,
+					suggestion: 'Choose a plan to keep going, or add a different card.',
+				},
+			},
+		}
+	}
+	if (err instanceof TrialPromoCodeInvalidError) {
+		return {
+			status: 400 as const,
+			body: {
+				error: {
+					code: ApiErrorCode.TRIAL_PROMO_CODE_INVALID,
+					message: err.message,
+					suggestion: 'Check the code, or remove it and add a card instead.',
+				},
+			},
+		}
+	}
+	if (err instanceof TrialCardError) {
+		return { status: err.status, body: createApiError(err.code, err.message) }
+	}
+	logger.error('Trial card step failed', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+	return {
+		status: 500 as const,
+		body: createApiError('INTERNAL_ERROR', 'Could not save the card. Try again.'),
+	}
+}
+
+app.openapi(trialSetupRoute, async (c) => {
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (!(await isWorkspaceHumanAdminOrOwner(c.get('db'), c.get('actorId'), workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
+	}
+	const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY?.trim()
+	if (!publishableKey) {
+		logger.error('STRIPE_PUBLISHABLE_KEY is not set, so the card step cannot start')
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+	try {
+		const { clientSecret } = await createTrialSetup({
+			db: c.get('db'),
+			stripe: getStripeClient(),
+			workspaceId,
+		})
+		return c.json({ client_secret: clientSecret, publishable_key: publishableKey }, 200)
+	} catch (err) {
+		const failure = trialFailure(err)
+		switch (failure.status) {
+			case 400:
+				return c.json(failure.body, 400)
+			case 404:
+				return c.json(failure.body, 404)
+			case 409:
+				return c.json(failure.body, 409)
+			default:
+				return c.json(failure.body, 500)
+		}
+	}
+})
+
+function promoCallerIp(c: { req: { raw: Request; header(name: string): string | undefined } }) {
+	const socketIp = (c.req.raw as unknown as { remoteAddress?: string }).remoteAddress
+	return extractClientIp(socketIp, c.req.header('X-Forwarded-For'))
+}
+
+function promoRateLimited(retryAfterMs: number) {
+	return {
+		retryAfter: String(Math.ceil(retryAfterMs / 1000)),
+		body: createApiError('RATE_LIMITED', 'Too many promo code tries. Wait a minute and try again.'),
+	}
+}
+
+app.openapi(trialPromoCheckRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { code } = c.req.valid('json')
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
+	}
+	const limit = hitPromoRateLimit(c.get('actorId'), promoCallerIp(c))
+	if (!limit.allowed) {
+		const limited = promoRateLimited(limit.retryAfterMs)
+		c.header('Retry-After', limited.retryAfter)
+		return c.json(limited.body, 429)
+	}
+	// Only a workspace that is waiting for its card has a use for a code, so any other state is
+	// refused before the code is looked at.
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const billing = workspaceSettingsSchema.partial().safeParse(row?.settings ?? {})
+	if (!row || !billing.success || billing.data.billing?.trial_state !== 'awaiting_card') {
+		return c.json(createApiError('CONFLICT', 'This workspace is not waiting for a card'), 409)
+	}
+	const trialDays = await promoCodeTrialDays(db, code)
+	return c.json({ valid: trialDays !== null, trial_days: trialDays }, 200)
+})
+
+app.openapi(trialStartRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { setup_intent_id, promo_code } = c.req.valid('json')
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', TRIAL_FORBIDDEN_MESSAGE), 403)
+	}
+	// A code is the only way past the card step, so the request must bring a card setup or a code.
+	if (Boolean(setup_intent_id) === Boolean(promo_code)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Send either a finished card setup or a promo code'),
+			400,
+		)
+	}
+	if (promo_code) {
+		const limit = hitPromoRateLimit(c.get('actorId'), promoCallerIp(c))
+		if (!limit.allowed) {
+			const limited = promoRateLimited(limit.retryAfterMs)
+			c.header('Retry-After', limited.retryAfter)
+			return c.json(limited.body, 429)
+		}
+	}
+	try {
+		const onStarted = () => startWelcomeAfterTrial(db, workspaceId, c.get('actorId'))
+		const { trialEndsAt } = promo_code
+			? await startTrialWithPromo({
+					db,
+					workspaceId,
+					actorId: c.get('actorId'),
+					code: promo_code,
+					onStarted,
+				})
+			: await startTrial({
+					db,
+					stripe: getStripeClient(),
+					workspaceId,
+					actorId: c.get('actorId'),
+					setupIntentId: setup_intent_id as string,
+					// The welcome was held back at sign-up so no session started before the card.
+					onStarted,
+				})
+		return c.json({ trial_state: 'started' as const, trial_ends_at: trialEndsAt }, 200)
+	} catch (err) {
+		const failure = trialFailure(err)
+		switch (failure.status) {
+			case 400:
+				return c.json(failure.body, 400)
+			case 404:
+				return c.json(failure.body, 404)
+			case 409:
+				return c.json(failure.body, 409)
+			default:
+				return c.json(failure.body, 500)
+		}
+	}
+})
+
+async function startWelcomeAfterTrial(db: Database, workspaceId: string, ownerActorId: string) {
+	if (shouldSkipOnboardingKickoff()) return
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const chiefOfStaffId = (row?.settings as { default_agent_id?: string | null } | undefined)
+		?.default_agent_id
+	if (chiefOfStaffId) await startChiefOfStaffWelcome(db, workspaceId, ownerActorId, chiefOfStaffId)
+}
+
 // The schema only takes the widest range any currency allows. The exact
 // min/max for the chosen currency is checked in the handler, otherwise this
 // check would cap EUR/DKK callers at the USD maximum.
@@ -657,121 +1001,13 @@ const buyCreditsRoute = createRoute({
 	},
 })
 
+// Closed: the pricing bet (Magnus, 9 Nov 2026) has no top-up. At 100% of a plan
+// work waits for the next period. Existing balances are still honoured when
+// spending (`canUseCreditBalance`) and credited by the webhook if a checkout
+// opened earlier still completes; only starting a new one is shut. The route and
+// its schema stay so older clients get this 404 and not an unknown-route error.
 app.openapi(buyCreditsRoute, async (c) => {
-	const db = c.get('db')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
-
-	// Delta 1b currency-scoped bounds. The body schema only enforces the widest
-	// range across currencies; USD (or no currency) keeps $10 to $500 and
-	// EUR/DKK use their own table entry.
-	const bounds =
-		currency && currency !== 'usd'
-			? CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
-			: { min: CREDIT_TOPUP_MIN_USD * 100, max: CREDIT_TOPUP_MAX_USD * 100 }
-	if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
-		return c.json(
-			createApiError(
-				'BAD_REQUEST',
-				`amount_usd_cents must be between ${bounds.min} and ${bounds.max}${
-					currency ? ` for currency=${currency}` : ''
-				}`,
-			),
-			400,
-		)
-	}
-
-	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
-		.from(workspaces)
-		.where(eq(workspaces.id, workspaceId))
-		.limit(1)
-
-	if (!workspace) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-
-	// Spends against the workspace's card - same gate as `checkoutRoute`.
-	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
-		return c.json(
-			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
-			403,
-		)
-	}
-
-	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
-	const billing = settingsParse.success ? settingsParse.data.billing : undefined
-
-	// Same eligibility as spending a balance (`canUseCreditBalance`), minus
-	// the balance>0 check since we're about to add to it. Any maskin-plan
-	// workspace may top up, trial included — a trial that hits its cap and
-	// wants to pay to keep running is the case this button exists for, and
-	// gating it to pro/team meant the NO CREDITS prompt led to a dead end.
-	//
-	// A Stripe customer is NOT required up front: a first-time buyer has none,
-	// and Stripe Checkout creates one when `customer` is undefined (the
-	// webhook then persists it, same as the subscription path). Requiring it
-	// here made the first purchase impossible, which is the only purchase a
-	// trial workspace can make.
-	//
-	// `past_due`/`canceled` still block, matching the spend gate: a workspace
-	// that can't be billed for its base plan shouldn't be taking on more.
-	const blockedStatus = billing?.status === 'past_due' || billing?.status === 'canceled'
-	// Enterprise workspaces fund their own LLM usage and never draw on a
-	// credit balance, so there is nothing for them to top up. Uses the
-	// db-reading helper because this route's workspace select carries only
-	// `id`/`settings`, not the enterprise-grant columns `isEnterprise` needs.
-	const eligible = !blockedStatus && !(await isEnterpriseWorkspace(db, workspaceId))
-	if (!eligible) {
-		return c.json(
-			createApiError('BAD_REQUEST', 'Workspace is not eligible to buy usage credits'),
-			400,
-		)
-	}
-
-	let stripeEnv: ReturnType<typeof readStripeEnv>
-	try {
-		stripeEnv = readStripeEnv()
-	} catch (err) {
-		logger.error('Stripe is not configured', {
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
-	}
-
-	// The top-up Price is optional config: without it there is nothing to
-	// charge against, so the endpoint is unavailable rather than misconfigured.
-	if (!stripeEnv.priceCreditsCustom) {
-		return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
-	}
-
-	const stripe = getStripeClient(stripeEnv)
-	try {
-		const session = await createCreditCheckoutSession(
-			stripe,
-			{
-				workspaceId,
-				amountUsdCents: amount_usd_cents,
-				successUrl: success_url,
-				cancelUrl: cancel_url,
-				existingCustomerId: billing?.stripe_customer_id ?? undefined,
-				currency: currency as MaskinCreditsCurrency | undefined,
-			},
-			stripeEnv,
-		)
-		if (!session.url) {
-			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
-			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
-		}
-		return c.json({ url: session.url, session_id: session.id }, 200)
-	} catch (err) {
-		logger.error('Stripe credit top-up checkout session creation failed', {
-			workspaceId,
-			amountUsdCents: amount_usd_cents,
-			error: err instanceof Error ? err.message : String(err),
-		})
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
-	}
+	return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
 })
 
 const cancelRoute = createRoute({
@@ -898,11 +1134,11 @@ const getDailyBudgetRoute = createRoute({
 	method: 'get',
 	path: '/daily-budget',
 	tags: ['billing'],
-	summary: 'The workspace daily target and whether the dollar unit can be used',
+	summary: 'The workspace daily target, as a percent of the plan',
 	request: { headers: workspaceIdHeader },
 	responses: {
 		200: {
-			description: 'Current daily target (null when off) and the dollar-unit check',
+			description: 'Current daily target (null when off), in percent of the plan',
 			content: { 'application/json': { schema: dailyBudgetResponseSchema } },
 		},
 		404: {
@@ -938,24 +1174,43 @@ const setDailyBudgetRoute = createRoute({
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
-		409: {
-			description: 'The dollar unit is locked until cost numbers are reliable',
-			content: { 'application/json': { schema: errorSchema } },
-		},
 	},
 })
 
+/** The stored target (as saved, maybe in an older unit) and the plan limit a percent is a share of. */
 async function readStoredDailyBudget(db: Database, workspaceId: string) {
 	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
 	if (!workspace) return null
-	const parsed = workspaceSettingsSchema.shape.daily_budget.safeParse(
+	const parsed = storedDailyBudgetSchema.safeParse(
 		(workspace.settings as Record<string, unknown> | null)?.daily_budget,
 	)
-	return { dailyBudget: parsed.success ? (parsed.data ?? null) : null }
+	return {
+		dailyBudget: parsed.success ? parsed.data : null,
+		capCents: resolveWorkspaceCapCents(workspace),
+	}
+}
+
+/** The response both routes return: the target in percent, plus what became of an older one. */
+function dailyBudgetResponse(
+	stored: NonNullable<Awaited<ReturnType<typeof readStoredDailyBudget>>>,
+) {
+	const { budget, earlier } = stored.dailyBudget
+		? toPercentBudget(stored.dailyBudget, stored.capCents)
+		: { budget: null, earlier: null }
+	return {
+		daily_budget: budget,
+		earlier_target: earlier,
+		plan_limit_known: stored.capCents !== null,
+	}
 }
 
 app.openapi(getDailyBudgetRoute, async (c) => {
@@ -963,8 +1218,7 @@ app.openapi(getDailyBudgetRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const stored = await readStoredDailyBudget(db, workspaceId)
 	if (!stored) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	const days = await readZeroCostDays(db, workspaceId, stored.dailyBudget?.timezone ?? 'UTC')
-	return c.json({ daily_budget: stored.dailyBudget, dollar_unit: evaluateDollarUnit(days) }, 200)
+	return c.json(dailyBudgetResponse(stored), 200)
 })
 
 app.openapi(setDailyBudgetRoute, async (c) => {
@@ -983,12 +1237,6 @@ app.openapi(setDailyBudgetRoute, async (c) => {
 			createApiError('FORBIDDEN', 'Only workspace owners/admins can set the daily budget'),
 			403,
 		)
-	}
-
-	const days = await readZeroCostDays(db, workspaceId, next?.timezone ?? 'UTC')
-	const dollarUnit = evaluateDollarUnit(days)
-	if (next?.unit === 'dollars' && !dollarUnit.available) {
-		return c.json(createApiError('CONFLICT', dollarUnit.reason ?? 'Dollar targets are locked'), 409)
 	}
 
 	// Atomic key write: a read-modify-write of the whole settings object could
@@ -1012,7 +1260,7 @@ app.openapi(setDailyBudgetRoute, async (c) => {
 		data: { before: before.dailyBudget, after: next },
 	})
 
-	return c.json({ daily_budget: next, dollar_unit: dollarUnit }, 200)
+	return c.json(dailyBudgetResponse({ dailyBudget: next, capCents: before.capCents }), 200)
 })
 
 // ── Auto top-up ─────────────────────────────────────────────────────────────
@@ -1055,7 +1303,8 @@ const setAutoTopUpRoute = createRoute({
 			content: { 'application/json': { schema: autoTopUpResponseSchema } },
 		},
 		400: {
-			description: 'Workspace cannot be charged automatically yet',
+			description:
+				'Workspace cannot be charged automatically yet, or auto top-up is closed on plans',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
@@ -1138,6 +1387,17 @@ app.openapi(setAutoTopUpRoute, async (c) => {
 		workspace.settings as { billing?: { stripe_customer_id?: string; status?: string } } | null
 	)?.billing
 	if (rule.enabled) {
+		// The pricing bet has no top-up: at 100% a plan waits for next month. A rule that was
+		// already saved is left alone, so switching the flag off brings it back.
+		if (autoTopUpClosedForPlans()) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Automatic top-up is not available on a plan. At 100% your plan waits for next month.',
+				),
+				400,
+			)
+		}
 		const blocked = billing?.status === 'past_due' || billing?.status === 'canceled'
 		if (!billing?.stripe_customer_id || blocked || (await isEnterpriseWorkspace(db, workspaceId))) {
 			return c.json(

@@ -2,12 +2,13 @@
 // PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
 // MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping.
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import {
 	BillingSection,
 	formatCredits,
 	formatResetsIn,
 } from '@/components/settings/billing-section'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'
 
@@ -27,7 +28,7 @@ const baseUsage = {
 	plan: 'trial' as const,
 	status: 'active' as const,
 	usd_cents_used: 0,
-	hard_cap_usd_cents: 1_000,
+	hard_cap_usd_cents: 286,
 	period_start: null,
 	period_resets_in_ms: 30 * 24 * 60 * 60 * 1000,
 	stripe_customer_id: null,
@@ -64,7 +65,7 @@ describe('BillingSection', () => {
 		vi.mocked(api.billing.checkout).mockReset()
 	})
 
-	it('renders trial plan with both upgrade buttons and the usage line', async () => {
+	it('renders trial plan with an upgrade button per paid plan and the usage line', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			usd_cents_used: 125,
@@ -77,10 +78,11 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Trial')
-		expect(screen.getByText('$1.25 / $10.00 used')).toBeInTheDocument()
+		expect(screen.getByText('$1.25 / $2.86 used')).toBeInTheDocument()
 		// Trial (non-paid-active) plans start with the comparison grid expanded.
-		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
+		for (const plan of ['Starter', 'Pro', 'Team', 'Ultra']) {
+			expect(screen.getByRole('button', { name: `Upgrade to ${plan}` })).toBeInTheDocument()
+		}
 		expect(
 			screen.queryByRole('button', { name: /Switch to bring-your-own/ }),
 		).not.toBeInTheDocument()
@@ -124,7 +126,7 @@ describe('BillingSection', () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 		})
 
 		render(
@@ -133,18 +135,18 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		expect(screen.queryByTestId('trial-banner')).not.toBeInTheDocument()
 	})
 
-	it('renders Pro plan with Team upgrade + Switch-to-BYO + Manage in Stripe', async () => {
+	it('renders Pro plan with Team and Ultra upgrades + Switch-to-BYO + Manage in Stripe', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			usd_cents_used: 750,
-			hard_cap_usd_cents: 4_900,
+			usd_cents_used: 250,
+			hard_cap_usd_cents: 714,
 			period_start: Date.now() - 7 * 24 * 60 * 60 * 1000,
 			period_resets_in_ms: 23 * 24 * 60 * 60 * 1000,
 			stripe_customer_id: 'cus_x',
@@ -157,8 +159,8 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
-		expect(screen.getByText(/\$7\.50 \/ \$49\.00 used/)).toBeInTheDocument()
+		await screen.findByText('Pro — 249 kr/mo')
+		expect(screen.getByText(/\$2\.50 \/ \$7\.14 used/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 
@@ -167,17 +169,20 @@ describe('BillingSection', () => {
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
 		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Upgrade to Ultra' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
+		// Only dearer plans are offered: not the one it is on, not the cheaper one.
 		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Starter' })).not.toBeInTheDocument()
 	})
 
-	it('renders Team plan with Switch-to-BYO but no further upgrade', async () => {
+	it('renders Team plan with an Ultra upgrade and Switch-to-BYO', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'team',
 			status: 'active',
-			hard_cap_usd_cents: 20_000,
+			hard_cap_usd_cents: 1_571,
 			usd_cents_used: 100,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -189,11 +194,57 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Team — $200/mo')
+		await screen.findByText('Team — 549 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
-		expect(screen.queryByRole('button', { name: /Upgrade/ })).not.toBeInTheDocument()
+		expect(screen.getAllByRole('button', { name: /Upgrade/ })).toHaveLength(1)
+		expect(screen.getByRole('button', { name: 'Upgrade to Ultra' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument()
+	})
+
+	it('labels a Starter workspace and shows its cap', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'starter',
+			status: 'active',
+			hard_cap_usd_cents: 286,
+			usd_cents_used: 100,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Starter — 99 kr/mo')
+		expect(screen.getByText(/\$1\.00 \/ \$2\.86 used/)).toBeInTheDocument()
+	})
+
+	it('labels an Ultra workspace, shows its cap and offers no upgrade', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'ultra',
+			status: 'active',
+			hard_cap_usd_cents: 4_286,
+			usd_cents_used: 100,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Ultra — 1.499 kr/mo')
+		expect(screen.getByText(/\$1\.00 \/ \$42\.86 used/)).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		expect(screen.queryByRole('button', { name: /Upgrade/ })).not.toBeInTheDocument()
 	})
 
 	it('renders BYO plan with the upgrade options + no usage bar', async () => {
@@ -292,7 +343,7 @@ describe('BillingSection', () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -303,11 +354,37 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
 		expect(screen.getByText(/lose access to Maskin's hosted LLM/)).toBeInTheDocument()
+	})
+
+	it('says usage, not token credits, in the Switch-to-BYO dialog when the percent display is on', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			hard_cap_usd_cents: 714,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+		})
+
+		render(
+			<TestWrapper>
+				<PlanPercentProvider value>
+					<BillingSection workspaceId="ws-1" enterprise />
+				</PlanPercentProvider>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — 249 kr/mo')
+		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
+		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
+		const dialog = screen.getByRole('dialog')
+		expect(within(dialog).getByText(/your remaining usage for this period/)).toBeInTheDocument()
+		expect(within(dialog).queryByText(/token/i)).not.toBeInTheDocument()
 	})
 
 	it('shows Cancel subscription (not Downgrade to Free) on the Trial card when enterprise is false', async () => {
@@ -316,7 +393,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -327,7 +404,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
@@ -358,7 +435,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			usd_cents_used: 6_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -371,7 +448,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Buy usage credits' })).toBeInTheDocument()
 		// A spendable balance is expected, already-paid-for usage — the bar must not read as an error.
@@ -384,7 +461,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 4_000,
@@ -397,7 +474,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
 	})
@@ -407,7 +484,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 0,
@@ -420,7 +497,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		expect(screen.queryByText(/^\$[\d.,]+ usage credits$/)).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Buy usage credits' })).not.toBeInTheDocument()
 	})
@@ -431,7 +508,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -442,9 +519,10 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
-		expect(screen.getAllByText(/of usage included each month/).length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Usage included each month').length).toBeGreaterThan(0)
+		expect(screen.queryByText(/kr of usage|on the house/)).not.toBeInTheDocument()
 		expect(screen.queryByText(/Buy usage credits any time/)).not.toBeInTheDocument()
 	})
 
@@ -453,7 +531,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			usd_cents_used: 6_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -466,7 +544,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		expect(screen.getByText('$0.00 usage credits')).toBeInTheDocument()
 		const bar = screen.getByRole('progressbar')
 		expect(bar.className).toContain('bg-error')
@@ -478,7 +556,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 0,
@@ -500,7 +578,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		await user.click(screen.getByRole('button', { name: 'Buy usage credits' }))
 		expect(await screen.findByRole('dialog')).toBeInTheDocument()
 
@@ -526,7 +604,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -537,7 +615,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $49/mo')
+		await screen.findByText('Pro — 249 kr/mo')
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
@@ -573,7 +651,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			linkedin_identity_addon: {
@@ -592,6 +670,38 @@ describe('BillingSection', () => {
 		await screen.findByText('LinkedIn Identity')
 		expect(screen.getByText('$49/mo × 2 = $98.00')).toBeInTheDocument()
 		expect(screen.getByText(/\$49\/month covers connectivity to LinkedIn/)).toBeInTheDocument()
+	})
+
+	it('uses the approved usage wording on the LinkedIn Identity line when the percent display is on', async () => {
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 714,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			linkedin_identity_addon: {
+				count: 2,
+				unit_price_usd_cents: 4900,
+				monthly_total_usd_cents: 9800,
+			},
+		})
+
+		render(
+			<TestWrapper>
+				<PlanPercentProvider value>
+					<BillingSection workspaceId="ws-1" enterprise />
+				</PlanPercentProvider>
+			</TestWrapper>,
+		)
+
+		await screen.findByText('LinkedIn Identity')
+		expect(
+			screen.getByText(
+				'The add-on covers the LinkedIn connection. Your plan usage continues to cover only what the model reasons through.',
+			),
+		).toBeInTheDocument()
+		expect(screen.queryByText(/token bucket/)).not.toBeInTheDocument()
 	})
 
 	describe('returning from Stripe Checkout', () => {

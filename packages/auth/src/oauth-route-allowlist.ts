@@ -255,6 +255,9 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/billing/invoices',
 	'GET /api/billing/auto-top-up',
 	'PUT /api/billing/auto-top-up',
+	'POST /api/billing/trial/setup',
+	'POST /api/billing/trial/start',
+	'POST /api/billing/trial/promo/check',
 	'GET /api/billing/usage',
 
 	// Create a workspace, change settings, or change who is in a workspace and with what role.

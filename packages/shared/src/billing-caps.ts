@@ -8,14 +8,24 @@
  * quota UI. Agents never count toward either cap.
  */
 
-export const PLAN_TIER_ORDER = ['trial', 'pro', 'team', 'enterprise'] as const
+export const PLAN_TIER_ORDER = ['trial', 'starter', 'pro', 'team', 'ultra', 'enterprise'] as const
 export type BillingPlan = (typeof PLAN_TIER_ORDER)[number]
+
+/** The four plans a workspace can buy, cheapest first. Trial and enterprise are not for sale. */
+export const PAID_PLANS = ['starter', 'pro', 'team', 'ultra'] as const
+export type PaidPlan = (typeof PAID_PLANS)[number]
+
+export function isPaidPlan(plan: string | null | undefined): plan is PaidPlan {
+	return (PAID_PLANS as readonly string[]).includes(plan ?? '')
+}
 
 /** Max total human members a workspace on this plan may hold. `null` = unlimited. */
 export const SEAT_CAPS: Record<BillingPlan, number | null> = {
 	trial: 1,
+	starter: 5,
 	pro: 5,
 	team: 25,
+	ultra: 25,
 	enterprise: null,
 }
 
@@ -28,12 +38,14 @@ export const SEAT_CAPS: Record<BillingPlan, number | null> = {
  */
 export const OWNERSHIP_CAPS: Record<BillingPlan, number | null> = {
 	trial: 1,
+	starter: 5,
 	pro: 5,
 	team: 25,
+	ultra: 25,
 	enterprise: null,
 }
 
-/** Higher of two plan tiers, per PLAN_TIER_ORDER (enterprise > team > pro > trial). */
+/** Higher of two plan tiers, per PLAN_TIER_ORDER (enterprise > ultra > team > pro > starter > trial). */
 export function higherTier(a: BillingPlan, b: BillingPlan): BillingPlan {
 	return PLAN_TIER_ORDER.indexOf(a) >= PLAN_TIER_ORDER.indexOf(b) ? a : b
 }

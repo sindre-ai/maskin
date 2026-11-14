@@ -5,12 +5,13 @@ import {
 	CREDIT_TOPUP_METADATA_KIND,
 	createCheckoutSession,
 	createCreditCheckoutSession,
-	hardCapForPlan,
+	hardCapForPrice,
 	isHandledStripeEvent,
 	mapSubscriptionStatus,
 	planForPriceId,
+	planFromSubscription,
 	priceIdForPlan,
-	priceIdFromSubscription,
+	priceIdsFromSubscription,
 	readStripeEnv,
 	resetStripeClientForTests,
 	resolveWorkspaceIdFromEvent,
@@ -22,6 +23,10 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_STARTER_DKK: 'price_starter_dkk',
+	STRIPE_PRICE_PRO_DKK: 'price_pro_dkk',
+	STRIPE_PRICE_TEAM_DKK: 'price_team_dkk',
+	STRIPE_PRICE_ULTRA_DKK: 'price_ultra_dkk',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 }
 
@@ -38,8 +43,17 @@ describe('readStripeEnv', () => {
 		const env = readStripeEnv(VALID_ENV)
 		expect(env.pricePro).toBe('price_pro')
 		expect(env.priceCreditsCustom).toBe('price_credits_custom_test')
-		expect(env.proHardCapUsdCents).toBe(4_900)
-		expect(env.teamHardCapUsdCents).toBe(20_000)
+		expect(env.priceDkk).toEqual({
+			starter: 'price_starter_dkk',
+			pro: 'price_pro_dkk',
+			team: 'price_team_dkk',
+			ultra: 'price_ultra_dkk',
+		})
+	})
+
+	it('leaves a kroner price null when its var is unset, and still boots', () => {
+		const { STRIPE_PRICE_ULTRA_DKK: _omit, ...missing } = VALID_ENV
+		expect(readStripeEnv(missing).priceDkk.ultra).toBeNull()
 	})
 
 	it('throws when a required var is missing', () => {
@@ -64,28 +78,42 @@ describe('readStripeEnv', () => {
 		expect(() => readStripeEnv(VALID_ENV)).not.toThrow()
 	})
 
-	it('ignores the Pro and Team cap env vars: the caps come from code', () => {
+	it('ignores the cap env vars: the caps come from code', () => {
 		// Regression: a stale prod MASKIN_PRO_HARD_CAP_USD_CENTS of 2000 pinned
-		// paying Pro workspaces at $20 of their $49.
+		// paying Pro workspaces at $20.
 		for (const stale of ['2000', 'abc', '0']) {
 			const env = readStripeEnv({
 				...VALID_ENV,
 				MASKIN_PRO_HARD_CAP_USD_CENTS: stale,
 				MASKIN_TEAM_HARD_CAP_USD_CENTS: stale,
 			})
-			expect(env.proHardCapUsdCents).toBe(4_900)
-			expect(env.teamHardCapUsdCents).toBe(20_000)
-			expect(hardCapForPlan('pro', env)).toBe(4_900)
+			expect(hardCapForPrice('pro', 'price_pro_dkk', env)).toBe(714)
 		}
 	})
 })
 
-describe('priceIdForPlan / planForPriceId / hardCapForPlan', () => {
+describe('priceIdForPlan / planForPriceId / hardCapForPrice', () => {
 	const env = readStripeEnv(VALID_ENV)
 
-	it('round-trips plan ↔ price id', () => {
-		expect(priceIdForPlan('pro', env)).toBe('price_pro')
-		expect(priceIdForPlan('team', env)).toBe('price_team')
+	it('sells the kroner price for every paid plan', () => {
+		expect(priceIdForPlan('starter', env)).toBe('price_starter_dkk')
+		expect(priceIdForPlan('pro', env)).toBe('price_pro_dkk')
+		expect(priceIdForPlan('team', env)).toBe('price_team_dkk')
+		expect(priceIdForPlan('ultra', env)).toBe('price_ultra_dkk')
+	})
+
+	it('throws a clear error when a plan has no kroner price in this environment', () => {
+		const { STRIPE_PRICE_ULTRA_DKK: _omit, ...missing } = VALID_ENV
+		expect(() => priceIdForPlan('ultra', readStripeEnv(missing))).toThrow(
+			/STRIPE_PRICE_ULTRA_DKK is not configured/,
+		)
+	})
+
+	it('maps the four kroner prices and the two old dollar prices to a plan', () => {
+		expect(planForPriceId('price_starter_dkk', env)).toBe('starter')
+		expect(planForPriceId('price_pro_dkk', env)).toBe('pro')
+		expect(planForPriceId('price_team_dkk', env)).toBe('team')
+		expect(planForPriceId('price_ultra_dkk', env)).toBe('ultra')
 		expect(planForPriceId('price_pro', env)).toBe('pro')
 		expect(planForPriceId('price_team', env)).toBe('team')
 	})
@@ -94,9 +122,16 @@ describe('priceIdForPlan / planForPriceId / hardCapForPlan', () => {
 		expect(planForPriceId('price_unknown', env)).toBeNull()
 	})
 
-	it('returns the configured USD-cent cap for each plan', () => {
-		expect(hardCapForPlan('pro', env)).toBe(4_900)
-		expect(hardCapForPlan('team', env)).toBe(20_000)
+	it('stores the kroner-derived cap for a kroner price', () => {
+		expect(hardCapForPrice('starter', 'price_starter_dkk', env)).toBe(286)
+		expect(hardCapForPrice('pro', 'price_pro_dkk', env)).toBe(714)
+		expect(hardCapForPrice('team', 'price_team_dkk', env)).toBe(1_571)
+		expect(hardCapForPrice('ultra', 'price_ultra_dkk', env)).toBe(4_286)
+	})
+
+	it('keeps the old dollar cap while a subscription is on an old dollar price', () => {
+		expect(hardCapForPrice('pro', 'price_pro', env)).toBe(4_900)
+		expect(hardCapForPrice('team', 'price_team', env)).toBe(20_000)
 	})
 })
 
@@ -190,17 +225,38 @@ describe('resolveWorkspaceIdFromEvent', () => {
 	})
 })
 
-describe('priceIdFromSubscription', () => {
-	it('extracts the first item price id', () => {
-		const sub = {
-			items: { data: [{ price: { id: 'price_pro' } }] },
-		} as unknown as Stripe.Subscription
-		expect(priceIdFromSubscription(sub)).toBe('price_pro')
+describe('priceIdsFromSubscription / planFromSubscription', () => {
+	const env = readStripeEnv({ ...VALID_ENV, STRIPE_PRICE_LINKEDIN_IDENTITY: 'price_linkedin' })
+	const subWith = (...ids: string[]) =>
+		({
+			items: { data: ids.map((id) => ({ price: { id } })) },
+		}) as unknown as Stripe.Subscription
+
+	it('lists every item price id in order', () => {
+		expect(priceIdsFromSubscription(subWith('price_a', 'price_b'))).toEqual(['price_a', 'price_b'])
 	})
 
-	it('returns null when items are empty', () => {
-		const sub = { items: { data: [] } } as unknown as Stripe.Subscription
-		expect(priceIdFromSubscription(sub)).toBeNull()
+	it('returns an empty list when items are empty', () => {
+		expect(priceIdsFromSubscription(subWith())).toEqual([])
+	})
+
+	it('finds the plan on the first item', () => {
+		expect(planFromSubscription(subWith('price_pro_dkk'), env)).toEqual({
+			plan: 'pro',
+			priceId: 'price_pro_dkk',
+		})
+	})
+
+	it('finds the plan when the add-on item comes first', () => {
+		expect(planFromSubscription(subWith('price_linkedin', 'price_team_dkk'), env)).toEqual({
+			plan: 'team',
+			priceId: 'price_team_dkk',
+		})
+	})
+
+	it('returns null when no item carries a known plan price', () => {
+		expect(planFromSubscription(subWith('price_linkedin', 'price_unknown'), env)).toBeNull()
+		expect(planFromSubscription(subWith(), env)).toBeNull()
 	})
 })
 
@@ -228,7 +284,7 @@ describe('createCheckoutSession', () => {
 		expect(params.mode).toBe('subscription')
 		expect(params.client_reference_id).toBe('ws-1')
 		expect(params.metadata?.workspace_id).toBe('ws-1')
-		expect(params.line_items).toEqual([{ price: 'price_pro', quantity: 1 }])
+		expect(params.line_items).toEqual([{ price: 'price_pro_dkk', quantity: 1 }])
 	})
 
 	it('reuses an existing Stripe customer when one is supplied', async () => {

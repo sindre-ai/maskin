@@ -57,6 +57,23 @@ describe('CreateFirstWorkspace', () => {
 		expect(vi.mocked(api.workspaces.create).mock.calls[0][0]).toEqual({ name: 'Acme' })
 	})
 
+	it('opens the card step when the new workspace waits for a card', async () => {
+		vi.mocked(api.workspaces.create).mockResolvedValue({
+			id: 'ws-new',
+			name: 'Acme',
+			settings: { billing: { plan: 'trial', trial_state: 'awaiting_card' } },
+		} as never)
+		renderScreen()
+		await userEvent.type(screen.getByLabelText('Workspace name'), 'Acme')
+		await userEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+		await waitFor(() =>
+			expect(navigate).toHaveBeenCalledWith({
+				to: '/start-trial/$workspaceId',
+				params: { workspaceId: 'ws-new' },
+			}),
+		)
+	})
+
 	it('shows an error and does not navigate when creation fails', async () => {
 		vi.mocked(api.workspaces.create).mockRejectedValue(new Error('boom'))
 		renderScreen()

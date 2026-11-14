@@ -316,6 +316,78 @@
 				"required": [
 					"audio"
 				]
+			},
+			"TranscribeFileResponse": {
+				"type": "object",
+				"properties": {
+					"file_id": {
+						"type": "string",
+						"format": "uuid"
+					},
+					"name": {
+						"type": "string"
+					},
+					"transcript_file_id": {
+						"type": [
+							"string",
+							"null"
+						],
+						"format": "uuid",
+						"description": "The saved .txt transcript. Read it with get_file. Null when no speech was found, or when saving it failed (then `text` holds the transcript)."
+					},
+					"transcript_file_url": {
+						"type": [
+							"string",
+							"null"
+						]
+					},
+					"text": {
+						"type": [
+							"string",
+							"null"
+						],
+						"description": "Null when the transcript was saved: read the file. Set only when saving failed (the whole transcript) or no speech was found (empty)."
+					},
+					"next_step": {
+						"type": "string",
+						"description": "What to do with this result."
+					},
+					"timed": {
+						"type": "boolean",
+						"description": "True when the transcript has timestamps and speaker labels; false when the model returned plain text only."
+					},
+					"audio_seconds": {
+						"type": "number"
+					},
+					"chunks": {
+						"type": "integer"
+					},
+					"model": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"file_id",
+					"name",
+					"transcript_file_id",
+					"transcript_file_url",
+					"text",
+					"next_step",
+					"timed",
+					"audio_seconds",
+					"chunks",
+					"model"
+				]
+			},
+			"TranscribeFileBody": {
+				"type": "object",
+				"properties": {
+					"language": {
+						"type": "string",
+						"pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$",
+						"description": "Optional language hint, e.g. \"en\" or \"nb-NO\"."
+					}
+				}
 			}
 		},
 		"parameters": {}
@@ -5259,6 +5331,9 @@
 											"conversation_id",
 											"agent_id"
 										]
+									},
+									"expected_status": {
+										"type": "string"
 									}
 								}
 							}
@@ -5632,6 +5707,63 @@
 					},
 					"404": {
 						"description": "Object not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The object is no longer in expected_status",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -8145,6 +8277,9 @@
 										}
 									},
 									"auto_create_workspace": {
+										"type": "boolean"
+									},
+									"card_step": {
 										"type": "boolean"
 									},
 									"workspace_id": {
@@ -17067,8 +17202,10 @@
 														"type": "string",
 														"enum": [
 															"trial",
+															"starter",
 															"pro",
 															"team",
+															"ultra",
 															"enterprise"
 														]
 													},
@@ -17102,6 +17239,26 @@
 															"null"
 														]
 													},
+													"trial_state": {
+														"type": "string",
+														"enum": [
+															"awaiting_card",
+															"started"
+														]
+													},
+													"trial_wallet": {
+														"type": "string",
+														"enum": [
+															"apple_pay",
+															"google_pay",
+															"other",
+															"none"
+														]
+													},
+													"trial_promo_code_id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"status": {
 														"type": "string",
 														"enum": [
@@ -17133,53 +17290,106 @@
 												]
 											},
 											"daily_budget": {
-												"type": "object",
-												"properties": {
-													"unit": {
-														"type": "string",
-														"enum": [
-															"tokens",
-															"dollars"
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
+																"enum": [
+																	"percent"
+																]
+															},
+															"amount": {
+																"type": "number",
+																"exclusiveMinimum": 0,
+																"maximum": 100
+															},
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
+															}
+														},
+														"required": [
+															"unit",
+															"amount"
 														]
 													},
-													"amount": {
-														"type": "number",
-														"exclusiveMinimum": 0,
-														"maximum": 1000000000000
-													},
-													"stop_share": {
-														"anyOf": [
-															{
-																"type": "number",
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
 																"enum": [
-																	80
+																	"tokens",
+																	"dollars"
 																]
 															},
-															{
+															"amount": {
 																"type": "number",
-																"enum": [
-																	90
-																]
+																"exclusiveMinimum": 0,
+																"maximum": 1000000000000
 															},
-															{
-																"type": "number",
-																"enum": [
-																	100
-																]
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
 															}
-														],
-														"default": 100
-													},
-													"timezone": {
-														"type": "string",
-														"minLength": 1,
-														"maxLength": 64,
-														"default": "UTC"
+														},
+														"required": [
+															"unit",
+															"amount"
+														]
 													}
-												},
-												"required": [
-													"unit",
-													"amount"
 												]
 											},
 											"voice": {
@@ -17425,7 +17635,7 @@
 						}
 					},
 					"403": {
-						"description": "Actor has reached their workspace-ownership cap for their plan tier",
+						"description": "Caller is an agent (workspaces are created by people), or the actor has reached their workspace-ownership cap for their plan tier",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -18245,8 +18455,10 @@
 														"type": "string",
 														"enum": [
 															"trial",
+															"starter",
 															"pro",
 															"team",
+															"ultra",
 															"enterprise"
 														]
 													},
@@ -18280,6 +18492,26 @@
 															"null"
 														]
 													},
+													"trial_state": {
+														"type": "string",
+														"enum": [
+															"awaiting_card",
+															"started"
+														]
+													},
+													"trial_wallet": {
+														"type": "string",
+														"enum": [
+															"apple_pay",
+															"google_pay",
+															"other",
+															"none"
+														]
+													},
+													"trial_promo_code_id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"status": {
 														"type": "string",
 														"enum": [
@@ -18311,53 +18543,106 @@
 												]
 											},
 											"daily_budget": {
-												"type": "object",
-												"properties": {
-													"unit": {
-														"type": "string",
-														"enum": [
-															"tokens",
-															"dollars"
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
+																"enum": [
+																	"percent"
+																]
+															},
+															"amount": {
+																"type": "number",
+																"exclusiveMinimum": 0,
+																"maximum": 100
+															},
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
+															}
+														},
+														"required": [
+															"unit",
+															"amount"
 														]
 													},
-													"amount": {
-														"type": "number",
-														"exclusiveMinimum": 0,
-														"maximum": 1000000000000
-													},
-													"stop_share": {
-														"anyOf": [
-															{
-																"type": "number",
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
 																"enum": [
-																	80
+																	"tokens",
+																	"dollars"
 																]
 															},
-															{
+															"amount": {
 																"type": "number",
-																"enum": [
-																	90
-																]
+																"exclusiveMinimum": 0,
+																"maximum": 1000000000000
 															},
-															{
-																"type": "number",
-																"enum": [
-																	100
-																]
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
 															}
-														],
-														"default": 100
-													},
-													"timezone": {
-														"type": "string",
-														"minLength": 1,
-														"maxLength": 64,
-														"default": "UTC"
+														},
+														"required": [
+															"unit",
+															"amount"
+														]
 													}
-												},
-												"required": [
-													"unit",
-													"amount"
 												]
 											},
 											"voice": {
@@ -39418,8 +39703,7 @@
 														"unit": {
 															"type": "string",
 															"enum": [
-																"tokens",
-																"dollars"
+																"percent"
 															]
 														},
 														"amount": {
@@ -41222,8 +41506,10 @@
 											"type": "string",
 											"enum": [
 												"trial",
+												"starter",
 												"pro",
 												"team",
+												"ultra",
 												"enterprise"
 											]
 										},
@@ -41303,6 +41589,16 @@
 												"unit_price_usd_cents",
 												"monthly_total_usd_cents"
 											]
+										},
+										"trial_state": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"awaiting_card",
+												"started"
+											]
 										}
 									},
 									"required": [
@@ -41316,7 +41612,8 @@
 										"stripe_subscription_id",
 										"credit_balance_cents",
 										"credit_topup_available",
-										"linkedin_identity_addon"
+										"linkedin_identity_addon",
+										"trial_state"
 									]
 								}
 							}
@@ -41898,8 +42195,10 @@
 									"plan": {
 										"type": "string",
 										"enum": [
+											"starter",
 											"pro",
-											"team"
+											"team",
+											"ultra"
 										]
 									},
 									"success_url": {
@@ -42117,6 +42416,980 @@
 					},
 					"500": {
 						"description": "Stripe misconfigured or upstream failure",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/trial/setup": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Start a Stripe card setup (no charge) for a workspace waiting for its trial card",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Secret for the browser card form",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"client_secret": {
+											"type": "string"
+										},
+										"publishable_key": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"client_secret",
+										"publishable_key"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The card setup is not finished or does not belong to this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Stripe is not configured or failed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/trial/promo/check": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Check a promo code for the 7-day trial. Looks only; nothing is used up.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								},
+								"required": [
+									"code"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Whether the code could start a trial with no card right now",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"valid": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"valid"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The workspace is not waiting for a card",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many promo code tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/trial/start": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Start the 7-day trial from a finished card setup, or from a promo code with no card",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"setup_intent_id": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 255
+									},
+									"promo_code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The trial has started",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"trial_state": {
+											"type": "string",
+											"enum": [
+												"started"
+											]
+										},
+										"trial_ends_at": {
+											"type": [
+												"integer",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"trial_state",
+										"trial_ends_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The card setup is not finished or does not belong to this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many promo code tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Stripe is not configured or failed",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -42705,7 +43978,7 @@
 				"tags": [
 					"billing"
 				],
-				"summary": "The workspace daily target and whether the dollar unit can be used",
+				"summary": "The workspace daily target, as a percent of the plan",
 				"parameters": [
 					{
 						"schema": {
@@ -42719,7 +43992,7 @@
 				],
 				"responses": {
 					"200": {
-						"description": "Current daily target (null when off) and the dollar-unit check",
+						"description": "Current daily target (null when off), in percent of the plan",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -42734,14 +44007,13 @@
 												"unit": {
 													"type": "string",
 													"enum": [
-														"tokens",
-														"dollars"
+														"percent"
 													]
 												},
 												"amount": {
 													"type": "number",
 													"exclusiveMinimum": 0,
-													"maximum": 1000000000000
+													"maximum": 100
 												},
 												"stop_share": {
 													"anyOf": [
@@ -42778,53 +44050,36 @@
 												"amount"
 											]
 										},
-										"dollar_unit": {
-											"type": "object",
+										"earlier_target": {
+											"type": [
+												"object",
+												"null"
+											],
 											"properties": {
-												"available": {
-													"type": "boolean"
-												},
-												"reason": {
-													"type": [
-														"string",
-														"null"
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
 													]
 												},
-												"days": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"date": {
-																"type": "string"
-															},
-															"ended_sessions": {
-																"type": "integer",
-																"minimum": 0
-															},
-															"zero_cost_sessions": {
-																"type": "integer",
-																"minimum": 0
-															}
-														},
-														"required": [
-															"date",
-															"ended_sessions",
-															"zero_cost_sessions"
-														]
-													}
+												"converted": {
+													"type": "boolean"
 												}
 											},
 											"required": [
-												"available",
-												"reason",
-												"days"
+												"unit",
+												"converted"
 											]
+										},
+										"plan_limit_known": {
+											"type": "boolean"
 										}
 									},
 									"required": [
 										"daily_budget",
-										"dollar_unit"
+										"earlier_target",
+										"plan_limit_known"
 									]
 								}
 							}
@@ -42922,14 +44177,13 @@
 											"unit": {
 												"type": "string",
 												"enum": [
-													"tokens",
-													"dollars"
+													"percent"
 												]
 											},
 											"amount": {
 												"type": "number",
 												"exclusiveMinimum": 0,
-												"maximum": 1000000000000
+												"maximum": 100
 											},
 											"stop_share": {
 												"anyOf": [
@@ -42991,14 +44245,13 @@
 												"unit": {
 													"type": "string",
 													"enum": [
-														"tokens",
-														"dollars"
+														"percent"
 													]
 												},
 												"amount": {
 													"type": "number",
 													"exclusiveMinimum": 0,
-													"maximum": 1000000000000
+													"maximum": 100
 												},
 												"stop_share": {
 													"anyOf": [
@@ -43035,53 +44288,36 @@
 												"amount"
 											]
 										},
-										"dollar_unit": {
-											"type": "object",
+										"earlier_target": {
+											"type": [
+												"object",
+												"null"
+											],
 											"properties": {
-												"available": {
-													"type": "boolean"
-												},
-												"reason": {
-													"type": [
-														"string",
-														"null"
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
 													]
 												},
-												"days": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"date": {
-																"type": "string"
-															},
-															"ended_sessions": {
-																"type": "integer",
-																"minimum": 0
-															},
-															"zero_cost_sessions": {
-																"type": "integer",
-																"minimum": 0
-															}
-														},
-														"required": [
-															"date",
-															"ended_sessions",
-															"zero_cost_sessions"
-														]
-													}
+												"converted": {
+													"type": "boolean"
 												}
 											},
 											"required": [
-												"available",
-												"reason",
-												"days"
+												"unit",
+												"converted"
 											]
+										},
+										"plan_limit_known": {
+											"type": "boolean"
 										}
 									},
 									"required": [
 										"daily_budget",
-										"dollar_unit"
+										"earlier_target",
+										"plan_limit_known"
 									]
 								}
 							}
@@ -43146,63 +44382,6 @@
 					},
 					"404": {
 						"description": "Workspace not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					},
-					"409": {
-						"description": "The dollar unit is locked until cost numbers are reliable",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -43546,7 +44725,7 @@
 						}
 					},
 					"400": {
-						"description": "Workspace cannot be charged automatically yet",
+						"description": "Workspace cannot be charged automatically yet, or auto top-up is closed on plans",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -51635,6 +52814,16 @@
 						},
 						"required": false,
 						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 150
+						},
+						"required": false,
+						"name": "per_group",
 						"in": "query"
 					},
 					{
@@ -61726,6 +62915,13 @@
 																	"options"
 																],
 																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+															},
+															"session_id": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
 															}
 														},
 														"required": [
@@ -66098,6 +67294,13 @@
 																	"options"
 																],
 																"description": "Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.\nIt renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button. If the call is whether to send something, attach `draft` (the object that holds it, or the exact text) and it shows above the buttons.\nTo ask for approval of a message: save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields, then set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. The `draft-approval-tasks` skill has the full steps.\nPosting a new card withdraws your earlier cards on the same object, so you do not need to withdraw them yourself. Another agent's cards, and your cards on other objects, stay. A card with `drafts` is still one card.\nTo ask whether an object should move to a new status (\"flip this bet to active\"), put `set_status` on the option that does it. The tap then makes the change, and the card drops once the object has left the status it had when you posted. A card that talks about changing a status without it is rejected.\n\nThe API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:\ntitle 9 words or fewer, ending in \"?\", and not opening with a status verb (\"Reviewing the funnel\"); summary at most 2 sentences, with no source paths, and not a restatement of the title;\nask omitted when the title is the question, otherwise exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;\n2-3 consequence lines per option, one clause each (no semicolons, no \", and\"); and nowhere in the block an em-dash, an en-dash, an emoji,\nor a hedge word standing in for a number (\"significantly\", \"substantially\", \"several\", \"many\", and the like).\n\nThe rest is house style the API does not check. Write to it anyway, because a human reads the result:\nsentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,\nand no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.\n\nExample:\n{ \"title\": \"Is the onboarding bet worth running?\",\n  \"summary\": \"3 of 5 signups stall on step 2, costing about 40 activations a week. The replacement copy and the migration are drafted; shipping is open.\",\n  \"options\": [\n    { \"label\": \"7-day window\", \"recommended\": true, \"consequences\": [\"Ships with cycle 1 tomorrow\", \"Adds 18 support tickets in week one\"] },\n    { \"label\": \"Hold\", \"consequences\": [\"Nothing ships this cycle\", \"Keeps losing 40 activations a week\"] } ] }"
+															},
+															"session_id": {
+																"type": [
+																	"string",
+																	"null"
+																],
+																"format": "uuid"
 															}
 														},
 														"required": [
@@ -77137,7 +78340,9 @@
 													"hmac-sha256",
 													"hmac-sha1",
 													"timestamp",
-													"ed25519"
+													"ed25519",
+													"standard-webhooks",
+													"stripe"
 												]
 											},
 											"signatureHeader": {
@@ -77146,6 +78351,17 @@
 											},
 											"signaturePrefix": {
 												"type": "string"
+											},
+											"digestEncoding": {
+												"type": "string",
+												"enum": [
+													"hex",
+													"base64"
+												]
+											},
+											"idHeader": {
+												"type": "string",
+												"minLength": 1
 											},
 											"timestampHeader": {
 												"type": "string"
@@ -78271,7 +79487,9 @@
 													"hmac-sha256",
 													"hmac-sha1",
 													"timestamp",
-													"ed25519"
+													"ed25519",
+													"standard-webhooks",
+													"stripe"
 												]
 											},
 											"signatureHeader": {
@@ -78280,6 +79498,17 @@
 											},
 											"signaturePrefix": {
 												"type": "string"
+											},
+											"digestEncoding": {
+												"type": "string",
+												"enum": [
+													"hex",
+													"base64"
+												]
+											},
+											"idHeader": {
+												"type": "string",
+												"minLength": 1
 											},
 											"timestampHeader": {
 												"type": "string"
@@ -79206,7 +80435,9 @@
 													"hmac-sha256",
 													"hmac-sha1",
 													"timestamp",
-													"ed25519"
+													"ed25519",
+													"standard-webhooks",
+													"stripe"
 												]
 											},
 											"signatureHeader": {
@@ -79215,6 +80446,17 @@
 											},
 											"signaturePrefix": {
 												"type": "string"
+											},
+											"digestEncoding": {
+												"type": "string",
+												"enum": [
+													"hex",
+													"base64"
+												]
+											},
+											"idHeader": {
+												"type": "string",
+												"minLength": 1
 											},
 											"timestampHeader": {
 												"type": "string"
@@ -86986,7 +88228,7 @@
 					"Desktop"
 				],
 				"summary": "Put a workspace file on an agent's computer",
-				"description": "The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out.",
+				"description": "The computer downloads the file straight from storage, so its bytes never pass through the caller. Starts the computer if needed. Overwrites a file of the same name in the folder. Takes up to two minutes, so a very large file can time out. Before downloading, files an earlier put-file placed there are removed: those over 24 hours old, and if the disk still lacks room for the file plus 1 GB, those over 1 hour old, oldest first. If there is still no room the call is refused (409) and nothing is downloaded.",
 				"parameters": [
 					{
 						"schema": {
@@ -87053,13 +88295,18 @@
 										"hash_verified": {
 											"type": "boolean",
 											"description": "True when the file has a stored hash and it matches. Large files have none, so only their size is checked."
+										},
+										"free_space_bytes": {
+											"type": "integer",
+											"description": "Free space left on the computer after the file landed."
 										}
 									},
 									"required": [
 										"path",
 										"size_bytes",
 										"sha256",
-										"hash_verified"
+										"hash_verified",
+										"free_space_bytes"
 									]
 								}
 							}
@@ -87181,6 +88428,1096 @@
 					},
 					"404": {
 						"description": "Desktop not available, or the agent is not in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Not enough free space on the computer, even after removing old fetched files",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Desktop could not be reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/desktop/apply-settings": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Desktop"
+				],
+				"summary": "Bring a running computer's settings files up to date",
+				"description": "Rewrites a fixed list of user settings files on the computer (the file chooser's size and position) without deleting it, so saved logins and open pages stay. Nothing outside that list is touched. Running it again changes nothing. Starts the computer if needed.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid",
+							"description": "Whose computer. Required for people; an agent may omit it (it is its own) and may not name another."
+						},
+						"required": false,
+						"name": "agent_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "The computer has the current settings",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"settings_version": {
+											"type": "integer",
+											"description": "The settings version now on the computer"
+										},
+										"changed": {
+											"type": "boolean",
+											"description": "False when the computer already had these settings, so nothing was written"
+										},
+										"chromium_restart_needed": {
+											"type": "boolean",
+											"description": "True when a setting only takes effect after Chromium restarts. Nothing is restarted for you: a restart closes the open pages."
+										}
+									},
+									"required": [
+										"settings_version",
+										"changed",
+										"chromium_restart_needed"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "agent_id missing or malformed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "An agent asked for another agent's computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Desktop not available, or the agent is not in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Desktop could not be reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/desktop/settings": {
+			"get": {
+				"tags": [
+					"Desktop"
+				],
+				"summary": "Read a computer's image tag, settings version, free disk and snapshot setting",
+				"description": "Read only: writes nothing and does not start the computer. A computer that is asleep answers with what the host knows and nulls for the rest, because reading the rest would wake it.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid",
+							"description": "Whose computer. Required for people; an agent may omit it (it is its own) and may not name another."
+						},
+						"required": false,
+						"name": "agent_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "What the computer and its host report",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"running",
+												"suspended"
+											]
+										},
+										"current_settings_version": {
+											"type": "integer",
+											"description": "The version apply-settings would write"
+										},
+										"settings_version": {
+											"type": [
+												"integer",
+												"null"
+											],
+											"description": "The version on the computer. Null: apply-settings has never run on it."
+										},
+										"image_tag": {
+											"type": [
+												"string",
+												"null"
+											],
+											"description": "The image the computer was created from. Null: it was built before images carried a tag, or the computer is asleep."
+										},
+										"chooser_size": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"chooser_position": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"disk_total_mb": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"disk_free_mb": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"snapshots": {
+											"type": [
+												"object",
+												"null"
+											],
+											"properties": {
+												"enabled": {
+													"type": "boolean"
+												},
+												"idle_minutes": {
+													"type": [
+														"integer",
+														"null"
+													]
+												}
+											},
+											"required": [
+												"enabled",
+												"idle_minutes"
+											],
+											"description": "Whether an idle computer is suspended to a snapshot, and after how many minutes. Null: the host did not say."
+										},
+										"new_computer_image": {
+											"type": [
+												"string",
+												"null"
+											],
+											"description": "The image a new computer on this host is created from, not what this one runs"
+										}
+									},
+									"required": [
+										"status",
+										"current_settings_version",
+										"settings_version",
+										"image_tag",
+										"chooser_size",
+										"chooser_position",
+										"disk_total_mb",
+										"disk_free_mb",
+										"snapshots",
+										"new_computer_image"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "agent_id missing or malformed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "An agent asked for another agent's computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Desktop not available, or the agent is not in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "Desktop could not be reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/desktop/save-file": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Desktop"
+				],
+				"summary": "Save a file from an agent's computer into the workspace",
+				"description": "The computer sends the file straight to storage, so its bytes never pass through the caller. Always makes a new file; never overwrites one. Only a regular file under the computer's home folder, outside hidden folders, up to 100 MB, and at most 20 saves per computer per hour. On any failure the stored copy is deleted and no file is made.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid",
+							"description": "Whose computer. Required for people; an agent may omit it (it is its own) and may not name another."
+						},
+						"required": false,
+						"name": "agent_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 1024,
+										"pattern": "^(\\/|~\\/)[^\\0\\r\\n]*$",
+										"description": "Path of a file under your home folder on the computer."
+									},
+									"name": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200,
+										"description": "Name for the new workspace file. Defaults to the file name."
+									}
+								},
+								"required": [
+									"path"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "The file is saved",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"file_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"name": {
+											"type": "string"
+										},
+										"size_bytes": {
+											"type": "integer"
+										},
+										"sha256": {
+											"type": "string"
+										},
+										"url": {
+											"type": "string",
+											"description": "Where a person opens the file in the app."
+										}
+									},
+									"required": [
+										"file_id",
+										"name",
+										"size_bytes",
+										"sha256",
+										"url"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The path is not allowed, the file is empty, or it is over the size cap",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "An agent asked for another agent's computer",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No regular file at the path",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many saves from this computer in the last hour",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -89441,6 +91778,571 @@
 					},
 					"504": {
 						"description": "The request to the speech provider timed out or could not be made",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/transcriptions/files/{id}": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"Transcriptions"
+				],
+				"summary": "Transcribe an uploaded audio or video file",
+				"description": "Reads a stored file, extracts its audio with ffmpeg, transcribes it in chunks on OpenRouter and saves the transcript as a .txt workspace file. The response carries the file's id, not the text: read it with get_file. Up to 60 minutes of audio. The cost OpenRouter reports is recorded against the workspace's plan usage, so the call is refused with 402 once the plan cap is reached and no prepaid credit remains. An enterprise workspace is never capped, but its usage is still recorded. Requires X-Workspace-Id and a writer role.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/TranscribeFileBody"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Transcript; empty text when no speech was detected",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/TranscribeFileResponse"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Not audio or video, no audio track, or longer than the limit",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"402": {
+						"description": "The workspace is over its plan cap",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "The caller has a read-only role in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File not found in this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "The speech provider is rate limiting us",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Transcription is not configured, or the file could not be read from storage",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "The speech provider answered with an error other than 401, 402 or 429",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"503": {
+						"description": "The speech provider refused our key, or ffmpeg is not installed on this server",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"504": {
+						"description": "The request to the speech provider timed out",
 						"content": {
 							"application/json": {
 								"schema": {
