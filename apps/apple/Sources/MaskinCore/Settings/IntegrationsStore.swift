@@ -163,6 +163,13 @@ public final class IntegrationsStore {
 		}
 	}
 
+	/// Whether Google Drive is connected, which is when its Folder watches page has something to show.
+	public var hasConnectedDrive: Bool {
+		accounts.contains { $0.provider == Self.driveProvider && $0.state == .connected }
+	}
+
+	public static let driveProvider = "google-drive"
+
 	/// The Discover tab: providers nobody has connected, under a search and a category chip.
 	public func availableProviders(query: String, category: IntegrationCategory?) -> [IntegrationProvider] {
 		available.filter {

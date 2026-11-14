@@ -35,27 +35,27 @@ public final class InviteStore {
 	public private(set) var phase: Phase = .loading
 	public private(set) var preview: InvitePreview?
 
-	/// FE-2 HOOK POINT. Signed-out people without an account land here. FE-2 (native sign-up) sets
-	/// this to start account creation for the invite; until it is set the screen says plainly that
-	/// an account has to be created on the web first. Nothing else in the invite flow changes.
-	@ObservationIgnored public var createAccount: (@MainActor (InvitePreview) -> Void)?
-
 	@ObservationIgnored private let remote: any InviteRemote
 	@ObservationIgnored private let viewer: @MainActor () -> InviteViewer?
+	@ObservationIgnored private let signedUp: @MainActor (InviteSignUp) throws -> Void
 	@ObservationIgnored private let joined: @MainActor (String) async -> Void
 
 	/// - Parameters:
 	///   - viewer: the signed-in actor right now, or nil. Read on demand, so signing in while the
 	///     screen is up takes effect.
+	///   - signedUp: runs when accepting created the account, to sign the new person in. Throws if
+	///     the sign-in could not be stored.
 	///   - joined: runs after the server accepted, to refresh the workspace list and switch to it.
 	public init(
 		token: String, remote: any InviteRemote,
 		viewer: @escaping @MainActor () -> InviteViewer?,
+		signedUp: @escaping @MainActor (InviteSignUp) throws -> Void,
 		joined: @escaping @MainActor (String) async -> Void
 	) {
 		self.token = token
 		self.remote = remote
 		self.viewer = viewer
+		self.signedUp = signedUp
 		self.joined = joined
 	}
 
@@ -106,6 +106,36 @@ public final class InviteStore {
 		} catch {
 			phase = .failed(InviteFailure.transport(error))
 		}
+	}
+
+	/// Signed out with no account: create one for the invited email and join, in one step. The
+	/// server makes the account and returns its key; we sign in with it, then switch to the workspace.
+	/// `name` may be blank (the server then uses the email).
+	public func createAccountAndJoin(name: String, password: String) async {
+		guard let preview, viewer() == nil else { return }
+		switch phase {
+		case .ready, .failed: break
+		default: return
+		}
+		phase = .accepting
+		let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		let result: InviteSignUp
+		do {
+			result = try await remote.signUpAndAccept(
+				token: token, email: preview.inviteEmail, password: password,
+				name: trimmed.isEmpty ? nil : trimmed)
+		} catch {
+			phase = .failed(InviteFailure.transport(error))
+			return
+		}
+		do {
+			try signedUp(result)
+		} catch {
+			phase = .failed(.sessionNotSaved)
+			return
+		}
+		await joined(result.workspaceId)
+		phase = .accepted(workspaceId: result.workspaceId)
 	}
 
 	/// Back out of the mismatch warning without joining.

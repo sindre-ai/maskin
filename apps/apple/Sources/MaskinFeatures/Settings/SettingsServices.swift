@@ -101,6 +101,11 @@ struct SettingsServices {
 			providerID: providerID, providerName: providerName, api: APIIntegrationKeySource(http: http))
 	}
 
+	/// Folder watches on the Drive connection. Writable for everyone but viewers, like the web.
+	func driveWatchesStore() -> DriveWatchesStore {
+		DriveWatchesStore(api: APIDriveWatchesSource(http: http), canWrite: workspace?.role != "viewer")
+	}
+
 	func addToolServerStore() -> AddToolServerStore {
 		AddToolServerStore(api: APIToolServersSource(http: http))
 	}

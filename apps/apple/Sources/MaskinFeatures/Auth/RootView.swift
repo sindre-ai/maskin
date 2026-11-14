@@ -215,6 +215,12 @@ extension RootView {
 				viewer: {
 					environment.auth.session.map { InviteViewer(apiKey: $0.apiKey, email: $0.email) }
 				},
+				signedUp: { signUp in
+					try environment.auth.adopt(
+						StoredSession(
+							apiKey: signUp.apiKey, actorId: signUp.actorId, name: signUp.name,
+							email: signUp.email, workspaceId: signUp.workspaceId))
+				},
 				joined: { workspaceId in
 					// Load the new workspace into the list first, then switch to it.
 					await environment.workspaces.refresh()
