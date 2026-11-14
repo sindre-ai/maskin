@@ -71,6 +71,8 @@ import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 import { config as stripeConfig } from './providers/stripe/config'
+import { config as telnyxConfig } from './providers/telnyx/config'
+import { revokeTelnyxApiKey } from './providers/telnyx/disconnect'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as vercelConfig } from './providers/vercel/config'
@@ -271,6 +273,11 @@ providers.set('custom-mcp', {
 
 providers.set('skjald', {
 	config: skjaldConfig,
+})
+
+providers.set('telnyx', {
+	config: telnyxConfig,
+	preDisconnect: revokeTelnyxApiKey,
 })
 
 providers.set('ubersuggest', {

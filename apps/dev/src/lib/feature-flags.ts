@@ -64,6 +64,15 @@ export const FLAGS = {
 	 */
 	COMPUTER_CLIPBOARD: 'computer-clipboard',
 	/**
+	 * Voice-outreach autosend: whether the Sales Rep (Voice) dialer actually
+	 * places calls. Off (default) builds the queue and stops short of dialing.
+	 * Gates ONLY the outbound dial action: the Telnyx provider, the voice_*
+	 * contact statuses and the webhook register unconditionally. Per-actor, so
+	 * one tester enables it after the first staging dial-through. Parent bet:
+	 * bet/5b8e-voice-outreach.
+	 */
+	VOICE_OUTREACH_AUTOSEND: 'voice-outreach-autosend',
+	/**
 	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
 	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
 	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES

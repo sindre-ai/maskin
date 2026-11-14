@@ -82,8 +82,10 @@ function IntegrationsPage() {
 	const { data: providers, isLoading: providersLoading } = useProviders()
 	// Deepdots stays out of the list until its flag is on for this person.
 	const deepdotsOn = useFeatureFlag('deepdots-connect')
+	// Telnyx credentials come from server env, not a UI connect. Its api_key card would open
+	// the PostHog-worded key dialog, so it stays hidden until a real connect flow exists.
 	const visibleProviders = sortBy(
-		(providers ?? []).filter((p) => p.name !== 'deepdots' || deepdotsOn),
+		(providers ?? []).filter((p) => p.name !== 'telnyx' && (p.name !== 'deepdots' || deepdotsOn)),
 		(p) => p.displayName,
 		(p) => p.name,
 	)

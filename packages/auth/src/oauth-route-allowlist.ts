@@ -230,6 +230,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/linkedin-unipile/callback',
 	'POST /api/integrations/linkedin-unipile/webhook',
 	'POST /api/integrations/skjald/exchange',
+	'POST /api/integrations/telnyx/tools/:toolName',
+	'POST /api/integrations/telnyx/webhook',
 	'POST /api/internal/agent-servers/reconcile',
 	'POST /api/internal/agent-servers/sessions/:id/complete',
 	'POST /api/internal/agent-servers/sessions/:id/logs',

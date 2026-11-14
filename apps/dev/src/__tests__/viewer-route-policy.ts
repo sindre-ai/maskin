@@ -96,6 +96,16 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'the one-time code and its PKCE verifier are the credential',
 	],
 	['POST', '/api/integrations/linkedin-unipile/webhook', 'provider webhook, authenticated by HMAC'],
+	[
+		'POST',
+		'/api/integrations/telnyx/webhook',
+		'provider webhook, authenticated by Ed25519 signature',
+	],
+	[
+		'POST',
+		'/api/integrations/telnyx/tools/:toolName',
+		'called by the Telnyx assistant, authenticated by a shared bearer secret',
+	],
 	// The Claude connector. A token a viewer approves carries the viewer role, so writes through it are refused.
 	['POST', '/api/oauth/authorize/approve', 'approves a Claude connection for the caller only'],
 	['POST', '/api/oauth/authorize/deny', 'declines a Claude connection for the caller only'],
