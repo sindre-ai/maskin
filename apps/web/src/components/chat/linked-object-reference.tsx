@@ -1543,6 +1543,7 @@ export function AgentReferenceCard({
 								type={actor.type}
 								size="sm"
 								imageUrl={actor.avatar_url ?? undefined}
+								initials={actor.initials}
 								className={AVATAR}
 							/>
 							<span className="truncate">{name}</span>

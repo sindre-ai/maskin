@@ -213,7 +213,13 @@ import {
 	AgentServerHttpError,
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
-import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import {
+	ContainerManager,
+	type LogChunk,
+	type StreamJsonUserMessage,
+	type TurnImage,
+	userTurnWithImages,
+} from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
@@ -1455,6 +1461,8 @@ export class SessionManager extends EventEmitter {
 		 * it apart from the human sending the same thing again.
 		 */
 		logTags?: Record<string, unknown>,
+		/** Images the agent sees with this turn. Not kept in the session log: only the text is. */
+		images?: TurnImage[],
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1472,9 +1480,12 @@ export class SessionManager extends EventEmitter {
 				throw new Error(`Agent server ${session.agentServerId} not found`)
 			}
 			const client = new AgentServerClient({ server: serverRow })
-			await client.sendInput(sessionId, payload)
+			await client.sendInput(sessionId, payload, images)
 		} else {
-			await this.containers.write(sessionId, payload)
+			await this.containers.write(
+				sessionId,
+				images && images.length > 0 ? userTurnWithImages(payload, images) : payload,
+			)
 		}
 
 		// The CLI does not echo the user turn back to stdout — only the

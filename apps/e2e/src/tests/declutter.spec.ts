@@ -120,6 +120,33 @@ test.describe('Declutter — For you', () => {
 		})
 	}
 
+	for (const width of [375, 768]) {
+		test(`greeting starts at the same left edge as Flows, buttons stay reachable @ ${width}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width, height: 800 })
+			await mockFeed(page, account.workspaceId)
+			await page.goto(`/${account.workspaceId}`)
+			const greeting = page.getByRole('heading', { level: 1 })
+			await expect(greeting).toBeVisible({ timeout: 30_000 })
+			const forYou = await greeting.boundingBox()
+
+			await page.goto(`/${account.workspaceId}/loops`)
+			const flows = page.getByRole('heading', { name: 'Flows', level: 1 })
+			await expect(flows).toBeVisible({ timeout: 30_000 })
+			const flowsBox = await flows.boundingBox()
+			expect(forYou?.x).toBeCloseTo(flowsBox?.x ?? -1, 0)
+
+			await page.goto(`/${account.workspaceId}`)
+			await expect(greeting).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Display' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'New chat' })).toBeVisible()
+			await expect(page.getByRole('button', { name: /^Call / })).toBeVisible()
+			await noHorizontalOverflow(page, `${width}`)
+		})
+	}
+
 	test('an empty feed shows an icon, one title and one line', async ({ page, account }) => {
 		await page.route('**/api/for-you*', (route) =>
 			route.request().method() === 'GET'

@@ -15,7 +15,7 @@ interface SignupCaptureMetadata {
 	name?: string
 	organization?: string
 	role?: string
-	/** Set by the web sign-up, which shows the welcome on New Chat. Other clients leave it out. */
+	/** Set by the web and iOS sign-ups: the welcome is the Chief of Staff's message in a chat, not a For You card. */
 	welcome_in_chat?: boolean
 }
 
@@ -54,12 +54,12 @@ export async function resolveAgentIdByName(
  * `POST /api/objects` handler in `routes/objects.ts`). Deterministically —
  * not by handing it to an agent's judgment — posts a Chief-of-Staff-authored
  * welcome comment on the object, then spawns a Researcher session with a
- * bespoke onboarding prompt. For web sign-ups (`metadata.welcome_in_chat`) the
- * new user is deliberately not @mentioned: the welcome they read is the Chief of
- * Staff message on the New Chat screen they land on, so this comment must not
- * also appear as a card on For You. Their first card there is Researcher's
- * reply, which mentions them. Other clients (iOS) have no such screen yet, so
- * they are still mentioned and get the welcome as a For You card.
+ * bespoke onboarding prompt. For web and iOS sign-ups (`metadata.welcome_in_chat`)
+ * the new user is deliberately not @mentioned: the welcome they read is the Chief
+ * of Staff message in the chat the server opened for them, so this comment must
+ * not also appear as a card on For You. Their first card there is Researcher's
+ * reply, which mentions them. A client that leaves the flag out still mentions
+ * them and gets the welcome as a For You card.
  *
  * The Researcher notification + session are wired directly here rather than
  * via the standard `CommentDispatcher` (`services/trigger-runner.ts`) mention

@@ -15,6 +15,13 @@ import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
+// The helper's computer: a stand-in, so a Done can be answered with a screenshot or without one.
+const desktop = vi.hoisted(() => ({ control: vi.fn() }))
+vi.mock('../../services/workspace-desktop', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/workspace-desktop')>()),
+	createWorkspaceDesktopService: () => ({ control: desktop.control }),
+}))
+
 const { default: sessionsRoutes } = await import('../../routes/sessions')
 
 /**
@@ -36,7 +43,11 @@ type Env = {
 	}
 }
 
-function appFor(actorId: string, actorType: 'human' | 'agent') {
+function appFor(
+	actorId: string,
+	actorType: 'human' | 'agent',
+	writeInput: ReturnType<typeof vi.fn> = vi.fn(async () => {}),
+) {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -58,7 +69,7 @@ function appFor(actorId: string, actorType: 'human' | 'agent') {
 		c.set('actorType', actorType)
 		c.set('sessionManager', {
 			createSession: vi.fn(),
-			writeInput: vi.fn(async () => {}),
+			writeInput,
 		} as unknown as Env['Variables']['sessionManager'])
 		await next()
 	})
@@ -242,6 +253,67 @@ describe('POST /sessions/:id/input answering a helper card (Integration)', () =>
 			card_answer: { message_id: cardId, outcome: 'done' },
 		})
 		expect(answer?.actorId).toBe(s.human)
+	})
+
+	describe('the screenshot a Done sends the helper', () => {
+		const SHOT = {
+			status: 200,
+			body: { image_base64: 'QUJD', mime_type: 'image/jpeg', width: 1920, height: 1080 },
+		}
+		async function answer(outcome: 'done' | 'declined') {
+			const { s, cardId } = await helperWithCard()
+			const writeInput = vi.fn(async () => {})
+			const res = await appFor(s.human, 'human', writeInput).request(
+				jsonRequest(
+					'POST',
+					`/api/sessions/${s.helper.id}/input`,
+					{ content: 'Done: I have finished.', card_answer: { message_id: cardId, outcome } },
+					H(s.ws.id),
+				),
+			)
+			expect(res.status).toBe(200)
+			return { s, writeInput }
+		}
+		// writeInput(sessionId, payload, attachments, messageId, logTags, images)
+		const turn = (writeInput: ReturnType<typeof vi.fn>) => ({
+			text: writeInput.mock.calls[0]?.[1]?.message?.content as string,
+			images: writeInput.mock.calls[0]?.[5] as unknown,
+		})
+
+		it('starts the helper turn with a screenshot taken when Done was pressed', async () => {
+			desktop.control.mockReset().mockResolvedValue(SHOT)
+			const { s, writeInput } = await answer('done')
+
+			expect(desktop.control).toHaveBeenCalledWith(
+				s.ws.id,
+				s.agent.id,
+				'screenshot',
+				{},
+				expect.any(Number),
+			)
+			const { text, images } = turn(writeInput)
+			expect(text).toContain('Done: I have finished.')
+			expect(text).toContain('screenshot of your computer, taken just now')
+			expect(images).toEqual([{ mediaType: 'image/jpeg', data: 'QUJD' }])
+		})
+
+		it('still sends the Done, and says no screenshot could be taken, when the computer fails', async () => {
+			desktop.control.mockReset().mockResolvedValue(null)
+			const { writeInput } = await answer('done')
+
+			const { text, images } = turn(writeInput)
+			expect(text).toContain('Done: I have finished.')
+			expect(text).toContain('could not take a screenshot of your computer just now')
+			expect(images).toEqual([])
+		})
+
+		it('takes no screenshot for a Not now', async () => {
+			desktop.control.mockReset()
+			const { writeInput } = await answer('declined')
+
+			expect(desktop.control).not.toHaveBeenCalled()
+			expect(turn(writeInput)).toEqual({ text: 'Done: I have finished.', images: undefined })
+		})
 	})
 
 	it('ignores a card answer that names a different card than the one it waits on', async () => {

@@ -196,11 +196,16 @@ export function ScrollingPageTitle() {
 	if (!scrollsAway || hideBar) return null
 	return (
 		// -mt-3 undoes 12px of the scroll area's 32px top padding so the row lines up with the
-		// floating buttons at 20px; min-h keeps the row when the page draws its own title.
-		<div className="hidden min-h-10 flex-none items-baseline gap-2 md:-mt-3 md:mb-4 md:flex">
+		// floating buttons at 20px; min-h keeps the row when the page draws its own title. The
+		// row sits at the bar's height, and the bar has a solid background, so it needs its own
+		// layer above the bar (z-30 over z-20) or the title is painted over. The row lets clicks
+		// through to the bar's buttons under it; only the heading itself takes them.
+		<div className="pointer-events-none relative z-30 hidden min-h-10 flex-none items-baseline gap-2 md:-mt-3 md:mb-4 md:flex">
 			{!hideTitle && headingText && (
 				<>
-					<h1 className="page-title min-w-0 truncate md:py-0.5">{headingText}</h1>
+					<h1 className="page-title pointer-events-auto min-w-0 truncate md:py-0.5">
+						{headingText}
+					</h1>
 					{subtitle && (
 						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}
@@ -254,6 +259,7 @@ export function Header() {
 		newMenuPrimaryOverride,
 		newMenuDisabled,
 		hideTitle,
+		wrapActions,
 		hideBar,
 		gutter,
 	} = usePageHeader()
@@ -405,7 +411,8 @@ export function Header() {
 						'flex min-w-0 items-baseline gap-2',
 						// A page with title tabs/search wants them right beside the title,
 						// so the title block stops growing and the controls take the slack.
-						titleTabs ? 'shrink' : 'flex-1',
+						// wrapActions: keep the title's own width so the buttons wrap below it.
+						titleTabs || wrapActions ? 'shrink' : 'flex-1',
 						// From md the scrolling title in the page content draws it instead.
 						scrollsAway && 'md:hidden',
 					)}

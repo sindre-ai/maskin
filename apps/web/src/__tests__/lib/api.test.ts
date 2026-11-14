@@ -207,6 +207,30 @@ describe('request', () => {
 	})
 })
 
+describe('request with no response body', () => {
+	it('treats a 204 as success for a reaction and for taking it back', async () => {
+		fetchSpy.mockImplementation(async () => new Response(null, { status: 204 }))
+
+		await expect(api.conversations.reactToMessage('c-1', 'ws-1', 7, '👍')).resolves.toBeUndefined()
+		await expect(
+			api.conversations.unreactToMessage('c-1', 'ws-1', 7, '👍'),
+		).resolves.toBeUndefined()
+	})
+
+	it('still throws ApiError when a reaction is refused', async () => {
+		fetchSpy.mockResolvedValue(
+			new Response(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Message not found' } }), {
+				status: 404,
+			}),
+		)
+
+		await expect(api.conversations.reactToMessage('c-1', 'ws-1', 7, '👍')).rejects.toMatchObject({
+			status: 404,
+			message: 'Message not found',
+		})
+	})
+})
+
 describe('sessions.input', () => {
 	it('POSTs content to /sessions/:id/input with workspace header', async () => {
 		vi.mocked(getApiKey).mockReturnValue('ank_key')

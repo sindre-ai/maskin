@@ -60,9 +60,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'created',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
@@ -78,9 +78,9 @@ describe('invalidateFromSSE', () => {
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.bets.all(workspaceId),
 		})
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 	})
 
 	it('invalidates objects for insight entity', () => {
@@ -90,9 +90,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'created',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 	})
 
 	it('invalidates objects for loop entity', () => {
@@ -102,9 +102,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'status_changed',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
@@ -123,9 +123,9 @@ describe('invalidateFromSSE', () => {
 			entity_id: entityId,
 			action: 'updated',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.objects.all(workspaceId),
-		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: queryKeys.objects.all(workspaceId) }),
+		)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
@@ -607,5 +607,43 @@ describe('invalidateFromSSE in a background tab', () => {
 		setVisibility('visible')
 		await vi.advanceTimersByTimeAsync(1_000)
 		expect(list.n).toBe(0)
+	})
+})
+
+describe('invalidateFromSSE throttled refetches', () => {
+	const keyCalls = (qc: ReturnType<typeof createMockQueryClient>, key: readonly unknown[]) =>
+		qc.invalidateQueries.mock.calls.filter(
+			([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(key),
+		)
+	const facetsKey = ['objects', workspaceId, 'facets']
+	const burst = (
+		qc: ReturnType<typeof createMockQueryClient>,
+		event: (i: number) => Record<string, unknown>,
+		n = 6,
+	) => {
+		for (let i = 0; i < n; i++) invalidateFromSSE(qc as never, workspaceId, event(i) as never)
+	}
+
+	it('keeps the objects facets out of the immediate objects invalidation', () => {
+		const qc = createMockQueryClient()
+		burst(qc, (i) => ({ entity_type: 'task', entity_id: `t-${i}`, action: 'updated' }), 1)
+		const call = keyCalls(qc, queryKeys.objects.all(workspaceId))[0]?.[0]
+		expect(call.predicate({ queryKey: ['objects', workspaceId, 'facets', {}] })).toBe(false)
+		expect(call.predicate({ queryKey: ['objects', workspaceId, 'listInfinite', {}] })).toBe(true)
+		expect(call.predicate({ queryKey: ['objects', workspaceId, 'board', {}] })).toBe(true)
+	})
+
+	it('refetches facets once, on the trailing edge, for a burst of object events', () => {
+		const qc = createMockQueryClient()
+		burst(qc, (i) => ({ entity_type: 'bet', entity_id: `b-${i}`, action: 'updated' }))
+		expect(keyCalls(qc, facetsKey)).toHaveLength(0)
+		vi.advanceTimersByTime(4_999)
+		expect(keyCalls(qc, facetsKey)).toHaveLength(0)
+		vi.advanceTimersByTime(1)
+		expect(keyCalls(qc, facetsKey)).toHaveLength(1)
+		// A later event opens a new window.
+		burst(qc, (i) => ({ entity_type: 'bet', entity_id: `c-${i}`, action: 'updated' }), 2)
+		vi.advanceTimersByTime(5_000)
+		expect(keyCalls(qc, facetsKey)).toHaveLength(2)
 	})
 })

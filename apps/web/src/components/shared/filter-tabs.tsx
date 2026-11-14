@@ -9,7 +9,7 @@ import { PILL_TRIGGER_CLASS } from '@/components/ui/select'
 import { cn } from '@/lib/cn'
 import { fitChips } from '@/lib/fit-chips'
 import { ChevronDown } from 'lucide-react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { type KeyboardEvent, useLayoutEffect, useRef, useState } from 'react'
 
 export interface FilterTabItem<T> {
 	label: string
@@ -49,16 +49,52 @@ interface FilterTabsProps<T> {
 	foldable?: boolean
 }
 
+// A chip group is one tab stop with arrow keys inside (Tech principle 13). The
+// active chip holds the tab stop; Left/Right/Home/End only move focus, so nothing
+// is selected until Enter or Space. The chips carry `data-chip-tab` so the folded
+// "More" trigger stays out of the arrow order.
+const CHIP_TAB_ATTR = 'data-chip-tab'
+
+function handleChipKeyDown(event: KeyboardEvent<HTMLElement>) {
+	if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+	const chips = Array.from(
+		event.currentTarget.querySelectorAll<HTMLButtonElement>(`button[${CHIP_TAB_ATTR}]`),
+	)
+	const current = chips.indexOf(event.target as HTMLButtonElement)
+	if (current === -1) return
+	let next: number
+	switch (event.key) {
+		case 'ArrowRight':
+			next = (current + 1) % chips.length
+			break
+		case 'ArrowLeft':
+			next = (current - 1 + chips.length) % chips.length
+			break
+		case 'Home':
+			next = 0
+			break
+		case 'End':
+			next = chips.length - 1
+			break
+		default:
+			return
+	}
+	event.preventDefault()
+	chips[next]?.focus()
+}
+
 function TabButton<T extends string | undefined>({
 	tab,
 	value,
 	onChange,
 	variant,
+	tabStop,
 }: {
 	tab: FilterTabItem<T>
 	value: T
 	onChange: (value: T) => void
 	variant: 'tab' | 'pill' | 'nav' | 'chip' | 'chip-outline'
+	tabStop: boolean
 }) {
 	const isChip = variant === 'chip' || variant === 'chip-outline'
 	const isPill = variant === 'pill' || isChip
@@ -75,6 +111,8 @@ function TabButton<T extends string | undefined>({
 			type="button"
 			aria-pressed={isActive}
 			aria-label={accessibleName}
+			tabIndex={tabStop ? 0 : -1}
+			{...{ [CHIP_TAB_ATTR]: '' }}
 			className={cn(
 				'whitespace-nowrap transition-colors duration-150',
 				isChip
@@ -143,6 +181,13 @@ function TabButton<T extends string | undefined>({
 	)
 }
 
+// The chip that holds the group's tab stop: the active one, or the first when
+// the active value has no visible chip (it is folded into More, or matches none).
+function tabStopIndex<T>(tabs: FilterTabItem<T>[], value: T) {
+	const active = tabs.findIndex((t) => t.value === value)
+	return active === -1 ? 0 : active
+}
+
 // Gap between two pill chips (`gap-2`), in px — the fold measures with it.
 const PILL_GAP = 8
 
@@ -202,14 +247,15 @@ function FoldablePillTabs<T extends string | undefined>({
 	return (
 		<div ref={wrapRef} className={cn('relative flex gap-2', className)}>
 			{/* biome-ignore lint/a11y/useSemanticElements: a filter toggle group is more idiomatic as role="group" than a <fieldset> */}
-			<div role="group" aria-label={ariaLabel} className="flex gap-2">
-				{shown.map((tab) => (
+			<div role="group" aria-label={ariaLabel} className="flex gap-2" onKeyDown={handleChipKeyDown}>
+				{shown.map((tab, index) => (
 					<TabButton
 						key={tab.label}
 						tab={tab}
 						value={value}
 						onChange={onChange}
 						variant={variant}
+						tabStop={index === tabStopIndex(shown, value)}
 					/>
 				))}
 				{folded.length > 0 && (
@@ -269,7 +315,13 @@ function FoldablePillTabs<T extends string | undefined>({
 			>
 				{tabs.map((tab) => (
 					<span key={tab.label} className="flex">
-						<TabButton tab={tab} value={value} onChange={() => {}} variant={variant} />
+						<TabButton
+							tab={tab}
+							value={value}
+							onChange={() => {}}
+							variant={variant}
+							tabStop={false}
+						/>
 					</span>
 				))}
 				<span className={cn(PILL_TRIGGER_CLASS, 'inline-flex')}>
@@ -314,9 +366,17 @@ export function FilterTabs<T extends string | undefined>({
 				isPill ? 'gap-2' : isNav ? 'gap-0.5' : 'gap-1',
 				className,
 			)}
+			onKeyDown={handleChipKeyDown}
 		>
-			{tabs.map((tab) => (
-				<TabButton key={tab.label} tab={tab} value={value} onChange={onChange} variant={variant} />
+			{tabs.map((tab, index) => (
+				<TabButton
+					key={tab.label}
+					tab={tab}
+					value={value}
+					onChange={onChange}
+					variant={variant}
+					tabStop={index === tabStopIndex(tabs, value)}
+				/>
 			))}
 		</div>
 	)
