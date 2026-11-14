@@ -131,6 +131,11 @@ public enum IntegrationConnectCopy {
 		IntegrationConnectNotice(.info, "\(name) wasn't connected. You closed the sign-in before it finished.")
 	}
 
+	/// For a provider whose setup has a step that only works on a computer.
+	public static func needsComputer(_ name: String) -> IntegrationConnectNotice {
+		IntegrationConnectNotice(.info, "\(name) is set up from a computer. Open Maskin on a computer to connect it.")
+	}
+
 	public static let offline = IntegrationConnectNotice(
 		.failure, "You're offline. Connect again when you have a connection.")
 

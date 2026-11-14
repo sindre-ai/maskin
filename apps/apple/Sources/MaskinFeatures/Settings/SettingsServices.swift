@@ -111,6 +111,11 @@ struct SettingsServices {
 			canManage: role.canManage)
 	}
 
+	func connectWithKeyStore(providerID: String, providerName: String) -> ConnectWithKeyStore {
+		ConnectWithKeyStore(
+			providerID: providerID, providerName: providerName, api: APIIntegrationKeySource(http: http))
+	}
+
 	/// Folder watches on the Drive connection. Writable for everyone but viewers, like the web.
 	func driveWatchesStore() -> DriveWatchesStore {
 		DriveWatchesStore(api: APIDriveWatchesSource(http: http), canWrite: workspace?.role != "viewer")

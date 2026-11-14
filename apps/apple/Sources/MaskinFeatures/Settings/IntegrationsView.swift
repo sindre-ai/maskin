@@ -4,16 +4,17 @@ import MaskinUI
 import SwiftUI
 
 /// Integrations (2B): every account a flow can use with its state: connected, needs sign-in, or
-/// not connected. Slack, GitHub and LinkedIn connect in a system sign-in sheet; the rest finish in
-/// the browser. Disconnecting is here.
+/// not connected. OAuth providers connect in a system sign-in sheet, key providers on a form, and
+/// the few that need a computer say so. Nothing here opens the web app. Disconnecting is here.
 struct IntegrationsView: View {
-	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var store: IntegrationsStore
 	@State private var actionTarget: ConnectedIntegration?
 	@State private var pendingDisconnect: ConnectedIntegration?
 	@State private var showAddToolServer = false
 	@State private var showClaude = false
+	/// The key provider whose form is open (PostHog).
+	@State private var keyProviderID: String?
 	@State private var showDriveWatches = false
 	@State private var accessTarget: ConnectedIntegration?
 	@State private var tab: Tab = .connected
@@ -24,14 +25,12 @@ struct IntegrationsView: View {
 	@State private var accessAgents: [IntegrationAccessStore.AgentRef] = []
 	enum Tab: Hashable { case connected, discover }
 
-	let webSetupURL: URL?
 	/// Builds the pages Integrations pushes (v3): Add tool server and Import from Claude. Nil in
 	/// previews, which drops those rows.
 	let services: SettingsServices?
 
-	init(store: IntegrationsStore, webSetupURL: URL?, services: SettingsServices? = nil) {
+	init(store: IntegrationsStore, services: SettingsServices? = nil) {
 		_store = State(initialValue: store)
-		self.webSetupURL = webSetupURL
 		self.services = services
 	}
 
@@ -165,17 +164,28 @@ struct IntegrationsView: View {
 						? { startConnect(integration.provider) } : nil)
 			}
 		}
+		.navigationDestination(item: $keyProviderID) { providerID in
+			if let services {
+				ConnectWithKeyView(
+					store: services.connectWithKeyStore(
+						providerID: providerID, providerName: store.connectName(providerID))
+				) {
+					store.dismissNotice()
+					Task { await store.load() }
+				}
+			}
+		}
 		.navigationDestination(isPresented: $showDriveWatches) {
 			if let services { DriveWatchesView(store: services.driveWatchesStore()) }
 		}
 		.navigationDestination(isPresented: $showClaude) {
-			if let services { ClaudeAccountView(store: services.claudeAccountStore(), importURL: services.webURL("keys")) }
+			if let services { ClaudeAccountView(store: services.claudeAccountStore()) }
 		}
 	}
 
 	private func dialogs(_ view: some View) -> some View {
 		view
-		// Returning from the browser: pick up whatever the web flow just connected.
+		// Back in the app: pick up anything that changed while it was away.
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { Task { await store.load() } }
 		}
@@ -186,12 +196,10 @@ struct IntegrationsView: View {
 		) { integration in
 			if integration.provider == IntegrationsStore.toolServerProvider {
 				EmptyView()
-			} else if store.canManage, store.supportsNativeConnect(integration.provider),
+			} else if store.canManage, store.canStartConnect(integration.provider),
 				integration.state != .connected
 			{
-				Button("Reconnect") { startConnect(integration.provider) }
-			} else if needsWeb(integration) {
-				Button("Reconnect in browser") { openSetup() }
+				Button("Reconnect") { startConnectFlow(integration.provider) }
 			}
 			if services != nil, integration.state == .connected {
 				Button("Agent access") { openAccess(integration) }
@@ -274,14 +282,21 @@ struct IntegrationsView: View {
 		Task { await store.connect(providerID: providerID) }
 	}
 
-	/// Native providers connect in the sheet (and ignore taps while one is running); the rest keep
-	/// the browser hand-off.
+	/// OAuth providers connect in the sheet (and ignore taps while one is running), key providers
+	/// open their form, and the rest explain they are set up from a computer.
 	private func availableAction(_ provider: IntegrationProvider) -> (() -> Void)? {
-		guard store.canManage else { return nil }
-		if store.supportsNativeConnect(provider.id) {
-			return store.isConnectInFlight ? nil : { startConnect(provider.id) }
+		guard store.canManage, store.canStartConnect(provider.id) else { return nil }
+		return store.isConnectInFlight ? nil : { startConnectFlow(provider.id) }
+	}
+
+	private func startConnectFlow(_ providerID: String) {
+		if store.supportsNativeConnect(providerID) {
+			startConnect(providerID)
+		} else if store.connectsWithKey(providerID), services != nil {
+			keyProviderID = providerID
+		} else {
+			store.explainComputerOnly(providerID)
 		}
-		return webSetupURL != nil ? { openSetup() } : nil
 	}
 
 	/// Reads the workspace's agents, then pushes the page. A failed read still opens it with no
@@ -296,14 +311,4 @@ struct IntegrationsView: View {
 		}
 	}
 
-	private func openSetup() { if let webSetupURL { openURL(webSetupURL) } }
-
-	/// Rows whose fix is a trip to the browser: an expired or under-scoped connection.
-	private func needsWeb(_ integration: ConnectedIntegration) -> Bool {
-		guard store.canManage, webSetupURL != nil else { return false }
-		switch integration.state {
-		case .needsReconnect, .incomplete, .disconnected: return true
-		case .connected: return false
-		}
-	}
 }

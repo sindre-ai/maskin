@@ -43,16 +43,46 @@ struct AddToolServerView: View {
 	}
 }
 
+/// Connect a provider that takes a pasted key (PostHog): one field, stored encrypted, never shown again.
+struct ConnectWithKeyView: View {
+	@State private var store: ConnectWithKeyStore
+	@Environment(\.dismiss) private var dismiss
+	let onConnected: () -> Void
+
+	init(store: ConnectWithKeyStore, onConnected: @escaping () -> Void) {
+		_store = State(initialValue: store)
+		self.onConnected = onConnected
+	}
+
+	var body: some View {
+		WorkspacePage(title: "Connect \(store.providerName)") {
+			PageGroupLabel(text: "\(store.providerName) key")
+			PageTextField(title: "Paste your key", text: $store.key, mono: true, isURL: true, secure: true)
+			PageFootnote(text: "The key is stored encrypted and never shown again.")
+			if let error = store.error { FormError(error) }
+			Button("Connect") {
+				Task {
+					await store.save()
+					if store.didConnect {
+						onConnected()
+						dismiss()
+					}
+				}
+			}
+			.buttonStyle(.primaryAction)
+			.disabled(!store.canSave)
+		}
+		.overlay { if store.isSaving { ProgressView() } }
+	}
+}
+
 /// Integrations › Import from Claude (v3): the Claude subscriptions agents run on. Importing a
-/// subscription needs the credentials file from a computer, so that step opens the web.
+/// subscription needs the credentials file from a computer, so the page says so and stops there.
 struct ClaudeAccountView: View {
 	@State private var store: ClaudeAccountStore
-	@Environment(\.openURL) private var openURL
-	let importURL: URL?
 
-	init(store: ClaudeAccountStore, importURL: URL?) {
+	init(store: ClaudeAccountStore) {
 		_store = State(initialValue: store)
-		self.importURL = importURL
 	}
 
 	var body: some View {
@@ -67,9 +97,6 @@ struct ClaudeAccountView: View {
 				}
 				PageFootnote(
 					text: "Agents run on your Claude plan, so their work does not draw on credits. Importing needs the Claude sign-in from a computer.")
-				if let importURL {
-					Button("Import on web") { openURL(importURL) }.buttonStyle(.primaryAction)
-				}
 			case .failed(let message): PageStatus(text: message)
 			default: PageStatus(text: "Loading your Claude account")
 			}
