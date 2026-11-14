@@ -172,6 +172,36 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/conversations/:id/messages/:messageId/thread/read',
 		"Group E, personal state: the caller's own thread read marker",
 	],
+	[
+		'POST',
+		'/api/chat-sections',
+		"Group E, personal state: the caller's own chat list section, never shared",
+	],
+	[
+		'PUT',
+		'/api/chat-sections/order',
+		"Group E, personal state: the order of the caller's own sections",
+	],
+	[
+		'PATCH',
+		'/api/chat-sections/:id',
+		"Group E, personal state: renames or folds only the caller's own section",
+	],
+	[
+		'DELETE',
+		'/api/chat-sections/:id',
+		"Group E, personal state: deletes only the caller's own section; its chats stay",
+	],
+	[
+		'PUT',
+		'/api/chat-sections/:id/chats/:conversationId',
+		"Group E, personal state: puts a chat the caller is in into the caller's own section",
+	],
+	[
+		'DELETE',
+		'/api/chat-sections/:id/chats/:conversationId',
+		"Group E, personal state: takes a chat out of the caller's own section",
+	],
 	['POST', '/api/subscriptions', 'Group E, personal state'],
 	['DELETE', '/api/subscriptions', 'Group E, personal state'],
 	['POST', '/api/subscriptions/read', 'Group E, personal state'],

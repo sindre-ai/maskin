@@ -670,6 +670,10 @@ export const addConversationParticipantsSchema = z.object({
 	actor_ids: z.array(z.string().uuid()).min(1).max(MAX_CONVERSATION_PARTICIPANTS),
 })
 
+/** The automatic views of the chat list. */
+export const CONVERSATION_LIST_VIEWS = ['waiting', 'running', 'quiet'] as const
+export type ConversationListView = (typeof CONVERSATION_LIST_VIEWS)[number]
+
 export const conversationListQuerySchema = z.object({
 	pinned: booleanQueryParam.optional(),
 	// Excludes archived conversations by default — matches the mockup's
@@ -689,9 +693,15 @@ export const conversationListQuerySchema = z.object({
 	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
 	scope: z.enum(['priority', 'recent']).optional(),
 	// The default list's listing rules: leave out empty direct messages with agents, chats with
-	// retired agents and topic chats quiet for about 14 days, unless pinned or unread. Nothing is
-	// archived; the chats stay in search and return when a new message arrives.
+	// retired agents and topic chats quiet for 7 days, unless pinned, in a section, a room, running
+	// or waiting on the caller. Nothing is archived; the chats stay in search and return when a new
+	// message arrives.
 	hide_quiet: booleanQueryParam.optional(),
+	// One automatic view of the caller's chats. 'waiting': an unread mention of the caller or an
+	// open card for them. 'running': an agent has an open turn in the chat. 'quiet': the chats
+	// hide_quiet leaves out for being quiet or with a retired agent (empty direct messages with
+	// agents are in no view). Combines with every other filter.
+	view: z.enum(CONVERSATION_LIST_VIEWS).optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
