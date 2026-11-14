@@ -30,6 +30,7 @@ import {
 import { dbLoadShed, isExempt as isLoadSheddingExempt } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import { inFlightCap } from './middleware/in-flight-cap'
+import { listReadCache } from './middleware/list-read-cache'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -531,6 +532,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	})
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
+
+	// After auth, so the cache is only read for a proven member. Per-person, a few seconds long.
+	app.use('/api/*', listReadCache())
 
 	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectsRoutes)

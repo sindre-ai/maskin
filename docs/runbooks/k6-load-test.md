@@ -7,6 +7,27 @@ chat list, actors list, sessions list, For You, unread chats and the open chat, 
 event stream (SSE) connection. Agents create, update and delete a throwaway task, which is what
 produces the events.
 
+## Two client profiles
+
+`CLIENT` picks what the simulated human tab asks for. `PROFILE` (below) picks how much load. Agents
+and event streams are the same in both, so two runs at the same `PROFILE` differ only in the tab.
+
+- `CLIENT=current` (default): the baseline on main. After every event the tab refetches the chat
+  list, unread chats, actors, sessions list, For You, objects, the open chat's messages, the open
+  chat's sessions and one object graph. This is today's behaviour and cannot show a client-side win.
+- `CLIENT=new-client`: behaves like the phase 1 web client of the bet "events carry the change".
+  - The first iteration is the page load and reads everything once.
+  - After that, an event is a message in the open chat with probability `MESSAGE_EVENT_SHARE`
+    (default 0.3, ASSUMED: the script does not parse the stream). Then only that conversation's
+    messages are refetched.
+  - Any other event marks the lists dirty. Actors, chat list, unread chats, sessions list and For
+    You are then refetched together by a trailing timer, at most once per `COALESCE_MS` (default
+    5000). A message event never triggers this refetch. The per-agent stats list is not modelled.
+  - The open chat's sessions, objects and the object graph are not refetched on events, so the
+    full session history is not walked.
+  - No delta frames: the stream is opened as in the current profile and its body is ignored. Delta
+    frames are phase 2 and are not modelled.
+
 ## Never run this against production
 
 The script aborts unless all of these hold:
@@ -27,7 +48,8 @@ staging application, or run the stack locally with `pnpm dev` and pass `http://l
 
 ## Run
 
-Start with the smoke profile (one minute, 5 tabs and 2 agents) to prove the credentials work:
+Start with the smoke profile (one minute, 5 tabs and 2 agents) to prove the credentials work.
+Add `-e CLIENT=new-client` to run the new-client profile; leave it out for the current one:
 
     k6 run -e BASE_URL=https://<staging-host> -e ALLOW_STAGING=yes \
       -e API_KEY=ank_xxx -e WORKSPACE_ID=<staging-workspace-uuid> \
@@ -38,8 +60,11 @@ Then the target load, and the step-up run that finds the limit:
     PROFILE=baseline    # 100 tabs and 30 agents, 2 min ramp, 10 min hold
     PROFILE=breakpoint  # 100 to 400 tabs and 30 to 120 agents in four 3-minute steps
 
-Pass it as `-e PROFILE=baseline`. Optional: `-e AGENT_API_KEY=...` to write as a different member,
-`-e SUMMARY_FILE=path.json` for the summary (default `k6-summary.json`).
+Pass it as `-e PROFILE=baseline`. For the comparison on the bet, run `baseline` twice against the
+same staging build, once with `-e CLIENT=current` and once with `-e CLIENT=new-client`, with the
+same `SUMMARY_FILE` naming pattern (for example `k6-current.json` and `k6-new-client.json`), and
+leave a few minutes between the runs. Optional: `-e AGENT_API_KEY=...` to write as a different
+member, `-e SUMMARY_FILE=path.json` for the summary (default `k6-summary.json`).
 
 The breakpoint profile stops itself when the error rate passes 5% or the 95th percentile of any
 non-stream request passes 5 seconds. The load level at that moment is the breaking point.
@@ -47,8 +72,16 @@ non-stream request passes 5 seconds. The load level at that moment is the breaki
 ## Read the result
 
 The run prints requests per second, error rate and the 95th percentile (p95) per route, and
-writes the same to the summary file. The event stream route always shows about 30 s: it is held
-open on purpose and is left out of the thresholds.
+writes the same to the summary file. The three numbers posted on the bet come from the summary:
+
+- `refetched_reads_per_second`: read requests per second on the six refetched routes (chat list,
+  unread chats, open chat messages, actors, sessions list, For You). Per route, see `routes`.
+- `error_rate`: share of failed requests, 0 to 1.
+- `slow_request_share`: share of non-stream requests that took 1 s or more, 0 to 1.
+
+Requests per second are averaged over the whole run, ramps included, and the setup probe is counted.
+The event stream route always shows about 30 s: it is held open on purpose and is left out of the
+thresholds.
 
 Database connection use is not visible to k6. Sample it on staging every 10 s during the run:
 
@@ -65,7 +98,14 @@ workspace: tasks whose title starts with `k6-loadtest`.
 
 ## Limits of the model
 
-- Humans are simulated as bursts of reads every 2 to 6 s, not by a real browser.
+- Humans are simulated as bursts of reads, not by a real browser. A tab waits 2 to 6 s between
+  iterations and holds the event stream for 30 s on about one iteration in five, so in both
+  profiles an event reaches a tab about every 10 s whatever the agents write, and the event rate
+  per tab is fixed.
+  A busier workspace would show a larger gap between the profiles, because the new client caps list
+  reads at one per `COALESCE_MS` while the current one does not.
+- The new-client tab models the coalescing and narrowing the spec describes, not the shared server
+  cache. The cache is server code and shows up in response times, not in request counts.
 - Event streams are opened and held for 30 s, and the stream body is not parsed, so the delegation
   strip work done per session event is only exercised if sessions run in staging.
 - iOS refetch behaviour is not modelled separately; it is the same reads.

@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, files, objects, sessions, workspaceMembers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
-import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import {
 	findAgentDeletionViolations,
@@ -148,11 +148,22 @@ app.get('/', async (c) => {
 		// Replay missed events if Last-Event-ID is provided
 		const parsedId = Number(lastEventId)
 		if (lastEventId && !Number.isNaN(parsedId)) {
+			// The workspace is bounded by >= and <= (same rows as =) and ordered by
+			// (workspace_id, id). With a plain equality Postgres treats the order as just "by
+			// id", picks the primary key and walks every other workspace's rows from an old
+			// cursor onward, throwing them away (migration 0153 adds the index that avoids
+			// it, but the planner only uses it for this shape). The 100 row cap is unchanged.
 			const missed = await db
 				.select()
 				.from(events)
-				.where(and(eq(events.workspaceId, workspaceId), gt(events.id, parsedId)))
-				.orderBy(asc(events.id))
+				.where(
+					and(
+						gte(events.workspaceId, workspaceId),
+						lte(events.workspaceId, workspaceId),
+						gt(events.id, parsedId),
+					),
+				)
+				.orderBy(asc(events.workspaceId), asc(events.id))
 				.limit(100)
 
 			for (const event of missed) {

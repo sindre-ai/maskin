@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
+import { ACTORS_STALE_MS } from '../lib/actors-stale'
 import {
 	type ActorListItem,
 	type CreateActorInput,
@@ -19,6 +20,7 @@ export function useActors(workspaceId?: string, options?: { enabled?: boolean })
 		queryKey: queryKeys.actors.all(workspaceId),
 		queryFn: () => api.actors.list(workspaceId),
 		enabled: options?.enabled,
+		staleTime: ACTORS_STALE_MS,
 		// Every picker and list that reads actors gets them A→Z by name.
 		select: sortActors,
 	})
