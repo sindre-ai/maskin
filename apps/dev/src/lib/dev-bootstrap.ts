@@ -26,6 +26,7 @@ import {
 	getTriggerData,
 	getViewData,
 } from './marketplace-loops/loop-data'
+import { loopSettingsSchema } from './marketplace-loops/loop-settings'
 import { actorSnapshot, skillSnapshot, triggerSnapshot } from './marketplace-loops/loop-snapshot'
 import {
 	MARKET_WATCH_ACTOR_IDS,
@@ -135,6 +136,11 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 				}
 			}
 
+			// A bad settings seed fails here, not on a customer's install.
+			const loopSettings = config.loop.settings
+				? loopSettingsSchema.parse(config.loop.settings)
+				: null
+
 			let loopId: string
 			if (existing) {
 				await tx
@@ -144,6 +150,7 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 						description: config.loop.description,
 						version: config.loop.version,
 						useCase: config.loop.useCase,
+						loopSettings,
 						retiredAt: null,
 						updatedAt: new Date(),
 					})
@@ -160,6 +167,7 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 						description: config.loop.description,
 						version: config.loop.version,
 						useCase: config.loop.useCase,
+						loopSettings,
 					})
 					.returning()
 

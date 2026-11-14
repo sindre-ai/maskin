@@ -2419,6 +2419,10 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// What the loop page needs beyond a title: entry condition, close condition, tags and
+	// starter targets (camelCase keys, see apps/dev/src/lib/marketplace-loops/loop-settings.ts).
+	// Null for a loop that ships none. Copied onto the installer's loop object.
+	loopSettings: jsonb('loop_settings'),
 	// Set by seedMarketplaceLoops when the slug is no longer in the code-defined seed list.
 	// A retired loop is hidden from the marketplace and refused for new installs, but the
 	// row stays so existing installs (installed_loops.source_loop_id) keep updating.

@@ -22,7 +22,7 @@ describe('Product Discovery Loop definition', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Loop')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.3.0')
+		expect(DISCOVERY_LOOP.version).toBe('1.4.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 

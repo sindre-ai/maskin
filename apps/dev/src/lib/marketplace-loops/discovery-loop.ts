@@ -22,6 +22,7 @@
 
 import discoveryViewsData from './data/discovery-views.json'
 import { skillIdsForActor, triggerIdsForActor } from './loop-data'
+import type { LoopSettings } from './loop-settings'
 
 export { actorSnapshot, skillSnapshot, triggerSnapshot } from './loop-snapshot'
 
@@ -29,11 +30,35 @@ export const DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT = '508ecfdc-c0fa-4103-ae54-
 export const DISCOVERY_ACTOR_CPO = 'f5bfd2f0-bdce-496b-9ab7-d181496b3101'
 export const DISCOVERY_ACTOR_STRATEGIST = '02f60f27-615a-4cdd-9af0-23f402f067e4'
 
+// What the loop page shows beside the tabs. The conditions are the live loop's, with the
+// workspace-specific parts removed. Only one target ships: the CPO's weekly grading trigger
+// updates the row with this exact label, so it stays current without anyone editing it.
+// The live loop's other targets (customer evidence share, tests completed, buyer-sourced bets)
+// are left out: their goals are the publisher's own numbers and nothing in this bundle keeps
+// their actuals up to date.
+const DISCOVERY_SETTINGS: LoopSettings = {
+	entryCondition:
+		'An in-scope insight is created or arrives (a product, market or customer signal, excluding workspace improvements and agent, loop or trigger operational chatter), or a person files an opportunity directly.',
+	closeCondition:
+		'An insight has a home. It is attached to a bet, handed to an owner who acted on it, or parked with a wake condition that names a specific event. In progress = insights still waiting for a decision (new or processing). Bets are what the loop produces, not what it measures.',
+	tags: ['Product'],
+	targets: [
+		{
+			label: 'Understanding acceptance (items passed of 15)',
+			source:
+				'The CPO grades both discovery pages against the Discovery acceptance test each week. The goal is all 15 items. Not graded yet.',
+			actual: 0,
+			target: 15,
+		},
+	],
+}
+
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Loop',
-	version: '1.3.0',
+	version: '1.4.0',
 	useCase: 'Discovery',
+	settings: DISCOVERY_SETTINGS,
 	description:
 		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, two living pages (what we understand about customers, and what it means for each bet) are kept current and graded each week, a plain-words weekly briefing says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
 } as const
