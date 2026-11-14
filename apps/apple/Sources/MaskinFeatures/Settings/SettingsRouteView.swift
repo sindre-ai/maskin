@@ -19,7 +19,8 @@ struct SettingsRouteView: View {
 		case .notifications: SettingsNotificationsPage(environment: environment)
 		case .workspace:
 			WorkspaceSettingsView(
-				store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
+				store: services.workspaceStore(), general: services.generalSettingsStore(),
+				workspaceId: services.workspaceId ?? "",
 				currentName: services.workspace?.name ?? "", role: services.role)
 		case .members:
 			MembersView(store: services.membersStore(), invitations: services.invitationsStore())
