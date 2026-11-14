@@ -1,13 +1,7 @@
 import type { Database } from '@maskin/db'
-import {
-	actors,
-	conversationParticipants,
-	conversations,
-	messages,
-	notifications,
-} from '@maskin/db/schema'
+import { conversationParticipants, messages, notifications } from '@maskin/db/schema'
 import { REQUEST_CARD_METADATA_KEYS } from '@maskin/shared'
-import { type SQL, and, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { type SQL, and, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm'
 import { isRequestCard, notAnswered } from './card-resolution'
 import { previewText } from './chat-notifications'
 
@@ -160,12 +154,25 @@ export async function loadChatSignals(
 	}
 	const cutoff = cardCutoff()
 
-	const [unreadRows, agentDirectRows, questionRows, requestCardRows] = await Promise.all([
+	const [unreadRows, questionRows, requestCardRows] = await Promise.all([
 		db
 			.select({
 				conversationId: messages.conversationId,
 				unread: sql<number>`count(*)::int`,
 				mentions: sql<number>`(count(*) FILTER (WHERE ${messages.metadata}->'mentions' @> jsonb_build_array(${callerId}::text)))::int`,
+				// A direct chat with an agent, where every new message counts. Worked out here, in the
+				// same query, so the list needs no extra round trip for it. Only chats with unread
+				// messages have a row, and only those need the flag.
+				agentDirect: sql<boolean>`EXISTS (
+					SELECT 1 FROM conversations ud
+					WHERE ud.id = ${messages.conversationId}
+						AND ud.direct_pair_key IS NOT NULL
+						AND EXISTS (
+							SELECT 1 FROM conversation_participants udp
+							INNER JOIN actors uda ON uda.id = udp.actor_id
+							WHERE udp.conversation_id = ud.id AND udp.left_at IS NULL AND uda.type = 'agent'
+						)
+				)`,
 			})
 			.from(messages)
 			.innerJoin(
@@ -183,24 +190,6 @@ export async function loadChatSignals(
 				),
 			)
 			.groupBy(messages.conversationId),
-		db
-			.selectDistinct({ id: conversations.id })
-			.from(conversations)
-			.innerJoin(
-				conversationParticipants,
-				and(
-					eq(conversationParticipants.conversationId, conversations.id),
-					isNull(conversationParticipants.leftAt),
-				),
-			)
-			.innerJoin(actors, eq(actors.id, conversationParticipants.actorId))
-			.where(
-				and(
-					inArray(conversations.id, conversationIds),
-					sql`${conversations.directPairKey} IS NOT NULL`,
-					eq(actors.type, 'agent'),
-				),
-			),
 		db
 			.select({
 				conversationId: sql<string>`${notifications.metadata}->>'conversation_id'`,
@@ -252,17 +241,18 @@ export async function loadChatSignals(
 	for (const row of questionRows) addCard(row.conversationId, row.content, row.createdAt)
 	for (const row of requestCardRows) addCard(row.conversationId, row.content, row.createdAt)
 
-	const agentDirectIds = new Set(agentDirectRows.map((r) => r.id))
 	for (const row of unreadRows) {
 		const entry = result.get(row.conversationId)
 		if (!entry) continue
 		entry.mentionsUnread = row.mentions
-		// In a direct chat with an agent every new message counts, so the unread total is the badge.
-		entry.unreadCount = agentDirectIds.has(row.conversationId) ? row.unread : 0
+		if (row.agentDirect) {
+			// In a direct chat with an agent every new message counts, so the unread total is the badge.
+			entry.unreadCount = row.unread
+		}
 	}
-	for (const [id, entry] of result) {
-		const waiting = entry.mentionsUnread + entry.openCards
-		entry.unreadCount = agentDirectIds.has(id) ? Math.max(entry.unreadCount, waiting) : waiting
+	// Mentions plus open cards, or the unread total when that is more (a direct chat with an agent).
+	for (const entry of result.values()) {
+		entry.unreadCount = Math.max(entry.unreadCount, entry.mentionsUnread + entry.openCards)
 	}
 	return result
 }
