@@ -83,6 +83,10 @@ struct SettingsServices {
 		ExtensionsStore(api: APIExtensionsSource(http: http), canManage: role == .owner)
 	}
 
+	func driveWatchesStore() -> DriveWatchesStore {
+		DriveWatchesStore(api: APIDriveWatchesSource(http: http), canManage: role.canManage)
+	}
+
 	func claudeAccountStore() -> ClaudeAccountStore {
 		ClaudeAccountStore(api: APIClaudeAccountSource(http: http))
 	}

@@ -11,21 +11,25 @@ struct IntegrationAccessView: View {
 	let title: String
 	/// Granted and requested permissions above the agent list (nil hides them).
 	let scopes: IntegrationScopesStore?
+	/// The watched folders, on the Google Drive page only (nil elsewhere).
+	let driveWatches: DriveWatchesStore?
 	let onReconnect: (() -> Void)?
 
 	init(
 		store: IntegrationAccessStore, title: String, scopes: IntegrationScopesStore? = nil,
-		onReconnect: (() -> Void)? = nil
+		driveWatches: DriveWatchesStore? = nil, onReconnect: (() -> Void)? = nil
 	) {
 		_store = State(initialValue: store)
 		self.title = title
 		self.scopes = scopes
+		self.driveWatches = driveWatches
 		self.onReconnect = onReconnect
 	}
 
 	var body: some View {
 		WorkspacePage(title: title) {
 			if let scopes { IntegrationScopesBlock(store: scopes, providerName: title, onReconnect: onReconnect) }
+			if let driveWatches { DriveWatchesBlock(store: driveWatches) }
 			switch store.phase {
 			case .loaded:
 				if store.agents.isEmpty {
@@ -45,10 +49,12 @@ struct IntegrationAccessView: View {
 		}
 		.task {
 			await scopes?.load()
+			await driveWatches?.load()
 			await store.load()
 		}
 		.refreshable {
 			await scopes?.load()
+			await driveWatches?.load()
 			await store.load()
 		}
 		.confirmationDialog(
