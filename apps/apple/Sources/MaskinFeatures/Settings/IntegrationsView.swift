@@ -105,7 +105,7 @@ struct IntegrationsView: View {
 		if services != nil, store.hasConnectedDrive, !isSearching, category == nil || category == .files {
 			PageCard(rows: [
 				PageRowModel(
-					id: "drive-watches", title: DriveWatchesStore.label,
+					id: "drive-watches", title: DriveWatchesCopy.label,
 					subtitle: "Folders agents watch in Google Drive", showsChevron: true,
 					action: { showDriveWatches = true })
 			])

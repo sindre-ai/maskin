@@ -101,7 +101,7 @@ public final class DriveWatchesStore {
 			watches = try await api.watches()
 			phase = .loaded
 		} catch {
-			let message = (error as? SettingsError)?.message ?? Self.loadError
+			let message = (error as? SettingsError)?.message ?? DriveWatchesCopy.loadError
 			if phase == .loaded { actionError = message } else { phase = .failed(message) }
 		}
 	}
@@ -120,8 +120,10 @@ public final class DriveWatchesStore {
 			actionError = (error as? SettingsError)?.message ?? "Couldn't stop that watch."
 		}
 	}
+}
 
-	/// Copy shared with `DRIVE_COPY` on the web (`apps/web/src/lib/drive-copy.ts`).
+/// Copy shared with `DRIVE_COPY` on the web (`apps/web/src/lib/drive-copy.ts`).
+public enum DriveWatchesCopy {
 	public static let label = "Folder watches"
 	public static let emptyTitle = "No folders are being watched"
 	public static let emptyDescription =
@@ -150,7 +152,7 @@ public struct APIDriveWatchesSource: DriveWatchesAPI {
 	public func watches() async throws -> [DriveWatch] {
 		let (data, status) = try await http.send("GET", "api/integrations/google-drive/watched-folders")
 		guard status == 200 else {
-			throw SettingsHTTP.error(status: status, data: data, fallback: DriveWatchesStore.loadError)
+			throw SettingsHTTP.error(status: status, data: data, fallback: DriveWatchesCopy.loadError)
 		}
 		return try SettingsHTTP.decode([Wire].self, data).map {
 			DriveWatch(

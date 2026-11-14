@@ -63,7 +63,7 @@ struct DriveWatchesTests {
 
 	@MainActor @Test func aFailedLoadShowsTheWebsSentence() async {
 		let api = FakeDriveWatches()
-		api.failure = SettingsError(DriveWatchesStore.loadError)
+		api.failure = SettingsError(DriveWatchesCopy.loadError)
 		let store = DriveWatchesStore(api: api, canWrite: true)
 		await store.load()
 		#expect(store.phase == .failed("Could not load folder watches"))
