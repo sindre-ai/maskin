@@ -217,6 +217,12 @@ struct ObjectHeaderView: View {
 	}
 }
 
+/// Priority values offered when the workspace hasn't set one yet; a value already stored is
+/// shown as stored, whatever it is. Outside the chips view because a generic type cannot hold it.
+enum ObjectHeaderPriority {
+	static let options = ["urgent", "high", "medium", "low"]
+}
+
 /// Status · driver · priority · due, each a 32pt chip opening its picker; a `+` chip offers the
 /// properties not set yet. Every chip keeps a 44pt hit area around its 32pt face.
 struct ObjectHeaderChips<Leading: View, Trailing: View>: View {
@@ -228,10 +234,6 @@ struct ObjectHeaderChips<Leading: View, Trailing: View>: View {
 	@ViewBuilder var leading: () -> Leading
 	@ViewBuilder var trailing: () -> Trailing
 	@State private var pickingDue = false
-
-	/// Priority values offered when the workspace hasn't set one yet; a value already stored is
-	/// shown as stored, whatever it is.
-	static let priorityOptions = ["urgent", "high", "medium", "low"]
 
 	var body: some View {
 		ChipFlow(spacing: MaskinSpace.s3) {
@@ -334,7 +336,7 @@ struct ObjectHeaderChips<Leading: View, Trailing: View>: View {
 				PriorityBars(level: PriorityBars.level(for: priority))
 			}
 		} menu: {
-			ForEach(Self.priorityOptions, id: \.self) { option in
+			ForEach(ObjectHeaderPriority.options, id: \.self) { option in
 				Button {
 					MaskinHaptics.play(.selection)
 					Task { await store.setPriority(option) }
@@ -375,7 +377,7 @@ struct ObjectHeaderChips<Leading: View, Trailing: View>: View {
 		} menu: {
 			if store.priority == nil {
 				Menu("Set priority") {
-					ForEach(Self.priorityOptions, id: \.self) { option in
+					ForEach(ObjectHeaderPriority.options, id: \.self) { option in
 						Button(option.capitalized) { Task { await store.setPriority(option) } }
 					}
 				}
