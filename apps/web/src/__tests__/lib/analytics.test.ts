@@ -31,6 +31,7 @@ import {
 	trackFileViewerPinPlaced,
 	trackFileViewerRoundSent,
 	trackFileViewerZoomUsed,
+	trackFirstResultOpened,
 	trackFlowError,
 	trackFlowStep,
 	trackForyouCardAction,
@@ -1368,5 +1369,31 @@ describe('chat list use', () => {
 			'6_20',
 			'21_plus',
 		])
+	})
+})
+
+describe('trackFirstResultOpened', () => {
+	it('sends result_opened once per person, on the person id as the flow_id', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		setStoredActor({ id: 'actor-result-1', name: 'Sam', type: 'human', email: null })
+
+		expect(trackFirstResultOpened()).toBe(true)
+		expect(trackFirstResultOpened()).toBe(false)
+
+		expect(capture).toHaveBeenCalledTimes(1)
+		expect(capture).toHaveBeenCalledWith('flow_step', {
+			flow: 'signup_to_first_result',
+			step: 'result_opened',
+			flow_id: 'actor-result-1',
+			surface: 'web',
+			duration_ms: null,
+		})
+	})
+
+	it('sends nothing when nobody is signed in', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		localStorage.clear()
+		expect(trackFirstResultOpened()).toBe(false)
+		expect(capture).not.toHaveBeenCalled()
 	})
 })

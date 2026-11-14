@@ -51,6 +51,26 @@ describe('integration_connect', () => {
 })
 
 describe('buildFlowStepProps', () => {
+	it('adds via and step_index only when the detail has them', () => {
+		const base = {
+			flow: 'signup_to_first_result',
+			step: 'intro_clicked',
+			flowId: 'p-1',
+			surface: 'backend' as const,
+			durationMs: null,
+		}
+		expect(buildFlowStepProps({ ...base, detail: { via: 'button', step_index: 1 } })).toMatchObject(
+			{
+				via: 'button',
+				step_index: 1,
+			},
+		)
+		const typed = buildFlowStepProps({ ...base, detail: { via: 'typed' } })
+		expect(typed).toMatchObject({ via: 'typed' })
+		expect(typed).not.toHaveProperty('step_index')
+		expect(buildFlowStepProps(base)).not.toHaveProperty('via')
+	})
+
 	it('returns exactly flow, step, flow_id, surface and duration_ms', () => {
 		expect(
 			buildFlowStepProps({
@@ -138,5 +158,20 @@ describe('createFlowClock', () => {
 		for (let i = 0; i < 501; i++) clock.tick(`f${i}`)
 		expect(clock.tick('f0')).toBeNull()
 		expect(clock.tick('f500')).toBe(0)
+	})
+})
+
+describe('FLOW_ERROR_CATEGORIES', () => {
+	it('lists missing_model_key and keeps it when building a flow_error', () => {
+		expect(FLOW_ERROR_CATEGORIES).toContain('missing_model_key')
+		expect(
+			buildFlowErrorProps({
+				flow: 'signup_to_first_result',
+				step: 'first_run_completed',
+				flowId: 'p-1',
+				surface: 'backend',
+				errorCategory: 'missing_model_key',
+			})?.error_category,
+		).toBe('missing_model_key')
 	})
 })

@@ -26,6 +26,7 @@ import {
 	type AiGenerationOutcome,
 	trackSessionAiGeneration,
 } from '../lib/analytics/ai-generation-events'
+import { trackFirstRunSettled } from '../lib/analytics/onboarding-funnel'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { unclassifiedFingerprint } from '../lib/credit-classifier'
@@ -1214,6 +1215,12 @@ export async function settleSession(
 		try {
 			const totals = computePostSettleTotals(row, outcome.usage)
 			posthogEmitted = await emitCompletion(row, outcome, totals, completedAt)
+			void trackFirstRunSettled(
+				deps.db,
+				row.id,
+				mapKindToOutcomeProp(outcome.kind),
+				outcome.failureReason?.reason_code ?? row.result?.failure_reason?.reason_code,
+			)
 			// One `$ai_generation` per session at terminal state. A pause is not
 			// terminal: the resume adds to the same totals and settles again, so
 			// emitting here would count the first segment twice.

@@ -8,6 +8,14 @@ vi.mock('../../lib/workspace-scope', () => ({
 	assertInWorkspace: vi.fn().mockResolvedValue(undefined),
 }))
 
+// The first-run funnel steps read the sessions table on create and settle. These tests queue
+// select results by position, so the steps are stubbed to keep the queues as written; their own
+// queries are covered in lib/analytics/onboarding-funnel.test.ts.
+vi.mock('../../lib/analytics/onboarding-funnel', () => ({
+	trackFirstRunStarted: vi.fn().mockResolvedValue(undefined),
+	trackFirstRunSettled: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('node:fs/promises', () => ({
 	mkdtemp: vi.fn().mockResolvedValue('/tmp/anko-session-test'),
 	mkdir: vi.fn().mockResolvedValue(undefined),

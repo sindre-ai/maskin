@@ -49,6 +49,7 @@ import {
 	trackMessageSentTagged,
 } from '../lib/analytics/chat-tag-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { trackIntroReply } from '../lib/analytics/onboarding-funnel'
 import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -1725,6 +1726,13 @@ app.openapi(postMessageRoute, (async (c) => {
 	// mid-turn may not have seen what landed since, and moving its cursor would hide that
 	// from its unread list.
 	if (callerType === 'human') {
+		void trackIntroReply(db, {
+			workspaceId,
+			conversationId: id,
+			humanId: callerId,
+			messageId: created.id,
+			tappedStepIndex: metadata?.from_suggested_step?.index ?? null,
+		})
 		await db
 			.update(conversationParticipants)
 			.set({

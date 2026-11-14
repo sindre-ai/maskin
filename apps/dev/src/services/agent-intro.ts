@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { actors, messages, workspaceMembers, workspaces } from '@maskin/db/schema'
 import type { FirstStep, MessageMetadata } from '@maskin/shared'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { trackOnboardingStep } from '../lib/analytics/onboarding-funnel'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterprise } from '../lib/enterprise'
 import { listProviders } from '../lib/integrations/registry'
@@ -152,6 +153,11 @@ export async function introduceAgentToRecipient(args: IntroduceArgs): Promise<vo
 			needed_tools_count: rendered.neededToolNames.length,
 			hints_dropped: neededTools.dropped,
 			scan_pending: scanPending,
+		})
+		void trackOnboardingStep({
+			workspaceId: args.workspaceId,
+			humanId: recipient.humanId,
+			step: 'intro_shown',
 		})
 
 		// The hello is out. The agent now looks around and the steps follow; this is the

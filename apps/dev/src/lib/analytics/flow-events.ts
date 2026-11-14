@@ -1,6 +1,7 @@
 import {
 	type FlowErrorCategory,
 	type FlowName,
+	type FlowStepDetail,
 	type FlowStepName,
 	buildFlowErrorProps,
 	buildFlowStepProps,
@@ -28,7 +29,7 @@ interface FlowEventBase<F extends FlowName> {
 
 /** One `flow_step`. Ids, names and a number only. Best-effort: never throws, so callers fire it without awaiting. */
 export async function trackFlowStep<F extends FlowName>(
-	p: FlowEventBase<F> & { durationMs?: number | null },
+	p: FlowEventBase<F> & { durationMs?: number | null; detail?: FlowStepDetail },
 ): Promise<void> {
 	const props = buildFlowStepProps({
 		flow: p.flow,
@@ -37,6 +38,7 @@ export async function trackFlowStep<F extends FlowName>(
 		surface: 'backend',
 		durationMs: p.durationMs !== undefined ? p.durationMs : flowClock.tick(p.flowId),
 		provider: p.provider,
+		detail: p.detail,
 	})
 	if (!props) return
 	try {
