@@ -96,6 +96,11 @@ struct SettingsServices {
 			canManage: role.canManage)
 	}
 
+	/// Folder watches on the Drive connection. Writable for everyone but viewers, like the web.
+	func driveWatchesStore() -> DriveWatchesStore {
+		DriveWatchesStore(api: APIDriveWatchesSource(http: http), canWrite: workspace?.role != "viewer")
+	}
+
 	func addToolServerStore() -> AddToolServerStore {
 		AddToolServerStore(api: APIToolServersSource(http: http))
 	}

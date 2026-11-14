@@ -14,6 +14,7 @@ struct IntegrationsView: View {
 	@State private var pendingDisconnect: ConnectedIntegration?
 	@State private var showAddToolServer = false
 	@State private var showClaude = false
+	@State private var showDriveWatches = false
 	@State private var accessTarget: ConnectedIntegration?
 	@State private var tab: Tab = .connected
 	@State private var query = ""
@@ -92,8 +93,22 @@ struct IntegrationsView: View {
 		}
 		if !accounts.isEmpty { PageCard(rows: accounts) }
 		if !servers.isEmpty { PageCard(rows: servers) }
+		driveWatchesCard
 		if !isSearching, category == nil || category == .custom {
 			addServerCard
+		}
+	}
+
+	/// Folder watches of the connected Google Drive. Open to everyone, like the web page: only Stop
+	/// watch needs write access.
+	@ViewBuilder private var driveWatchesCard: some View {
+		if services != nil, store.hasConnectedDrive, !isSearching, category == nil || category == .files {
+			PageCard(rows: [
+				PageRowModel(
+					id: "drive-watches", title: DriveWatchesCopy.label,
+					subtitle: "Folders agents watch in Google Drive", showsChevron: true,
+					action: { showDriveWatches = true })
+			])
 		}
 	}
 
@@ -149,6 +164,9 @@ struct IntegrationsView: View {
 					onReconnect: store.canManage && store.supportsNativeConnect(integration.provider)
 						? { startConnect(integration.provider) } : nil)
 			}
+		}
+		.navigationDestination(isPresented: $showDriveWatches) {
+			if let services { DriveWatchesView(store: services.driveWatchesStore()) }
 		}
 		.navigationDestination(isPresented: $showClaude) {
 			if let services { ClaudeAccountView(store: services.claudeAccountStore(), importURL: services.webURL("keys")) }
