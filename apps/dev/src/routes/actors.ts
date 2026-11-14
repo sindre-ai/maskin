@@ -29,6 +29,7 @@ import {
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
+	normalizeActorInitials,
 	normalizeStarterPrompts,
 	normalizeTags,
 	updateActorSchema,
@@ -144,6 +145,11 @@ const actorStarterPromptsSql = sql<
 	string[]
 >`CASE WHEN jsonb_typeof(${actors.metadata}->'starter_prompts') = 'array' THEN ${actors.metadata}->'starter_prompts' ELSE '[]'::jsonb END`.mapWith(
 	(value: unknown) => normalizeStarterPrompts(typeof value === 'string' ? parseJson(value) : value),
+)
+
+/** The letters the agent chose for its avatar, or null. Cleaned on the way out like the starter prompts. */
+const actorInitialsSql = sql<string | null>`${actors.metadata}->>'initials'`.mapWith(
+	(value: unknown) => normalizeActorInitials(value),
 )
 
 function parseJson(text: string): unknown {
@@ -836,6 +842,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
 					starter_prompts: actorStarterPromptsSql,
+					initials: actorInitialsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -893,6 +900,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
 					starter_prompts: actorStarterPromptsSql,
+					initials: actorInitialsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1126,6 +1134,7 @@ app.openapi(getActorRoute, (async (c) => {
 				avatar_url: actorAvatarUrlSql,
 				tags: actorTagsSql,
 				starter_prompts: actorStarterPromptsSql,
+				initials: actorInitialsSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1452,6 +1461,19 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// Initials are the letters on an agent's avatar, shown to everyone, so changing another actor's
+	// needs owner/admin, the same floor as its starter prompts. An agent may still set its own.
+	if (
+		body.initials !== undefined &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError('FORBIDDEN', "Only workspace admins can change another actor's initials"),
+			403,
+		)
+	}
+
 	// envFrom names which API-service variables get copied into the agent's
 	// sessions, so only a human admin or owner may change it, even on the actor's
 	// own record. Sending the stored list back unchanged stays open.
@@ -1556,6 +1578,24 @@ app.openapi(updateActorRoute, (async (c) => {
 		starterPrompts = normalizeStarterPrompts(body.starter_prompts)
 	}
 
+	// Initials are the letters on an agent's avatar. Only agents carry them. They live on the actor's
+	// metadata; an empty value clears them, which removes the key so the automatic letters come back.
+	let initials: string | null | undefined
+	if (body.initials !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent carries initials'), 400)
+		}
+		initials = body.initials === null ? null : normalizeActorInitials(body.initials)
+		if (body.initials !== null && body.initials.trim() !== '' && initials === null) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'Initials must be 1 to 3 letters or digits', [
+					{ field: 'initials', message: 'Use 1 to 3 letters or digits' },
+				]),
+				400,
+			)
+		}
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1619,6 +1659,11 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	const clearedMetadataKeys = [
+		...(mailbox === null ? ['mailbox'] : []),
+		...(initials === null ? ['initials'] : []),
+	]
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1633,13 +1678,18 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
-			...((mailbox !== undefined || tags !== undefined || starterPrompts !== undefined) && {
-				// One metadata write for every key, so sending a mailbox, tags and starters together keeps all.
-				metadata: sql`${mailbox === null ? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'` : sql`coalesce(${actors.metadata}, '{}'::jsonb)`} || ${JSON.stringify(
+			...((mailbox !== undefined ||
+				tags !== undefined ||
+				starterPrompts !== undefined ||
+				initials !== undefined) && {
+				// One metadata write for every key, so sending a mailbox, tags, starters and initials together keeps all.
+				// Clearing a key removes it: the merge below can not remove one, so it is taken out first.
+				metadata: sql`${clearedMetadataKeys.reduce((metadata, key) => sql`${metadata} - ${sql.raw(`'${key}'`)}`, sql`coalesce(${actors.metadata}, '{}'::jsonb)`)} || ${JSON.stringify(
 					{
 						...(mailbox ? { mailbox } : {}),
 						...(tags !== undefined ? { tags } : {}),
 						...(starterPrompts !== undefined ? { starter_prompts: starterPrompts } : {}),
+						...(initials ? { initials } : {}),
 					},
 				)}::jsonb`,
 			}),
@@ -1666,6 +1716,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
 			starter_prompts: actorStarterPromptsSql,
+			initials: actorInitialsSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1860,6 +1911,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
 			starter_prompts: actorStarterPromptsSql,
+			initials: actorInitialsSql,
 		})
 
 	if (!updated) {

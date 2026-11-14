@@ -93,6 +93,7 @@ import {
 	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
+	classifyUnclassifiedExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
 	isCreditBalanceLowText,
@@ -215,7 +216,13 @@ import {
 	AgentServerHttpError,
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
-import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import {
+	ContainerManager,
+	type LogChunk,
+	type StreamJsonUserMessage,
+	type TurnImage,
+	userTurnWithImages,
+} from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
@@ -576,7 +583,7 @@ function classifyExit(args: {
 }): TerminalClassification {
 	if (args.userStopped) return 'human_stop'
 	if (args.status === 'completed') return 'agent_completed'
-	if (!args.failureReason) return 'unknown'
+	if (!args.failureReason || args.failureReason.reason_code === 'unclassified') return 'unknown'
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
@@ -1457,6 +1464,8 @@ export class SessionManager extends EventEmitter {
 		 * it apart from the human sending the same thing again.
 		 */
 		logTags?: Record<string, unknown>,
+		/** Images the agent sees with this turn. Not kept in the session log: only the text is. */
+		images?: TurnImage[],
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1474,9 +1483,12 @@ export class SessionManager extends EventEmitter {
 				throw new Error(`Agent server ${session.agentServerId} not found`)
 			}
 			const client = new AgentServerClient({ server: serverRow })
-			await client.sendInput(sessionId, payload)
+			await client.sendInput(sessionId, payload, images)
 		} else {
-			await this.containers.write(sessionId, payload)
+			await this.containers.write(
+				sessionId,
+				images && images.length > 0 ? userTurnWithImages(payload, images) : payload,
+			)
 		}
 
 		// The CLI does not echo the user turn back to stdout — only the
@@ -4648,7 +4660,11 @@ ${cont.continues_prompt}
 						reset_at: null,
 						verbatim_output: null,
 					}
-				: null)
+				: // A non-zero exit that nothing recognised is never saved bare: it gets an explicit
+					// reason, and settleSession tells the owner. A stop someone asked for is not a death.
+					exitCode !== null && exitCode !== 0 && !this.stopRequested.has(sessionId)
+					? classifyUnclassifiedExit(stdoutTail)
+					: null)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 		// A stop the user asked for ends as user_stopped, not failed. A budget stop
 		// also goes through stopSession (so it sits in stopRequested too) but it is
@@ -6777,7 +6793,14 @@ ${cont.continues_prompt}
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
+			!stoppedByUser && exitCode !== null
+				? (classifySessionExit(stdoutTail, exitCode) ??
+					// Same rule as handleCompletion: a non-zero exit nothing recognised gets an explicit
+					// reason, unless a person asked for the stop.
+					(exitCode !== 0 && !this.stopRequested.has(sessionId)
+						? classifyUnclassifiedExit(stdoutTail)
+						: null))
+				: null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,

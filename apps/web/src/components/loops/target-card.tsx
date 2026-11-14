@@ -115,6 +115,14 @@ export function TargetCard({ target, owner }: TargetCardProps) {
 			</div>
 			<p className="text-[26px] font-bold leading-[1.05] tracking-tight text-foreground">
 				{formatFigure(target.actual)} of {formatFigure(target.target)}
+				{target.manual && (
+					<span
+						title="Typed in by hand, not counted live. It can be out of date."
+						className="ml-2 align-middle text-[12px] font-medium tracking-normal text-muted-foreground"
+					>
+						manual
+					</span>
+				)}
 			</p>
 			<div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-border">
 				<div

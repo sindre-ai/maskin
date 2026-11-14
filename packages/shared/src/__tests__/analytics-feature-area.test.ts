@@ -4,6 +4,7 @@ import { FEATURE_AREAS, featureAreaForEvent } from '../analytics-feature-area'
 describe('featureAreaForEvent', () => {
 	it.each([
 		['chat_session_started', 'chats'],
+		['chat_session_seeded', 'chats'],
 		['chat_reply_posted', 'chats'],
 		['agent_chat_started_message', 'chats'],
 		['foryou_card_shown', 'for_you'],

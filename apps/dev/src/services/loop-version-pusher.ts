@@ -26,9 +26,11 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { loopSettingsPatch, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
@@ -44,6 +46,12 @@ import {
 	partitionProvisionedSkills,
 	rewriteWiring,
 } from './loop-provisioning'
+import {
+	type ViewSyncCounts,
+	deleteViewFileBytes,
+	syncLoopViews,
+	toViewItems,
+} from './loop-views-provisioning'
 import {
 	type CapturedLiveSession,
 	captureLiveSessions,
@@ -117,6 +125,10 @@ export class LoopVersionPusher {
 		private db: Database,
 		private agentStorage: AgentStorageManager,
 		private tickMs: number = TICK_MS,
+		// Where the pages of a loop's custom views are written. Only needed for
+		// loops that publish views; a push that finds views without it fails and
+		// retries on the next tick.
+		private storage?: StorageProvider,
 	) {}
 
 	start(): void {
@@ -261,12 +273,16 @@ export class LoopVersionPusher {
 			.from(marketplaceLoopItems)
 			.where(eq(marketplaceLoopItems.loopId, install.sourceLoopId))
 
-		const loopItems: MarketplaceItem[] = loopItemRows.map((r) => ({
-			id: r.id,
-			sourceItemId: r.sourceItemId,
-			itemType: r.itemType as ItemType,
-			itemSnapshot: (r.itemSnapshot as Record<string, unknown>) ?? {},
-		}))
+		// Views are not rows in the workspace like the other items; they are synced
+		// to the loop object's tabs separately below.
+		const loopItems: MarketplaceItem[] = loopItemRows
+			.filter((r) => r.itemType !== 'view')
+			.map((r) => ({
+				id: r.id,
+				sourceItemId: r.sourceItemId,
+				itemType: r.itemType as ItemType,
+				itemSnapshot: (r.itemSnapshot as Record<string, unknown>) ?? {},
+			}))
 
 		const installed = await this.loadInstalledRows(install.id)
 
@@ -322,6 +338,7 @@ export class LoopVersionPusher {
 		// pass-1.5 — see installed-loops.ts).
 		const skillActorBindings: Array<{ sourceSkillId: string; sourceActorIds: string[] }> = []
 
+		let viewCounts: ViewSyncCounts | null = null
 		let alreadyCurrent = false
 		await this.db.transaction(async (tx) => {
 			// Serialise with any other push of this install (the hourly tick or a
@@ -760,6 +777,33 @@ export class LoopVersionPusher {
 				}
 			}
 
+			// Custom views (tabs on the loop page): write the pages the new version
+			// brings and drop the ones it no longer publishes. A loop with no views
+			// costs no queries here. A version that drops every view leaves the
+			// install's tabs until a later version publishes one (see
+			// loop-views-provisioning.ts).
+			const viewItems = toViewItems(loopItemRows)
+			if (install.objectId && viewItems.length > 0) {
+				if (!this.storage) {
+					throw new Error(
+						`cannot sync views for install ${install.id}: the version pusher has no file storage`,
+					)
+				}
+				if (!createdBy) {
+					throw new Error(
+						`cannot sync views for install ${install.id}: no workspace actor to attribute the pages to`,
+					)
+				}
+				viewCounts = await syncLoopViews({
+					db: tx,
+					storage: this.storage,
+					workspaceId: install.workspaceId,
+					loopObjectId: install.objectId,
+					actorId: createdBy,
+					items: viewItems,
+				})
+			}
+
 			// Fold this tick's trigger adds/removes into the linked Loop object's
 			// `metadata.trigger_ids` (see installed-loops.ts for where that object is
 			// first created at install time). Agent association on `GET /api/loops`
@@ -789,6 +833,36 @@ export class LoopVersionPusher {
 					.where(eq(objects.id, install.objectId))
 			}
 
+			// Loop-page settings (entry and close condition, tags, starter targets). A
+			// field a workspace has edited is kept; see loopSettingsPatch.
+			if (install.objectId) {
+				const [source] = await tx
+					.select({ loopSettings: marketplaceLoops.loopSettings })
+					.from(marketplaceLoops)
+					.where(eq(marketplaceLoops.id, install.sourceLoopId))
+					.limit(1)
+				const [loopObject] = await tx
+					.select({ metadata: objects.metadata })
+					.from(objects)
+					.where(eq(objects.id, install.objectId))
+					.limit(1)
+				if (loopObject) {
+					const patch = loopSettingsPatch(
+						readLoopSettings(source?.loopSettings),
+						loopObject.metadata as Record<string, unknown> | null,
+					)
+					if (Object.keys(patch).length > 0) {
+						await tx
+							.update(objects)
+							.set({
+								metadata: sql`coalesce(${objects.metadata}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+								updatedAt: new Date(),
+							})
+							.where(eq(objects.id, install.objectId))
+					}
+				}
+			}
+
 			await tx
 				.update(installedLoops)
 				.set({ installedVersion: targetVersion, updatedAt: new Date() })
@@ -806,6 +880,7 @@ export class LoopVersionPusher {
 						from_version: install.installedVersion,
 						to_version: targetVersion,
 						items: { adds, updates, removes, reuses },
+						...(viewCounts ? { views: viewCountsForEvent(viewCounts) } : {}),
 						trigger: actingActorId ? 'manual' : 'cron',
 					},
 				})
@@ -853,6 +928,11 @@ export class LoopVersionPusher {
 			}
 		}
 
+		const syncedViews = viewCounts as ViewSyncCounts | null
+		if (syncedViews && this.storage) {
+			await deleteViewFileBytes(this.storage, install.workspaceId, syncedViews.removedFileIds)
+		}
+
 		logger.info('Re-provisioned locked install', {
 			installId: install.id,
 			workspaceId: install.workspaceId,
@@ -862,6 +942,7 @@ export class LoopVersionPusher {
 			updates,
 			removes,
 			reuses,
+			...(syncedViews ? { views: viewCountsForEvent(syncedViews) } : {}),
 		})
 		return { adds, updates, removes, reuses }
 	}
@@ -977,6 +1058,15 @@ export class LoopVersionPusher {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+function viewCountsForEvent(counts: ViewSyncCounts) {
+	return {
+		adds: counts.adds,
+		updates: counts.updates,
+		removes: counts.removes,
+		kept: counts.kept,
+	}
+}
 
 function toInstalledRow(id: string, type: ItemType, metadata: unknown): InstalledRow {
 	const meta = (metadata as Record<string, unknown>) ?? {}

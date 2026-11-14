@@ -113,6 +113,17 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 				// Settings index retries) while clientWidth stays fixed.
 				if (FORM_FIELD_TAGS.includes(el.tagName)) continue
 				if (hasHorizontalOverflowIntent(el)) continue
+				// `touch-hit` (app.css) grows a small button's tap area to 44px with a
+				// centred ::after. That pseudo-element counts as scrollable content on
+				// the right side by (44 - width) / 2, and nothing is clipped or scrolled.
+				// Skip only that much, so a real overflow on the same element still fails.
+				if (
+					typeof el.className === 'string' &&
+					el.className.split(/\s+/).includes('touch-hit') &&
+					el.scrollWidth - el.clientWidth <= Math.max(0, (44 - el.clientWidth) / 2) + tolerance
+				) {
+					continue
+				}
 				offenders.push({
 					selector: describe(el),
 					scrollWidth: el.scrollWidth,

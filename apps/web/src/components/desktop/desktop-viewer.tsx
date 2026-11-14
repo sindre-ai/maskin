@@ -7,6 +7,7 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
+import type { ComputerViewFlow } from '@/lib/computer-view-flow'
 import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
 import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
@@ -106,6 +107,7 @@ export function DesktopViewer({
 	variant = 'inline',
 	onOpen,
 	onOpenAgent,
+	flow,
 }: {
 	workspaceId: string
 	/** Whose computer this is: every agent has its own. */
@@ -121,6 +123,8 @@ export function DesktopViewer({
 	onOpen?: () => void
 	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
 	onOpenAgent?: (agentId: string) => void
+	/** The analytics flow of this view: it reports mode changes only (opened by the parent). */
+	flow?: ComputerViewFlow
 }) {
 	const targetRef = useRef<HTMLDivElement>(null)
 	const rfbRef = useRef<RfbHandle | null>(null)
@@ -150,6 +154,8 @@ export function DesktopViewer({
 		setError(null)
 		setControlling(false)
 		setRemoteText('')
+		const startedAt = performance.now()
+		let live = false
 
 		void (async () => {
 			try {
@@ -177,7 +183,10 @@ export function DesktopViewer({
 				rfb.qualityLevel = 9
 				rfb.viewOnly = true
 				rfb.addEventListener('connect', () => {
-					if (!cancelled) setPhase('connected')
+					if (cancelled) return
+					live = true
+					flow?.firstFrame(performance.now() - startedAt)
+					setPhase('connected')
 				})
 				rfb.addEventListener('clipboard', (event) => {
 					if (cancelled) return
@@ -191,6 +200,7 @@ export function DesktopViewer({
 				})
 				rfb.addEventListener('disconnect', () => {
 					if (cancelled) return
+					flow?.connectionLost(live)
 					rfbRef.current = null
 					setControlling(false)
 					setPhase((prev) => {
@@ -212,7 +222,12 @@ export function DesktopViewer({
 			rfbRef.current?.disconnect()
 			rfbRef.current = null
 		}
-	}, [workspaceId, agentId, attempt, connectDesktop, copyArming])
+	}, [workspaceId, agentId, attempt, connectDesktop, copyArming, flow])
+
+	// Take-over started and ended. The flow ends one still running when the view is closed.
+	useEffect(() => {
+		flow?.takeOver(controlling)
+	}, [controlling, flow])
 
 	useEffect(() => {
 		const rfb = rfbRef.current

@@ -56,6 +56,26 @@ public struct APIAuthenticator: Authenticating {
 		}
 	}
 
+	public func requestPasswordReset(email: String) async throws {
+		let output: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output
+		do {
+			output = try await client.post_sol_api_sol_auth_sol_forgot_hyphen_password(
+				.init(body: .json(.init(email: email))))
+		} catch {
+			throw PasswordResetError.network(error.localizedDescription)
+		}
+
+		switch output {
+		case .ok:
+			return
+		case .undocumented(let status, _):
+			throw PasswordResetError.server(status: status)
+		default:
+			// The only other documented answer is 429.
+			throw PasswordResetError.rateLimited
+		}
+	}
+
 	public func signUp(
 		name: String, organization: String, role: String, email: String, password: String,
 		idempotencyKey: String

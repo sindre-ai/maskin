@@ -83,6 +83,7 @@ import {
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { runLimited } from '../lib/run-limited'
 import {
 	TITLE_COVERAGE_SCALE,
 	TITLE_HIT_WEIGHT,
@@ -1030,6 +1031,7 @@ const facetsObjectsRoute = createRoute({
 })
 
 const DAY_MS = 86_400_000
+const FACET_CONCURRENCY = 3
 
 app.openapi(facetsObjectsRoute, async (c) => {
 	const db = c.get('db')
@@ -1089,46 +1091,79 @@ app.openapi(facetsObjectsRoute, async (c) => {
 	const groupExpr = (resolveGroupExpression(query.group_by, query.tz) ??
 		resolveGroupExpression('status')) as SQL
 
+	// The four `updated` buckets and `fresh` share one condition set (every filter
+	// but recency), so they are one scan with a FILTER per count instead of five
+	// queries.
+	const recencyCounts = async () => {
+		const bucketEntries = Object.entries(updatedBounds ?? {})
+		const selection: Record<string, SQL<unknown>> = {
+			fresh: sql`count(*) filter (where ${gte(objects.updatedAt, sinceWeek)})`,
+		}
+		for (const [bucket, [from, to]] of bucketEntries) {
+			const parts: SQL[] = []
+			if (from !== null) parts.push(gte(objects.updatedAt, new Date(from)))
+			if (to !== null) parts.push(lt(objects.updatedAt, new Date(to)))
+			selection[`updated_${bucket}`] = sql`count(*) filter (where ${and(...parts) ?? sql`true`})`
+		}
+		const [row] = (await db
+			.select(selection)
+			.from(objects)
+			.where(and(...noRecency))) as Array<Record<string, unknown>>
+		return {
+			fresh: toCount(row?.fresh),
+			updated: bucketEntries.map(
+				([bucket]) => [bucket, toCount(row?.[`updated_${bucket}`])] as const,
+			),
+		}
+	}
+
+	// At most FACET_CONCURRENCY queries on the pool at once: the page asks for ~10
+	// independent counts on every filter change and SSE refresh.
 	const [
 		total,
 		groupRows,
 		typeRows,
 		statusRows,
 		driverRows,
-		fresh,
+		recency,
 		starred,
 		working,
 		waiting,
-		updatedEntries,
 		[workspace],
-	] = await Promise.all([
-		countWhere(conditionsWithout({})),
-		grouped(groupExpr, conditionsWithout({})),
-		grouped(sql`${objects.type}`, conditionsWithout({ type: true })),
-		grouped(sql`${objects.status}`, conditionsWithout({ status: true })),
-		grouped(sql`coalesce(${objects.driver}::text, '')`, conditionsWithout({ driver: true })),
-		countWhere([...noRecency, gte(objects.updatedAt, sinceWeek)]),
-		countWhere([...conditionsWithout({ starred: true }), starredByCondition(actorId)]),
-		countWhere([
-			...conditionsWithout({ working: true }),
-			sql`${objects.activeSessionId} is not null`,
-		]),
-		waitingIds.length === 0
-			? Promise.resolve(0)
-			: countWhere([
-					...conditionsWithout({ attention_ids: true }),
-					inArray(objects.id, waitingIds),
-				]),
-		Promise.all(
-			Object.entries(updatedBounds ?? {}).map(async ([bucket, [from, to]]) => {
-				const where = [...noRecency]
-				if (from !== null) where.push(gte(objects.updatedAt, new Date(from)))
-				if (to !== null) where.push(lt(objects.updatedAt, new Date(to)))
-				return [bucket, await countWhere(where)] as const
-			}),
-		),
-		db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1),
-	])
+	] = (await runLimited<unknown>(FACET_CONCURRENCY, [
+		() => countWhere(conditionsWithout({})),
+		() => grouped(groupExpr, conditionsWithout({})),
+		() => grouped(sql`${objects.type}`, conditionsWithout({ type: true })),
+		() => grouped(sql`${objects.status}`, conditionsWithout({ status: true })),
+		() => grouped(sql`coalesce(${objects.driver}::text, '')`, conditionsWithout({ driver: true })),
+		recencyCounts,
+		() => countWhere([...conditionsWithout({ starred: true }), starredByCondition(actorId)]),
+		() =>
+			countWhere([
+				...conditionsWithout({ working: true }),
+				sql`${objects.activeSessionId} is not null`,
+			]),
+		() =>
+			waitingIds.length === 0
+				? Promise.resolve(0)
+				: countWhere([
+						...conditionsWithout({ attention_ids: true }),
+						inArray(objects.id, waitingIds),
+					]),
+		() => db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1),
+	])) as [
+		number,
+		Array<{ value: string; total: number }>,
+		Array<{ value: string; total: number }>,
+		Array<{ value: string; total: number }>,
+		Array<{ value: string; total: number }>,
+		Awaited<ReturnType<typeof recencyCounts>>,
+		number,
+		number,
+		number,
+		Array<typeof workspaces.$inferSelect>,
+	]
+	const { fresh, updated: updatedEntries } = recency
 
 	// Group order: statuses follow the workspace's configured lifecycle order,
 	// dates run newest first, everything else A to Z with "no value" last.
@@ -1645,7 +1680,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 })
 
 // GET /{id}/graph/traverse - Bounded multi-hop BFS across the relationships
-// table starting at {id}. Returns nodes (objects only) + edges as flat lists.
+// table starting at {id}. Returns nodes (objects, files, chats and sessions) + edges as flat lists.
 // Bounds: depth cap, node cap, and their product ceiling (5000). Cycles are
 // broken by a visited set keyed on object id, so a workspace with a
 // `supersedes`/`contradicts` loop returns a bounded, terminating response.
@@ -1682,7 +1717,7 @@ const traverseGraphRoute = createRoute({
 	tags: ['Objects'],
 	summary: 'Bounded multi-hop graph traversal from an object',
 	description:
-		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.",
+		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.",
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,

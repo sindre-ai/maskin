@@ -39,6 +39,7 @@ describe('admitPosthogEvent', () => {
 			'agent_session_started',
 			'plan_limit_reached',
 			'chat_session_started',
+			'chat_session_seeded',
 			'integration_connect_started',
 			'integration_tool_called',
 			'foryou_card_action',
@@ -49,6 +50,7 @@ describe('admitPosthogEvent', () => {
 			'trial_card_rejected_duplicate',
 			'support_item_opened',
 			'support_item_resolved',
+			'notification_sent',
 		]) {
 			for (let i = 0; i < 10; i++) expect(admitPosthogEvent(event)).toEqual({ send: true })
 		}

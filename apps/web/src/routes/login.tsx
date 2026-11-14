@@ -93,6 +93,11 @@ function LoginPage() {
 							}}
 							placeholder="Your password"
 						/>
+						<div className="mt-1.5 text-right text-xs">
+							<Link to="/forgot-password" className="text-muted-foreground hover:text-foreground">
+								Forgot password?
+							</Link>
+						</div>
 					</div>
 
 					{error && <p className="text-xs text-error">{error}</p>}

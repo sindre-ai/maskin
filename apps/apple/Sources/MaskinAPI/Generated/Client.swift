@@ -3165,6 +3165,101 @@ public struct Client: APIProtocol {
             }
         )
     }
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    public func post_sol_api_sol_auth_sol_forgot_hyphen_password(_ input: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input) async throws -> Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/auth/forgot-password",
+                    parameters: []
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .post
+                )
+                suppressMutabilityWarning(&request)
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 429:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .tooManyRequests(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
     /// List skills for an agent
     ///
     /// - Remark: HTTP `GET /api/actors/{actorId}/skills`.

@@ -81,7 +81,11 @@ public struct MainShell: View {
 			await badges.start(environment: environment)
 		}
 		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
-		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
+		.environment(
+			\.actorPictures,
+			ActorPictures(
+				url: { [pictures] in pictures.url(for: $0) },
+				initials: { [pictures] in pictures.initials(for: $0) }))
 		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { Task { await pictures.load(environment: environment) } }

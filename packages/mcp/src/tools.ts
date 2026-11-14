@@ -17,6 +17,7 @@ import {
 	notificationActionSchema,
 	notificationOptionSchema,
 	skillNameSchema,
+	starterPromptListSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
 
@@ -303,6 +304,13 @@ const startAgentInputSchema = z.object({
 		.optional()
 		.describe(
 			'Normally leave this out: when you start the session from a chat, it is attached to your reply automatically. Only set it to attach the work to a specific earlier message of yours in a chat you are in; an id from a chat you are not in is ignored.',
+		),
+	file_ids: z
+		.array(z.string().uuid())
+		.max(20)
+		.optional()
+		.describe(
+			'Ids of workspace files the agent needs (an upload, a render, a working package). They are listed by name and id in its starting prompt, so it does not have to hunt for them or ask for them again.',
 		),
 })
 
@@ -675,7 +683,7 @@ export const tools = {
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. Send at least one of `object_id`, `source_id`, `target_id` or `type`; with none the call is refused. Any parameter not listed here is rejected with an error.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -713,7 +721,7 @@ export const tools = {
 	},
 	traverse_graph: {
 		description:
-			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on object id. Only object endpoints inside the caller's workspace are followed; file endpoints and cross-workspace ids are skipped. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
+			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on node id. Nodes can be objects, files, chats (`conversation`) and sessions inside the caller's workspace; cross-workspace ids are skipped. The start node must be an object — a chat or file id returns 404. A default call follows every edge type, so on a loop item the sibling items fill the result and cut it off at `max_nodes`: pass `edge_type_allow_list` (for example `attached` to find an object's files, `produced_by` for what a session made, `spawned` for the sessions a chat started, `in_loop` for loop membership) or a smaller `max_depth`. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -751,11 +759,16 @@ export const tools = {
 						'about',
 						'competes_with',
 						'derived_from',
+						'attached',
+						'in_loop',
+						'produced_by',
+						'spawned',
+						'has_file',
 					]),
 				)
 				.optional()
 				.describe(
-					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type.',
+					'Only follow relationships whose `type` is in this list. Omit to follow every workspace edge type. `attached` links an object to a file, `in_loop` a loop to its items, `produced_by` a session to what it created, `spawned` a chat to a session it started, `has_file` a chat to a file uploaded in it.',
 				),
 			direction: z
 				.enum(['outbound', 'inbound', 'both'])
@@ -837,7 +850,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing agent that was created in this workspace to a workspace (a person or an agent created elsewhere is refused with 403; people join by accepting an email invitation) — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), starter_prompts (agents only), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing agent that was created in this workspace to a workspace (a person or an agent created elsewhere is refused with 403; people join by accepting an email invitation) — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead. Changing the `tools` of another actor needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value, provided the server command, args and url are unchanged.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional().describe('New name for the actor.'),
@@ -864,7 +877,20 @@ export const tools = {
 				.describe(
 					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. REPLACES the whole map — read the actor first and merge, or you will silently drop its existing servers. To add the tools of a connected integration, copy the `mcp.server` of that provider from list_integration_providers in under the provider name. `type` is required on each entry ("stdio" or "http").',
 				),
+			starter_prompts: starterPromptListSchema
+				.optional()
+				.describe(
+					"One-tap openers shown as chips in a new chat with this agent (agents only). Each entry is both the chip label and the exact text put in the message box, so write it as the person would say it. Up to 4 entries, 1-60 characters each, no line breaks, no repeats ignoring capitals. REPLACES the whole list; pass [] to clear. An agent may set its own; setting another actor's needs owner or admin.",
+				),
 			llm_config: actorLlmConfigSchema,
+			initials: z
+				.string()
+				.max(3)
+				.nullable()
+				.optional()
+				.describe(
+					'The 1 to 3 letters or digits shown on the agent avatar, for example "DEV". Saved upper case. An agent may set its own; changing another agent\'s needs owner or admin. Pass "" or null to clear it and go back to letters worked out from the name. Agents only.',
+				),
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
@@ -1185,7 +1211,7 @@ export const tools = {
 	// ─── Files ───────────────────────────────────────────────
 	create_file: {
 		description:
-			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else.',
+			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else. The file is linked to the chat you are running in, so it stays reachable from that chat; pass `conversation_id` to link it to another chat, and `object_id` to attach it to a work item.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -1227,15 +1253,47 @@ export const tools = {
 				.describe(
 					'Encoding of `content`. Defaults to "utf8" — pass markdown/HTML/JSON as a normal string. Use "base64" for binary files (images, PDFs, archives).',
 				),
+			conversation_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Chat to link the file to. Leave out to link it to the chat you are running in (none when you are not in a chat).',
+				),
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe('Work item (bet, task, insight, ...) to attach the file to.'),
 		}),
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. To see which files belong to one chat, pass `conversation_id` (a chat you are in): it returns the 50 newest files attached to messages in that chat, each with name, mime type, size, who attached it and when, plus `total` and `omitted` for the rest, however old the chat is. Narrow it with `type` (a mime type or prefix, e.g. "video") and `uploaded_by` (an actor id). With `conversation_id` the other filters and paging do not apply. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
 			kind: z.enum(['briefing']).optional().describe('Only files of this kind.'),
+			conversation_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'List the files attached to messages in this chat instead of the whole workspace. Only chats you are in.',
+				),
+			type: z
+				.string()
+				.optional()
+				.describe(
+					'With conversation_id: only files whose mime type starts with this, e.g. "video" or "application/pdf".',
+				),
+			uploaded_by: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'With conversation_id: only files attached by this actor (see get_conversation).',
+				),
 			tags: z
 				.array(z.string())
 				.max(20)
@@ -1513,7 +1571,7 @@ export const tools = {
 	},
 	list_conversation_messages: {
 		description:
-			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
+			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. Each message row carries its `metadata`; files people uploaded with a message are in `metadata.attachments`, an array of `{file_id, name, mime_type, size_bytes}`. Fetch one with get_file using that id. An upload is on the message it was sent with, so page back with before_id to find an older one. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1529,7 +1587,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need it for your actual reply: whatever you write at the end of your turn is posted automatically. Use it for an interim note, mainly a short heads-up before something slow. Skip bare acknowledgements ("okay", "got it"). Read recent messages with list_conversation_messages if you need context. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); use a thread for side conversations or long-running work and keep \`also_in_channel\` off unless the whole chat should see it. An interim post lands in a thread under the message that started your turn (the thread is created if the message was top-level), so a long run does not fill the main timeline; your final reply is posted to the main timeline automatically. Pass \`top_level: true\` only when the whole chat must see the post. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and you must never write card text yourself; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need it for your actual reply: whatever you write at the end of your turn is posted automatically. Use it for an interim note, mainly a short heads-up before something slow. Skip bare acknowledgements ("okay", "got it"). Read recent messages with list_conversation_messages if you need context. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); use a thread for side conversations or long-running work and keep \`also_in_channel\` off unless the whole chat should see it. If your turn was started by a reply in a thread, an interim post lands in that thread; if it was started by a top-level message, it goes to the main timeline. Your final reply is posted automatically. Pass \`top_level: true\` only when the whole chat must see a post made during a thread turn. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and you must never write card text yourself; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -2729,7 +2787,7 @@ export const tools = {
 	},
 	show_computer: {
 		description:
-			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one of these: you are acting for the person, so tick it yourself and carry on. Only hand it over if the check then turns into an image or puzzle challenge. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished; then call `desktop_screenshot` to see what changed before carrying on. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one of these: you are acting for the person, so tick it yourself and carry on. Only hand it over if the check then turns into an image or puzzle challenge. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished, with a screenshot of your computer. Look at it before carrying on; if none came, call `desktop_screenshot`. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			task: z

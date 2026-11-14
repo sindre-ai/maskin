@@ -65,6 +65,13 @@ export function PageSearchInput({
 		setOpen(true)
 	}
 
+	// Closing the takeover removes the focused input, which would drop the caret to
+	// the page body. Hand focus back to the icon button that opened it.
+	function closeNarrow() {
+		setOpen(false)
+		iconRef.current?.focus()
+	}
+
 	usePageSearchShortcut(() => {
 		// Wide: the field itself is on screen. Narrow: open the inline field (or, if it
 		// is already open, put the caret back in it).
@@ -104,7 +111,7 @@ export function PageSearchInput({
 				onKeyDown={(e) => {
 					if (e.key === 'Escape') {
 						handleChange('')
-						setOpen(false)
+						closeNarrow()
 					}
 				}}
 				placeholder={label}
@@ -157,7 +164,7 @@ export function PageSearchInput({
 				ref={iconRef}
 				onClick={(e) => openCollapsed(e.currentTarget.closest('header'))}
 				className={cn(
-					'relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
+					'touch-hit relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
 					text && 'text-foreground',
 				)}
 			>
@@ -180,8 +187,8 @@ export function PageSearchInput({
 						variant="ghost"
 						size="icon"
 						aria-label="Close search"
-						onClick={() => setOpen(false)}
-						className="size-[30px] shrink-0 rounded-lg text-muted-foreground"
+						onClick={closeNarrow}
+						className="touch-hit relative size-[30px] shrink-0 rounded-lg text-muted-foreground"
 					>
 						<X aria-hidden size={15} />
 					</Button>

@@ -313,7 +313,7 @@ function LinkPopover({ editor, open, initialUrl, onCommit, onRemove, onClose }: 
 						onClose()
 					}
 				}}
-				className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="h-8 w-full rounded-md border border-control bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			/>
 			<button
 				type="button"
@@ -635,6 +635,13 @@ export function EditorToolbar({
 		setLinkOpen(false)
 	}
 
+	// Esc in the link box: close it and hand the caret back to the editor with
+	// the selection kept, so the input unmounting does not drop focus to the page.
+	const closeLink = () => {
+		setLinkOpen(false)
+		editor.commands.focus()
+	}
+
 	// Left/Right move between the toolbar's own buttons (not the link box's),
 	// Escape hands focus back to the editor (selection intact). The buttons are
 	// one tab stop: Tab leaves the toolbar from wherever focus is.
@@ -645,7 +652,7 @@ export function EditorToolbar({
 		if (event.target instanceof HTMLInputElement) return
 		if (event.key === 'Escape') {
 			event.preventDefault()
-			editor.commands.focus()
+			closeLink()
 			return
 		}
 		if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
@@ -725,7 +732,7 @@ export function EditorToolbar({
 								initialUrl={linkInitialUrl}
 								onCommit={commitLink}
 								onRemove={removeLink}
-								onClose={() => setLinkOpen(false)}
+								onClose={closeLink}
 							/>
 						</div>
 					)}
@@ -761,7 +768,7 @@ export function EditorToolbar({
 						initialUrl={linkInitialUrl}
 						onCommit={commitLink}
 						onRemove={removeLink}
-						onClose={() => setLinkOpen(false)}
+						onClose={closeLink}
 					/>
 				</div>
 			)}

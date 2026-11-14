@@ -51,7 +51,9 @@ export type LoopStatus = (typeof LOOP_STATUSES)[number]
 export {
 	loopTargetSchema,
 	loopTargetSourceSchema,
+	loopTargetViewSchema,
 	type LoopTarget,
+	type LoopTargetView,
 	type LoopTargetSource,
 } from './loop-targets'
 

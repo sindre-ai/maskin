@@ -275,3 +275,25 @@ test.describe('Floating composers — item, agent, reply pane and trial banner',
 		})
 	}
 })
+
+test.describe('Screen title on a plain screen', () => {
+	test('the Flows heading shows above the solid bar at desktop width', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1440, height: 900 })
+		await page.goto(`/${account.workspaceId}/loops`)
+		const heading = page.getByRole('heading', { level: 1, name: 'Flows' })
+		await expect(heading).toBeVisible({ timeout: 15_000 })
+		// The bar is solid, so a title painted under it is "visible" to Playwright but not to a
+		// person. Let the bar take pointer events too, then the point at the heading's centre is
+		// the heading itself only when nothing is drawn over it.
+		const onTop = await heading.evaluate((el) => {
+			const bar = document.querySelector<HTMLElement>('main > header')
+			if (bar) bar.style.pointerEvents = 'auto'
+			const box = el.getBoundingClientRect()
+			return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === el
+		})
+		expect(onTop).toBe(true)
+	})
+})

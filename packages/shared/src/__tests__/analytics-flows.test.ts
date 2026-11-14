@@ -35,6 +35,21 @@ describe('buildFlowStepProps', () => {
 		})
 	})
 
+	it('adds from only when the step says where the flow started', () => {
+		const base = {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flowId: 'f1',
+			surface: 'web' as const,
+			durationMs: null,
+		}
+		expect(buildFlowStepProps({ ...base, from: 'agent_page' })).toMatchObject({
+			from: 'agent_page',
+		})
+		expect(buildFlowStepProps(base)).not.toHaveProperty('from')
+		expect(buildFlowStepProps({ ...base, from: '' })).not.toHaveProperty('from')
+	})
+
 	it('drops a step that is not in the vocabulary, or has no flow_id', () => {
 		const base = { surface: 'web' as const, durationMs: 5 }
 		expect(

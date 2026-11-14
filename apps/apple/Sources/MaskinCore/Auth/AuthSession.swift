@@ -131,6 +131,15 @@ public enum SignUpError: Error, Sendable, Equatable {
 	case network(String)
 }
 
+/// Why asking for a password reset link failed. The server answers the same 200 whether or not the
+/// email has an account, so there is deliberately no "no such account" case.
+public enum PasswordResetError: Error, Sendable, Equatable {
+	/// 429.
+	case rateLimited
+	case server(status: Int)
+	case network(String)
+}
+
 /// Sign-in and sign-up. A protocol so `AuthSession` is testable without a server.
 public protocol Authenticating: Sendable {
 	/// `POST /api/auth/login`.
@@ -142,6 +151,9 @@ public protocol Authenticating: Sendable {
 		name: String, organization: String, role: String, email: String, password: String,
 		idempotencyKey: String
 	) async throws -> SignUpResult
+	/// `POST /api/auth/forgot-password`. Returns normally for any email the server accepts, known or
+	/// not; the link goes to the inbox and opens the web reset page.
+	func requestPasswordReset(email: String) async throws
 }
 
 extension Authenticating {
@@ -151,6 +163,10 @@ extension Authenticating {
 		idempotencyKey: String
 	) async throws -> SignUpResult {
 		throw SignUpError.network("Sign-up isn't available here.")
+	}
+
+	public func requestPasswordReset(email: String) async throws {
+		throw PasswordResetError.network("Password reset isn't available here.")
 	}
 }
 
@@ -244,6 +260,18 @@ public final class AuthSession {
 			return
 		}
 		state = .signedIn(stored)
+	}
+
+	/// Asks the server to email a reset link. The same call succeeds for an unknown email, so the
+	/// caller shows one neutral message either way.
+	public func requestPasswordReset(email: String) async throws {
+		do {
+			try await authenticator.requestPasswordReset(email: email)
+		} catch let error as PasswordResetError {
+			throw error
+		} catch {
+			throw PasswordResetError.network(error.localizedDescription)
+		}
 	}
 
 	public func signIn(email: String, password: String) async {
