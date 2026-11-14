@@ -18,12 +18,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 /**
  * The chat route has the Threads pane, so each handoff renders as a card in the
  * timeline (the strip is only the fallback without the pane). The card has no
- * landmark role; find it through its "View thread" button.
+ * landmark role; find it through its "View background session" button.
  */
 function handoffCard(page: Page) {
 	return page
 		.locator('div.rounded-xl')
-		.filter({ has: page.getByRole('button', { name: 'View thread' }) })
+		.filter({ has: page.getByRole('button', { name: 'View background session' }) })
 		.filter({ hasText: 'Do the handed-off work.' })
 }
 
@@ -72,7 +72,7 @@ test.describe('Chats v2 — handed-off strip', () => {
 			await expect(card).toBeVisible({ timeout: 15_000 })
 			await expect(card).toContainText(agentName)
 			await expect(card).toContainText('QUEUED')
-			await expect(card.getByRole('button', { name: 'View thread' })).toBeVisible()
+			await expect(card.getByRole('button', { name: 'View background session' })).toBeVisible()
 		})
 	}
 })
@@ -144,7 +144,7 @@ test.describe('Chats v2 — handed-off strip title', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const card = page
 				.locator('div.rounded-xl')
-				.filter({ has: page.getByRole('button', { name: 'View thread' }) })
+				.filter({ has: page.getByRole('button', { name: 'View background session' }) })
 				.filter({ hasText: 'Draft the launch post' })
 			await expect(card).toBeVisible({ timeout: 15_000 })
 			await expect(card).not.toContainText('Sent by')
