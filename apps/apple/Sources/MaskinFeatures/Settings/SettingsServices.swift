@@ -66,12 +66,6 @@ struct SettingsServices {
 		return apiBaseURL
 	}
 
-	/// The web app's workspace settings page, where Privacy & data lives. Nil without a workspace.
-	var webSettingsURL: URL? {
-		guard let workspaceId else { return nil }
-		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
-	}
-
 	func webURL(_ path: String) -> URL? {
 		guard let workspaceId else { return nil }
 		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
@@ -140,6 +134,15 @@ struct SettingsServices {
 			api: source ?? NoSettingsSource(),
 			refreshWorkspaces: { await workspaces.refresh() },
 			selectWorkspace: { workspaces.select($0) })
+	}
+
+	/// The General switches. Nil without a workspace.
+	func generalSettingsStore() -> GeneralSettingsStore? {
+		guard let workspace else { return nil }
+		let workspaces = environment.workspaces
+		return GeneralSettingsStore(
+			api: APIGeneralSettingsSource(http: http), actorId: actorId, workspace: workspace,
+			canWritePrivacy: workspace.role != "viewer", refreshWorkspaces: { await workspaces.refresh() })
 	}
 
 	func membersStore() -> MembersStore {

@@ -9,12 +9,36 @@ public struct WorkspaceSummary: Identifiable, Sendable, Equatable, Codable {
 	/// The signed-in actor's role in it (`owner`, `member`, …).
 	public var role: String
 	public var memberCount: Int
+	/// This is the signed-in person's default workspace.
+	public var isDefault: Bool
+	/// Privacy & data: whether product usage is shared with Maskin, and whether it leaves out the
+	/// person's name and email. The server's defaults are on and off.
+	public var shareUsage: Bool
+	public var anonymize: Bool
 
-	public init(id: String, name: String, role: String, memberCount: Int) {
+	public init(
+		id: String, name: String, role: String, memberCount: Int, isDefault: Bool = false,
+		shareUsage: Bool = true, anonymize: Bool = false
+	) {
 		self.id = id
 		self.name = name
 		self.role = role
 		self.memberCount = memberCount
+		self.isDefault = isDefault
+		self.shareUsage = shareUsage
+		self.anonymize = anonymize
+	}
+
+	/// Lists cached before these fields existed still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		id = try c.decode(String.self, forKey: .id)
+		name = try c.decode(String.self, forKey: .name)
+		role = try c.decode(String.self, forKey: .role)
+		memberCount = try c.decode(Int.self, forKey: .memberCount)
+		isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+		shareUsage = try c.decodeIfPresent(Bool.self, forKey: .shareUsage) ?? true
+		anonymize = try c.decodeIfPresent(Bool.self, forKey: .anonymize) ?? false
 	}
 }
 
@@ -47,7 +71,11 @@ public struct APIWorkspaceSource: WorkspaceListing {
 		switch output {
 		case .ok(let ok):
 			return try ok.body.json.map {
-				WorkspaceSummary(id: $0.id, name: $0.name, role: $0.role, memberCount: $0.memberCount)
+				let privacy = $0.settings?.additionalProperties["privacy"]?.value as? [String: Any]
+				return WorkspaceSummary(
+					id: $0.id, name: $0.name, role: $0.role, memberCount: $0.memberCount,
+					isDefault: $0.isDefault, shareUsage: privacy?["share_usage"] as? Bool ?? true,
+					anonymize: privacy?["anonymize_workspace"] as? Bool ?? false)
 			}
 		default:
 			throw WorkspaceListingError("Couldn't load workspaces.")
