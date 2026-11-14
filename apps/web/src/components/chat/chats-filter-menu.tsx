@@ -10,7 +10,8 @@ import { PILL_TRIGGER_CLASS } from '@/components/ui/select'
 import { cn } from '@/lib/cn'
 import { ChevronDown, ListFilter } from 'lucide-react'
 
-export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived' | 'threads'
+// `running` and `quiet` are the sectioned list's views; the old list never offers them.
+export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived' | 'threads' | 'running' | 'quiet'
 
 export const CHATS_FILTERS: Array<{ value: ChatsFilter; label: string }> = [
 	{ value: 'all', label: 'All' },
@@ -20,8 +21,23 @@ export const CHATS_FILTERS: Array<{ value: ChatsFilter; label: string }> = [
 	{ value: 'threads', label: 'Threads' },
 ]
 
-export function chatsFilterLabel(filter: ChatsFilter): string {
-	return CHATS_FILTERS.find((f) => f.value === filter)?.label ?? 'All'
+/** The sectioned list's filters: Waiting on you takes the place of Unread, and Running and Quiet
+ *  are the other two views (their tiles open them). */
+export const SECTIONED_CHATS_FILTERS: Array<{ value: ChatsFilter; label: string }> = [
+	{ value: 'all', label: 'All' },
+	{ value: 'unread', label: 'Waiting on you' },
+	{ value: 'pinned', label: 'Pinned' },
+	{ value: 'archived', label: 'Archived' },
+	{ value: 'threads', label: 'Threads' },
+]
+
+export function chatsFilterLabel(filter: ChatsFilter, sectioned = false): string {
+	if (filter === 'running') return 'Running'
+	if (filter === 'quiet') return 'Quiet'
+	return (
+		(sectioned ? SECTIONED_CHATS_FILTERS : CHATS_FILTERS).find((f) => f.value === filter)?.label ??
+		'All'
+	)
 }
 
 /**
@@ -35,7 +51,9 @@ export function ChatsFilterMenu({
 	value,
 	onChange,
 	iconOnly,
+	sectioned = false,
 }: {
+	sectioned?: boolean
 	value: ChatsFilter
 	onChange: (value: ChatsFilter) => void
 	/** The v3 list head: a 32px round filter icon instead of the labelled pill. */
@@ -50,12 +68,12 @@ export function ChatsFilterMenu({
 						type="button"
 						variant="ghost"
 						size="icon"
-						title={`Filter — ${chatsFilterLabel(value)}`}
+						title={`Filter — ${chatsFilterLabel(value, sectioned)}`}
 						className={cn(
 							'size-8 rounded-full bg-background shadow-[inset_0_0_0_1px_var(--border)] hover:bg-secondary',
 							isFiltered && 'bg-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]',
 						)}
-						aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
+						aria-label={`Filter conversations — ${chatsFilterLabel(value, sectioned)}`}
 					>
 						<ListFilter className="size-3.5" aria-hidden />
 					</Button>
@@ -69,10 +87,10 @@ export function ChatsFilterMenu({
 							'inline-flex hover:bg-background',
 							isFiltered && 'border-border-strong',
 						)}
-						aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
+						aria-label={`Filter conversations — ${chatsFilterLabel(value, sectioned)}`}
 					>
 						<span className="whitespace-nowrap">
-							{isFiltered ? chatsFilterLabel(value) : 'All chats'}
+							{isFiltered ? chatsFilterLabel(value, sectioned) : 'All chats'}
 						</span>
 						<ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
 					</Button>
@@ -83,7 +101,7 @@ export function ChatsFilterMenu({
 					value={value}
 					onValueChange={(next) => onChange(next as ChatsFilter)}
 				>
-					{CHATS_FILTERS.map((f) => (
+					{(sectioned ? SECTIONED_CHATS_FILTERS : CHATS_FILTERS).map((f) => (
 						<DropdownMenuRadioItem key={f.value} value={f.value}>
 							{f.label}
 						</DropdownMenuRadioItem>

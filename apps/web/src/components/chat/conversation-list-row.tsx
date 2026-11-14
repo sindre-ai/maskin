@@ -9,11 +9,13 @@ import {
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { badgeCount, hasQuietNews } from '@/lib/chat-list-sections'
 import { cn } from '@/lib/cn'
 import { shortActorName, snippetAuthorLabel } from '@/lib/conversation-snippet'
 import { plainPreview } from '@/lib/linked-objects'
 import { Link } from '@tanstack/react-router'
-import { Hash, MoreHorizontal, Repeat } from 'lucide-react'
+import { Hash, MoreHorizontal, Pin, Repeat } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { ConversationAvatarStack } from './conversation-avatar-stack'
 
 interface ConversationListRowProps {
@@ -27,6 +29,17 @@ interface ConversationListRowProps {
 	label?: string
 	/** The row was clicked or opened with the keyboard (not the `···` menu). */
 	onOpen?: () => void
+	/** Sectioned list only: the number counts mentions plus open cards, new messages alone show
+	 *  a hollow dot, and a pinned chat in a section carries a pin glyph. */
+	sectioned?: boolean
+	/** Sectioned list only: why the chat is in a view ("Mentions you: ..."), in place of the preview. */
+	reason?: string | null
+	/** Sectioned list only: extra items for the `···` menu, above Pin ("Move to section"). */
+	menuExtra?: ReactNode
+	/** Sectioned list only: where the chat lives, as a small chip beside the time (view lists). */
+	chip?: string | null
+	/** Sectioned list only: the pin glyph shows beside the name (a pinned chat inside a section). */
+	showPin?: boolean
 }
 
 /**
@@ -41,6 +54,11 @@ export function ConversationListRow({
 	threadUnread = 0,
 	label,
 	onOpen,
+	sectioned = false,
+	reason,
+	menuExtra,
+	showPin = false,
+	chip,
 }: ConversationListRowProps) {
 	// Counterparts first, the viewer last: a one-to-one thread reads as "the
 	// agent's row". A thread with nobody else falls back to its own participants.
@@ -52,7 +70,11 @@ export function ConversationListRow({
 	// Whatever title it was created with is not a topic.
 	const title =
 		label ?? (conversation.directPairKey && others[0] ? others[0].actorName : conversation.title)
-	const isUnread = conversation.unread_count > 0
+	// Sectioned: the number is mentions plus open cards (every message in a direct chat), and news
+	// with nothing for the viewer is a hollow dot that adds 0.
+	const badge = sectioned ? badgeCount(conversation) : 0
+	const hollowDot = sectioned && badge === 0 && hasQuietNews(conversation)
+	const isUnread = sectioned ? badge > 0 : conversation.unread_count > 0
 	const workingActorIds = new Set(conversation.working_actor_ids)
 	const workingNames = conversation.participants
 		.filter((p) => workingActorIds.has(p.actorId))
@@ -118,9 +140,34 @@ export function ConversationListRow({
 						>
 							{title}
 						</span>
+						{showPin ? (
+							<Pin
+								size={12}
+								aria-label="Pinned"
+								role="img"
+								className="shrink-0 text-muted-foreground"
+							/>
+						) : null}
+						{sectioned && badge > 0 ? (
+							<span
+								role="img"
+								aria-label={`${badge} waiting on you`}
+								className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-brand px-1 text-[11px] font-bold text-white"
+							>
+								{badge}
+							</span>
+						) : null}
 					</div>
 					<div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted-foreground">
-						{isUnread ? (
+						{sectioned ? (
+							hollowDot ? (
+								<span
+									role="img"
+									aria-label="New messages, nothing needs you"
+									className="size-1.5 shrink-0 rounded-full border border-muted-foreground"
+								/>
+							) : null
+						) : isUnread ? (
 							<span
 								role="img"
 								aria-label={`${conversation.unread_count} unread`}
@@ -130,7 +177,9 @@ export function ConversationListRow({
 						<span className="min-w-0 truncate">
 							{/* "Forge: …" / "You: …" — a preview with no attribution reads as
 							    if the viewer wrote every line. */}
-							{workingLabel ? (
+							{reason ? (
+								<span className="font-medium text-brand-subtle-foreground">{reason}</span>
+							) : workingLabel ? (
 								<span className="font-medium">{workingLabel}</span>
 							) : conversation.snippet ? (
 								<>
@@ -155,10 +204,15 @@ export function ConversationListRow({
 								'No messages yet'
 							)}
 						</span>
+						{chip ? (
+							<span className="ml-auto max-w-[40%] shrink-0 truncate rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium">
+								{chip}
+							</span>
+						) : null}
 						<RelativeTime
 							date={conversation.lastMessageAt ?? conversation.createdAt}
 							format="clock"
-							className="ml-auto shrink-0 text-xs"
+							className={cn('shrink-0 text-xs', !chip && 'ml-auto')}
 						/>
 					</div>
 					{threadUnread > 0 ? (
@@ -179,6 +233,7 @@ export function ConversationListRow({
 					</button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="end">
+					{menuExtra}
 					<DropdownMenuItem
 						onSelect={() =>
 							updateMe.mutate({ id: conversation.id, data: { pinned: !conversation.pinned } })

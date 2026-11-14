@@ -4,6 +4,7 @@ import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
 import { MessageThreadPane } from '@/components/chat/replies/message-thread-pane'
+import { QuietBar } from '@/components/chat/sections/quiet-bar'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
@@ -29,6 +30,7 @@ import { useConversationLinked, useResolvedLinkedItems } from '@/hooks/use-conve
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useHeightVar } from '@/hooks/use-height-var'
 import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
 import { useIsWideDesktopViewport } from '@/hooks/use-mobile'
@@ -77,6 +79,8 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/$conversationI
 })
 
 function ConversationThreadPage() {
+	// The same flag as the Chats list: the quiet bar belongs to the sectioned list.
+	const sectionsOn = useFeatureFlag('chat-list-sections')
 	const { conversationId } = Route.useParams()
 	const { msg: deepLinkMessageId, thread: openThreadRootId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
@@ -374,6 +378,9 @@ function ConversationThreadPage() {
 								onToggleOverview={toggleOverview}
 							/>
 							<ArchivedBar workspaceId={workspaceId} conversationId={conversationId} />
+							{sectionsOn ? (
+								<QuietBar workspaceId={workspaceId} conversationId={conversationId} />
+							) : null}
 						</div>
 						<ThreadMessages
 							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[max(0px,calc(var(--thread-header-h,4.5rem)-54px))] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"
