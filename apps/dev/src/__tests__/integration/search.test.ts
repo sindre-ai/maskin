@@ -785,7 +785,9 @@ describe('GET /api/search against real Postgres', () => {
 			.update(objects)
 			.set({ content: 'mentions kappa once' })
 			.where(eq(objects.title, 'unrelated'))
-		await seedObjects('task', 'todo', 1, () => 'kappa task')
+		// A read chat is in the done status group, so the task is done too: the group order is only
+		// seen when the match and the status group are the same.
+		await seedObjects('task', 'done', 1, () => 'kappa task')
 		await seedChat('kappa chat', [actorId])
 		const res = await search({ q: 'kappa' })
 		expect(res.results.map((r) => r.group)).toEqual(['chats', 'objects', 'objects'])
