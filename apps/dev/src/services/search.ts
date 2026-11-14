@@ -385,13 +385,43 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
  */
 const SNIPPET = sql`substr(s.body, 1, 160)`
 
-function orderBy(sort: SearchQuery['sort'], source: SearchSource): SQL {
+/**
+ * Tie-break between rows of the same match tier and score: what needs you first, then what is in
+ * progress or new, then done, then archived (shown only when filtered in).
+ */
+const STATUS_GROUP_RANK: Record<StatusGroupKey, number> = {
+	needs_you: 0,
+	in_progress: 1,
+	new: 1,
+	done: 2,
+	archived: 3,
+}
+
+/** The tie-break rank of `m.status`, worked out from the (type, status) pairs the source holds. */
+function statusRankExpression(pairs: PairRow[]): SQL {
+	const byRank = new Map<number, PairRow[]>()
+	for (const pair of pairs) {
+		const rank = STATUS_GROUP_RANK[getStatusGroup(pair.type, pair.status)]
+		byRank.set(rank, [...(byRank.get(rank) ?? []), pair])
+	}
+	if (byRank.size <= 1) return sql`0`
+	const branches = [...byRank].map(([rank, group]) => {
+		const list = sql.join(
+			group.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
+			sql`, `,
+		)
+		return sql`when (m.type, m.status) in (${list}) then ${rank}::int`
+	})
+	return sql`(case ${sql.join(branches, sql` `)} else 0 end)`
+}
+
+function orderBy(sort: SearchQuery['sort'], source: SearchSource, statusRank: SQL): SQL {
 	if (sort === 'recent') return sql`m.updated_at desc nulls last, m.id`
 	if (sort === 'az') return sql`lower(m.title) asc, m.id`
 	if (source.unreadFirst) {
-		return sql`m.tier, m.score desc, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
+		return sql`m.tier, m.score desc, ${statusRank}, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
 	}
-	return sql`m.tier, m.score desc, m.updated_at desc nulls last, m.id`
+	return sql`m.tier, m.score desc, ${statusRank}, m.updated_at desc nulls last, m.id`
 }
 
 interface PairRow {
@@ -575,7 +605,7 @@ async function runSource(
 		passingPairs.length === 0
 			? sql`false`
 			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
-	const ordering = orderBy(query.sort, source)
+	const ordering = orderBy(query.sort, source, statusRankExpression(passingPairs))
 	// The snippet of a returned row is the deep text that hit, when the row had its
 	// deep text checked; otherwise the body.
 	const pickedSnippet =
@@ -975,8 +1005,9 @@ export async function runSearch(
 
 	let results: SearchResultRow[]
 	if (query.sort === 'rel') {
-		// Best match tier first across every group, then score. Ties keep the fixed group order and each
-		// source's own order (newest first): the sort is stable over rows listed group by group.
+		// Best match tier first across every group, then score, then open before done before archived.
+		// Ties keep the fixed group order and each source's own order (newest first): the sort is
+		// stable over rows listed group by group.
 		const order = (key: SearchSourceGroup) => SEARCH_SOURCE_GROUPS.indexOf(key)
 		const byGroup = ok.slice().sort((a, b) => order(a.source.key) - order(b.source.key))
 		// Typo hits come after every exact hit, closest spelling first.
@@ -991,7 +1022,12 @@ export async function runSearch(
 					rank: result.ranks[i] as { tier: number; score: number },
 				})),
 			)
-			.sort((a, b) => a.rank.tier - b.rank.tier || b.rank.score - a.rank.score)
+			.sort(
+				(a, b) =>
+					a.rank.tier - b.rank.tier ||
+					b.rank.score - a.rank.score ||
+					STATUS_GROUP_RANK[a.row.statusGroup] - STATUS_GROUP_RANK[b.row.statusGroup],
+			)
 			.map(({ row }) => row)
 		const shown = query.per_group ? capPerGroup(exactRows, query.per_group, query.limit) : exactRows
 		results = [...shown, ...typoRows].slice(0, query.limit)
