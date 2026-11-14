@@ -44,7 +44,7 @@ const SelectTrigger = React.forwardRef<
 				? 'gap-1.5 rounded-[7px] border border-transparent px-1.5 py-[3px] text-[11.5px] transition-colors hover:border-border hover:bg-muted/50 data-[state=open]:border-border-strong data-[state=open]:bg-muted/50'
 				: size === 'pill'
 					? ''
-					: 'h-8 gap-2 border border-input bg-background px-3 py-1.5 text-xs [&>span]:line-clamp-1',
+					: 'h-8 gap-2 border border-control bg-background px-3 py-1.5 text-xs [&>span]:line-clamp-1',
 			className,
 		)}
 		{...props}
