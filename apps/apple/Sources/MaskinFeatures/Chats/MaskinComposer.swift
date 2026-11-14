@@ -82,16 +82,19 @@ struct MaskinComposer: View {
 	/// An agent is typing, streaming or working: Stop takes the last slot while the field is empty.
 	var busy = false
 	var onStop: (() -> Void)?
+	/// A control that sits inside the bar, above the field (the item page's Comment / Message chip).
+	var topAccessory: AnyView?
 	let onSend: () -> Void
 
 	init(
 		model: ChatComposerModel, config: MaskinComposerConfig, busy: Bool = false,
-		onStop: (() -> Void)? = nil, onSend: @escaping () -> Void
+		onStop: (() -> Void)? = nil, topAccessory: AnyView? = nil, onSend: @escaping () -> Void
 	) {
 		self.model = model
 		self.config = config
 		self.busy = busy
 		self.onStop = onStop
+		self.topAccessory = topAccessory
 		self.onSend = onSend
 		_showsFormatting = State(initialValue: ComposerFormatting.isShown(actorID: model.selfActorID))
 	}
@@ -200,6 +203,9 @@ struct MaskinComposer: View {
 
 	private var bar: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			if let topAccessory {
+				topAccessory
+			}
 			if let quote = ComposerQuoteStrip.content(for: model) {
 				ComposerQuoteStrip(label: quote.label, text: quote.text, onClear: model.clearQuote)
 					.padding(.top, MaskinSpace.s2)
