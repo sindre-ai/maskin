@@ -145,7 +145,6 @@ struct IntegrationsView: View {
 					store: services.integrationAccessStore(integrationId: integration.id, agents: accessAgents),
 					title: store.displayName(for: integration),
 					scopes: IntegrationScopesStore(http: services.http, integrationID: integration.id),
-					driveWatches: integration.provider == "google-drive" ? services.driveWatchesStore() : nil,
 					onReconnect: store.canManage && store.supportsNativeConnect(integration.provider)
 						? { startConnect(integration.provider) } : nil)
 			}
