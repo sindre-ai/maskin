@@ -4534,6 +4534,50 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'record_go_ahead',
+		{
+			description: tools.record_go_ahead.description,
+			inputSchema: tools.record_go_ahead.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/go-ahead`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('record_go_ahead', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'take_back_go_ahead',
+		{
+			description: tools.take_back_go_ahead.description,
+			inputSchema: tools.take_back_go_ahead.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id } = args
+			const result = await apiCall(
+				config,
+				'DELETE',
+				`/api/objects/${object_id}/go-ahead`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('take_back_go_ahead', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_object',
 		{
 			description: tools.delete_object.description,

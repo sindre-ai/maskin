@@ -615,6 +615,9 @@ export const api = {
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
 		unstar: (id: string, workspaceId: string) =>
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
+		// Ends the job's go-ahead. 404 when it has none (already taken back).
+		takeBackGoAhead: (id: string, workspaceId: string) =>
+			request<GoAhead>(`/objects/${id}/go-ahead`, { method: 'DELETE', workspaceId }),
 	},
 
 	account: {
@@ -2065,6 +2068,17 @@ export interface NextStep {
 	updated_at: string
 }
 
+/** A person's yes to keep going on a job without asking for each step, as the detail read returns it. */
+export interface GoAhead {
+	id: string
+	object_id: string
+	granted_by: string
+	granted_by_name: string
+	via: 'chat' | 'card'
+	message_id: number | null
+	granted_at: string
+}
+
 export interface ObjectResponse {
 	id: string
 	workspaceId: string
@@ -2100,6 +2114,8 @@ export interface ObjectResponse {
 	preview?: ObjectPreview | null
 	// Detail endpoint only: the open or blocked next step, null when there is none.
 	next_step?: NextStep | null
+	// Detail endpoint only: the job's live go-ahead, null when there is none or the job is closed.
+	go_ahead?: GoAhead | null
 }
 
 export interface StarToggleResponse {

@@ -30,6 +30,12 @@ vi.mock('../../lib/next-steps', async (importOriginal) => ({
 	getLiveNextStep: vi.fn().mockResolvedValue(null),
 }))
 
+// Same for the go-ahead lookup. It has its own integration test.
+vi.mock('../../lib/go-aheads', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/go-aheads')>()),
+	getLiveGoAhead: vi.fn().mockResolvedValue(null),
+}))
+
 // Import the route module directly (not index.ts)
 const { default: objectsRoutes } = await import('../../routes/objects')
 

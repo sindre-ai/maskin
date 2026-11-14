@@ -32,6 +32,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { ChevronsUpDown, Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { GoAheadLine } from './go-ahead-line'
 import { NextStepBlock } from './next-step-block'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
@@ -184,6 +185,7 @@ export function ObjectDetailShell({
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const nextStepBlockOn = useFeatureFlag('next-step-block')
+	const goAheadOn = useFeatureFlag('go-ahead')
 	const { data: allObjects } = useObjects(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
@@ -613,6 +615,16 @@ export function ObjectDetailShell({
 						{/* The open next step: action, owner, due date. Renders NOTHING when the
 						    object has none, and the whole block is behind its flag. */}
 						{nextStepBlockOn && <NextStepBlock step={object.next_step} workspaceId={workspaceId} />}
+
+						{/* A person's go-ahead on this job, with Take back. Renders NOTHING when the job has
+						    none, and the line is behind its own flag. */}
+						{goAheadOn && (
+							<GoAheadLine
+								goAhead={object.go_ahead}
+								objectId={object.id}
+								workspaceId={workspaceId}
+							/>
+						)}
 
 						{/* A working agent and an open question each get one slim line under
 						    the meta row; an item with neither draws nothing. */}

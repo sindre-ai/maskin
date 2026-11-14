@@ -218,6 +218,7 @@ import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
+import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -2658,6 +2659,37 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "Go-ahead on the job" block, the one place a session is shown a person's stored go-ahead:
+	 * built at every launch for an unattended run (next to its goal) and for a chat (next to what it
+	 * drives). Behind the go-ahead flag (workspace-scoped, or per driver actor), so with the flag off
+	 * nothing is read or added. Never saved on the session: a go-ahead taken back between two
+	 * launches must not be shown again from a saved copy. A failure here only costs the block, never
+	 * the launch.
+	 */
+	private async resolveGoAheadBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		if (
+			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.GO_AHEAD, { actorId: session.actorId })
+		) {
+			return ''
+		}
+		try {
+			return await buildGoAheadBlock(
+				this.db,
+				{
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					initiatedFromObjectId: session.initiatedFromObjectId,
+					conversationId: session.conversationId,
+				},
+				frontendBaseUrl(),
+			)
+		} catch (err) {
+			logger.warn('Failed to build go-ahead block', { sessionId: session.id, error: String(err) })
+			return ''
+		}
+	}
+
+	/**
 	 * The "Jobs you are handed" block for a chat session: how to treat a job a person hands the
 	 * agent, and the flow and company targets it can serve. Behind the job-target-in-chat flag
 	 * (workspace-scoped), so with the flag off nothing is built or saved. Built on the first launch
@@ -2939,12 +2971,14 @@ ${cont.continues_prompt}
 					: ''
 			const drivesBlock = await this.resolveChatDrivesBlock(session)
 			const jobTargetBlock = await this.resolveChatJobTargetBlock(session)
-			envVars.SYSTEM_PROMPT = `${startupBlock}${drivesBlock}${jobTargetBlock}${resolvedSystemPrompt}${continuation}`
+			const goAheadBlock = await this.resolveGoAheadBlock(session)
+			envVars.SYSTEM_PROMPT = `${startupBlock}${drivesBlock}${goAheadBlock}${jobTargetBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
 			const senderLine = typeof sentBy === 'string' ? await loadSenderLine(this.db, sentBy) : ''
-			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
+			const goAheadBlock = await this.resolveGoAheadBlock(session)
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${goAheadBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:

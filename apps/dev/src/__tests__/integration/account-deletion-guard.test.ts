@@ -47,6 +47,8 @@ const KEPT: Record<string, string> = {
 	file_proposal_changes: 'decided_by on a kept proposal; the decision stays with the deleted user',
 	next_steps:
 		'owner / created_by / blocked-on actor of a step on a kept object (owner and created_by are ON DELETE SET NULL); the step stays, attributed to the deleted user',
+	job_go_aheads:
+		'granted_by is the person who said yes on a kept job; the row stays as the record of who allowed what (it ends when the job closes), attributed to the deleted user',
 	file_uploads:
 		'transient ledger of an in-flight upload; the reaper aborts the stored upload and settles the row when it expires, so erasing it here would strand the stored parts',
 	for_you_withdrawals:

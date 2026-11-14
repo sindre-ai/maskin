@@ -16,6 +16,7 @@ import {
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
+	recordGoAheadShape,
 	scheduleNextStepSchema,
 	setNextStepSchema,
 	skillNameSchema,
@@ -546,6 +547,23 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			object_id: z.string().uuid().describe('The object the step belongs to.'),
 			...scheduleNextStepSchema.shape,
+		}),
+	},
+	record_go_ahead: {
+		description:
+			'Record a person\u2019s go-ahead on a job: their yes to keep going without asking for each step. Use it when a person says so in a chat about the job: pass object_id, via chat and message_id, the id of their message. The message must be in a chat about this job and written by a person; yours or another agent\u2019s is refused (403). You cannot grant a go-ahead yourself. Never ask a person to say it again if you can quote their message. After recording, say so in the chat and in a comment on the job. From then on every session on the job is shown it, and you carry on with steps that send nothing in a person\u2019s name, spend nothing and delete nothing. It never covers sending, spending or deleting: those still need their own approval. It ends when the job closes or a person takes it back. Returns the go-ahead; 200 with the existing one when the job already has one.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The job (object) the go-ahead is for.'),
+			...recordGoAheadShape,
+		}),
+	},
+	take_back_go_ahead: {
+		description:
+			'Take back the go-ahead on a job. Use it when a person says stop, or when you are unsure the go-ahead still stands. Anyone may call it, because it only makes things safer. After this the next session on the job sees no go-ahead and asks again for anything that is not a safe step. 404 when the job has none.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The job (object) to take the go-ahead back from.'),
 		}),
 	},
 	delete_object: {

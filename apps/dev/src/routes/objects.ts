@@ -68,6 +68,7 @@ import { trackSupportItemOpened, trackSupportItemResolved } from '../lib/analyti
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { getLiveGoAhead } from '../lib/go-aheads'
 import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-titles'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
@@ -1996,37 +1997,47 @@ app.openapi(getObjectRoute, async (c) => {
 	}
 
 	const basePreview = buildObjectPreview(object)
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession, nextStep] =
-		await Promise.all([
-			isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
-			getUnreadCount(db, {
-				workspaceId: object.workspaceId,
-				actorId,
-				entityType: 'object',
-				entityId: id,
-			}),
-			getSubscriberCount(db, {
-				workspaceId: object.workspaceId,
-				entityType: 'object',
-				entityId: id,
-			}),
-			object.activeSessionId
-				? db
-						.select({ currentActivity: sessions.currentActivity, status: sessions.status })
-						.from(sessions)
-						.where(eq(sessions.id, object.activeSessionId))
-						.limit(1)
-						.then((rows) => rows[0] ?? null)
-				: Promise.resolve(null),
-			isObjectStarredByActor(db, { actorId, objectId: id }),
-			loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
-			getLiveNextStep(db, id),
-		])
+	const [
+		subscribed,
+		unreadCount,
+		subscriberCount,
+		activeSession,
+		starred,
+		lastSession,
+		nextStep,
+		goAhead,
+	] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, {
+			workspaceId: object.workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		getSubscriberCount(db, {
+			workspaceId: object.workspaceId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
+		isObjectStarredByActor(db, { actorId, objectId: id }),
+		loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
+		getLiveNextStep(db, id),
+		getLiveGoAhead(db, id),
+	])
 
 	return c.json(
 		{
 			...serialize(object),
 			next_step: nextStep ? serializeNextStep(nextStep) : null,
+			go_ahead: goAhead,
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
 			last_session: lastSession,
