@@ -275,7 +275,7 @@ jobs:
 
       - name: Upload shots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shots-ios
           path: ${{ env.OUT }}
@@ -285,7 +285,7 @@ jobs:
       # always(): a timeout cancel is exactly when the logs are needed.
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: logs-ios
           path: ${{ env.LOGS }}
@@ -468,7 +468,7 @@ jobs:
 
       - name: Upload shots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shots-watch
           path: ${{ env.OUT }}
@@ -477,7 +477,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: logs-watch
           path: ${{ env.LOGS }}
@@ -539,7 +539,7 @@ jobs:
           EOF
 
       - name: Upload the raw set
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots-ios-1.1-raw
           path: raw
