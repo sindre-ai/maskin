@@ -75,7 +75,7 @@ struct DeepLinkSessionSettingsTests {
 	func workspacePage() {
 		for address in [
 			"https://maskin.io/\(ws)/marketplace", "https://maskin.io/\(ws)/settings/nope",
-			"https://maskin.io/\(ws)/loops/new", "maskin://\(ws)/marketplace",
+			"https://maskin.io/\(ws)/search", "maskin://\(ws)/marketplace",
 		] {
 			#expect(DeepLink(string: address) == nil, "\(address)")
 			#expect(DeepLink.isWorkspacePage(URL(string: address)!), "\(address)")
