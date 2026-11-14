@@ -25,7 +25,7 @@ describe('buildAppleAppSiteAssociation', () => {
 		expect(buildAppleAppSiteAssociation('abcdefghij')).toBeNull()
 	})
 
-	it('covers the invite path and the existing deep links', () => {
+	it('covers the invite path and every deep link the app can open', () => {
 		const aasa = buildAppleAppSiteAssociation('ABCDE12345')
 		const detail = aasa?.applinks.details[0]
 		expect(detail?.appIDs).toEqual(['ABCDE12345.io.maskin.app'])
@@ -34,6 +34,11 @@ describe('buildAppleAppSiteAssociation', () => {
 			'/*/objects/*',
 			'/*/chats/*',
 			'/*/notifications',
+			'/*/files/*',
+			'/*/agents',
+			'/*/agents/*',
+			'/*/loops/*',
+			'/*/triggers/*',
 		])
 	})
 })
