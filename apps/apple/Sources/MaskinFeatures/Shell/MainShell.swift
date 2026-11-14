@@ -169,7 +169,10 @@ public struct MainShell: View {
 			default: break
 			}
 		}
-		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
+		.sheet(item: $runtime.presentation, onDismiss: {
+			runtime.deviceCode = nil
+			runtime.settingsRoute = nil
+		}) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
 		}
@@ -313,6 +316,15 @@ private struct PresentationContent: View {
 			if let workspaceID = environment.workspaceId {
 				TriggersSheet(environment: environment, workspaceID: workspaceID, initialSelection: id)
 			}
+		case .session(let id):
+			if let workspaceID = environment.workspaceId {
+				DetailSheet {
+					SessionLogsView(
+						sessionID: id,
+						api: APISessionLogsSource(client: environment.client, workspaceID: workspaceID),
+						session: AgentSession(id: id, actorID: "", status: ""))
+				}
+			}
 		case .profile:
 			ProfileSheet(environment: environment, runtime: runtime)
 		case .files:
@@ -326,10 +338,10 @@ private struct PresentationContent: View {
 				if let code = runtime.deviceCode {
 					SettingsScreen(environment: environment, deviceCode: code)
 				} else {
-					SettingsScreen(environment: environment)
+					SettingsScreen(environment: environment, initialRoute: runtime.settingsRoute)
 				}
 			}
-			.id(runtime.deviceCode)
+			.id("\(runtime.deviceCode ?? "")|\(runtime.settingsRoute.map { "\($0)" } ?? "")")
 			.environment(runtime)
 		}
 	}

@@ -12,6 +12,21 @@ enum SettingsRoute: Hashable, Identifiable {
 	case deviceCode(String)
 }
 
+extension SettingsRoute {
+	/// The page a `maskin://<ws>/settings/<page>` link opens.
+	init(_ page: DeepLink.SettingsPage) {
+		switch page {
+		case .members: self = .members
+		case .integrations: self = .integrations
+		case .keys: self = .keys
+		case .skills: self = .skills
+		case .billing: self = .billing
+		case .notifications: self = .notifications
+		case .objects: self = .objectTypes
+		}
+	}
+}
+
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
 @MainActor
 struct SettingsServices {
