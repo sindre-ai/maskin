@@ -7,6 +7,7 @@
 //   FF_TESTER_ACTOR_IDS=<uuid>,<uuid>          actors who see tester features
 //   FF_TESTER_FEATURES=some-flag,other-flag    flag ids on for those tester actors
 //   FF_WORKSPACE_FEATURES=<uuid>:<flag>,...    workspace-scoped flag entries
+//   FF_SIGNUP_FEATURES=some-flag,other-flag    flag ids on for every NEW sign-up
 //
 // A flag has exactly two states: off, or on for the tester actors / listed
 // workspaces. There is deliberately no "on for everyone" setting — shipping a
@@ -98,6 +99,17 @@ export const FLAGS = {
 	 */
 	AGENT_CHANGE_REVIEW: 'agent-change-review',
 	/**
+	 * One switch for the whole trial-card bet (bet
+	 * [A card to start a 7-day trial, usage shown as a percent of the plan, and five DKK prices where a fifth of the price is tokens](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c7069a63-518c-415b-83df-ef350c65c5db)):
+	 * the card step at sign-up and its "Your trial has not started" banner (task T2), plus the
+	 * percent display and the stop at 100% (task T3). A new sign-up cannot be named in advance,
+	 * so the card step reads this flag per NEW sign-up from FF_SIGNUP_FEATURES
+	 * (isSignupFlagEnabled), not per tester actor; the percent screens use the normal tester
+	 * check (the layout reads it once and passes it down through PlanPercentContext). Off means sign-up works exactly as before and no workspace waits for a card.
+	 * The 100% stop itself is backend, ungated, and safe for everyone. Retire once the card step is on for everyone.
+	 */
+	TRIAL_CARD_PERCENT: 'trial-card-percent',
+	/**
 	 * Gates the Refresh button on HTML views in the file viewer (bet
 	 * [Customizable app: best-practice templates users can reshape or replace with their own views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0e9b2ed9-1246-430d-8d2a-b44bbb7a70d5)).
 	 * A view that names a list in its maskin-sources block is shown through the data
@@ -155,6 +167,12 @@ export interface FeatureFlagConfig {
 	 * this set.
 	 */
 	workspaceFeatures: Set<string>
+	/**
+	 * Flag ids on for every new sign-up, sourced from `FF_SIGNUP_FEATURES`. A person who has not
+	 * signed up yet cannot be named in `FF_TESTER_ACTOR_IDS`, so a sign-up-time feature (the card
+	 * step) needs a list that is not keyed by actor. Read only by `isSignupFlagEnabled`.
+	 */
+	signupFeatures: Set<string>
 }
 
 function parseList(raw: string | undefined): string[] {
@@ -188,6 +206,7 @@ export function parseFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): Fe
 		testerActorIds: new Set(parseList(env.FF_TESTER_ACTOR_IDS).map((id) => id.toLowerCase())),
 		testerFlags: new Set(parseList(env.FF_TESTER_FEATURES)),
 		workspaceFeatures: parseWorkspaceFeatures(env.FF_WORKSPACE_FEATURES),
+		signupFeatures: new Set(parseList(env.FF_SIGNUP_FEATURES)),
 	}
 }
 
@@ -249,6 +268,20 @@ export function isFlagEnabledForWorkspace(
 	if (flagConfig.workspaceFeatures.has(target)) return true
 	if (config?.actorId && isFlagEnabled(config.actorId, flagId, flagConfig, registry)) return true
 	return false
+}
+
+/**
+ * Whether a flag is on for the sign-up happening right now. Not tied to an actor or a workspace:
+ * the person does not exist yet when the sign-up route decides. Unknown flag ids (typos, ids not
+ * in the registry) always resolve to false.
+ */
+export function isSignupFlagEnabled(
+	flagId: string,
+	flagConfig: FeatureFlagConfig = getFeatureFlagConfig(),
+	registry: Record<string, string> = FLAGS,
+): boolean {
+	if (!Object.values(registry).includes(flagId)) return false
+	return flagConfig.signupFeatures.has(flagId)
 }
 
 let _config: FeatureFlagConfig | null = null

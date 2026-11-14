@@ -186,6 +186,9 @@ public final class AuthSession {
 	/// Set by a sign-up that created the account but not its first workspace. The account and key
 	/// are saved; the shell's workspace refresh is the retry. Cleared by the next sign-in/up.
 	public private(set) var workspaceProvisioningFailed = false
+	/// True from a successful sign-up until the shell takes it: the card step opens once, right
+	/// after sign-up, and not again on a later launch.
+	public private(set) var justSignedUp = false
 	/// The server rejected the stored key (revoked or rotated) and the session was ended for it.
 	/// The login screen should say so; cleared by the next sign-in.
 	public private(set) var sessionExpired = false
@@ -316,6 +319,7 @@ public final class AuthSession {
 		lastError = nil
 		lastSignUpError = nil
 		workspaceProvisioningFailed = false
+		justSignedUp = false
 		sessionExpired = false
 		defer { isSigningUp = false }
 		do {
@@ -330,12 +334,19 @@ public final class AuthSession {
 			signOutMarker.set(false)
 			firstUse.markPending(actorId: stored.actorId)
 			workspaceProvisioningFailed = result.workspaceProvisioningFailed
+			justSignedUp = true
 			state = .signedIn(stored)
 		} catch let error as SignUpError {
 			lastSignUpError = error
 		} catch {
 			lastSignUpError = .network(error.localizedDescription)
 		}
+	}
+
+	/// Whether this launch's sign-up has not been acted on yet; reading it clears it.
+	public func takeJustSignedUp() -> Bool {
+		defer { justSignedUp = false }
+		return justSignedUp
 	}
 
 	/// Take a session another device of the same person already holds (the iPhone handing its

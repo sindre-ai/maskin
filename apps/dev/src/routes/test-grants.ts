@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
+import { PAID_PLANS } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -58,7 +59,7 @@ function tokenMatches(provided: string | undefined, expected: string): boolean {
 
 const grantBodySchema = z
 	.object({
-		plan: z.enum(['trial', 'pro', 'team']).optional(),
+		plan: z.enum(['trial', ...PAID_PLANS]).optional(),
 		enterprise_granted: z.boolean().optional(),
 	})
 	.refine((v) => v.plan !== undefined || v.enterprise_granted !== undefined, {

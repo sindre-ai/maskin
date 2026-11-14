@@ -20,14 +20,23 @@ struct BillingView: View {
 	var body: some View {
 		WorkspacePage(title: "Billing") {
 			if let usage = store.usage {
-				if let banner = Self.trialBanner(usage) {
+				if store.percentDisplay, let banner = Self.limitBanner(usage) {
+					PlanLimitBanner(
+						title: banner.title, detail: banner.detail,
+						actionTitle: manageURL == nil ? nil : banner.action
+					) {
+						if let manageURL { openURL(manageURL) }
+					}
+				} else if let banner = Self.trialBanner(usage) {
 					TrialBanner(title: banner.title, detail: banner.detail, actionTitle: manageURL == nil ? nil : "Choose") {
 						if let manageURL { openURL(manageURL) }
 					}
 				}
 				PageGroupLabel(text: "Plan")
 				PageCard(rows: rows(usage))
-				if let cap = usage.capCents, let fraction = usage.usedFraction {
+				if store.percentDisplay {
+					percentMeter(usage)
+				} else if let cap = usage.capCents, let fraction = usage.usedFraction {
 					UsageMeter(
 						title: "Credits this month", used: BillingUsage.dollars(usage.usedCents),
 						of: BillingUsage.dollars(cap), fraction: fraction)
@@ -51,6 +60,18 @@ struct BillingView: View {
 		.refreshable { await store.load() }
 	}
 
+	/// The percent view: "N% of plan used", a meter, and what happens at 100%. No dollars, no tokens.
+	@ViewBuilder
+	private func percentMeter(_ usage: BillingUsage) -> some View {
+		if let text = usage.percentText, let percent = usage.percent, let tone = usage.percentTone {
+			PlanPercentMeter(
+				text: text, percent: percent, tone: tone,
+				caption: Self.percentCaption(usage))
+		} else if usage.plan != "enterprise" {
+			PageStatus(text: "Usage is unavailable right now. We do not show a figure because none is known.")
+		}
+	}
+
 	private func rows(_ usage: BillingUsage) -> [PageRowModel] {
 		let healthy = usage.status == .active
 		var rows = [
@@ -59,6 +80,8 @@ struct BillingView: View {
 				subtitle: [usage.statusLabel, usage.resetsText].compactMap { $0 }.joined(separator: " · "),
 				accessory: .state(PageState(usage.planLabel, healthy ? .active : .muted)))
 		]
+		// The percent view shows usage in its own meter below, never as dollars.
+		if store.percentDisplay { return rows }
 		let spent = BillingUsage.dollars(usage.usedCents)
 		if let fraction = usage.usedFraction, let cap = usage.capCents {
 			rows.append(
@@ -88,6 +111,23 @@ extension BillingView {
 		guard ms > 0 else { return ("Your trial has ended", detail) }
 		let days = Int((Double(ms) / 86_400_000).rounded(.up))
 		return ("Trial ends in \(days) \(days == 1 ? "day" : "days")", detail)
+	}
+
+	/// The line under the meter: the 80% warning, else when the usage resets.
+	static func percentCaption(_ usage: BillingUsage, now: Date = Date()) -> String? {
+		if let percent = usage.percent, percent >= BillingUsage.warnPercent {
+			return "Work will wait at 100%. Choose a plan to keep going."
+		}
+		if usage.plan == "trial" { return "Resets when your trial ends." }
+		return usage.periodEndLabel(now: now).map { "Resets \($0)" }
+	}
+
+	/// The 100% screen: the banner sentence, the paused notice and the button label. Nil unless the
+	/// plan is used up and nothing lets new work start.
+	static func limitBanner(_ usage: BillingUsage, now: Date = Date()) -> (title: String, detail: String, action: String)? {
+		guard usage.isPaused else { return nil }
+		let copy = usage.limitCopy(now: now)
+		return (copy.banner, copy.notice, copy.button)
 	}
 }
 
@@ -145,5 +185,75 @@ private struct UsageMeter: View {
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 		.accessibilityElement(children: .combine)
 		.accessibilityValue("\(Int(fraction * 100)) percent used")
+	}
+}
+
+/// The 100% notice: the plan is used up and agents are paused. Warning tint, an icon, and a way to
+/// the plan picker (the web plan page) for people who can change the plan.
+private struct PlanLimitBanner: View {
+	let title: String
+	let detail: String
+	let actionTitle: String?
+	let action: () -> Void
+
+	var body: some View {
+		HStack(alignment: .top, spacing: MaskinSpace.s8) {
+			Image(systemName: "exclamationmark.triangle.fill")
+				.foregroundStyle(MaskinColor.warning)
+				.accessibilityHidden(true)
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+				Text(title)
+					.font(MaskinTypeface.sans(MaskinFontSize.t14, weight: MaskinFontWeight.semibold))
+					.foregroundStyle(MaskinColor.warning)
+				Text(detail)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink3)
+				if let actionTitle {
+					Button(actionTitle, action: action).buttonStyle(.secondaryAction)
+				}
+			}
+			Spacer(minLength: 0)
+		}
+		.padding(MaskinSpace.s9)
+		.background(MaskinColor.warningTint, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+		.accessibilityElement(children: .contain)
+	}
+}
+
+/// "N% of plan used" with a bar. Colour follows the tone, and the number is always written, so
+/// colour is never the only signal.
+private struct PlanPercentMeter: View {
+	let text: String
+	let percent: Int
+	let tone: BillingUsage.PercentTone
+	let caption: String?
+
+	private var tint: Color {
+		switch tone {
+		case .primary: MaskinColor.sig
+		case .warning: MaskinColor.warning
+		case .error: MaskinColor.danger
+		}
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			Text("Plan usage").maskinText(.microLabelLarge).textCase(.uppercase).foregroundStyle(MaskinColor.ink4)
+			Text(text)
+				.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.semibold))
+				.foregroundStyle(MaskinColor.ink)
+			ProgressView(value: Double(percent), total: 100)
+				.tint(tint)
+			if let caption {
+				Text(caption)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink3)
+			}
+		}
+		.padding(MaskinSpace.s9)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
+		.accessibilityElement(children: .combine)
+		.accessibilityValue("\(percent) percent used")
 	}
 }

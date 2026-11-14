@@ -84,17 +84,13 @@ vi.mock('@/components/layout/page-header', () => ({
 	),
 }))
 
-// The route reads workspace billing at its boundary to derive the NO CREDITS
+// The route reads workspace billing at its boundary to derive the Upgrade
 // pill overlay (D1). Stub both here so this route-level suite doesn't need a
 // QueryClientProvider or the billing API surface — the pill's own render logic
 // is asserted in `components/loops/loop-row.test.tsx`.
 const mockUseBillingUsage = vi.fn()
 vi.mock('@/hooks/use-billing', () => ({
 	useBillingUsage: () => mockUseBillingUsage(),
-}))
-
-vi.mock('@/components/settings/buy-credits-dialog', () => ({
-	BuyCreditsDialog: () => null,
 }))
 
 vi.mock('@/lib/workspace-context', async (importOriginal) => ({

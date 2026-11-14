@@ -17,6 +17,7 @@ public enum MaskinColor {
 	public static let rule2 = Color(light: RGBA(0xE8EDF5), dark: RGBA(0x1D2126))
 	public static let ruleStrong = Color(light: RGBA(0xC2CBDA), dark: RGBA(0x4A525B))
 	public static let ruleInput = Color(light: RGBA(0xD5DCE8), dark: RGBA(0x2D333A))
+	public static let ruleControl = Color(light: RGBA(0x7E89A0), dark: RGBA(0x5B6577))
 	public static let ink = Color(light: RGBA(0x0E1422), dark: RGBA(0xE9ECEF))
 	public static let ink2 = Color(light: RGBA(0x1F2940), dark: RGBA(0xD5D9DE))
 	public static let ink3 = Color(light: RGBA(0x3A455C), dark: RGBA(0xB9BFC6))

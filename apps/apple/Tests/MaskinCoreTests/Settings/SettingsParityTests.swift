@@ -128,6 +128,117 @@ struct BillingTests {
 		#expect(store.usage?.usedFraction == 0.25)
 	}
 
+	@Test("the percent view is off unless the flag is on, and a flags failure reads as off")
+	func percentFlag() async {
+		let off = BillingStore(api: FakeSettings())
+		await off.load()
+		#expect(off.percentDisplay == false)
+
+		let fake = FakeSettings()
+		fake.enabledFlags = [BillingStore.percentFlag]
+		let on = BillingStore(api: fake)
+		await on.load()
+		#expect(on.percentDisplay == true)
+		#expect(on.usage != nil)
+	}
+
+	@Test("percent rounds down, is 100 at the cap and never made up")
+	func percent() {
+		func usage(_ used: Int, _ cap: Int?, plan: String = "trial") -> BillingUsage {
+			BillingUsage(
+				plan: plan, status: .active, usedCents: used, capCents: cap, creditBalanceCents: 0,
+				resetsInMs: 3 * 86_400_000)
+		}
+		// The same cases as packages/shared/src/__tests__/plan-pricing-usage-percent.test.ts.
+		#expect(usage(0, 286).percent == 0)
+		#expect(usage(120, 286).percent == 41)
+		#expect(usage(285, 286).percent == 99)
+		#expect(usage(286, 286).percent == 100)
+		#expect(usage(900, 286).percent == 100)
+		#expect(usage(10, nil).percent == nil)
+		#expect(usage(10, 0).percent == nil)
+		#expect(usage(10, 1_000, plan: "enterprise").percent == nil)
+		#expect(usage(10, 286).percentText == "3% of plan used")
+	}
+
+	@Test("tone is primary under 80, warning from 80, error at 100")
+	func tone() {
+		func tone(_ used: Int) -> BillingUsage.PercentTone? {
+			BillingUsage(
+				plan: "pro", status: .active, usedCents: used, capCents: 100, creditBalanceCents: 0,
+				resetsInMs: 86_400_000
+			).percentTone
+		}
+		#expect(tone(79) == .primary)
+		#expect(tone(80) == .warning)
+		#expect(tone(99) == .warning)
+		#expect(tone(100) == .error)
+	}
+
+	@Test("paused at 100% unless a credit balance keeps work starting or the period is over")
+	func paused() {
+		var usage = BillingUsage(
+			plan: "pro", status: .active, usedCents: 714, capCents: 714, creditBalanceCents: 0,
+			resetsInMs: 86_400_000)
+		#expect(usage.isPaused)
+		usage.creditBalanceCents = 500
+		#expect(!usage.isPaused)
+		usage.status = .pastDue
+		#expect(usage.isPaused)
+		usage.status = .active
+		usage.creditBalanceCents = 0
+		usage.resetsInMs = 0
+		#expect(!usage.isPaused)
+		usage.resetsInMs = 86_400_000
+		usage.usedCents = 713
+		#expect(!usage.isPaused)
+	}
+
+	@Test("the 100% words are the design spec's, for a trial and for a paid plan")
+	func limitWords() {
+		// 7 Nov 2026, 12:00 UTC; the plan resets 6 days later.
+		let now = Date(timeIntervalSince1970: 1_794_052_800)
+		let resets = 6 * 86_400_000
+		let trial = BillingUsage(
+			plan: "trial", status: .active, usedCents: 286, capCents: 286, creditBalanceCents: 0,
+			resetsInMs: resets)
+		let t = trial.limitCopy(now: now)
+		#expect(t.button == "Choose a plan")
+		#expect(t.banner.hasPrefix("You have used 100% of your trial. New work waits until your trial ends on "))
+		#expect(t.banner.hasSuffix(", or you can choose a plan now."))
+		#expect(t.notice == "Your agents are paused. Your plan is used up. Work starts again when you choose a plan.")
+
+		var pro = trial
+		pro.plan = "pro"
+		let p = pro.limitCopy(now: now)
+		#expect(p.button == "Change plan")
+		#expect(p.banner.hasPrefix("You have used 100% of your Pro plan. New work waits until "))
+		#expect(p.banner.hasSuffix(", or you can change plan now."))
+		#expect(p.notice.hasPrefix("Your agents are paused. Your plan is used up. Work starts again on "))
+		#expect(p.notice.hasSuffix(", or when you change plan."))
+
+		pro.resetsInMs = nil
+		#expect(pro.limitCopy(now: now).banner == "You have used 100% of your Pro plan. New work waits until next month, or you can change plan now.")
+		// No money anywhere in the 100% words.
+		for words in [t.banner, t.notice, p.banner, p.notice] {
+			#expect(!words.contains("$") && !words.lowercased().contains("token") && !words.lowercased().contains("credit"))
+		}
+	}
+
+	@Test("the reset day reads like the web: 'd Mon'")
+	func resetDay() {
+		let now = Date(timeIntervalSince1970: 1_794_052_800)
+		var usage = FakeSettings().billingUsage
+		usage.resetsInMs = 86_400_000
+		let label = usage.periodEndLabel(now: now, locale: Locale(identifier: "en_GB"))
+		let expected = DateFormatter()
+		expected.locale = Locale(identifier: "en_GB")
+		expected.dateFormat = "d MMM"
+		#expect(label == expected.string(from: now.addingTimeInterval(86_400)))
+		usage.resetsInMs = 0
+		#expect(usage.periodEndLabel(now: now) == nil)
+	}
+
 	@Test("a failure with nothing cached becomes the failed phase")
 	func fails() async {
 		let fake = FakeSettings()

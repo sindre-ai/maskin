@@ -207,10 +207,68 @@ struct IntegrationsConnectStoreTests {
 		let member = make(fake, auth, role: .member)
 		await member.connect(providerID: "slack")
 		let admin = make(fake, auth)
-		await admin.connect(providerID: "linear")
+		await admin.connect(providerID: "posthog")
+		await admin.connect(providerID: "resend")
 		#expect(fake.calls.isEmpty)
-		#expect(!admin.supportsNativeConnect("linear"))
+		#expect(!admin.supportsNativeConnect("posthog"))
 		#expect(IntegrationsStore(api: fake, currentRole: .admin).supportsNativeConnect("slack") == false)
+	}
+
+	@Test("Linear connects in the sheet, not in the browser")
+	func linearConnects() async {
+		let fake = FakeSettings()
+		let auth = FakeWebAuth()
+		auth.result = .success(callback("status=connected&provider=linear&integration_id=i9"))
+		let store = make(fake, auth)
+		#expect(store.supportsNativeConnect("linear"))
+		await store.connect(providerID: "linear")
+		#expect(fake.calls.first == "start-connect:linear")
+		#expect(auth.opened.map(\.scheme) == ["maskin"])
+		#expect(store.connectNotice == IntegrationConnectCopy.connected("Linear"))
+	}
+
+	@Test("every OAuth provider the server serves connects in the sheet")
+	func everyOAuthProviderIsNative() {
+		// The server's OAuth providers (auth type oauth2 or oauth2_custom in lib/integrations/providers).
+		let oauth = [
+			"airtable", "amplitude", "atlassian", "attio", "canva", "clickup", "deepdots", "github", "gmail",
+			"google-calendar", "google-drive", "google-meet", "google-search-console", "linear",
+			"linkedin-unipile", "microsoft", "miro", "mixpanel", "notion", "sentry", "slack", "stripe",
+			"ubersuggest", "vercel", "webflow", "zapier",
+		]
+		let store = make(FakeSettings(), FakeWebAuth())
+		#expect(Set(oauth) == IntegrationsStore.nativeConnectProviders)
+		for id in oauth { #expect(store.supportsNativeConnect(id), "\(id)") }
+	}
+
+	@Test("a provider the list does not name yet is native when the server says it is OAuth")
+	func newOAuthProvider() async {
+		let fake = FakeSettings()
+		let store = make(fake, FakeWebAuth())
+		fake.providerList.append(IntegrationProvider(id: "brand-new", displayName: "Brand New", authKind: .oauth))
+		#expect(!store.supportsNativeConnect("brand-new"))
+		await store.load()
+		#expect(store.supportsNativeConnect("brand-new"))
+	}
+
+	@Test("key and computer-only providers never go to the sheet or the web")
+	func nonOAuthProviders() async {
+		let fake = FakeSettings()
+		let store = make(fake, FakeWebAuth())
+		fake.providerList += [
+			IntegrationProvider(id: "posthog", displayName: "PostHog", authKind: .apiKey),
+			IntegrationProvider(id: "resend", displayName: "Resend", authKind: .manual),
+			IntegrationProvider(id: "skjald", displayName: "Skjald", authKind: .manual),
+		]
+		await store.load()
+		#expect(store.connectsWithKey("posthog") && !store.supportsNativeConnect("posthog"))
+		for id in ["resend", "skjald"] {
+			#expect(store.needsComputer(id) && !store.supportsNativeConnect(id) && !store.connectsWithKey(id))
+		}
+		for id in ["slack", "linear", "posthog", "resend", "skjald"] { #expect(store.canStartConnect(id), "\(id)") }
+		store.explainComputerOnly("resend")
+		#expect(store.connectNotice == IntegrationConnectCopy.needsComputer("Resend"))
+		#expect(store.connectNotice?.kind == .info)
 	}
 
 	@Test("GitHub selection_required loads installations, then binds the chosen one")
@@ -317,5 +375,43 @@ struct NativeConnectRequestTests {
 		let decoded = try JSONSerialization.jsonObject(with: Data(request.body.utf8)) as? [String: String]
 		#expect(decoded == ["native_return_url": "maskin://integrations/callback"])
 		#expect(start.integrationId == "8d1f0a4e-3c63-4e1b-9d2e-0c6f7a2b1c11")
+	}
+}
+
+@MainActor
+@Suite("ConnectWithKeyStore")
+struct ConnectWithKeyStoreTests {
+	final class FakeKeyAPI: IntegrationKeyAPI, @unchecked Sendable {
+		var failure: SettingsError?
+		private(set) var sent: [(provider: String, key: String)] = []
+		func connect(provider: String, key: String, idempotencyKey: String) async throws {
+			if let failure { throw failure }
+			sent.append((provider, key))
+		}
+	}
+
+	@Test("sends the trimmed key once and clears it")
+	func connects() async {
+		let api = FakeKeyAPI()
+		let store = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: api)
+		#expect(!store.canSave)
+		store.key = "  phx_abc \n"
+		#expect(store.canSave)
+		await store.save()
+		#expect(api.sent.map(\.provider) == ["posthog"])
+		#expect(api.sent.map(\.key) == ["phx_abc"])
+		#expect(store.didConnect && store.key.isEmpty && store.error == nil)
+		#expect(!store.canSave)
+	}
+
+	@Test("a refused key shows the server's sentence and keeps the field")
+	func refused() async {
+		let api = FakeKeyAPI()
+		api.failure = SettingsError("That key was refused.")
+		let store = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: api)
+		store.key = "bad"
+		await store.save()
+		#expect(store.error == "That key was refused.")
+		#expect(!store.didConnect && store.key == "bad")
 	}
 }

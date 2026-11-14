@@ -5766,7 +5766,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 			;(manager as unknown as { budgetStopped: Map<string, string> }).budgetStopped.set(
 				session.id,
-				'usage exceeded the plan cap and no usage credits are available',
+				'your plan is used up',
 			)
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
@@ -5784,8 +5784,7 @@ describe('SessionManager', () => {
 			const expectedReason = {
 				provider: 'maskin',
 				reason_code: 'plan_cap_exceeded',
-				human_message:
-					'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+				human_message: 'Session stopped — your plan is used up.',
 				http_status: null,
 				reset_at: null,
 				verbatim_output: null,
@@ -5916,7 +5915,7 @@ describe('SessionManager', () => {
 			const internals = arm(session)
 			// A budget stop goes through stopSession too, so it is in stopRequested.
 			internals.stopRequested.add(session.id)
-			internals.budgetStopped.set(session.id, 'usage exceeded the plan cap')
+			internals.budgetStopped.set(session.id, 'your plan is used up')
 
 			await internals.handleCompletion(session.id, 'container-abc', 143)
 

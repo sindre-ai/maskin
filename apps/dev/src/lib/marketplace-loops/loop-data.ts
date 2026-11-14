@@ -24,6 +24,7 @@ import marketWatchTriggersData from './data/market-watch-triggers.json'
 import meetingLoopActorsData from './data/meeting-loop-actors.json'
 import meetingLoopSkillsData from './data/meeting-loop-skills.json'
 import meetingLoopTriggersData from './data/meeting-loop-triggers.json'
+import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
@@ -65,6 +66,8 @@ export interface MarketplaceLoopSeedConfig {
 		version: string
 		useCase: string
 		description: string
+		// Entry/close conditions, tags and starter targets for the loop page. Optional.
+		settings?: LoopSettings
 	}
 	actorIds: readonly string[]
 	triggerIds: readonly string[]

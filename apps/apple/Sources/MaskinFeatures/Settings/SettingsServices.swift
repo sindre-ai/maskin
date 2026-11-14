@@ -12,6 +12,21 @@ enum SettingsRoute: Hashable, Identifiable {
 	case deviceCode(String)
 }
 
+extension SettingsRoute {
+	/// The page a `maskin://<ws>/settings/<page>` link opens.
+	init(_ page: DeepLink.SettingsPage) {
+		switch page {
+		case .members: self = .members
+		case .integrations: self = .integrations
+		case .keys: self = .keys
+		case .skills: self = .skills
+		case .billing: self = .billing
+		case .notifications: self = .notifications
+		case .objects: self = .objectTypes
+		}
+	}
+}
+
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
 @MainActor
 struct SettingsServices {
@@ -94,6 +109,16 @@ struct SettingsServices {
 		IntegrationAccessStore(
 			api: APISettingsIntegrationAccessSource(http: http), integrationId: integrationId, agents: agents,
 			canManage: role.canManage)
+	}
+
+	func connectWithKeyStore(providerID: String, providerName: String) -> ConnectWithKeyStore {
+		ConnectWithKeyStore(
+			providerID: providerID, providerName: providerName, api: APIIntegrationKeySource(http: http))
+	}
+
+	/// Folder watches on the Drive connection. Writable for everyone but viewers, like the web.
+	func driveWatchesStore() -> DriveWatchesStore {
+		DriveWatchesStore(api: APIDriveWatchesSource(http: http), canWrite: workspace?.role != "viewer")
 	}
 
 	func addToolServerStore() -> AddToolServerStore {

@@ -1,4 +1,6 @@
 import { LiveCallComposerSlot } from '@/components/agents/live-call-surface'
+import { PlanLimitComposerGate } from '@/components/billing/plan-limit-banner'
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { ArchivedBar } from '@/components/chat/archived-bar'
 import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
@@ -80,6 +82,7 @@ function ConversationThreadPage() {
 	const { conversationId } = Route.useParams()
 	const { msg: deepLinkMessageId, thread: openThreadRootId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
+	const planPercent = usePlanPercentEnabled()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
@@ -398,12 +401,14 @@ function ConversationThreadPage() {
 						<div ref={composerBarRef} className={cn(FLOATING_EDGE, 'bottom-0 pt-4')}>
 							<LiveCallComposerSlot />
 							<div className="px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-								<ThreadComposer
-									workspaceId={workspaceId}
-									conversationId={conversationId}
-									fillRequest={fillRequest}
-									onEditLast={requestEditLast}
-								/>
+								<PlanLimitComposerGate workspaceId={workspaceId} enabled={planPercent}>
+									<ThreadComposer
+										workspaceId={workspaceId}
+										conversationId={conversationId}
+										fillRequest={fillRequest}
+										onEditLast={requestEditLast}
+									/>
+								</PlanLimitComposerGate>
 							</div>
 						</div>
 					</div>

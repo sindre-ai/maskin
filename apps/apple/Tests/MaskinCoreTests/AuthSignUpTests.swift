@@ -70,6 +70,22 @@ struct AuthSignUpTests {
 		#expect(keys.count == 1 && UUID(uuidString: keys[0]) != nil)
 	}
 
+	@Test("a sign-up is handed to the shell once, then cleared")
+	func justSignedUpIsTakenOnce() async {
+		let (auth, _, _, _) = make(.success(created))
+		#expect(!auth.takeJustSignedUp())
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
+		#expect(auth.takeJustSignedUp())
+		#expect(!auth.takeJustSignedUp())
+	}
+
+	@Test("a failed sign-up is not handed to the shell")
+	func failedSignUpIsNotJustSignedUp() async {
+		let (auth, _, _, _) = make(.failure(SignUpError.emailTaken))
+		await auth.signUp(name: "Sam", organization: "Acme", role: "Founder", email: "sam@example.com", password: secret)
+		#expect(!auth.takeJustSignedUp())
+	}
+
 	@Test("a plain sign-in never queues the first-use screen")
 	func signInIsNotFirstUse() async {
 		struct Login: Authenticating {

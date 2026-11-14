@@ -389,10 +389,18 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			return BillingUsage(
 				plan: row.plan.rawValue, status: BillingUsage.Status(rawValue: row.status.rawValue) ?? .active,
 				usedCents: row.usd_cents_used, capCents: row.hard_cap_usd_cents,
-				creditBalanceCents: row.credit_balance_cents, resetsInMs: row.period_resets_in_ms)
+				creditBalanceCents: row.credit_balance_cents, resetsInMs: row.period_resets_in_ms,
+				trialState: row.trial_state.flatMap { BillingUsage.TrialState(rawValue: $0.rawValue) })
 		default:
 			throw SettingsError("Couldn't load your plan.")
 		}
+	}
+
+	public func isFeatureEnabled(_ flag: String) async -> Bool {
+		guard let output = try? await client.get_sol_api_sol_feature_hyphen_flags(.init()),
+			case .ok(let ok) = output, let body = try? ok.body.json
+		else { return false }
+		return body.flags.additionalProperties[flag] ?? false
 	}
 
 	// MARK: Schema

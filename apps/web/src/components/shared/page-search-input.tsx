@@ -164,7 +164,7 @@ export function PageSearchInput({
 				ref={iconRef}
 				onClick={(e) => openCollapsed(e.currentTarget.closest('header'))}
 				className={cn(
-					'relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
+					'touch-hit relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
 					text && 'text-foreground',
 				)}
 			>
@@ -188,7 +188,7 @@ export function PageSearchInput({
 						size="icon"
 						aria-label="Close search"
 						onClick={closeNarrow}
-						className="size-[30px] shrink-0 rounded-lg text-muted-foreground"
+						className="touch-hit relative size-[30px] shrink-0 rounded-lg text-muted-foreground"
 					>
 						<X aria-hidden size={15} />
 					</Button>

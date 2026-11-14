@@ -57,7 +57,7 @@ export function HandoffCard({ session, onViewThread }: HandoffCardProps) {
 							size="sm"
 							onClick={() => onViewThread(session.id)}
 						>
-							View thread
+							View background session
 						</Button>
 						<span
 							className={cn(

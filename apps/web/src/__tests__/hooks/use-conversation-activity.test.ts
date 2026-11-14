@@ -669,8 +669,7 @@ function budgetFailureReason() {
 	return {
 		provider: 'maskin',
 		reason_code: 'plan_cap_exceeded',
-		human_message:
-			'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+		human_message: 'Session stopped — your plan is used up.',
 		http_status: null,
 		reset_at: null,
 		verbatim_output: null,
@@ -705,7 +704,7 @@ describe('useSessionBudgetStopToast', () => {
 
 		await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
 		expect(toast.error).toHaveBeenCalledWith(
-			'Plan limit reached — buy usage credits or upgrade to keep going',
+			'Plan limit reached — change plan to keep going',
 			expect.objectContaining({ action: expect.objectContaining({ label: 'Go to Billing' }) }),
 		)
 	})

@@ -36,6 +36,14 @@ Nothing else is needed: `GET /api/feature-flags` resolves every registered flag
 for the calling actor automatically, and the frontend fetches all of them at
 once.
 
+## A flag for a sign-up that has not happened yet
+
+A new sign-up cannot be named in `FF_TESTER_ACTOR_IDS`, so a feature that changes sign-up itself
+(the trial card step) reads `FF_SIGNUP_FEATURES` instead: comma-separated flag ids that are on for
+every new sign-up. Read it with `isSignupFlagEnabled(flagId)` at the sign-up route, once. It is
+not keyed by actor and it does not touch `GET /api/feature-flags`. Register the id in `FLAGS` like
+any other flag; an id missing from the registry is always off.
+
 ## One boundary per feature, as high in the tree as possible
 
 Read the flag **once**, at the highest sensible point — the app shell or a route

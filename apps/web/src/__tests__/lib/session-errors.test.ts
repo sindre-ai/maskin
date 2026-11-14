@@ -38,7 +38,28 @@ describe('toastSessionCreateError', () => {
 		})
 	})
 
-	it('shows a credits/upgrade message for a paid plan over cap', () => {
+	it('offers Add card when the workspace is waiting for its trial card', () => {
+		const err = new ApiError(402, 'Your trial has not started. Add a card to begin your 7 days.')
+		err.code = 'TRIAL_NOT_STARTED'
+
+		// biome-ignore lint/suspicious/noExplicitAny: navigate's real type is the router's overloaded signature, irrelevant to this test
+		toastSessionCreateError(err, navigate as any, workspaceId)
+
+		expect(toast.error).toHaveBeenCalledWith(
+			'Your trial has not started. Add a card to begin your 7 days.',
+			expect.objectContaining({ action: expect.objectContaining({ label: 'Add card' }) }),
+		)
+		const options = vi.mocked(toast.error).mock.calls[0]?.[1] as unknown as {
+			action: { onClick: () => void }
+		}
+		options.action.onClick()
+		expect(navigate).toHaveBeenCalledWith({
+			to: '/start-trial/$workspaceId',
+			params: { workspaceId },
+		})
+	})
+
+	it('shows a change-plan message for a paid plan over cap', () => {
 		const err = new ApiError(402, 'Plan cap exceeded')
 		err.code = 'PLAN_CAP_EXCEEDED'
 		err.planCapContext = { plan: 'pro', used: 32_000_000, cap: 32_000_000, period_end: null }
@@ -47,7 +68,7 @@ describe('toastSessionCreateError', () => {
 		toastSessionCreateError(err, navigate as any, workspaceId)
 
 		expect(toast.error).toHaveBeenCalledWith(
-			'Plan limit reached — buy usage credits or upgrade to keep going',
+			'Plan limit reached — change plan to keep going',
 			expect.objectContaining({ action: expect.objectContaining({ label: 'Go to Billing' }) }),
 		)
 	})

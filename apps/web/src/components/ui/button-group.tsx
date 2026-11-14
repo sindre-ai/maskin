@@ -6,10 +6,10 @@ function ButtonGroup({ className, ...props }: React.ComponentProps<'div'>) {
 	return (
 		<div
 			className={cn(
-				'inline-flex items-center rounded-md border border-input shadow-xs',
+				'inline-flex items-center rounded-md border border-control shadow-xs',
 				'[&>button]:rounded-none [&>button]:border-0 [&>button]:shadow-none',
 				'[&>button:first-child]:rounded-l-md [&>button:last-child]:rounded-r-md',
-				'[&>button:not(:last-child)]:border-r [&>button:not(:last-child)]:border-input',
+				'[&>button:not(:last-child)]:border-r [&>button:not(:last-child)]:border-control',
 				className,
 			)}
 			{...props}

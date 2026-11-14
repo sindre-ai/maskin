@@ -30,6 +30,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { loopSettingsPatch, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
@@ -830,6 +831,36 @@ export class LoopVersionPusher {
 						updatedAt: new Date(),
 					})
 					.where(eq(objects.id, install.objectId))
+			}
+
+			// Loop-page settings (entry and close condition, tags, starter targets). A
+			// field a workspace has edited is kept; see loopSettingsPatch.
+			if (install.objectId) {
+				const [source] = await tx
+					.select({ loopSettings: marketplaceLoops.loopSettings })
+					.from(marketplaceLoops)
+					.where(eq(marketplaceLoops.id, install.sourceLoopId))
+					.limit(1)
+				const [loopObject] = await tx
+					.select({ metadata: objects.metadata })
+					.from(objects)
+					.where(eq(objects.id, install.objectId))
+					.limit(1)
+				if (loopObject) {
+					const patch = loopSettingsPatch(
+						readLoopSettings(source?.loopSettings),
+						loopObject.metadata as Record<string, unknown> | null,
+					)
+					if (Object.keys(patch).length > 0) {
+						await tx
+							.update(objects)
+							.set({
+								metadata: sql`coalesce(${objects.metadata}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+								updatedAt: new Date(),
+							})
+							.where(eq(objects.id, install.objectId))
+					}
+				}
 			}
 
 			await tx

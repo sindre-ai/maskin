@@ -12,15 +12,8 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
-vi.mock('../../lib/daily-budget', async () => {
-	const actual =
-		await vi.importActual<typeof import('../../lib/daily-budget')>('../../lib/daily-budget')
-	return { ...actual, readZeroCostDays: vi.fn() }
-})
-
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
 import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
-import { DOLLAR_UNIT_LOCKED_REASON, readZeroCostDays } from '../../lib/daily-budget'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
@@ -33,10 +26,10 @@ import { createTestApp } from '../setup'
 const OWNER_CALLER = { role: 'owner', type: 'human' } as const
 
 // Sentinel Pro/Team cap env values (USD cents) that are intentionally NOT the
-// literal defaults (4_900 / 20_000). Pro and Team caps come from code, so every
-// test below must still see the literals with these set — a sentinel leaking
-// into a response means env is being read again. Pi / Euler digits keep them
-// memorable.
+// kroner caps (714 / 1_571). Paid plan caps come from code (plan-pricing.ts), so
+// every test below must still see the code values with these set. A sentinel
+// leaking into a response means env is being read again. Pi / Euler digits keep
+// them memorable.
 const PRO_ENV_SENTINEL = '31415926'
 const TEAM_ENV_SENTINEL = '27182818'
 
@@ -45,6 +38,10 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_STARTER_DKK: 'price_starter_dkk',
+	STRIPE_PRICE_PRO_DKK: 'price_pro_dkk',
+	STRIPE_PRICE_TEAM_DKK: 'price_team_dkk',
+	STRIPE_PRICE_ULTRA_DKK: 'price_ultra_dkk',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	MASKIN_PRO_HARD_CAP_USD_CENTS: PRO_ENV_SENTINEL,
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: TEAM_ENV_SENTINEL,
@@ -59,7 +56,6 @@ const clearEnv = () => {
 }
 
 beforeEach(() => {
-	vi.mocked(readZeroCostDays).mockReset().mockResolvedValue([])
 	_resetBillingUsageCache()
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createCreditCheckoutSession).mockReset()
@@ -135,6 +131,49 @@ describe('POST /api/billing/checkout', () => {
 		expect(createCheckoutSession).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({ plan: 'team', existingCustomerId: 'cus_99' }),
+			expect.anything(),
+		)
+	})
+
+	it.each([
+		['starter', 'price_starter_dkk'],
+		['pro', 'price_pro_dkk'],
+		['team', 'price_team_dkk'],
+		['ultra', 'price_ultra_dkk'],
+	])('starts checkout for %s with the kroner price ids from env', async (plan, priceId) => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+		vi.mocked(createCheckoutSession).mockResolvedValue({
+			id: `cs_test_${plan}`,
+			url: `https://checkout.stripe.com/c/cs_test_${plan}`,
+		} as Awaited<ReturnType<typeof createCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			url: `https://checkout.stripe.com/c/cs_test_${plan}`,
+			session_id: `cs_test_${plan}`,
+		})
+		// The route hands the env it read to createCheckoutSession, which picks the
+		// kroner price for the plan: the id for this plan must be the one from env.
+		const stripeEnv = vi.mocked(createCheckoutSession).mock.calls[0]?.[2]
+		expect(stripeEnv?.priceDkk[plan as 'starter' | 'pro' | 'team' | 'ultra']).toBe(priceId)
+		expect(createCheckoutSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ workspaceId, plan }),
 			expect.anything(),
 		)
 	})
@@ -216,355 +255,96 @@ describe('POST /api/billing/checkout', () => {
 	})
 })
 
-describe('top-up price env (STRIPE_PRICE_CREDITS_CUSTOM) unset', () => {
-	beforeEach(() => {
-		// Empty string reads as unset (readStripeEnv uses a falsy check); the outer
-		// beforeEach re-runs setupEnv() so this doesn't leak into later tests.
-		process.env.STRIPE_PRICE_CREDITS_CUSTOM = ''
-	})
+describe('POST /api/billing/credits/checkout (closed)', () => {
+	// The pricing bet has no top-up: at 100% of a plan work waits for the next
+	// period. The route stays so older clients get a 404 and not an unknown-route
+	// error, and it must never reach Stripe.
+	const topupBody = {
+		amount_usd_cents: 2_500,
+		success_url: 'https://app.test/success',
+		cancel_url: 'https://app.test/cancel',
+	}
 
-	it('POST /api/billing/credits/checkout returns 404 and never calls Stripe', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: { billing: { plan: 'pro', status: 'active' } },
-			},
-		]
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(404)
-		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
-	})
-
-	it('POST /api/billing/checkout (subscription) still succeeds', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
-		vi.mocked(createCheckoutSession).mockResolvedValue({
-			id: 'cs_test_unset',
-			url: 'https://checkout.stripe.com/c/cs_test_unset',
-		} as Awaited<ReturnType<typeof createCheckoutSession>>)
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/checkout',
-				{
-					plan: 'pro',
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(200)
-		expect(createCheckoutSession).toHaveBeenCalled()
-	})
-})
-
-describe('POST /api/billing/credits/checkout', () => {
-	it('lets a trial workspace top up — every maskin plan may buy credits', async () => {
-		// Was 400 ("not eligible"): the gate required pro/team, so the NO
-		// CREDITS prompt on a trial workspace led to a dead end — it offered a
-		// top-up the backend then refused. `canUseCreditBalance` was widened to
-		// match, so a trial can spend what it buys.
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: { billing: { plan: 'trial', status: 'active' } },
-			},
-		]
-		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
-			id: 'cs_credit_trial',
-			url: 'https://checkout.stripe.com/c/cs_credit_trial',
-		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(200)
-		expect(createCreditCheckoutSession).toHaveBeenCalled()
-	})
-
-	it('lets a first-time buyer through with no stripe_customer_id on file', async () => {
-		// Was 400. A workspace that has never paid has no customer id by
-		// definition, and Stripe Checkout mints one when `customer` is
-		// undefined — so requiring it up front made the first purchase (the
-		// only one a trial workspace can make) impossible.
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: { billing: { plan: 'pro', status: 'active' } },
-			},
-		]
-		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
-			id: 'cs_credit_first',
-			url: 'https://checkout.stripe.com/c/cs_credit_first',
-		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(200)
-		expect(vi.mocked(createCreditCheckoutSession).mock.calls[0]?.[1]).toMatchObject({
-			existingCustomerId: undefined,
-		})
-	})
-
-	it('still returns 400 for a past_due workspace', async () => {
-		// Unchanged and deliberate: a workspace that cannot be billed for its
-		// base plan should not be taking on more spend. Matches the spend gate.
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: {
-					billing: { plan: 'pro', status: 'past_due', stripe_customer_id: 'cus_x' },
-				},
-			},
-		]
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(400)
-		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
-	})
-
-	it('returns 400 when the amount is below the minimum', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: {
-					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
-				},
-			},
-		]
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 100,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(400)
-	})
-
-	it('returns 400 when the amount is above the maximum', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: {
-					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
-				},
-			},
-		]
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 100_000,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(400)
-	})
-
-	describe('per-currency amount bounds', () => {
-		async function postTopup(amount: number, currency?: string) {
+	it.each(['trial', 'starter', 'pro', 'team', 'ultra'])(
+		'returns 404 for a %s workspace in good standing and never calls Stripe',
+		async (plan) => {
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
 			mockResults.select = [
 				{
 					id: workspaceId,
 					...OWNER_CALLER,
-					settings: {
-						billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
-					},
+					settings: { billing: { plan, status: 'active', stripe_customer_id: 'cus_x' } },
 				},
 			]
-			vi.mocked(createCreditCheckoutSession).mockResolvedValue({
-				id: 'cs_credit_bounds',
-				url: 'https://checkout.stripe.com/c/cs_credit_bounds',
-			} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
-			return app.request(
-				jsonRequest(
-					'POST',
-					'/api/billing/credits/checkout',
-					{
-						amount_usd_cents: amount,
-						success_url: 'https://app.test/success',
-						cancel_url: 'https://app.test/cancel',
-						...(currency ? { currency } : {}),
-					},
-					{ 'X-Workspace-Id': workspaceId },
-				),
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/billing/credits/checkout', topupBody, {
+					'X-Workspace-Id': workspaceId,
+				}),
 			)
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error).toMatchObject({
+				code: 'NOT_FOUND',
+				message: 'Credit top-up is not available',
+			})
+			expect(createCreditCheckoutSession).not.toHaveBeenCalled()
+		},
+	)
+
+	it('returns 404 even when the top-up price env is set, and still when it is unset', async () => {
+		for (const credits of ['price_credits_custom_test', '']) {
+			process.env.STRIPE_PRICE_CREDITS_CUSTOM = credits
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.select = [
+				{
+					id: workspaceId,
+					...OWNER_CALLER,
+					settings: { billing: { plan: 'pro', status: 'active' } },
+				},
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/billing/credits/checkout', topupBody, {
+					'X-Workspace-Id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(404)
 		}
-
-		it.each([
-			['eur', 2_250],
-			['eur', 50_001],
-			['eur', 450_000],
-			['dkk', 17_500],
-			['dkk', 50_001],
-			['dkk', 3_490_000],
-		])('accepts %s at %i minor units', async (currency, amount) => {
-			expect((await postTopup(amount, currency)).status).toBe(200)
-		})
-
-		it.each([
-			['eur', 2_249],
-			['eur', 450_001],
-			['dkk', 17_499],
-			['dkk', 3_490_001],
-		])('rejects %s at %i minor units', async (currency, amount) => {
-			expect((await postTopup(amount, currency)).status).toBe(400)
-		})
-
-		it.each([
-			['usd', 50_001],
-			[undefined, 50_001],
-			[undefined, 999],
-		])('keeps the $10 to $500 range for currency=%s at %i', async (currency, amount) => {
-			expect((await postTopup(amount, currency)).status).toBe(400)
-		})
-
-		it.each([
-			['usd', 50_000],
-			[undefined, 1_000],
-		])('still accepts currency=%s at %i', async (currency, amount) => {
-			expect((await postTopup(amount, currency)).status).toBe(200)
-		})
+		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
 	})
 
-	it('returns the checkout URL for an eligible pro workspace', async () => {
+	it('returns 404 for a past_due workspace too, not the old 400', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.select = [
 			{
 				id: workspaceId,
 				...OWNER_CALLER,
-				settings: {
-					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
-				},
+				settings: { billing: { plan: 'pro', status: 'past_due', stripe_customer_id: 'cus_x' } },
 			},
 		]
-		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
-			id: 'cs_credit_1',
-			url: 'https://checkout.stripe.com/c/cs_credit_1',
-		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
 
 		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(200)
-		const body = await res.json()
-		expect(body).toEqual({
-			url: 'https://checkout.stripe.com/c/cs_credit_1',
-			session_id: 'cs_credit_1',
-		})
-		expect(createCreditCheckoutSession).toHaveBeenCalledWith(
-			expect.anything(),
-			expect.objectContaining({
-				workspaceId,
-				amountUsdCents: 2_500,
-				existingCustomerId: 'cus_x',
+			jsonRequest('POST', '/api/billing/credits/checkout', topupBody, {
+				'X-Workspace-Id': workspaceId,
 			}),
-			expect.objectContaining({ priceCreditsCustom: 'price_credits_custom_test' }),
-		)
-	})
-
-	it('returns 404 when workspace is missing', async () => {
-		const { app } = createTestApp(billingRoutes, '/api/billing')
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': randomUUID() },
-			),
 		)
 		expect(res.status).toBe(404)
+		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('returns 404 when the workspace is missing', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest('POST', '/api/billing/credits/checkout', topupBody, {
+				'X-Workspace-Id': randomUUID(),
+			}),
+		)
+		expect(res.status).toBe(404)
+		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
 	})
 })
 
@@ -692,7 +472,7 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 714 })
 	})
 
 	it('falls back to the code Team cap, not the env, when a Team workspace has no hard_cap_usd_cents', async () => {
@@ -712,7 +492,24 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
+		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 1_571 })
+	})
+
+	it.each([
+		['trial', 286],
+		['starter', 286],
+		['ultra', 4_286],
+	])('falls back to the kroner cap for %s with no stored cap', async (plan, cap) => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: { billing: { plan, status: 'active' } } }],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ plan, hard_cap_usd_cents: cap })
 	})
 
 	it('falls back to plan default when stored hard_cap_usd_cents is zero or negative', async () => {
@@ -762,11 +559,11 @@ describe('GET /api/billing/usage', () => {
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
 		// Pro env sentinel is set but ignored, so the fallback resolves to the
-		// literal $49.00 default. Proves the route took the `> 0` false branch
-		// all the way to the literal.
+		// code default (50 kr, 714 cents). Proves the route took the false branch of
+		// the greater-than-zero check all the way to the code default.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'pro',
-			hard_cap_usd_cents: 4_900,
+			hard_cap_usd_cents: 714,
 		})
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
@@ -774,7 +571,7 @@ describe('GET /api/billing/usage', () => {
 		// Team env sentinel is set but ignored — fallback hits the literal.
 		expect(await negRes.json()).toMatchObject({
 			plan: 'team',
-			hard_cap_usd_cents: 20_000,
+			hard_cap_usd_cents: 1_571,
 		})
 
 		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))
@@ -785,7 +582,7 @@ describe('GET /api/billing/usage', () => {
 		})
 	})
 
-	it('falls back to literal Pro/Team defaults when env caps are unset', async () => {
+	it('falls back to the code Pro/Team defaults when env caps are unset', async () => {
 		for (const k of ['MASKIN_PRO_HARD_CAP_USD_CENTS', 'MASKIN_TEAM_HARD_CAP_USD_CENTS']) {
 			delete process.env[k]
 		}
@@ -805,11 +602,11 @@ describe('GET /api/billing/usage', () => {
 
 		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
 		expect(proRes.status).toBe(200)
-		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
+		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 714 })
 
 		const teamRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': teamWs }))
 		expect(teamRes.status).toBe(200)
-		expect(await teamRes.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
+		expect(await teamRes.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 1_571 })
 	})
 
 	it('still honours an explicit billing.hard_cap_usd_cents when set', async () => {
@@ -950,14 +747,15 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({ credit_balance_cents: 0 })
 	})
 
-	it('reports credit_topup_available true when the top-up price env is set', async () => {
+	it('reports credit_topup_available false even when the top-up price env is set', async () => {
+		// The top-up is closed (pricing bet): the flag no longer follows the env.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ credit_topup_available: true })
+		expect(await res.json()).toMatchObject({ credit_topup_available: false })
 	})
 
 	it('reports credit_topup_available false when the top-up price env is unset', async () => {
@@ -1284,69 +1082,114 @@ describe('GET /api/billing/usage', () => {
 })
 
 describe('/api/billing/daily-budget', () => {
-	const TOKENS = { unit: 'tokens', amount: 2_000_000, stop_share: 90, timezone: 'Europe/Oslo' }
-	const BROKEN_COST_DAYS = [{ date: '2026-10-25', ended_sessions: 1208, zero_cost_sessions: 1206 }]
+	const PERCENT = { unit: 'percent', amount: 4.5, stop_share: 90, timezone: 'Europe/Oslo' }
+	// A Pro plan with a $20 limit, so one dollar is 5% of the plan.
+	const PRO = { plan: 'pro', hard_cap_usd_cents: 2000 }
+	const workspaceRow = (workspaceId: string, settings: Record<string, unknown>) => ({
+		id: workspaceId,
+		settings,
+		enterpriseGranted: false,
+		billingOwnerId: null,
+	})
 	const put = (workspaceId: string, body: unknown) =>
 		jsonRequest('PUT', '/api/billing/daily-budget', body, { 'X-Workspace-Id': workspaceId })
+	const get = (workspaceId: string) =>
+		jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId })
 
 	it('GET returns null (off) for a workspace that never set a target', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, {})]]
 
-		const res = await app.request(
-			jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId }),
-		)
+		const res = await app.request(get(workspaceId))
 
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual({
 			daily_budget: null,
-			dollar_unit: { available: true, reason: null, days: [] },
+			earlier_target: null,
+			plan_limit_known: true,
 		})
 	})
 
-	it('GET returns the stored target and reads the cost check in its timezone', async () => {
+	it('GET returns a stored percent target as it is', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: { daily_budget: TOKENS } }]]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, { daily_budget: PERCENT })]]
 
-		const res = await app.request(
-			jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId }),
-		)
+		const body = await (await app.request(get(workspaceId))).json()
 
-		expect((await res.json()).daily_budget).toEqual(TOKENS)
-		expect(readZeroCostDays).toHaveBeenCalledWith(expect.anything(), workspaceId, 'Europe/Oslo')
+		expect(body.daily_budget).toEqual(PERCENT)
+		expect(body.earlier_target).toBeNull()
 	})
 
-	it('GET says why dollars are locked when zero-cost events are 5% or more', async () => {
+	it('GET turns an earlier dollar target into its share of the plan limit', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
-		vi.mocked(readZeroCostDays).mockResolvedValue(BROKEN_COST_DAYS)
+		mockResults.selectQueue = [
+			[
+				workspaceRow(workspaceId, {
+					billing: PRO,
+					daily_budget: { unit: 'dollars', amount: 1, stop_share: 90, timezone: 'Europe/Oslo' },
+				}),
+			],
+		]
 
-		const res = await app.request(
-			jsonGet('/api/billing/daily-budget', { 'X-Workspace-Id': workspaceId }),
-		)
+		const body = await (await app.request(get(workspaceId))).json()
 
-		const body = await res.json()
-		expect(body.dollar_unit.available).toBe(false)
-		expect(body.dollar_unit.reason).toBe(DOLLAR_UNIT_LOCKED_REASON)
+		expect(body.daily_budget).toEqual({ ...PERCENT, amount: 5 })
+		expect(body.earlier_target).toEqual({ unit: 'dollars', converted: true })
 	})
 
-	it('PUT stores a token target for an owner and writes an audit event', async () => {
+	it('GET uses the default percent for an earlier token target and says it could not convert', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				workspaceRow(workspaceId, {
+					billing: PRO,
+					daily_budget: { unit: 'tokens', amount: 2_000_000, stop_share: 100, timezone: 'UTC' },
+				}),
+			],
+		]
+
+		const body = await (await app.request(get(workspaceId))).json()
+
+		expect(body.daily_budget).toEqual({
+			unit: 'percent',
+			amount: 3.3,
+			stop_share: 100,
+			timezone: 'UTC',
+		})
+		expect(body.earlier_target).toEqual({ unit: 'tokens', converted: false })
+	})
+
+	it('GET says the plan limit is unknown for an unmetered plan', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ ...workspaceRow(workspaceId, { daily_budget: PERCENT }), enterpriseGranted: true }],
+		]
+
+		const body = await (await app.request(get(workspaceId))).json()
+
+		expect(body.plan_limit_known).toBe(false)
+		expect(body.daily_budget).toEqual(PERCENT)
+	})
+
+	it('PUT stores a percent target for an owner and writes an audit event', async () => {
 		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, {})], [OWNER_CALLER]]
 
-		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+		const res = await app.request(put(workspaceId, { daily_budget: PERCENT }))
 
 		expect(res.status).toBe(200)
-		expect((await res.json()).daily_budget).toEqual(TOKENS)
+		expect((await res.json()).daily_budget).toEqual(PERCENT)
 		expect(calls.updates).toHaveLength(1)
 		expect(calls.inserts).toContainEqual(
 			expect.objectContaining({
 				action: 'workspace_daily_budget_updated',
-				data: { before: null, after: TOKENS },
+				data: { before: null, after: PERCENT },
 			}),
 		)
 	})
@@ -1354,15 +1197,15 @@ describe('/api/billing/daily-budget', () => {
 	it('PUT fills in the default stop-at share and timezone', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, {})], [OWNER_CALLER]]
 
 		const res = await app.request(
-			put(workspaceId, { daily_budget: { unit: 'tokens', amount: 1000 } }),
+			put(workspaceId, { daily_budget: { unit: 'percent', amount: 3 } }),
 		)
 
 		expect((await res.json()).daily_budget).toEqual({
-			unit: 'tokens',
-			amount: 1000,
+			unit: 'percent',
+			amount: 3,
 			stop_share: 100,
 			timezone: 'UTC',
 		})
@@ -1372,7 +1215,7 @@ describe('/api/billing/daily-budget', () => {
 		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: { daily_budget: TOKENS } }],
+			[workspaceRow(workspaceId, { daily_budget: PERCENT })],
 			[OWNER_CALLER],
 		]
 
@@ -1383,52 +1226,12 @@ describe('/api/billing/daily-budget', () => {
 		expect(calls.updates).toHaveLength(1)
 	})
 
-	it('PUT refuses a dollar target with 409 while cost numbers are unreliable', async () => {
-		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
-		vi.mocked(readZeroCostDays).mockResolvedValue(BROKEN_COST_DAYS)
-
-		const res = await app.request(
-			put(workspaceId, { daily_budget: { unit: 'dollars', amount: 50 } }),
-		)
-
-		expect(res.status).toBe(409)
-		expect(calls.updates).toHaveLength(0)
-	})
-
-	it('PUT still allows a token target while dollars are locked', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
-		vi.mocked(readZeroCostDays).mockResolvedValue(BROKEN_COST_DAYS)
-
-		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
-
-		expect(res.status).toBe(200)
-	})
-
-	it('PUT accepts a dollar target once cost numbers are reliable', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
-
-		const res = await app.request(
-			put(workspaceId, { daily_budget: { unit: 'dollars', amount: 50.25 } }),
-		)
-
-		expect(res.status).toBe(200)
-	})
-
 	it('PUT returns 403 for a plain member and writes nothing', async () => {
 		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: {} }],
-			[{ role: 'member', type: 'human' }],
-		]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, {})], [{ role: 'member', type: 'human' }]]
 
-		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+		const res = await app.request(put(workspaceId, { daily_budget: PERCENT }))
 
 		expect(res.status).toBe(403)
 		expect(calls.updates).toHaveLength(0)
@@ -1437,25 +1240,25 @@ describe('/api/billing/daily-budget', () => {
 	it('PUT returns 403 for an agent holding an admin role', async () => {
 		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: {} }],
-			[{ role: 'admin', type: 'agent' }],
-		]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, {})], [{ role: 'admin', type: 'agent' }]]
 
-		const res = await app.request(put(workspaceId, { daily_budget: TOKENS }))
+		const res = await app.request(put(workspaceId, { daily_budget: PERCENT }))
 
 		expect(res.status).toBe(403)
 		expect(calls.updates).toHaveLength(0)
 	})
 
 	it.each([
-		['zero', { unit: 'tokens', amount: 0 }],
-		['fractional tokens', { unit: 'tokens', amount: 1.5 }],
-		['share of 70', { unit: 'tokens', amount: 10, stop_share: 70 }],
+		['zero', { unit: 'percent', amount: 0 }],
+		['over 100', { unit: 'percent', amount: 100.5 }],
+		['two decimals', { unit: 'percent', amount: 3.33 }],
+		['share of 70', { unit: 'percent', amount: 10, stop_share: 70 }],
+		['a token target', { unit: 'tokens', amount: 1000 }],
+		['a dollar target', { unit: 'dollars', amount: 50 }],
 	])('PUT rejects an invalid target (%s) with 400', async (_label, daily_budget) => {
 		const { app, mockResults, calls } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [OWNER_CALLER]]
+		mockResults.selectQueue = [[workspaceRow(workspaceId, {})], [OWNER_CALLER]]
 
 		const res = await app.request(put(workspaceId, { daily_budget }))
 
