@@ -57,6 +57,9 @@ export const queryKeys = {
 		replyThreads: (workspaceId: string) => ['conversations', workspaceId, 'replyThreads'] as const,
 		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
+	chatSections: {
+		all: (workspaceId: string) => ['chatSections', workspaceId] as const,
+	},
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,

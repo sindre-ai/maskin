@@ -505,7 +505,19 @@ export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }
 // and `search` for a row opened from the list search's results (then `section` is `search` too).
 // `section` is the list section the row sat in: agent for the Agents view's rows (a chat folded
 // under an agent reports its agent row's place), recent for the flat list.
-export type ChatListSection = 'pinned' | 'unread' | 'agent' | 'recent' | 'room' | 'search'
+// `custom` is a section the person made (never its name: names are free text), `waiting`, `running`
+// and `quiet` are the three views.
+export type ChatListSection =
+	| 'pinned'
+	| 'unread'
+	| 'agent'
+	| 'recent'
+	| 'room'
+	| 'search'
+	| 'custom'
+	| 'waiting'
+	| 'running'
+	| 'quiet'
 export type ChatListOpenSource = 'list' | 'search'
 
 /** 1-based place of a row among the rows on screen, as a bucket so no chat can be told apart. */

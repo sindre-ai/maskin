@@ -268,6 +268,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	return res.json()
 }
 
+/** A delete that answers 204 has no body for `request` to parse; that is success, not a failure. */
+function ignoreEmptyBody(error: unknown): void {
+	if (error instanceof SyntaxError) return
+	throw error
+}
+
 /**
  * XHR-based file upload that reports byte-level progress via onProgress.
  * fetch() does not expose upload progress; we use this only for file uploads
@@ -1708,6 +1714,37 @@ export const api = {
 			}),
 	},
 
+	chatSections: {
+		list: (workspaceId: string) => request<ChatSectionsResponse>('/chat-sections', { workspaceId }),
+		create: (workspaceId: string, data: { name: string }) =>
+			request<ChatSectionResponse>('/chat-sections', { method: 'POST', body: data, workspaceId }),
+		update: (id: string, workspaceId: string, data: { name?: string; collapsed?: boolean }) =>
+			request<ChatSectionResponse>(`/chat-sections/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		remove: (id: string, workspaceId: string) =>
+			request<void>(`/chat-sections/${id}`, { method: 'DELETE', workspaceId }).catch(
+				ignoreEmptyBody,
+			),
+		reorder: (workspaceId: string, ids: string[]) =>
+			request<ChatSectionsResponse>('/chat-sections/order', {
+				method: 'PUT',
+				body: { ids },
+				workspaceId,
+			}),
+		addChat: (id: string, conversationId: string, workspaceId: string) =>
+			request<ChatSectionResponse>(`/chat-sections/${id}/chats/${conversationId}`, {
+				method: 'PUT',
+				workspaceId,
+			}),
+		removeChat: (id: string, conversationId: string, workspaceId: string) =>
+			request<void>(`/chat-sections/${id}/chats/${conversationId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}).catch(ignoreEmptyBody),
+	},
 	conversations: {
 		list: (workspaceId: string, params?: Record<string, string>) => {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
@@ -2925,6 +2962,30 @@ export interface ConversationListItemResponse {
 	participants: ConversationParticipantResponse[]
 	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
 	working_actor_ids: string[]
+	/** The viewer's own section this chat sits in, null when it sits in none. */
+	sectionId?: string | null
+	/** Unread mentions of the viewer in this chat. */
+	mentions_unread?: number
+	/** Open cards (questions, access, keychain, tool server, computer) waiting on the viewer. */
+	open_cards?: number
+	/** One line of the newest open card, for the Waiting on you reason. */
+	card_text?: string | null
+	/** An agent has a turn open in this chat now. */
+	agent_running?: boolean
+}
+
+/** One of the viewer's own sections. Never shared; the server scopes every call to the caller. */
+export interface ChatSectionResponse {
+	id: string
+	name: string
+	position: number
+	collapsed: boolean
+	/** Chats in the section, in the order they show. */
+	conversationIds: string[]
+}
+
+export interface ChatSectionsResponse {
+	sections: ChatSectionResponse[]
 }
 
 export interface ConversationListResponse {

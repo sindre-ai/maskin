@@ -128,6 +128,14 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
+	/**
+	 * Gates the sectioned chat list on web (bet
+	 * [Chat list sections](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3939eac8-9e04-4e40-85ae-c981bb32bab4)):
+	 * the Waiting on you, Running and Quiet tiles, the person's own sections and the quiet note.
+	 * Frontend only: read once, in `ConversationList`. Off means the list is drawn exactly as
+	 * before. Retire once it is on for everyone.
+	 */
+	CHAT_LIST_SECTIONS: 'chat-list-sections',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
