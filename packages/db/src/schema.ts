@@ -1246,7 +1246,7 @@ export const nextStepSweepClaims = pgTable(
 // yes. At most one live row per object (taken_back_at is null). It ends when the job closes; that
 // is read from the object's status, never stored. via: chat (a person's message, quoted by
 // message_id) or card (a person approved a card). No actor foreign key on taken_back_by: it is a
-// record. See 0152_job_go_aheads.sql.
+// record. See 0153_job_go_aheads.sql.
 export const jobGoAheads = pgTable(
 	'job_go_aheads',
 	{
