@@ -32,6 +32,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 	@State private var widgetReloader = makeWidgetReloader()
 	/// Workspace invitation links: holds the token across sign-in and relaunch, presents the screen.
 	@State private var invites: InviteCoordinator
+	/// The "Choose a new password" sheet a password-reset link opens. The link's token is held here
+	/// only, for as long as the sheet is up: it is a single-use credential and is never stored.
+	@State private var passwordReset: ResetPasswordModel?
 	/// Opt-in Face ID / Touch ID / passcode lock (Settings → Security). Off by default.
 	@State private var appLock: AppLockController
 	/// The short confirmation ("Copied") any screen can ask for through the environment.
@@ -107,7 +110,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 			welcomeChatId = firstUseActorId == nil ? nil : await welcomeConversationId?()
 		}
 		.handlesDeepLinks(
-			runtime.router, intercept: { invites.open($0) }, connect: { runtime.presentDeviceSignIn(code: $0) }
+			runtime.router, intercept: { invites.open($0) || openPasswordReset($0) }, connect: { runtime.presentDeviceSignIn(code: $0) }
 		) { runtime.present($0) }
 		.onChange(of: auth.session?.actorId, initial: true) { _, id in
 			if id == nil { invites.signedOut() } else { invites.resume(isSignedIn: true) }
@@ -118,6 +121,9 @@ private let onRuntimeReady: (AppRuntime) -> Void
 					store: store, onFinish: { invites.finish() },
 					onSignIn: { invites.dismiss() }, onClose: { invites.dismiss() })
 			}
+		}
+		.sheet(item: $passwordReset) { model in
+			ResetPasswordView(model: model, onDone: { finishPasswordReset() })
 		}
 		// Only Maskin links go to the router; it flags anything else (GitHub, ...) as unopenable, so
 		// outside links must fall through to the markdown view's own confirm-and-open path.
@@ -204,6 +210,22 @@ extension RootView {
 					if !Task.isCancelled { self.toast = nil }
 				}
 		}
+	}
+
+	/// Opens the new-password sheet for a reset link from the email. Returns whether the URL was
+	/// one, so it never reaches the deep-link router. Works signed in or out; the reset itself
+	/// needs no account, and the person lands on sign-in afterwards.
+	fileprivate func openPasswordReset(_ url: URL) -> Bool {
+		guard let link = PasswordResetLink(url: url) else { return false }
+		passwordReset = ResetPasswordModel(token: link.token) { [auth = environment.auth] token, password in
+			try await auth.resetPassword(token: token, password: password)
+		}
+		return true
+	}
+
+	fileprivate func finishPasswordReset() {
+		passwordReset = nil
+		toast = ResetPasswordModel.doneMessage
 	}
 
 	fileprivate static func makeInvites(_ environment: AppEnvironment) -> InviteCoordinator {

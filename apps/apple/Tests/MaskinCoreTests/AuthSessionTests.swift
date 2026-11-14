@@ -403,3 +403,63 @@ struct AuthSessionPasswordResetTests {
 		}
 	}
 }
+
+private final class ResetCalls: @unchecked Sendable {
+	var calls: [(token: String, password: String)] = []
+}
+
+private struct ResettingAuthenticator: Authenticating {
+	var failure: (any Error)?
+	var calls = ResetCalls()
+	func login(email: String, password: String) async throws -> LoginResult { throw AuthError.invalidCredentials }
+	func resetPassword(token: String, password: String) async throws {
+		calls.calls.append((token, password))
+		if let failure { throw failure }
+	}
+}
+
+@MainActor
+@Suite("AuthSession set new password")
+struct AuthSessionSetPasswordTests {
+	@Test("passes the token and password on and does not touch the session")
+	func passesThrough() async throws {
+		let authenticator = ResettingAuthenticator()
+		let store = InMemorySecretStore()
+		let auth = AuthSession(authenticator: authenticator, store: store)
+
+		try await auth.resetPassword(token: "rst_token", password: "correct horse")
+
+		#expect(authenticator.calls.calls.count == 1)
+		#expect(authenticator.calls.calls[0].token == "rst_token")
+		#expect(authenticator.calls.calls[0].password == "correct horse")
+		#expect(auth.credentials == nil)
+		#expect(try store.read() == nil)
+	}
+
+	@Test("an invalid or expired link is passed on as is")
+	func passesInvalidLink() async {
+		let auth = AuthSession(
+			authenticator: ResettingAuthenticator(failure: PasswordResetError.invalidLink),
+			store: InMemorySecretStore())
+
+		await #expect(throws: PasswordResetError.invalidLink) {
+			try await auth.resetPassword(token: "rst_token", password: "correct horse")
+		}
+	}
+
+	@Test("any other error becomes a network error")
+	func wrapsOthers() async {
+		let auth = AuthSession(
+			authenticator: ResettingAuthenticator(failure: URLError(.notConnectedToInternet)),
+			store: InMemorySecretStore())
+
+		do {
+			try await auth.resetPassword(token: "rst_token", password: "correct horse")
+			Issue.record("expected a throw")
+		} catch let error as PasswordResetError {
+			if case .network = error {} else { Issue.record("expected .network, got \(error)") }
+		} catch {
+			Issue.record("expected PasswordResetError, got \(error)")
+		}
+	}
+}

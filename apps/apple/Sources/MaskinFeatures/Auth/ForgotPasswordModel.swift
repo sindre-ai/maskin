@@ -58,6 +58,8 @@ extension PasswordResetError {
 	/// Plain-language text for the inline error under the field.
 	var message: String {
 		switch self {
+		case .invalidLink:
+			"This reset link is invalid or has expired. Ask for a new one."
 		case .rateLimited:
 			"Too many attempts. Wait a few minutes and try again."
 		case .server(let status):

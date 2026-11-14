@@ -134,6 +134,8 @@ public enum SignUpError: Error, Sendable, Equatable {
 /// Why asking for a password reset link failed. The server answers the same 200 whether or not the
 /// email has an account, so there is deliberately no "no such account" case.
 public enum PasswordResetError: Error, Sendable, Equatable {
+	/// 400 on setting the new password: the emailed link is invalid, already used or expired.
+	case invalidLink
 	/// 429.
 	case rateLimited
 	case server(status: Int)
@@ -154,6 +156,9 @@ public protocol Authenticating: Sendable {
 	/// `POST /api/auth/forgot-password`. Returns normally for any email the server accepts, known or
 	/// not; the link goes to the inbox and opens the web reset page.
 	func requestPasswordReset(email: String) async throws
+	/// `POST /api/auth/reset-password`. Spends the emailed link's token and sets the new password;
+	/// the server ends the account's existing sign-ins, so the person signs in again afterwards.
+	func resetPassword(token: String, password: String) async throws
 }
 
 extension Authenticating {
@@ -166,6 +171,10 @@ extension Authenticating {
 	}
 
 	public func requestPasswordReset(email: String) async throws {
+		throw PasswordResetError.network("Password reset isn't available here.")
+	}
+
+	public func resetPassword(token: String, password: String) async throws {
 		throw PasswordResetError.network("Password reset isn't available here.")
 	}
 }
@@ -264,6 +273,19 @@ public final class AuthSession {
 	public func requestPasswordReset(email: String) async throws {
 		do {
 			try await authenticator.requestPasswordReset(email: email)
+		} catch let error as PasswordResetError {
+			throw error
+		} catch {
+			throw PasswordResetError.network(error.localizedDescription)
+		}
+	}
+
+	/// Sets a new password with the token from the reset email. The session is left alone: the
+	/// server ends this account's sign-ins itself, and the next request that carries the old key
+	/// is rejected and ends the session the usual way.
+	public func resetPassword(token: String, password: String) async throws {
+		do {
+			try await authenticator.resetPassword(token: token, password: password)
 		} catch let error as PasswordResetError {
 			throw error
 		} catch {

@@ -107,6 +107,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		// `invite` is a route, not a workspace: invitation links are `InviteLink`'s, and a bare
 		// `/invite` must not be read as the inbox of a workspace called "invite".
 		guard workspace.lowercased() != "invite" else { return nil }
+		// Same for the password-reset route: it is `PasswordResetLink`'s, never a workspace.
+		guard workspace.lowercased() != PasswordResetLink.route else { return nil }
 
 		switch rest.count {
 		case 0:

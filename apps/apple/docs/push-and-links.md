@@ -108,6 +108,14 @@ Verify: `curl -sI https://maskin.io/.well-known/apple-app-site-association` (200
 then on a device `xcrun simctl openurl booted https://maskin.io/<workspaceId>/objects/<id>` (simulator
 needs `applinks:maskin.io?mode=developer` or a real install). `xcrun simctl openurl booted maskin://<workspaceId>/objects/<id>` tests the custom scheme with no hosting.
 
+## Password reset links
+`https://maskin.io/reset-password?token=<raw>` and `maskin://reset-password?token=<raw>` open the "Choose a new password" sheet
+(`MaskinFeatures/Auth/ResetPasswordView.swift`), signed in or out. `RootView` intercepts the URL before the deep-link router
+(`PasswordResetLink.swift`; the router refuses `reset-password` as a workspace name). The token is a one-hour, single-use
+credential: it is held in memory for the sheet and never stored. Saving posts `POST /api/auth/reset-password`; the server ends
+the account's web and iOS sign-ins, so the person signs in again with the new password. The universal link only reaches the app
+once the `/reset-password` entry is in the served association file and a build that handles it is installed: ship the app first.
+
 ## Invitation links
 `https://maskin.io/invite?token=<raw>` and `maskin://invite?token=<raw>` open the invite screen
 (`MaskinFeatures/Invites/InviteView.swift`). `InviteCoordinator` keeps the token in `UserDefaults` (`invite.pending.v1`, at most 7 days)
