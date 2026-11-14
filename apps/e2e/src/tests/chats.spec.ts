@@ -131,10 +131,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		await expect(await headerMenuItem(page, 'Unarchive conversation')).toBeVisible()
 		await page.keyboard.press('Escape')
 
-		// A second participant posts a message while the primary actor isn't
-		// looking — it should surface as unread in the conversation list.
+		// A message that mentions the partner while they aren't looking should surface as unread in
+		// their conversation list. (A plain message does not: only mentions and open cards count.)
 		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 			content: 'Are you still there?',
+			metadata: { mentions: [secondHuman.id] },
 		})
 
 		const partnerPage = await signInAsActor(browser, secondHuman.api_key, {
@@ -161,10 +162,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			account.apiKey,
 		)
 
-		// The primary actor posts while the partner is away, so the partner has
-		// something to read in the first place.
+		// The primary actor mentions the partner while they are away, so the partner has
+		// something unread in the first place.
 		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 			content: 'Anything to report?',
+			metadata: { mentions: [secondHuman.id] },
 		})
 
 		const partnerApi = new TestAPI(secondHuman.api_key)
@@ -242,6 +244,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		)
 		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 			content: 'Visible in both themes',
+			metadata: { mentions: [secondHuman.id] },
 		})
 
 		for (const scheme of ['light', 'dark'] as const) {
