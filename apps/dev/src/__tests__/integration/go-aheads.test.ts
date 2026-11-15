@@ -429,9 +429,11 @@ describe('a go-ahead never covers sending, spending or deleting', () => {
 			}
 		}
 		walk(root)
-		// The only importers: the route, the single-object read and the session launch that shows
-		// the prompt block. Nothing in a send, spend or delete path is on this list.
+		// The only importers: the route, the single-object read, the session launch that shows
+		// the prompt block, and the done-when approval, which records the go-ahead a person gives
+		// by tapping Approve on the card. Nothing in a send, spend or delete path is on this list.
 		expect(importers.sort()).toEqual([
+			'lib/done-when.ts',
 			'routes/object-go-ahead.ts',
 			'routes/objects.ts',
 			'services/session-manager.ts',
