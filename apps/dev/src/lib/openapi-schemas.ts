@@ -323,7 +323,15 @@ export const integrationResponseSchema = z.object({
 	agentGrants: z.array(agentGrantSchema).optional(),
 	// Saved credentials shared with an agent for one chat only ("Allow in this chat").
 	chatGrants: z
-		.array(z.object({ actorId: z.string().uuid(), conversationId: z.string().uuid() }))
+		.array(
+			z.object({
+				id: z.string().uuid(),
+				actorId: z.string().uuid(),
+				conversationId: z.string().uuid(),
+				// Null for a saved credential's grant, which lasts until a person removes it.
+				expiresAt: z.string().nullable(),
+			}),
+		)
 		.optional(),
 })
 

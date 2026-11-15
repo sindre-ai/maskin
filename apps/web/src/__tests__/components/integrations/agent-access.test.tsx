@@ -22,10 +22,12 @@ vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: AGENTS }) }))
 const setGrant = vi.fn()
 const removeGrant = vi.fn()
 const setDefault = vi.fn()
+const removeChatGrant = vi.fn()
 vi.mock('@/hooks/use-integrations', () => ({
 	useSetAgentGrant: () => ({ mutate: setGrant, isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: removeGrant, isPending: false }),
 	useSetDefaultAgentAccess: () => ({ mutate: setDefault, isPending: false }),
+	useRemoveChatGrant: () => ({ mutate: removeChatGrant, isPending: false }),
 }))
 
 const mockRole = vi.fn(() => 'member')
@@ -245,5 +247,48 @@ describe('AgentAccess', () => {
 		const { open } = renderOpen({ createdBy: 'agent-1' })
 		await open()
 		expect(screen.getByRole('combobox', { name: 'Access for all other agents' })).toBeDisabled()
+	})
+})
+
+describe('AgentAccess chat grants', () => {
+	const chatGrants = [
+		{ id: 'grant-1', actorId: 'agent-3', conversationId: 'conv-1', expiresAt: null },
+	]
+
+	it('lists a chat-only grant by agent name and removes it', async () => {
+		mockRole.mockReturnValue('admin')
+		const { user, open } = renderOpen({ chatGrants })
+		await open()
+
+		expect(screen.getByText('Allowed in a chat')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Remove chat access for Writer' }))
+		expect(removeChatGrant).toHaveBeenCalledWith('grant-1')
+	})
+
+	it('shows when a timed grant expires, and nothing for one without an expiry', async () => {
+		const { open } = renderOpen({
+			chatGrants: [
+				{ ...chatGrants[0], expiresAt: '2026-11-12T10:30:00.000Z' },
+				{ id: 'grant-2', actorId: 'agent-1', conversationId: 'conv-2', expiresAt: null },
+			],
+		})
+		await open()
+
+		expect(screen.getByText(/Only in one chat · expires/)).toBeInTheDocument()
+		expect(screen.getAllByText('Only in one chat')).toHaveLength(1)
+	})
+
+	it('does not offer Remove to a member who did not connect it', async () => {
+		mockActor.mockReturnValue({ id: 'human-2', type: 'human' })
+		const { open } = renderOpen({ chatGrants })
+		await open()
+
+		expect(screen.getByRole('button', { name: 'Remove chat access for Writer' })).toBeDisabled()
+	})
+
+	it('shows no chat list when there are no chat grants', async () => {
+		const { open } = renderOpen()
+		await open()
+		expect(screen.queryByText('Allowed in a chat')).not.toBeInTheDocument()
 	})
 })

@@ -7,9 +7,15 @@ import { buildIntegrationResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
 const mockAllow = vi.fn()
+const mockDecline = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/lib/api')>()),
-	api: { integrations: { allowAccess: (...args: unknown[]) => mockAllow(...args) } },
+	api: {
+		integrations: {
+			allowAccess: (...args: unknown[]) => mockAllow(...args),
+			declineFromChat: (...args: unknown[]) => mockDecline(...args),
+		},
+	},
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -90,6 +96,7 @@ beforeEach(() => {
 	role = 'member'
 	actor = { id: 'human-1', type: 'human' }
 	mockAllow.mockResolvedValue({ actorId: AGENT, changed: true, relaunch: 'stopped' })
+	mockDecline.mockResolvedValue({ actorId: AGENT })
 })
 
 describe('IntegrationAccessRequestCard', () => {
@@ -162,14 +169,33 @@ describe('IntegrationAccessRequestCard', () => {
 		const user = userEvent.setup()
 		renderCard()
 		await user.click(screen.getByRole('button', { name: 'Not now' }))
+		await waitFor(() => expect(sendMutate).toHaveBeenCalledTimes(1))
 
 		expect(mockAllow).not.toHaveBeenCalled()
+		expect(mockDecline).toHaveBeenCalledWith(
+			'22222222-2222-2222-2222-222222222222',
+			'ws-1',
+			SESSION_ID,
+		)
 		const call = sendMutate.mock.calls[0][0] as {
 			content: string
 			metadata: { card_answer: unknown }
 		}
 		expect(call.content).toContain("don't use Slack")
 		expect(call.metadata.card_answer).toEqual({ message_id: 7, outcome: 'declined' })
+		expect(await screen.findByText(/Declined/)).toBeInTheDocument()
+	})
+
+	it('Not now: still tells the agent and closes the card when the audit call fails', async () => {
+		mockDecline.mockRejectedValue(new Error('boom'))
+		const user = userEvent.setup()
+		renderCard()
+		await user.click(screen.getByRole('button', { name: 'Not now' }))
+
+		await waitFor(() => expect(sendMutate).toHaveBeenCalledTimes(1))
+		expect(
+			(sendMutate.mock.calls[0][0] as { metadata: { card_answer: unknown } }).metadata.card_answer,
+		).toEqual({ message_id: 7, outcome: 'declined' })
 		expect(await screen.findByText(/Declined/)).toBeInTheDocument()
 	})
 
@@ -235,6 +261,7 @@ describe('IntegrationAccessRequestCard', () => {
 
 		renderCard(helperRequest)
 		await user.click(screen.getByRole('button', { name: 'Not now' }))
+		await waitFor(() => expect(inputMutate).toHaveBeenCalledTimes(1))
 		expect(sendMutate).not.toHaveBeenCalled()
 		expect(inputMutate.mock.calls[0]?.[0]).toMatchObject({
 			id: SESSION_ID,
