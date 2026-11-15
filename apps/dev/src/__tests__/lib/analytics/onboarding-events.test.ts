@@ -62,14 +62,23 @@ const answer = {
 	content: 'Looks right',
 }
 const card = [
-	{ data: { decision: { options: [{ label: 'Looks right' }, { label: 'Wrong entirely' }] } } },
+	{
+		data: {
+			decision: {
+				options: [
+					{ label: 'Looks right' },
+					{ label: 'Needs correction' },
+					{ label: 'Wrong entirely' },
+				],
+			},
+		},
+	},
 ]
-const signupObject = [{ metadata: { source: 'signup_capture' } }]
 
 describe('maybeTrackOnboardingResearchAnswered', () => {
-	it('emits the answer as one property when a person taps an option on the sign-up card', async () => {
-		await maybeTrackOnboardingResearchAnswered(fakeDb(card, signupObject), answer)
-		await maybeTrackOnboardingResearchAnswered(fakeDb(card, signupObject), {
+	it('emits the answer as one property when a person taps an option on the research card', async () => {
+		await maybeTrackOnboardingResearchAnswered(fakeDb(card), answer)
+		await maybeTrackOnboardingResearchAnswered(fakeDb(card), {
 			...answer,
 			content: 'Wrong entirely',
 		})
@@ -89,18 +98,15 @@ describe('maybeTrackOnboardingResearchAnswered', () => {
 	})
 
 	it('ignores a reply that is not under a decision card with that option', async () => {
-		await maybeTrackOnboardingResearchAnswered(
-			fakeDb([{ data: { content: 'hi' } }], signupObject),
-			answer,
-		)
+		await maybeTrackOnboardingResearchAnswered(fakeDb([{ data: { content: 'hi' } }]), answer)
 		expect(capturePosthogEventMock).not.toHaveBeenCalled()
 	})
 
-	it('ignores the same words on an object that is not the sign-up one', async () => {
-		await maybeTrackOnboardingResearchAnswered(
-			fakeDb(card, [{ metadata: { source: 'other' } }]),
-			answer,
-		)
+	it('ignores a decision card that does not carry all three answers', async () => {
+		const otherCard = [
+			{ data: { decision: { options: [{ label: 'Looks right' }, { label: 'Wrong entirely' }] } } },
+		]
+		await maybeTrackOnboardingResearchAnswered(fakeDb(otherCard), answer)
 		expect(capturePosthogEventMock).not.toHaveBeenCalled()
 	})
 })
