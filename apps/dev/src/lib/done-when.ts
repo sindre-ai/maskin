@@ -262,8 +262,9 @@ export async function approveDraftDoneWhen(
 }
 
 /**
- * Sets one line's state. Only a person may, and only on an approved list: until the outcome check
- * lands, a tick is a person's reading, never an agent's.
+ * Sets one line's state. Only a person may, and only on an approved list: a tick through here is a
+ * person's reading, never an agent's. The outcome check writes the state of the lines no person
+ * has ticked (lib/outcome-check.ts), and never over a person's tick.
  */
 export async function setLineState(
 	tx: Transaction,
