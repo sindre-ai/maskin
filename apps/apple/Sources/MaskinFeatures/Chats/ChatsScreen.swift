@@ -465,6 +465,15 @@ private struct ChatThreadHost: View {
 					}
 				}
 			}
+			// A quiet chat opened from search or the Quiet view: it is out of the main list, and writing in it
+			// brings it back.
+			.safeAreaInset(edge: .top, spacing: 0) {
+				if conversations.sectionsEnabled, let row = conversations.conversation(id: conversationID) ?? chat.detail,
+					TeamViewRules.showsQuietBar(row, sections: conversations.sections), let last = row.lastMessageAt
+				{
+					QuietBar(since: TeamViewRules.quietSince(last))
+				}
+			}
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
 				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting, onLeft: onLeft)
 				.presentationDetents([.medium, .large])

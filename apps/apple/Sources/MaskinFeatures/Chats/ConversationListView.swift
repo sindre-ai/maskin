@@ -549,9 +549,13 @@ struct ConversationListView: View {
 					TeamSectionHeader(label: "Pinned", count: layout.tiles.count)
 				}
 			}
+			// "New section" sits under the person's sections; with none yet it stands alone below Pinned.
+			let lastCustomID = layout.sections.last { $0.kind == .custom }?.id
+			let canAddSection = store.sectionsEnabled && !layout.isFiltering && !picking.isActive
+			if canAddSection, lastCustomID == nil { newSectionRow.rowChrome() }
 			ForEach(layout.sections) { section in
 				if section.kind == .custom {
-					customSection(section, now: now)
+					customSection(section, now: now, showsNewSection: canAddSection && section.id == lastCustomID)
 				} else {
 					Section {
 						ForEach(section.rows) { row in
@@ -566,15 +570,6 @@ struct ConversationListView: View {
 				}
 			}
 			if store.sectionsEnabled, !layout.isFiltering, !picking.isActive {
-				Button { nameRequest = SectionNameRequest(kind: .new(movingChatID: nil)) } label: {
-					Label("New section", systemImage: "plus")
-						.maskinText(.subhead).fontWeight(.semibold)
-						.foregroundStyle(MaskinColor.sigInk)
-						.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin - MaskinSpace.s12, alignment: .leading)
-						.contentShape(Rectangle())
-				}
-				.buttonStyle(.maskinPressed)
-				.rowChrome()
 				if store.quietNoteSeen, store.quietChatCount > 0 {
 					QuietFooter(count: store.quietChatCount) { store.activeView = .quiet }
 						.plainRow(insets: EdgeInsets(top: MaskinSpace.s4, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
@@ -587,9 +582,20 @@ struct ConversationListView: View {
 
 	// MARK: Sections and views
 
+	private var newSectionRow: some View {
+		Button { nameRequest = SectionNameRequest(kind: .new(movingChatID: nil)) } label: {
+			Label("New section", systemImage: "plus")
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.sigInk)
+				.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin - MaskinSpace.s12, alignment: .leading)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+	}
+
 	/// One of the person's sections: a folding header, its chats, or the empty-section prompt.
 	@ViewBuilder
-	private func customSection(_ section: TeamLayout.Section, now: Date) -> some View {
+	private func customSection(_ section: TeamLayout.Section, now: Date, showsNewSection: Bool) -> some View {
 		let sections = store.sections
 		let index = sections.firstIndex { $0.id == section.sectionID }
 		Section {
@@ -602,6 +608,7 @@ struct ConversationListView: View {
 					rowView(row, now: now)
 				}
 			}
+			if showsNewSection { newSectionRow.rowChrome() }
 		} header: {
 			CustomSectionHeader(
 				section: section, canMoveUp: (index ?? 0) > 0, canMoveDown: index.map { $0 < sections.count - 1 } ?? false,

@@ -258,6 +258,90 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		return all
 	}
 
+	// MARK: - Sections
+
+	/// The `chat-list-sections` feature flag, read once per store. Any failure reads as off, so the
+	/// list is drawn the way it always was.
+	public func sectionsEnabled() async -> Bool {
+		guard let output = try? await client.get_sol_api_sol_feature_hyphen_flags(.init()),
+			case .ok(let ok) = output, let body = try? ok.body.json
+		else { return false }
+		return body.flags.additionalProperties["chat-list-sections"] ?? false
+	}
+
+	public func sections() async throws -> [ChatSection] {
+		let output = try await client.get_sol_api_sol_chat_hyphen_sections(
+			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else { throw ChatsError("Couldn't load your sections.") }
+		return try ok.body.json.sections.map {
+			ChatSection(
+				id: $0.id, name: $0.name, position: $0.position, collapsed: $0.collapsed,
+				conversationIDs: $0.conversationIds)
+		}
+	}
+
+	public func createSection(name: String) async throws -> ChatSection {
+		let output = try await client.post_sol_api_sol_chat_hyphen_sections(
+			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: .json(.init(name: name))))
+		switch output {
+		case .created(let created):
+			let row = try created.body.json
+			return ChatSection(
+				id: row.id, name: row.name, position: row.position, collapsed: row.collapsed,
+				conversationIDs: row.conversationIds)
+		case .conflict(let conflict):
+			throw ChatsError((try? conflict.body.json.error.message) ?? TeamViewRules.duplicateMessage(name))
+		default:
+			throw ChatsError("Couldn't add the section.")
+		}
+	}
+
+	public func updateSection(id: String, name: String?, collapsed: Bool?) async throws -> ChatSection {
+		let output = try await client.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(
+			.init(
+				path: .init(id: id), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(.init(name: name, collapsed: collapsed))))
+		switch output {
+		case .ok(let ok):
+			let row = try ok.body.json
+			return ChatSection(
+				id: row.id, name: row.name, position: row.position, collapsed: row.collapsed,
+				conversationIDs: row.conversationIds)
+		case .conflict(let conflict):
+			throw ChatsError((try? conflict.body.json.error.message) ?? TeamViewRules.duplicateMessage(name ?? ""))
+		default:
+			throw ChatsError("Couldn't change the section.")
+		}
+	}
+
+	public func deleteSection(id: String) async throws {
+		let output = try await client.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(
+			.init(path: .init(id: id), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok = output else { throw ChatsError("Couldn't delete the section.") }
+	}
+
+	public func reorderSections(ids: [String]) async throws {
+		let output = try await client.put_sol_api_sol_chat_hyphen_sections_sol_order(
+			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID), body: .json(.init(ids: ids))))
+		guard case .ok = output else { throw ChatsError("Couldn't reorder your sections.") }
+	}
+
+	public func putChat(_ conversationID: String, inSection sectionID: String) async throws {
+		let output = try await client.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(
+			.init(
+				path: .init(id: sectionID, conversationId: conversationID),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok = output else { throw ChatsError("Couldn't move the chat.") }
+	}
+
+	public func removeChat(_ conversationID: String, fromSection sectionID: String) async throws {
+		let output = try await client.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(
+			.init(
+				path: .init(id: sectionID, conversationId: conversationID),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok = output else { throw ChatsError("Couldn't move the chat.") }
+	}
+
 	// MARK: - Thread
 
 	public func detail(conversationID: String) async throws -> ConversationSummary {
