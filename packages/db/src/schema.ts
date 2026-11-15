@@ -1301,6 +1301,74 @@ export const jobGoAheads = pgTable(
 	],
 )
 
+// ── Done-when lines ────────────────────────────────────────────────────────
+
+// One line of a job's done-when list. draft rows are written by the agent through a decision card;
+// approved rows exist only after a person taps Approve. Not object metadata, so no writer of the
+// object can edit what defines done. See 0159_done_when_lines.sql.
+export const doneWhenLines = pgTable(
+	'done_when_lines',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		version: integer('version').notNull().default(1),
+		position: integer('position').notNull(),
+		text: text('text').notNull(),
+		checkedBy: text('checked_by').notNull(),
+		needsYes: boolean('needs_yes').notNull().default(false),
+		reading: text('reading'),
+		comparison: text('comparison'),
+		listStatus: text('list_status').notNull().default('draft'),
+		state: text('state').notNull().default('not_checked'),
+		stateSetAt: timestamp('state_set_at', { withTimezone: true }),
+		stateSetBy: uuid('state_set_by'),
+		approvedBy: uuid('approved_by').references(() => actors.id, { onDelete: 'set null' }),
+		approvedAt: timestamp('approved_at', { withTimezone: true }),
+		createdBy: uuid('created_by').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('done_when_lines_object_idx').on(t.objectId, t.listStatus),
+		index('done_when_lines_workspace_idx').on(t.workspaceId),
+		check('done_when_lines_checked_by_check', sql`${t.checkedBy} in ('code', 'checker', 'person')`),
+		check(
+			'done_when_lines_list_status_check',
+			sql`${t.listStatus} in ('draft', 'approved', 'superseded')`,
+		),
+		check(
+			'done_when_lines_state_check',
+			sql`${t.state} in ('true', 'false', 'cannot_tell', 'not_checked')`,
+		),
+	],
+)
+
+// "List skipped, because X": the agent's reason for not writing a done-when list on a job. One per
+// job. Counted for the skip rate.
+export const doneWhenSkips = pgTable(
+	'done_when_skips',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		reason: text('reason').notNull(),
+		skippedBy: uuid('skipped_by').notNull(),
+		skippedAt: timestamp('skipped_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('done_when_skips_one_per_object_idx').on(t.objectId),
+		index('done_when_skips_workspace_idx').on(t.workspaceId),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(

@@ -18,6 +18,12 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
+import {
+	approveDraftDoneWhen,
+	hasApprovedDoneWhen,
+	resolveDoneWhenTap,
+	writeDraftDoneWhen,
+} from '../lib/done-when'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
@@ -335,6 +341,23 @@ app.openapi(createCommentRoute, (async (c) => {
 				: undefined
 		if (statusCheck && 'decision' in statusCheck) decision = statusCheck.decision
 		violations.push(...(statusCheck && 'violations' in statusCheck ? statusCheck.violations : []))
+		// A done-when list is on behind its flag, and an approved list can no longer be rewritten
+		// by an agent: it raises a normal card with its reason instead.
+		if (body.decision.done_when) {
+			if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.DONE_WHEN_LIST)) {
+				violations.push({
+					path: 'done_when',
+					message:
+						'The done-when list is not switched on in this workspace. Drop done_when and the approve_done_when option.',
+				})
+			} else if (await hasApprovedDoneWhen(db, body.entity_id)) {
+				violations.push({
+					path: 'done_when',
+					message:
+						'This job already has an approved done-when list, and only a person can change it. If a line is wrong, post a card with a decision and your reason, and no done_when block.',
+				})
+			}
+		}
 		// A delete_agent option names an agent that must exist here. Checked here for the same reason.
 		if (violations.length === 0) {
 			violations.push(
@@ -464,6 +487,18 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 		: null
 
+	// A person tapping Approve on a done-when card approves the draft as themselves, in the same
+	// transaction as their reply. Only a person's own client counts, as above.
+	const doneWhenTap = mayApprove
+		? await resolveDoneWhenTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+	const doneWhenDraft = decision?.done_when
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -481,7 +516,12 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	const delivery = routing?.delivery
 	const { comment, unresolvedMentions } =
-		replyApprovals.length === 0 && !delivery && !statusTap && !deletionTap
+		replyApprovals.length === 0 &&
+		!delivery &&
+		!statusTap &&
+		!deletionTap &&
+		!doneWhenTap &&
+		!doneWhenDraft
 			? await post(db)
 			: await db.transaction(async (tx) => {
 					if (deletionTap) {
@@ -490,6 +530,17 @@ app.openapi(createCommentRoute, (async (c) => {
 							approverId: actorId,
 							tap: deletionTap,
 						})
+					}
+					if (doneWhenDraft) {
+						await writeDraftDoneWhen(tx, {
+							workspaceId,
+							objectId: body.entity_id,
+							actorId,
+							block: doneWhenDraft,
+						})
+					}
+					if (doneWhenTap) {
+						await approveDraftDoneWhen(tx, { objectId: doneWhenTap.objectId, actorId })
 					}
 					if (statusTap) {
 						statusAction = await applyStatusTap(tx, {

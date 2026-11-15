@@ -20,6 +20,7 @@ import {
 	scheduleNextStepSchema,
 	setNextStepSchema,
 	skillNameSchema,
+	skipDoneWhenSchema,
 	starterPromptListSchema,
 	updateNextStepSchema,
 } from '@maskin/shared'
@@ -565,6 +566,15 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z.string().uuid().describe('The job (object) to take the go-ahead back from.'),
+		}),
+	},
+	skip_done_when: {
+		description:
+			'Write "list skipped, because X" on a job that needs no done-when list: one session can finish it, it undoes cleanly, nothing in it sends, spends or deletes, and no target is behind it. A plain chat question needs no skip. Anything else gets a list: propose it with create_comment and a done_when block on a decision card, with the person in mentions. The server refuses a skip on a bet, a target or a job with a target behind it (403), and counts every skip and every refusal. 400 when the job already has a list.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The job (object) that needs no list.'),
+			...skipDoneWhenSchema.shape,
 		}),
 	},
 	delete_object: {

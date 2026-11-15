@@ -32,6 +32,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { ChevronsUpDown, Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { DoneWhenProgress } from './done-when-lines'
 import { GoAheadLine } from './go-ahead-line'
 import { NextStepBlock } from './next-step-block'
 import { ObjectAskBanner } from './object-ask-banner'
@@ -186,6 +187,7 @@ export function ObjectDetailShell({
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const nextStepBlockOn = useFeatureFlag('next-step-block')
 	const goAheadOn = useFeatureFlag('go-ahead')
+	const doneWhenOn = useFeatureFlag('done-when-list')
 	const { data: allObjects } = useObjects(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
@@ -621,6 +623,16 @@ export function ObjectDetailShell({
 						{goAheadOn && (
 							<GoAheadLine
 								goAhead={object.go_ahead}
+								objectId={object.id}
+								workspaceId={workspaceId}
+							/>
+						)}
+
+						{/* The done-when list: "3 of 6 lines true" and the lines. Renders NOTHING when the
+						    job has no list, and the block is behind its own flag. */}
+						{doneWhenOn && (
+							<DoneWhenProgress
+								doneWhen={object.done_when}
 								objectId={object.id}
 								workspaceId={workspaceId}
 							/>

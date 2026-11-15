@@ -621,6 +621,13 @@ export const api = {
 		// Ends the job's go-ahead. 404 when it has none (already taken back).
 		takeBackGoAhead: (id: string, workspaceId: string) =>
 			request<GoAhead>(`/objects/${id}/go-ahead`, { method: 'DELETE', workspaceId }),
+		// A person's reading of one done-when line. Refused for an agent.
+		setDoneWhenLine: (id: string, lineId: string, state: DoneWhenState, workspaceId: string) =>
+			request<DoneWhen>(`/objects/${id}/done-when/lines/${lineId}`, {
+				method: 'PATCH',
+				body: { state },
+				workspaceId,
+			}),
 	},
 
 	account: {
@@ -2128,6 +2135,44 @@ export interface GoAhead {
 	granted_at: string
 }
 
+export type DoneWhenChecker = 'code' | 'checker' | 'person'
+export type DoneWhenState = 'true' | 'false' | 'cannot_tell' | 'not_checked'
+
+/** What an agent proposes on a decision card: lines a person approves before work starts. */
+export interface DoneWhenBlock {
+	questions?: string[]
+	lines: Array<{
+		text: string
+		checked_by: DoneWhenChecker
+		needs_yes?: boolean
+		reading?: string
+		comparison?: string
+	}>
+}
+
+/** A job's done-when list as the detail read returns it: the approved list, else the draft. */
+export interface DoneWhen {
+	object_id: string
+	status: 'draft' | 'approved'
+	version: number
+	approved_by: string | null
+	approved_by_name: string | null
+	approved_at: string | null
+	lines: Array<{
+		id: string
+		position: number
+		text: string
+		checked_by: DoneWhenChecker
+		needs_yes: boolean
+		reading: string | null
+		comparison: string | null
+		state: DoneWhenState
+		state_set_at: string | null
+	}>
+	true_count: number
+	total: number
+}
+
 export interface ObjectResponse {
 	id: string
 	workspaceId: string
@@ -2165,6 +2210,8 @@ export interface ObjectResponse {
 	next_step?: NextStep | null
 	// Detail endpoint only: the job's live go-ahead, null when there is none or the job is closed.
 	go_ahead?: GoAhead | null
+	// Detail endpoint only: the job's done-when list, null when it has none.
+	done_when?: DoneWhen | null
 }
 
 export interface StarToggleResponse {
@@ -2229,6 +2276,8 @@ export interface LatestMentionDecisionOption {
 	set_status?: { status: string; object_id?: string }
 	/** The option the agent carries out if nobody answers by the card's `expires_at`. */
 	default_on_silence?: boolean
+	/** Tapping this option approves the done-when list on the card, as the person who tapped. */
+	approve_done_when?: boolean
 }
 
 /**
@@ -2260,6 +2309,8 @@ export interface LatestMentionDecision {
 	draft?: LatestMentionDecisionDraft
 	/** One card, several messages: each shows as its own preview with Send and Skip. */
 	drafts?: LatestMentionDecisionDraft[]
+	/** The done-when list the agent proposes: questions on top, then the tagged lines. */
+	done_when?: DoneWhenBlock
 }
 
 export interface LatestMention {

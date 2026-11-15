@@ -533,6 +533,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	update_next_step: 'next_step_update',
 	record_go_ahead: 'go_ahead_record',
 	take_back_go_ahead: 'go_ahead_take_back',
+	skip_done_when: 'done_when_skip',
 	create_relationship: 'relationship_create',
 	delete_relationship: 'relationship_delete',
 	// Workspaces + members

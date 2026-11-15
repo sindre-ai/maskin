@@ -503,3 +503,85 @@ describe('default_on_silence', () => {
 		).toEqual(['options.0.default_on_silence'])
 	})
 })
+
+describe('done_when on a decision', () => {
+	const lines = [
+		{
+			text: 'The first 10 emails are sent and logged',
+			checked_by: 'person' as const,
+			needs_yes: true,
+		},
+		{
+			text: 'At least 3 payments came in',
+			checked_by: 'code' as const,
+			reading: 'Stripe payments in the last 7 days',
+			comparison: '>= 3',
+		},
+	]
+	const withApprove = (overrides: Partial<CommentDecision> = {}) =>
+		buildDecision({
+			done_when: { questions: ['Who is the audience?'], lines },
+			options: [
+				{
+					label: 'Approve',
+					recommended: true,
+					approve_done_when: true,
+					consequences: ['Work starts on these lines', 'Lines that send still ask you'],
+				},
+				{ label: 'Hold', consequences: ['Nothing starts', 'The list stays a draft'] },
+			],
+			...overrides,
+		})
+
+	it('accepts a list with exactly one approving option', () => {
+		const decision = withApprove()
+		expect(commentDecisionSchema.safeParse(decision).success).toBe(true)
+		expect(validateDecisionProse(decision)).toEqual([])
+	})
+
+	it('needs exactly one approve_done_when option', () => {
+		const none = withApprove({
+			options: [
+				{ label: 'Go', recommended: true, consequences: ['Starts', 'Stops asking'] },
+				{ label: 'Hold', consequences: ['Nothing starts', 'Stays a draft'] },
+			],
+		})
+		expect(violate(none)).toContain('options')
+	})
+
+	it('refuses approve_done_when without a list', () => {
+		const decision = withApprove({ done_when: undefined })
+		expect(violate(decision)).toContain('options')
+	})
+
+	it('a code line needs a reading, and a person line may not carry one', () => {
+		const decision = withApprove({
+			done_when: {
+				lines: [
+					{ text: 'Payments came in', checked_by: 'code' },
+					{ text: 'A person looked', checked_by: 'person', reading: 'something' },
+				],
+			},
+		})
+		expect(violate(decision)).toEqual(
+			expect.arrayContaining(['done_when.lines.0.reading', 'done_when.lines.1.checked_by']),
+		)
+	})
+
+	it('applies the wording rules to the questions and lines', () => {
+		const decision = withApprove({
+			done_when: { questions: ['Which — list?'], lines: [lines[0] as (typeof lines)[0]] },
+		})
+		expect(violate(decision)).toContain('done_when.questions.0')
+	})
+
+	it('rejects more than 8 lines', () => {
+		const many = Array.from({ length: 9 }, (_, i) => ({
+			text: `Line ${i}`,
+			checked_by: 'person' as const,
+		}))
+		expect(
+			commentDecisionSchema.safeParse(withApprove({ done_when: { lines: many } })).success,
+		).toBe(false)
+	})
+})

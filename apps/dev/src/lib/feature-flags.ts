@@ -145,6 +145,16 @@ export const FLAGS = {
 	 */
 	GO_AHEAD: 'go-ahead',
 	/**
+	 * Gates the done-when list (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Write a done-when list before work starts](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/75cf7896-7e2f-4f28-b2bc-c7b06d621b2d)):
+	 * the done_when block on a decision card (backend, workspace-scoped: refused when off, read with
+	 * isFlagEnabledForWorkspace when the card is posted), the lines on the card and the "N of M lines
+	 * true" block on the job's Overview (frontend, read where they draw). Off means cards are
+	 * posted and drawn exactly as before and the Overview shows nothing. The tables and routes
+	 * behind it are additive and safe with the flag off. Retire once it is on for everyone.
+	 */
+	DONE_WHEN_LIST: 'done-when-list',
+	/**
 	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
 	 * else, or a decision card it posted expires. Backend only, workspace-scoped: read with

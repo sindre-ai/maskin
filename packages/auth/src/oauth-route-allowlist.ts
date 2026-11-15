@@ -408,6 +408,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/live-activities/tokens',
 	'POST /api/objects/:id/approval',
 	'POST /api/objects/:id/chat-approval',
+	'POST /api/objects/:id/done-when/skip',
+	'PATCH /api/objects/:id/done-when/lines/:lineId',
 	'DELETE /api/objects/:id/go-ahead',
 	'POST /api/objects/:id/go-ahead',
 	'PATCH /api/objects/:id/next-step',

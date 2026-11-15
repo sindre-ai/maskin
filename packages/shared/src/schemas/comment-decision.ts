@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { doneWhenBlockSchema, doneWhenStrings, findDoneWhenViolations } from './done-when'
 
 /**
  * The structured decision block an agent attaches to a comment when it needs a
@@ -117,6 +118,12 @@ export const decisionOptionSchema = z.object({
 		.optional()
 		.describe(
 			'Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.',
+		),
+	approve_done_when: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on the one option that approves the done-when list on this card (needs done_when). A person tapping it approves the list as themselves, and it also gives the go-ahead for every line that does not send, spend or delete. Your own call can never approve a list: only the tap does. Leave it off otherwise.',
 		),
 	delete_agent: z
 		.object({
@@ -272,6 +279,11 @@ export const commentDecisionSchema = z
 			.describe(
 				'Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.',
 			),
+		done_when: doneWhenBlockSchema
+			.optional()
+			.describe(
+				'Attach this to propose the done-when list for a job: what will be true when the work is done. The card shows your questions on top and the lines below, each tagged Code, Checker or You. Posting the card saves the lines as a draft; a person tapping the option with approve_done_when approves them. You cannot approve or edit an approved list. If a person replies with changes, post a new card with the redrafted lines. Put the job in the comment\u2019s object.',
+			),
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
@@ -352,6 +364,12 @@ export function validateDecisionProse(
 		['title', decision.title],
 		['summary', decision.summary],
 		...(decision.ask === undefined ? [] : ([['ask', decision.ask]] as Array<[string, string]>)),
+		...(decision.done_when
+			? doneWhenStrings(decision.done_when).map<[string, string]>(([path, value]) => [
+					`done_when.${path}`,
+					value,
+				])
+			: []),
 		...decision.options.flatMap<[string, string]>((option, index) => [
 			[`options.${index}.label`, option.label],
 			...option.consequences.map<[string, string]>((line, lineIndex) => [
@@ -386,6 +404,24 @@ export function validateDecisionProse(
 		)
 	}
 
+	if (decision.done_when) {
+		for (const found of findDoneWhenViolations(decision.done_when)) {
+			add(`done_when.${found.path}`, found.message)
+		}
+	}
+	const approving = decision.options.filter((option) => option.approve_done_when)
+	if (approving.length > 0 && !decision.done_when) {
+		add(
+			'options',
+			'approve_done_when needs a done_when block on the same card. Add the lines, or drop approve_done_when.',
+		)
+	}
+	if (decision.done_when && approving.length !== 1) {
+		add(
+			'options',
+			`A card with done_when needs exactly one option with approve_done_when, got ${approving.length}.`,
+		)
+	}
 	violations.push(...findDefaultOnSilenceViolations(decision))
 
 	const titleWords = words(decision.title)

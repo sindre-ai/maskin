@@ -105,6 +105,7 @@ const ROWS: Record<string, Row> = {
 	update_next_step: row('Update next step', { idempotent: true }),
 	record_go_ahead: row('Record go-ahead'),
 	take_back_go_ahead: row('Take back go-ahead'),
+	skip_done_when: row('Skip done-when list'),
 	list_objects: row('List objects'),
 	search_objects: row('Search objects'),
 	create_relationship: row('Create relationship'),

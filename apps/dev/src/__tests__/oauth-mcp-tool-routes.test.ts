@@ -50,6 +50,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/invites', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/approval', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/chat-approval', // approve_draft_from_chat: an approval gate, never through a person's own AI tool
+	'POST /api/objects/x/done-when/skip', // skip_done_when: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/go-ahead', // record_go_ahead: a go-ahead is a person's own say-so, never through their AI tool
 	'POST /api/objects/x/next-step', // set_next_step: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/schedule-next-step', // schedule_next_step: same route family as set_next_step
