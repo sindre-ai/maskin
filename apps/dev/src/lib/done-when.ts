@@ -142,13 +142,28 @@ export async function hasApprovedDoneWhen(
 
 /**
  * Saves the lines of a decision card as the job's draft, replacing the earlier draft. Called in
- * the same transaction as the card. Never touches an approved list: the caller refuses first.
+ * the same transaction as the card, after the card is posted, so every row carries the id of the
+ * card that proposed it. Locks the job like the tap does, so a repost cannot interleave with a
+ * tap, and refuses when the job got an approved list since the caller looked.
  */
 export async function writeDraftDoneWhen(
 	tx: Transaction,
-	params: { workspaceId: string; objectId: string; actorId: string; block: DoneWhenBlock },
+	params: {
+		workspaceId: string
+		objectId: string
+		actorId: string
+		cardEventId: number
+		block: DoneWhenBlock
+	},
 ): Promise<void> {
-	const { workspaceId, objectId, actorId, block } = params
+	const { workspaceId, objectId, actorId, cardEventId, block } = params
+	await lockObject(tx, objectId)
+	if (await hasApprovedDoneWhen(tx, objectId)) {
+		throw new DoneWhenError(
+			'FORBIDDEN',
+			'This job already has an approved done-when list, and only a person can change it. If a line is wrong, post a card with a decision and your reason, and no done_when block.',
+		)
+	}
 	await tx
 		.delete(doneWhenLines)
 		.where(and(eq(doneWhenLines.objectId, objectId), eq(doneWhenLines.listStatus, 'draft')))
@@ -163,6 +178,7 @@ export async function writeDraftDoneWhen(
 			reading: line.checked_by === 'code' ? (line.reading ?? null) : null,
 			comparison: line.checked_by === 'code' ? (line.comparison ?? null) : null,
 			listStatus: 'draft',
+			cardEventId,
 			createdBy: actorId,
 		})),
 	)
@@ -172,11 +188,13 @@ export async function writeDraftDoneWhen(
  * A person approving the draft by tapping Approve on its card. Written by the server in the same
  * transaction as the person's reply; no tool or route lets an agent do it. Also gives the
  * go-ahead for the lines that do not send, spend or delete, as a card grant by that person.
- * Returns false when there is no draft to approve (an old card tapped again).
+ * Approves only the rows of the card that was tapped, so what a person approves is the text on
+ * that card. Returns false when that card's list is already approved (the same card tapped again).
+ * Throws when the card is no longer the current draft: the agent has posted a newer one.
  */
 export async function approveDraftDoneWhen(
 	tx: Transaction,
-	params: { objectId: string; actorId: string },
+	params: { objectId: string; actorId: string; cardEventId: number },
 ): Promise<boolean> {
 	if (!(await isHuman(tx, params.actorId))) {
 		throw new DoneWhenError('FORBIDDEN', 'Only a person can approve a done-when list.')
@@ -185,13 +203,42 @@ export async function approveDraftDoneWhen(
 	const drafts = await tx
 		.select({ id: doneWhenLines.id })
 		.from(doneWhenLines)
-		.where(and(eq(doneWhenLines.objectId, object.id), eq(doneWhenLines.listStatus, 'draft')))
-	if (drafts.length === 0) return false
+		.where(
+			and(
+				eq(doneWhenLines.objectId, object.id),
+				eq(doneWhenLines.listStatus, 'draft'),
+				eq(doneWhenLines.cardEventId, params.cardEventId),
+			),
+		)
+	if (drafts.length === 0) {
+		const [approvedFromCard] = await tx
+			.select({ id: doneWhenLines.id })
+			.from(doneWhenLines)
+			.where(
+				and(
+					eq(doneWhenLines.objectId, object.id),
+					eq(doneWhenLines.listStatus, 'approved'),
+					eq(doneWhenLines.cardEventId, params.cardEventId),
+				),
+			)
+			.limit(1)
+		if (approvedFromCard) return false
+		throw new DoneWhenError(
+			'BAD_REQUEST',
+			'This list has changed since this card was posted, so nothing was approved. Open the newer card and approve that one.',
+		)
+	}
 
 	await tx
 		.update(doneWhenLines)
 		.set({ listStatus: 'approved', approvedBy: params.actorId, approvedAt: new Date() })
-		.where(and(eq(doneWhenLines.objectId, object.id), eq(doneWhenLines.listStatus, 'draft')))
+		.where(
+			and(
+				eq(doneWhenLines.objectId, object.id),
+				eq(doneWhenLines.listStatus, 'draft'),
+				eq(doneWhenLines.cardEventId, params.cardEventId),
+			),
+		)
 	await recordEvent(tx, {
 		workspaceId: object.workspaceId,
 		actorId: params.actorId,
@@ -369,7 +416,7 @@ async function hasApprovedOrDraft(tx: Transaction, objectId: string): Promise<bo
 /**
  * A person's reply that picks the Approve option of a done-when card. Matches the way the other
  * card taps are read: the reply is the option's label, on a comment that carries a done_when
- * block, and the option has approve_done_when. Returns the object to approve the draft on.
+ * block, and the option has approve_done_when. Returns the object and the card to approve.
  */
 export async function resolveDoneWhenTap(
 	db: Database,
@@ -379,7 +426,7 @@ export async function resolveDoneWhenTap(
 		parentEventId: number | undefined
 		content: string
 	},
-): Promise<{ objectId: string } | null> {
+): Promise<{ objectId: string; cardEventId: number } | null> {
 	if (params.parentEventId === undefined) return null
 	const reply = params.content.trim()
 	if (!reply) return null
@@ -399,5 +446,5 @@ export async function resolveDoneWhenTap(
 	if (!decision?.done_when) return null
 	const picked = decision.options.filter((o) => o.label.trim() === reply)
 	if (picked.length !== 1 || !picked[0]?.approve_done_when) return null
-	return { objectId: params.entityId }
+	return { objectId: params.entityId, cardEventId: params.parentEventId }
 }

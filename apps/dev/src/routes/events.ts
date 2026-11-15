@@ -19,6 +19,7 @@ import {
 } from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
 import {
+	DoneWhenError,
 	approveDraftDoneWhen,
 	hasApprovedDoneWhen,
 	resolveDoneWhenTap,
@@ -515,65 +516,82 @@ app.openapi(createCommentRoute, (async (c) => {
 			approvedSendHash,
 		})
 	const delivery = routing?.delivery
-	const { comment, unresolvedMentions } =
-		replyApprovals.length === 0 &&
-		!delivery &&
-		!statusTap &&
-		!deletionTap &&
-		!doneWhenTap &&
-		!doneWhenDraft
-			? await post(db)
-			: await db.transaction(async (tx) => {
-					if (deletionTap) {
-						await recordAgentDeletionApproval(tx, {
-							workspaceId,
-							approverId: actorId,
-							tap: deletionTap,
-						})
-					}
-					if (doneWhenDraft) {
-						await writeDraftDoneWhen(tx, {
-							workspaceId,
-							objectId: body.entity_id,
-							actorId,
-							block: doneWhenDraft,
-						})
-					}
-					if (doneWhenTap) {
-						await approveDraftDoneWhen(tx, { objectId: doneWhenTap.objectId, actorId })
-					}
-					if (statusTap) {
-						statusAction = await applyStatusTap(tx, {
-							tap: statusTap,
-							workspaceId,
-							actorId,
-							sessionId: c.get('maskinSessionId'),
-						})
-					}
-					for (const approval of replyApprovals) {
-						await recordObjectApproval(tx, {
-							workspaceId,
-							actorId,
-							objectId: approval.objectId,
-							objectType: approval.objectType,
-							preview: approval.preview,
-							via: 'reply',
-							replyToEventId: approval.cardEventId,
-						})
-					}
-					const posted = await post(tx as unknown as typeof db)
-					if (delivery) {
-						await deliverRoutedComment(tx, {
-							delivery,
-							workspaceId,
-							commenterId: actorId,
-							object: { id: body.entity_id, title: object.title ?? '', type: object.type },
-							commentEventId: posted.comment.id,
-							body: body.content,
-						})
-					}
-					return posted
-				})
+	let result: Awaited<ReturnType<typeof post>>
+	try {
+		result =
+			replyApprovals.length === 0 &&
+			!delivery &&
+			!statusTap &&
+			!deletionTap &&
+			!doneWhenTap &&
+			!doneWhenDraft
+				? await post(db)
+				: await db.transaction(async (tx) => {
+						if (deletionTap) {
+							await recordAgentDeletionApproval(tx, {
+								workspaceId,
+								approverId: actorId,
+								tap: deletionTap,
+							})
+						}
+						if (doneWhenTap) {
+							await approveDraftDoneWhen(tx, {
+								objectId: doneWhenTap.objectId,
+								actorId,
+								cardEventId: doneWhenTap.cardEventId,
+							})
+						}
+						if (statusTap) {
+							statusAction = await applyStatusTap(tx, {
+								tap: statusTap,
+								workspaceId,
+								actorId,
+								sessionId: c.get('maskinSessionId'),
+							})
+						}
+						for (const approval of replyApprovals) {
+							await recordObjectApproval(tx, {
+								workspaceId,
+								actorId,
+								objectId: approval.objectId,
+								objectType: approval.objectType,
+								preview: approval.preview,
+								via: 'reply',
+								replyToEventId: approval.cardEventId,
+							})
+						}
+						const posted = await post(tx as unknown as typeof db)
+						// The draft carries the id of the card that proposes it, so it is written after the card.
+						if (doneWhenDraft) {
+							await writeDraftDoneWhen(tx, {
+								workspaceId,
+								objectId: body.entity_id,
+								actorId,
+								cardEventId: Number(posted.comment.id),
+								block: doneWhenDraft,
+							})
+						}
+						if (delivery) {
+							await deliverRoutedComment(tx, {
+								delivery,
+								workspaceId,
+								commenterId: actorId,
+								object: { id: body.entity_id, title: object.title ?? '', type: object.type },
+								commentEventId: posted.comment.id,
+								body: body.content,
+							})
+						}
+						return posted
+					})
+	} catch (err) {
+		// A tap on a card the agent has since replaced approves nothing and says so.
+		if (err instanceof DoneWhenError) {
+			const status = err.code === 'FORBIDDEN' ? 403 : err.code === 'NOT_FOUND' ? 404 : 400
+			return c.json(createApiError(err.code, err.message), status as never)
+		}
+		throw err
+	}
+	const { comment, unresolvedMentions } = result
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the

@@ -72,10 +72,25 @@ async function setup(type = 'task') {
 	return { person, workspace, agent, job }
 }
 
-async function draft(workspaceId: string, objectId: string, actorId: string) {
+/** Posts a card row like the comment route does, then writes the draft under that card's id. */
+async function draft(workspaceId: string, objectId: string, actorId: string, block = BLOCK) {
+	const [card] = await db
+		.insert(events)
+		.values({
+			workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: objectId,
+			action: 'commented',
+			data: { content: 'List ready' },
+		})
+		.returning()
+	if (!card) throw new Error('no card')
+	const cardEventId = Number(card.id)
 	await db.transaction((tx) =>
-		writeDraftDoneWhen(tx, { workspaceId, objectId, actorId, block: BLOCK }),
+		writeDraftDoneWhen(tx, { workspaceId, objectId, actorId, cardEventId, block }),
 	)
+	return cardEventId
 }
 
 describe('the done-when draft and its approval', () => {
@@ -90,9 +105,11 @@ describe('the done-when draft and its approval', () => {
 
 	it('a person approving makes the list approved and records a card go-ahead', async () => {
 		const { person, workspace, agent, job } = await setup()
-		await draft(workspace.id, job.id, agent.id)
+		const cardEventId = await draft(workspace.id, job.id, agent.id)
 		expect(
-			await db.transaction((tx) => approveDraftDoneWhen(tx, { objectId: job.id, actorId: person })),
+			await db.transaction((tx) =>
+				approveDraftDoneWhen(tx, { objectId: job.id, actorId: person, cardEventId }),
+			),
 		).toBe(true)
 
 		expect(await hasApprovedDoneWhen(db, job.id)).toBe(true)
@@ -103,11 +120,65 @@ describe('the done-when draft and its approval', () => {
 
 	it('an agent can never approve', async () => {
 		const { workspace, agent, job } = await setup()
-		await draft(workspace.id, job.id, agent.id)
+		const cardEventId = await draft(workspace.id, job.id, agent.id)
 		await expect(
-			db.transaction((tx) => approveDraftDoneWhen(tx, { objectId: job.id, actorId: agent.id })),
+			db.transaction((tx) =>
+				approveDraftDoneWhen(tx, { objectId: job.id, actorId: agent.id, cardEventId }),
+			),
 		).rejects.toMatchObject({ code: 'FORBIDDEN' })
 		expect(await hasApprovedDoneWhen(db, job.id)).toBe(false)
+	})
+
+	it('a tap on a card the agent has since replaced approves nothing', async () => {
+		const { person, workspace, agent, job } = await setup()
+		const cardA = await draft(workspace.id, job.id, agent.id)
+		const reposted = {
+			lines: [{ text: 'A different line the person never saw', checked_by: 'person' as const }],
+		}
+		const cardB = await draft(workspace.id, job.id, agent.id, reposted)
+
+		await expect(
+			db.transaction((tx) =>
+				approveDraftDoneWhen(tx, { objectId: job.id, actorId: person, cardEventId: cardA }),
+			),
+		).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+		expect(await hasApprovedDoneWhen(db, job.id)).toBe(false)
+		expect(
+			await db.select().from(jobGoAheads).where(eq(jobGoAheads.objectId, job.id)),
+		).toHaveLength(0)
+
+		// The newer card still approves, and only its own text.
+		expect(
+			await db.transaction((tx) =>
+				approveDraftDoneWhen(tx, { objectId: job.id, actorId: person, cardEventId: cardB }),
+			),
+		).toBe(true)
+		const list = await getDoneWhen(db, job.id)
+		expect(list).toMatchObject({ status: 'approved', total: 1 })
+		expect(list?.lines.map((l) => l.text)).toEqual(['A different line the person never saw'])
+	})
+
+	it('the same card tapped twice approves once and does not fail', async () => {
+		const { person, workspace, agent, job } = await setup()
+		const cardEventId = await draft(workspace.id, job.id, agent.id)
+		const approve = () =>
+			db.transaction((tx) =>
+				approveDraftDoneWhen(tx, { objectId: job.id, actorId: person, cardEventId }),
+			)
+		expect(await approve()).toBe(true)
+		expect(await approve()).toBe(false)
+	})
+
+	it('an agent cannot replace a list once it is approved, even past the route check', async () => {
+		const { person, workspace, agent, job } = await setup()
+		const cardEventId = await draft(workspace.id, job.id, agent.id)
+		await db.transaction((tx) =>
+			approveDraftDoneWhen(tx, { objectId: job.id, actorId: person, cardEventId }),
+		)
+		await expect(draft(workspace.id, job.id, agent.id)).rejects.toMatchObject({
+			code: 'FORBIDDEN',
+		})
+		expect(await getDoneWhen(db, job.id)).toMatchObject({ status: 'approved', total: 2 })
 	})
 
 	it('reads a tap only from the option with approve_done_when on a card with a list', async () => {
@@ -145,7 +216,7 @@ describe('the done-when draft and its approval', () => {
 				parentEventId: Number(card.id),
 				content,
 			})
-		expect(await tap('Approve')).toEqual({ objectId: job.id })
+		expect(await tap('Approve')).toEqual({ objectId: job.id, cardEventId: Number(card.id) })
 		expect(await tap('Hold')).toBeNull()
 		expect(await tap('approve everything')).toBeNull()
 	})
@@ -154,9 +225,9 @@ describe('the done-when draft and its approval', () => {
 describe('ticking a line', () => {
 	async function approved() {
 		const ctx = await setup()
-		await draft(ctx.workspace.id, ctx.job.id, ctx.agent.id)
+		const cardEventId = await draft(ctx.workspace.id, ctx.job.id, ctx.agent.id)
 		await db.transaction((tx) =>
-			approveDraftDoneWhen(tx, { objectId: ctx.job.id, actorId: ctx.person }),
+			approveDraftDoneWhen(tx, { objectId: ctx.job.id, actorId: ctx.person, cardEventId }),
 		)
 		const [line] = await db
 			.select()

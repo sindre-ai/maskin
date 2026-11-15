@@ -9,6 +9,10 @@
 -- version replaces an approved one. At most one draft or approved list per object at a time is
 -- kept by the application: it replaces the old draft rows in one transaction.
 --
+-- card_event_id is the comment (the decision card) that proposed the line. A person's tap approves
+-- only the rows of the card they tapped, so a card an agent reposts after the person opened the old
+-- one cannot change what they approve.
+--
 -- checked_by says who reads the line: code (a reading and comparison the system can check),
 -- checker (a second agent) or person. reading and comparison are only filled for a code line.
 -- state is true, false, cannot_tell or not_checked; until the outcome check lands only a person
@@ -34,6 +38,7 @@ CREATE TABLE IF NOT EXISTS "done_when_lines" (
 	"reading" text,
 	"comparison" text,
 	"list_status" text NOT NULL DEFAULT 'draft',
+	"card_event_id" bigint,
 	"state" text NOT NULL DEFAULT 'not_checked',
 	"state_set_at" timestamp with time zone,
 	"state_set_by" uuid,

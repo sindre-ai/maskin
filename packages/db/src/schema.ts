@@ -1324,6 +1324,7 @@ export const doneWhenLines = pgTable(
 		reading: text('reading'),
 		comparison: text('comparison'),
 		listStatus: text('list_status').notNull().default('draft'),
+		cardEventId: bigint('card_event_id', { mode: 'number' }),
 		state: text('state').notNull().default('not_checked'),
 		stateSetAt: timestamp('state_set_at', { withTimezone: true }),
 		stateSetBy: uuid('state_set_by'),
