@@ -87,7 +87,7 @@ describe('viewReason', () => {
 		const quiet = chat('a', { lastMessageAt: '2026-11-04T12:00:00.000Z' })
 		expect(daysQuiet(quiet, NOW)).toBe(10)
 		expect(viewReason('quiet', quiet, NOW)).toBe('Last message 10 days ago')
-		expect(viewReason('quiet', chat('b', { lastMessageAt: '2026-11-13T11:00:00.000Z' }), NOW)).toBe(
+		expect(viewReason('quiet', chat('b', { lastMessageAt: '2026-11-13T13:00:00.000Z' }), NOW)).toBe(
 			'Last message 0 days ago',
 		)
 	})
