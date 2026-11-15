@@ -1,6 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, messages, objects } from '@maskin/db/schema'
-import { SIGNUP_CAPTURE_SOURCE } from '@maskin/shared'
+import { events, messages } from '@maskin/db/schema'
 import { and, count, eq, sql } from 'drizzle-orm'
 import { logger } from '../logger'
 import { capturePosthogEvent } from './posthog'
@@ -71,8 +70,10 @@ export async function maybeTrackOnboardingSecondMessage(
 
 /**
  * Records onboarding_research_answered when the person taps one of the three answers on
- * the research summary: a reply to a decision card on the sign-up knowledge object whose
- * text is one of that card's option labels. One property, answer. Never message text.
+ * the research summary: a reply to a decision card whose text is one of that card's option
+ * labels. The card is the one the Chief of Staff posts on the Researcher's first-pass brief,
+ * so it is told by carrying all three answers as options, not by which object it sits on.
+ * One property, answer. Never message text.
  * Best-effort: never throws, so callers fire it without awaiting.
  */
 export async function maybeTrackOnboardingResearchAnswered(
@@ -105,19 +106,11 @@ export async function maybeTrackOnboardingResearchAnswered(
 			.limit(1)
 		const options = (card?.data as { decision?: { options?: Array<{ label?: unknown }> } } | null)
 			?.decision?.options
-		const isTap = options?.some(
-			(o) =>
-				typeof o.label === 'string' &&
-				o.label.trim().toLowerCase() === p.content.trim().toLowerCase(),
+		const labels = new Set(
+			(options ?? []).flatMap((o) => (typeof o.label === 'string' ? [o.label.trim().toLowerCase()] : [])),
 		)
-		if (!isTap) return
-
-		const [object] = await db
-			.select({ metadata: objects.metadata })
-			.from(objects)
-			.where(and(eq(objects.id, p.objectId), eq(objects.workspaceId, p.workspaceId)))
-			.limit(1)
-		if ((object?.metadata as { source?: unknown } | null)?.source !== SIGNUP_CAPTURE_SOURCE) return
+		const isResearchCard = Object.keys(RESEARCH_ANSWER_BY_LABEL).every((label) => labels.has(label))
+		if (!isResearchCard) return
 
 		await capturePosthogEvent(ONBOARDING_RESEARCH_ANSWERED_EVENT, p.actorId, {
 			workspace_id: p.workspaceId,
