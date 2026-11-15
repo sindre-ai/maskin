@@ -106,10 +106,8 @@ export async function maybeTrackOnboardingResearchAnswered(
 			.limit(1)
 		const options = (card?.data as { decision?: { options?: Array<{ label?: unknown }> } } | null)
 			?.decision?.options
-		const labels = new Set(
-			(options ?? []).flatMap((o) => (typeof o.label === 'string' ? [o.label.trim().toLowerCase()] : [])),
-		)
-		const isResearchCard = Object.keys(RESEARCH_ANSWER_BY_LABEL).every((label) => labels.has(label))
+		const labels = (options ?? []).map((o) => `${o.label}`.trim().toLowerCase())
+		const isResearchCard = Object.keys(RESEARCH_ANSWER_BY_LABEL).every((l) => labels.includes(l))
 		if (!isResearchCard) return
 
 		await capturePosthogEvent(ONBOARDING_RESEARCH_ANSWERED_EVENT, p.actorId, {
