@@ -101,6 +101,7 @@ import {
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -216,6 +217,8 @@ import {
 	AgentServerHttpError,
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
+import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
+import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
 import {
 	ContainerManager,
 	type LogChunk,
@@ -224,6 +227,7 @@ import {
 	userTurnWithImages,
 } from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
+import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -2636,6 +2640,111 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "What you drive" block for a chat session: the loops and open objects
+	 * the agent drives, with targets. Built on the first launch and saved on
+	 * `sessions.config.chat_drives`, so the saved text is what the agent was shown
+	 * and a resume reuses it. An agent that drives nothing gets '' and nothing is
+	 * saved. A failure here only costs the block, never the launch.
+	 */
+	private async resolveChatDrivesBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		// Only a chat (a conversation) gets it; other interactive sessions are not chats.
+		const { conversationId } = session
+		if (!conversationId) return ''
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.chat_drives === 'string') return config.chat_drives
+		try {
+			const block = await buildChatDrivesBlock(
+				this.db,
+				{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId },
+				frontendBaseUrl(),
+			)
+			if (!block) return ''
+			await saveChatDrives(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = { ...config, chat_drives: block }
+			return block
+		} catch (err) {
+			logger.warn('Failed to build chat drives block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
+	 * The "Go-ahead on the job" block, the one place a session is shown a person's stored go-ahead:
+	 * built at every launch for an unattended run (next to its goal) and for a chat (next to what it
+	 * drives). Behind the go-ahead flag (workspace-scoped, or per driver actor), so with the flag off
+	 * nothing is read or added. Never saved on the session: a go-ahead taken back between two
+	 * launches must not be shown again from a saved copy. A failure here only costs the block, never
+	 * the launch.
+	 */
+	private async resolveGoAheadBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		if (
+			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.GO_AHEAD, { actorId: session.actorId })
+		) {
+			return ''
+		}
+		try {
+			return await buildGoAheadBlock(
+				this.db,
+				{
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					initiatedFromObjectId: session.initiatedFromObjectId,
+					conversationId: session.conversationId,
+				},
+				frontendBaseUrl(),
+			)
+		} catch (err) {
+			logger.warn('Failed to build go-ahead block', { sessionId: session.id, error: String(err) })
+			return ''
+		}
+	}
+
+	/**
+	 * The "Jobs you are handed" block for a chat session: how to treat a job a person hands the
+	 * agent, and the flow and company targets it can serve. Behind the job-target-in-chat flag
+	 * (workspace-scoped), so with the flag off nothing is built or saved. Built on the first launch
+	 * and saved on `sessions.config.chat_job_target`; a resume reuses the saved text. A failure here
+	 * only costs the block, never the launch.
+	 */
+	private async resolveChatJobTargetBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		const { conversationId } = session
+		if (!conversationId) return ''
+		if (
+			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.JOB_TARGET_IN_CHAT, {
+				actorId: session.actorId,
+			})
+		) {
+			return ''
+		}
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.chat_job_target === 'string') return config.chat_job_target
+		try {
+			const block = await buildChatJobTargetBlock(
+				this.db,
+				{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId },
+				frontendBaseUrl(),
+			)
+			await saveChatJobTarget(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = {
+				...config,
+				chat_job_target: block,
+			}
+			return block
+		} catch (err) {
+			logger.warn('Failed to build chat job target block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
 	 * Build the launch spec for a session — env vars (including integration
 	 * credentials), image, and resource limits. The shape mirrors
 	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
@@ -2874,12 +2983,16 @@ ${cont.continues_prompt}
 								: ''
 						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
 					: ''
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
+			const drivesBlock = await this.resolveChatDrivesBlock(session)
+			const jobTargetBlock = await this.resolveChatJobTargetBlock(session)
+			const goAheadBlock = await this.resolveGoAheadBlock(session)
+			envVars.SYSTEM_PROMPT = `${startupBlock}${drivesBlock}${goAheadBlock}${jobTargetBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
 			const senderLine = typeof sentBy === 'string' ? await loadSenderLine(this.db, sentBy) : ''
-			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
+			const goAheadBlock = await this.resolveGoAheadBlock(session)
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${goAheadBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:

@@ -35,6 +35,8 @@ const EXACT: Record<string, FeatureArea> = {
 	message_sent_tagged: 'chats',
 	sindre_message_received: 'chats',
 	sindre_message_sent: 'chats',
+	turn_sent_back: 'chats',
+	turn_check_cap_hit: 'chats',
 	foryou_card_action: 'for_you',
 	mark_read_clicked: 'for_you',
 	ask_banner_decide_clicked: 'for_you',

@@ -65,15 +65,23 @@ import {
 } from '../lib/analytics/knowledge-events'
 import { trackObjectCreated } from '../lib/analytics/object-events'
 import { trackSupportItemOpened, trackSupportItemResolved } from '../lib/analytics/support-events'
+import { getDoneWhen } from '../lib/done-when'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { getLiveGoAhead } from '../lib/go-aheads'
 import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-titles'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
+import { getLiveNextStep, serializeNextStep } from '../lib/next-steps'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
-import { applyObjectUpdate } from '../lib/object-update'
+import {
+	AgentFieldWriteError,
+	applyObjectUpdate,
+	guardedFieldsChanged,
+	recordAgentWriteRefused,
+} from '../lib/object-update'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -2025,35 +2033,50 @@ app.openapi(getObjectRoute, async (c) => {
 	}
 
 	const basePreview = buildObjectPreview(object)
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession] =
-		await Promise.all([
-			isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
-			getUnreadCount(db, {
-				workspaceId: object.workspaceId,
-				actorId,
-				entityType: 'object',
-				entityId: id,
-			}),
-			getSubscriberCount(db, {
-				workspaceId: object.workspaceId,
-				entityType: 'object',
-				entityId: id,
-			}),
-			object.activeSessionId
-				? db
-						.select({ currentActivity: sessions.currentActivity, status: sessions.status })
-						.from(sessions)
-						.where(eq(sessions.id, object.activeSessionId))
-						.limit(1)
-						.then((rows) => rows[0] ?? null)
-				: Promise.resolve(null),
-			isObjectStarredByActor(db, { actorId, objectId: id }),
-			loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
-		])
+	const [
+		subscribed,
+		unreadCount,
+		subscriberCount,
+		activeSession,
+		starred,
+		lastSession,
+		nextStep,
+		goAhead,
+		doneWhen,
+	] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, {
+			workspaceId: object.workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		getSubscriberCount(db, {
+			workspaceId: object.workspaceId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
+		isObjectStarredByActor(db, { actorId, objectId: id }),
+		loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
+		getLiveNextStep(db, id),
+		getLiveGoAhead(db, id),
+		getDoneWhen(db, id),
+	])
 
 	return c.json(
 		{
 			...serialize(object),
+			next_step: nextStep ? serializeNextStep(nextStep) : null,
+			go_ahead: goAhead,
+			done_when: doneWhen,
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
 			last_session: lastSession,
@@ -2101,6 +2124,11 @@ const updateObjectRoute = createRoute({
 		400: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description:
+				"An agent tried to change what defines done: a target's fields or status, or a flow's targets, entry condition, close condition or closed statuses",
 		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
@@ -2159,15 +2187,35 @@ app.openapi(updateObjectRoute, async (c) => {
 	}
 
 	// One transaction for the update, its status event and the notification fan-out.
-	const { row: updated, staleStatus } = await db.transaction((tx) =>
-		applyObjectUpdate(tx, {
-			id,
-			actorId,
-			body,
-			sessionId: c.get('maskinSessionId'),
-			onlyIfStatus: expectedStatus,
-		}),
-	)
+	let updated: typeof objects.$inferSelect | undefined
+	let staleStatus: string | null | undefined
+	try {
+		const result = await db.transaction((tx) =>
+			applyObjectUpdate(tx, {
+				id,
+				actorId,
+				body,
+				sessionId: c.get('maskinSessionId'),
+				actorType: c.get('actorType'),
+				onlyIfStatus: expectedStatus,
+			}),
+		)
+		updated = result.row
+		staleStatus = result.staleStatus
+	} catch (err) {
+		if (err instanceof AgentFieldWriteError) {
+			await recordAgentWriteRefused(db, {
+				workspaceId: existing.workspaceId,
+				actorId,
+				objectId: id,
+				objectType: err.objectType,
+				fieldCount: err.fields.length,
+				sessionId: c.get('maskinSessionId'),
+			})
+			return c.json(createApiError('FORBIDDEN', err.message), 403)
+		}
+		throw err
+	}
 
 	if (staleStatus !== undefined) {
 		return c.json(
@@ -2828,6 +2876,26 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 					id,
 					ok: false,
 					error: `Invalid status '${patch.status}' for type '${existing.type}'`,
+				})
+				continue
+			}
+		}
+
+		if (c.get('actorType') === 'agent') {
+			const refused = guardedFieldsChanged(existing, patch)
+			if (refused.length > 0) {
+				results.push({
+					id,
+					ok: false,
+					error: new AgentFieldWriteError(refused, existing.type).message,
+				})
+				await recordAgentWriteRefused(db, {
+					workspaceId,
+					actorId,
+					objectId: id,
+					objectType: existing.type,
+					fieldCount: refused.length,
+					sessionId: c.get('maskinSessionId'),
 				})
 				continue
 			}

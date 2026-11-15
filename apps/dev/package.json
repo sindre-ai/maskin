@@ -26,6 +26,7 @@
 		"@maskin/ext-crm": "workspace:*",
 		"@maskin/ext-knowledge": "workspace:*",
 		"@maskin/ext-notetaker": "workspace:*",
+		"@maskin/ext-targets": "workspace:*",
 		"@maskin/ext-work": "workspace:*",
 		"@maskin/markdown": "workspace:*",
 		"@maskin/mcp": "workspace:*",

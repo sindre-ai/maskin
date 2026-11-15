@@ -6,6 +6,7 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useObjectFlow } from '@/hooks/use-object-flow'
@@ -31,6 +32,9 @@ import { useNavigate } from '@tanstack/react-router'
 import { ChevronsUpDown, Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { DoneWhenProgress } from './done-when-lines'
+import { GoAheadLine } from './go-ahead-line'
+import { NextStepBlock } from './next-step-block'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
@@ -181,6 +185,9 @@ export function ObjectDetailShell({
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const nextStepBlockOn = useFeatureFlag('next-step-block')
+	const goAheadOn = useFeatureFlag('go-ahead')
+	const doneWhenOn = useFeatureFlag('done-when-list')
 	const { data: allObjects } = useObjects(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
@@ -606,6 +613,30 @@ export function ObjectDetailShell({
 							expanded={originOpen}
 							onToggle={() => setOriginOpen((open) => !open)}
 						/>
+
+						{/* The open next step: action, owner, due date. Renders NOTHING when the
+						    object has none, and the whole block is behind its flag. */}
+						{nextStepBlockOn && <NextStepBlock step={object.next_step} workspaceId={workspaceId} />}
+
+						{/* A person's go-ahead on this job, with Take back. Renders NOTHING when the job has
+						    none, and the line is behind its own flag. */}
+						{goAheadOn && (
+							<GoAheadLine
+								goAhead={object.go_ahead}
+								objectId={object.id}
+								workspaceId={workspaceId}
+							/>
+						)}
+
+						{/* The done-when list: "3 of 6 lines true" and the lines. Renders NOTHING when the
+						    job has no list, and the block is behind its own flag. */}
+						{doneWhenOn && (
+							<DoneWhenProgress
+								doneWhen={object.done_when}
+								objectId={object.id}
+								workspaceId={workspaceId}
+							/>
+						)}
 
 						{/* A working agent and an open question each get one slim line under
 						    the meta row; an item with neither draws nothing. */}

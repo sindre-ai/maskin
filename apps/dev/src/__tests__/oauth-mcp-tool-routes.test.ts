@@ -26,6 +26,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'DELETE /api/actors/x', // delete_agent: irreversible, and a person's own AI tool must not stand in for the approval card
 	'DELETE /api/conversations/x/participants/x', // newer MCP tool, route not yet checked for the token's workspace pin
 	'DELETE /api/integrations/x', // disconnect_integration: third-party credentials
+	'DELETE /api/objects/x/go-ahead', // take_back_go_ahead: newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/actors/x/access', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/conversations/x/files', // list_files with conversation_id: newer MCP tool, route not yet checked for the token's workspace pin
@@ -33,6 +34,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'GET /api/for-you', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/activity', // newer MCP tool, route not yet checked for the token's workspace pin
 	'GET /api/sessions/x/keychain-credentials', // newer MCP tool, route not yet checked for the token's workspace pin
+	'PATCH /api/objects/x/next-step', // update_next_step: newer MCP tool, route not yet checked for the token's workspace pin
 	'PATCH /api/workspaces/x', // update_workspace: workspace settings
 	'POST /api/actors', // create_actor: returns a new API key
 	'POST /api/conversations', // newer MCP tool, route not yet checked for the token's workspace pin
@@ -48,6 +50,10 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/invites', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/approval', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/chat-approval', // approve_draft_from_chat: an approval gate, never through a person's own AI tool
+	'POST /api/objects/x/done-when/skip', // skip_done_when: newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/objects/x/go-ahead', // record_go_ahead: a go-ahead is a person's own say-so, never through their AI tool
+	'POST /api/objects/x/next-step', // set_next_step: newer MCP tool, route not yet checked for the token's workspace pin
+	'POST /api/objects/x/schedule-next-step', // schedule_next_step: same route family as set_next_step
 	'POST /api/sessions/x/ask', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/computer-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/connect-card', // newer MCP tool, route not yet checked for the token's workspace pin

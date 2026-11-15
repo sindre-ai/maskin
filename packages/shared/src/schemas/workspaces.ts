@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { storedDailyBudgetSchema } from './daily-budget'
 import { LOOP_STATUSES } from './objects'
+import { agentDailyBudgetSchema } from './self-start-limits'
 
 const fieldDefinitionSchema = z.object({
 	name: z.string(),
@@ -243,6 +244,10 @@ export const workspaceSettingsSchema = z.object({
 	// off. Written only by PUT /api/billing/daily-budget, which owns the owner check
 	// and the dollar-unit gate; PATCH /api/workspaces/:id rejects it.
 	daily_budget: storedDailyBudgetSchema.optional(),
+	// Daily token budget per agent for self-started runs (bet Agents take the lead). Absent means
+	// no per-agent limit; the amounts are a person's call. Read at session start by
+	// services/self-start-limits.ts.
+	agent_daily_budget: agentDailyBudgetSchema.optional(),
 	// Voice v1 (bet 16bd0042). Absent means transcripts persist; only an explicit
 	// `persist_transcripts: false` opts the workspace out (no transcript rows,
 	// no audio blob). Deliberately no default so existing workspaces' stored
