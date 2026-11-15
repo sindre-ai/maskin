@@ -60086,6 +60086,2266 @@ public enum Operations {
             }
         }
     }
+    /// List the caller's own chat sections, in order
+    ///
+    /// - Remark: HTTP `GET /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/get`.
+    public enum get_sol_api_sol_chat_hyphen_sections {
+        public static let id: Swift.String = "get/api/chat-sections"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/GET/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_chat_hyphen_sections.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_chat_hyphen_sections.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.get_sol_api_sol_chat_hyphen_sections.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            public init(headers: Operations.get_sol_api_sol_chat_hyphen_sections.Input.Headers) {
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sectionsPayload`.
+                        public struct sectionsPayloadPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sectionsPayload/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sectionsPayload/name`.
+                            public var name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sectionsPayload/position`.
+                            public var position: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sectionsPayload/collapsed`.
+                            public var collapsed: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sectionsPayload/conversationIds`.
+                            public var conversationIds: [Swift.String]
+                            /// Creates a new `sectionsPayloadPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - name:
+                            ///   - position:
+                            ///   - collapsed:
+                            ///   - conversationIds:
+                            public init(
+                                id: Swift.String,
+                                name: Swift.String,
+                                position: Swift.Int,
+                                collapsed: Swift.Bool,
+                                conversationIds: [Swift.String]
+                            ) {
+                                self.id = id
+                                self.name = name
+                                self.position = position
+                                self.collapsed = collapsed
+                                self.conversationIds = conversationIds
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case name
+                                case position
+                                case collapsed
+                                case conversationIds
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sections`.
+                        public typealias sectionsPayload = [Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body.jsonPayload.sectionsPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/json/sections`.
+                        public var sections: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body.jsonPayload.sectionsPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - sections:
+                        public init(sections: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body.jsonPayload.sectionsPayload) {
+                            self.sections = sections
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case sections
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/GET/responses/200/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The caller’s sections, each with the chats in it
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/get/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Create a section, last in the caller’s order
+    ///
+    /// - Remark: HTTP `POST /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/post`.
+    public enum post_sol_api_sol_chat_hyphen_sections {
+        public static let id: Swift.String = "post/api/chat-sections"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/POST/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_chat_hyphen_sections.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_chat_hyphen_sections.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.post_sol_api_sol_chat_hyphen_sections.Input.Headers
+            /// - Remark: Generated from `#/paths/api/chat-sections/POST/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/POST/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/POST/requestBody/json/name`.
+                    public var name: Swift.String
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - name:
+                    public init(name: Swift.String) {
+                        self.name = name
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case name
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/chat-sections/POST/requestBody/content/application\/json`.
+                case json(Operations.post_sol_api_sol_chat_hyphen_sections.Input.Body.jsonPayload)
+            }
+            public var body: Operations.post_sol_api_sol_chat_hyphen_sections.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.post_sol_api_sol_chat_hyphen_sections.Input.Headers,
+                body: Operations.post_sol_api_sol_chat_hyphen_sections.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Created: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/json/id`.
+                        public var id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/json/name`.
+                        public var name: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/json/position`.
+                        public var position: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/json/collapsed`.
+                        public var collapsed: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/json/conversationIds`.
+                        public var conversationIds: [Swift.String]
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - name:
+                        ///   - position:
+                        ///   - collapsed:
+                        ///   - conversationIds:
+                        public init(
+                            id: Swift.String,
+                            name: Swift.String,
+                            position: Swift.Int,
+                            collapsed: Swift.Bool,
+                            conversationIds: [Swift.String]
+                        ) {
+                            self.id = id
+                            self.name = name
+                            self.position = position
+                            self.collapsed = collapsed
+                            self.conversationIds = conversationIds
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case name
+                            case position
+                            case collapsed
+                            case conversationIds
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/201/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created.Body
+                /// Creates a new `Created`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created.Body) {
+                    self.body = body
+                }
+            }
+            /// Section created
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/post/responses/201`.
+            ///
+            /// HTTP response code: `201 created`.
+            case created(Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created)
+            /// The associated value of the enum case if `self` is `.created`.
+            ///
+            /// - Throws: An error if `self` is not `.created`.
+            /// - SeeAlso: `.created`.
+            public var created: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created {
+                get throws {
+                    switch self {
+                    case let .created(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "created",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/POST/responses/409/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The caller already has a section with this name, or has too many sections
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/post/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Put the caller’s sections in a new order
+    ///
+    /// Send every one of the caller’s section ids exactly once, in the order they should show.
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/order`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/order/put`.
+    public enum put_sol_api_sol_chat_hyphen_sections_sol_order {
+        public static let id: Swift.String = "put/api/chat-sections/order"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Headers
+            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/requestBody/json/ids`.
+                    public var ids: [Swift.String]
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - ids:
+                    public init(ids: [Swift.String]) {
+                        self.ids = ids
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case ids
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/requestBody/content/application\/json`.
+                case json(Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Body.jsonPayload)
+            }
+            public var body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Headers,
+                body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sectionsPayload`.
+                        public struct sectionsPayloadPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sectionsPayload/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sectionsPayload/name`.
+                            public var name: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sectionsPayload/position`.
+                            public var position: Swift.Int
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sectionsPayload/collapsed`.
+                            public var collapsed: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sectionsPayload/conversationIds`.
+                            public var conversationIds: [Swift.String]
+                            /// Creates a new `sectionsPayloadPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - name:
+                            ///   - position:
+                            ///   - collapsed:
+                            ///   - conversationIds:
+                            public init(
+                                id: Swift.String,
+                                name: Swift.String,
+                                position: Swift.Int,
+                                collapsed: Swift.Bool,
+                                conversationIds: [Swift.String]
+                            ) {
+                                self.id = id
+                                self.name = name
+                                self.position = position
+                                self.collapsed = collapsed
+                                self.conversationIds = conversationIds
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case name
+                                case position
+                                case collapsed
+                                case conversationIds
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sections`.
+                        public typealias sectionsPayload = [Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body.jsonPayload.sectionsPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/json/sections`.
+                        public var sections: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body.jsonPayload.sectionsPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - sections:
+                        public init(sections: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body.jsonPayload.sectionsPayload) {
+                            self.sections = sections
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case sections
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/200/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The sections in their new order
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/order/put/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct BadRequest: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/order/PUT/responses/400/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body
+                /// Creates a new `BadRequest`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body) {
+                    self.body = body
+                }
+            }
+            /// The ids are not exactly the caller’s sections
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/order/put/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            public var badRequest: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Rename a section, or fold or unfold it
+    ///
+    /// - Remark: HTTP `PATCH /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch`.
+    public enum patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_ {
+        public static let id: Swift.String = "patch/api/chat-sections/{id}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/path/id`.
+                public var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Headers
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/requestBody/json/name`.
+                    public var name: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/requestBody/json/collapsed`.
+                    public var collapsed: Swift.Bool?
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - name:
+                    ///   - collapsed:
+                    public init(
+                        name: Swift.String? = nil,
+                        collapsed: Swift.Bool? = nil
+                    ) {
+                        self.name = name
+                        self.collapsed = collapsed
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case name
+                        case collapsed
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/requestBody/content/application\/json`.
+                case json(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Body.jsonPayload)
+            }
+            public var body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            ///   - body:
+            public init(
+                path: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Path,
+                headers: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Headers,
+                body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Body? = nil
+            ) {
+                self.path = path
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/json/id`.
+                        public var id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/json/name`.
+                        public var name: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/json/position`.
+                        public var position: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/json/collapsed`.
+                        public var collapsed: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/json/conversationIds`.
+                        public var conversationIds: [Swift.String]
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - name:
+                        ///   - position:
+                        ///   - collapsed:
+                        ///   - conversationIds:
+                        public init(
+                            id: Swift.String,
+                            name: Swift.String,
+                            position: Swift.Int,
+                            collapsed: Swift.Bool,
+                            conversationIds: [Swift.String]
+                        ) {
+                            self.id = id
+                            self.name = name
+                            self.position = position
+                            self.collapsed = collapsed
+                            self.conversationIds = conversationIds
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case name
+                            case position
+                            case collapsed
+                            case conversationIds
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/200/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Section updated
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/404/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Not found
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/PATCH/responses/409/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The caller already has a section with this name
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Delete a section; its chats go back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/delete`.
+    public enum delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_ {
+        public static let id: Swift.String = "delete/api/chat-sections/{id}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/path/id`.
+                public var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Path,
+                headers: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Headers
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/200/content/json/deleted`.
+                        public var deleted: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/200/content/json/conversationIds`.
+                        public var conversationIds: [Swift.String]
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - deleted:
+                        ///   - conversationIds:
+                        public init(
+                            deleted: Swift.Bool,
+                            conversationIds: [Swift.String]
+                        ) {
+                            self.deleted = deleted
+                            self.conversationIds = conversationIds
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case deleted
+                            case conversationIds
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/200/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Section deleted
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/delete/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/details`.
+                            public var details: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/json/error`.
+                        public var error: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/DELETE/responses/404/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Not found
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/delete/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Put a chat in a section, out of any other section it was in
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/put`.
+    public enum put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_ {
+        public static let id: Swift.String = "put/api/chat-sections/{id}/chats/{conversationId}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/path/id`.
+                public var id: Swift.String
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/path/conversationId`.
+                public var conversationId: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                ///   - conversationId:
+                public init(
+                    id: Swift.String,
+                    conversationId: Swift.String
+                ) {
+                    self.id = id
+                    self.conversationId = conversationId
+                }
+            }
+            public var path: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Path,
+                headers: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Headers
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/json/id`.
+                        public var id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/json/name`.
+                        public var name: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/json/position`.
+                        public var position: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/json/collapsed`.
+                        public var collapsed: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/json/conversationIds`.
+                        public var conversationIds: [Swift.String]
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - name:
+                        ///   - position:
+                        ///   - collapsed:
+                        ///   - conversationIds:
+                        public init(
+                            id: Swift.String,
+                            name: Swift.String,
+                            position: Swift.Int,
+                            collapsed: Swift.Bool,
+                            conversationIds: [Swift.String]
+                        ) {
+                            self.id = id
+                            self.name = name
+                            self.position = position
+                            self.collapsed = collapsed
+                            self.conversationIds = conversationIds
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case name
+                            case position
+                            case collapsed
+                            case conversationIds
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/200/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The section, with the chat in it
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/put/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/PUT/responses/404/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// The section is not the caller’s, or the caller is not in the chat
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/put/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Take a chat out of a section; it goes back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/delete`.
+    public enum delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_ {
+        public static let id: Swift.String = "delete/api/chat-sections/{id}/chats/{conversationId}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/path/id`.
+                public var id: Swift.String
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/path/conversationId`.
+                public var conversationId: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                ///   - conversationId:
+                public init(
+                    id: Swift.String,
+                    conversationId: Swift.String
+                ) {
+                    self.id = id
+                    self.conversationId = conversationId
+                }
+            }
+            public var path: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Path,
+                headers: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Headers
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/json/id`.
+                        public var id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/json/name`.
+                        public var name: Swift.String
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/json/position`.
+                        public var position: Swift.Int
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/json/collapsed`.
+                        public var collapsed: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/json/conversationIds`.
+                        public var conversationIds: [Swift.String]
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - name:
+                        ///   - position:
+                        ///   - collapsed:
+                        ///   - conversationIds:
+                        public init(
+                            id: Swift.String,
+                            name: Swift.String,
+                            position: Swift.Int,
+                            collapsed: Swift.Bool,
+                            conversationIds: [Swift.String]
+                        ) {
+                            self.id = id
+                            self.name = name
+                            self.position = position
+                            self.collapsed = collapsed
+                            self.conversationIds = conversationIds
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case name
+                            case position
+                            case collapsed
+                            case conversationIds
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/200/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The section, without the chat
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/delete/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/details`.
+                            public var details: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/json/error`.
+                        public var error: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/chat-sections/{id}/chats/{conversationId}/DELETE/responses/404/content/application\/json`.
+                    case json(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// The section is not the caller’s
+            ///
+            /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/delete/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// List sessions (lean by default; pass verbose=true for the full shape)
     ///
     /// - Remark: HTTP `GET /api/sessions`.
