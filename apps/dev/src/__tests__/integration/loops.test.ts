@@ -651,6 +651,64 @@ describe('Loops read API integration', () => {
 		})
 	})
 
+	it('lets a checked reading win over the live count, and counts live only where there is none', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Phone sales',
+			metadata: {
+				targets: [
+					{
+						label: 'Calls total',
+						source: 'metric:phone_sales.calls_total',
+						actual: 5,
+						target: 500,
+					},
+					{ label: 'Meetings', source: 'metric:phone_sales.meetings_booked', actual: 9, target: 3 },
+				],
+			},
+		})
+		for (const person of [
+			{ status: 'qualified', metadata: { call_done: true, call_at: '2020-01-01' } },
+			{ status: 'meeting_booked', metadata: {} },
+		]) {
+			const row = await insertObject(db, workspaceId, actorId, { type: 'contact', ...person })
+			await insertRelationship(db, actorId, {
+				sourceId: loop.id,
+				sourceType: 'object',
+				targetId: row.id,
+				targetType: 'object',
+				type: 'in_loop',
+			})
+		}
+		await recordReading(db, {
+			workspaceId,
+			subjectId: loop.id,
+			measure: 'phone_sales.calls_total',
+			value: 77,
+			readAt: new Date('2026-11-02T08:00:00Z'),
+			source: 'stripe',
+			sourceRef: 'reading-1',
+		})
+
+		const res = await makeApp(actorId).request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{
+				targets: Array<{ label: string; actual: number; manual: boolean; reading?: unknown }>
+			}>
+		}
+		const byLabel = new Map((body.loops[0]?.targets ?? []).map((t) => [t.label, t]))
+		// The live count for calls_total would be 1; the reading's number stays.
+		expect(byLabel.get('Calls total')).toMatchObject({ actual: 77, manual: false })
+		expect(byLabel.get('Calls total')?.reading).toBeDefined()
+		// No reading: the live count fills in.
+		expect(byLabel.get('Meetings')).toMatchObject({ actual: 1, manual: false })
+		expect(byLabel.get('Meetings')?.reading).toBeUndefined()
+	})
+
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
