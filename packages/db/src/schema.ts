@@ -16,6 +16,7 @@ import {
 	check,
 	date,
 	doublePrecision,
+	foreignKey,
 	index,
 	integer,
 	jsonb,
@@ -2338,6 +2339,84 @@ export const savedViews = pgTable(
 
 export type SavedView = typeof savedViews.$inferSelect
 export type NewSavedView = typeof savedViews.$inferInsert
+
+// ── Chat Sections ───────────────────────────────────────────────────────────
+//
+// A person's own named groups in the chat list ("Sections"), and which of their chats sit in
+// which one. Personal on purpose: chat tags belong to the chat and saved views to the workspace,
+// so both are shared. Every row here belongs to one actor, every route reads and writes only the
+// caller's own rows, and no route takes an owner id from the request.
+//
+// A chat sits in at most one section per person: chat_section_items is keyed by
+// (actor_id, conversation_id). Its composite foreign key to chat_sections(id, actor_id) keeps the
+// item's owner equal to the section's owner, so a row can never put one person's chat into another
+// person's section. Deleting a section, a chat, the person or the workspace removes the rows.
+// `collapsed` is the section's fold state, stored with the section so web and iOS agree.
+
+export const chatSections = pgTable(
+	'chat_sections',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// The owner. The only actor who can read or change the section.
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		// Free text typed by the person. Never sent to analytics.
+		name: text('name').notNull(),
+		// 0-based order among the owner's sections in this workspace, rewritten by the reorder route.
+		position: integer('position').notNull(),
+		collapsed: boolean('collapsed').notNull().default(false),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One name per person in a workspace, whatever the capitalisation.
+		uniqueIndex('chat_sections_owner_name_uniq').on(
+			t.workspaceId,
+			t.actorId,
+			sql`lower(${t.name})`,
+		),
+		// The target of chat_section_items' composite foreign key.
+		uniqueIndex('chat_sections_id_actor_uniq').on(t.id, t.actorId),
+		index('chat_sections_owner_position_idx').on(t.workspaceId, t.actorId, t.position),
+		check('chat_sections_name_check', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 60`),
+	],
+)
+
+export type ChatSection = typeof chatSections.$inferSelect
+export type NewChatSection = typeof chatSections.$inferInsert
+
+export const chatSectionItems = pgTable(
+	'chat_section_items',
+	{
+		sectionId: uuid('section_id').notNull(),
+		conversationId: uuid('conversation_id')
+			.notNull()
+			.references(() => conversations.id, { onDelete: 'cascade' }),
+		// Same person as the section's owner (see the composite foreign key below).
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// One section per chat per person.
+		primaryKey({ columns: [t.actorId, t.conversationId] }),
+		foreignKey({
+			columns: [t.sectionId, t.actorId],
+			foreignColumns: [chatSections.id, chatSections.actorId],
+			name: 'chat_section_items_section_owner_fk',
+		}).onDelete('cascade'),
+		index('chat_section_items_section_idx').on(t.sectionId),
+		index('chat_section_items_conversation_idx').on(t.conversationId),
+	],
+)
+
+export type ChatSectionItem = typeof chatSectionItems.$inferSelect
+export type NewChatSectionItem = typeof chatSectionItems.$inferInsert
 
 // ── Workspace Onboarding Prompts ──────────────────────────────────────────────
 //

@@ -358,12 +358,13 @@ describe('Conversations Integration', () => {
 			)
 			const conversation = (await created.json()) as { id: string }
 
-			// Owner posts a message — other participant should see it as unread.
+			// Owner posts a message that mentions the other participant: it is unread for them. A plain
+			// message would not count in a topical chat (see chat-unread.test.ts).
 			await ownerApp.request(
 				jsonRequest(
 					'POST',
 					`/api/conversations/${conversation.id}/messages`,
-					{ content: 'first message' },
+					{ content: 'first message', metadata: { mentions: [other.id] } },
 					{ 'x-workspace-id': workspaceId },
 				),
 			)
@@ -429,13 +430,18 @@ describe('Conversations Integration', () => {
 			)
 			const conversation = (await created.json()) as { id: string }
 			const headers = { 'x-workspace-id': workspaceId }
-			const post = async (app: ReturnType<typeof createConversationsApp>['app'], content: string) =>
+			// Only a mention counts as unread in a topical chat, so the owner's messages mention `other`.
+			const post = async (
+				app: ReturnType<typeof createConversationsApp>['app'],
+				content: string,
+				mentions?: string[],
+			) =>
 				(await (
 					await app.request(
 						jsonRequest(
 							'POST',
 							`/api/conversations/${conversation.id}/messages`,
-							{ content },
+							{ content, ...(mentions ? { metadata: { mentions } } : {}) },
 							headers,
 						),
 					)
@@ -445,8 +451,8 @@ describe('Conversations Integration', () => {
 					await app.request(jsonGet(`/api/conversations/${conversation.id}`, headers))
 				).json()) as { unread_count: number; last_read_message_id: number | null }
 
-			const m1 = await post(ownerApp, 'question')
-			const m2 = await post(ownerApp, 'follow-up')
+			const m1 = await post(ownerApp, 'question', [other.id])
+			const m2 = await post(ownerApp, 'follow-up', [other.id])
 
 			// A reply reads everything before it, without any PATCH /me from the client.
 			const { app: otherApp } = createConversationsApp(other.id)
@@ -468,7 +474,7 @@ describe('Conversations Integration', () => {
 			expect((await detail(otherApp)).last_read_message_id).toBe(reply.id)
 
 			// Messages that arrive after the reply are unread, and the cursor never skips ahead of them.
-			const m3 = await post(ownerApp, 'later')
+			const m3 = await post(ownerApp, 'later', [other.id])
 			expect(m3.id).toBeGreaterThan(m2.id)
 			const later = await detail(otherApp)
 			expect(later.unread_count).toBe(1)
@@ -497,7 +503,7 @@ describe('Conversations Integration', () => {
 				jsonRequest(
 					'POST',
 					`/api/conversations/${conversation.id}/messages`,
-					{ content: 'one' },
+					{ content: 'one', metadata: { mentions: [other.id] } },
 					{ 'x-workspace-id': workspaceId },
 				),
 			)
@@ -506,7 +512,7 @@ describe('Conversations Integration', () => {
 				jsonRequest(
 					'POST',
 					`/api/conversations/${conversation.id}/messages`,
-					{ content: 'two' },
+					{ content: 'two', metadata: { mentions: [other.id] } },
 					{ 'x-workspace-id': workspaceId },
 				),
 			)
@@ -564,7 +570,7 @@ describe('Conversations Integration', () => {
 				jsonRequest(
 					'POST',
 					`/api/conversations/${conversation.id}/messages`,
-					{ content: 'one' },
+					{ content: 'one', metadata: { mentions: [other.id] } },
 					{ 'x-workspace-id': workspaceId },
 				),
 			)
@@ -573,7 +579,7 @@ describe('Conversations Integration', () => {
 				jsonRequest(
 					'POST',
 					`/api/conversations/${conversation.id}/messages`,
-					{ content: 'two' },
+					{ content: 'two', metadata: { mentions: [other.id] } },
 					{ 'x-workspace-id': workspaceId },
 				),
 			)
@@ -716,7 +722,7 @@ describe('Conversations Integration', () => {
 					jsonRequest(
 						'POST',
 						`/api/conversations/${conversationId}/messages`,
-						{ content: 'ping' },
+						{ content: 'ping', metadata: { mentions: [other.id] } },
 						{ 'x-workspace-id': workspaceId },
 					),
 				)
@@ -777,7 +783,7 @@ describe('Conversations Integration', () => {
 				jsonRequest(
 					'POST',
 					`/api/conversations/${unreadId}/messages`,
-					{ content: 'ping' },
+					{ content: 'ping', metadata: { mentions: [other.id] } },
 					{ 'x-workspace-id': workspaceId },
 				),
 			)

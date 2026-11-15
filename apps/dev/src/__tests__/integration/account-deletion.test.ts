@@ -4,6 +4,9 @@ import {
 	events,
 	actors,
 	apiKeys,
+	chatSectionItems,
+	chatSections,
+	conversations,
 	deviceAuthCodes,
 	deviceTokens,
 	liveActivityCards,
@@ -19,7 +22,13 @@ import {
 } from '@maskin/db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertConversation,
+	insertObject,
+	insertSession,
+	insertWorkspace,
+} from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, sql } from './global-setup'
 
@@ -84,6 +93,16 @@ describe('account deletion (integration)', () => {
 			entityId: obj.id,
 			source: 'manual',
 		})
+		const [section] = await db
+			.insert(chatSections)
+			.values({ workspaceId: ws.id, actorId: me.id, name: 'Private notes', position: 0 })
+			.returning()
+		const filedChat = await insertConversation(db, ws.id, me.id, { title: 'Filed chat' })
+		await db.insert(chatSectionItems).values({
+			sectionId: section?.id as string,
+			conversationId: filedChat.id,
+			actorId: me.id,
+		})
 
 		const res = await del()
 		expect(res.status).toBe(200)
@@ -126,6 +145,14 @@ describe('account deletion (integration)', () => {
 				.from(notificationPreferences)
 				.where(eq(notificationPreferences.actorId, me.id)),
 		).toEqual([])
+		// Their sections and what they filed in them are gone; the chat itself stays.
+		expect(await db.select().from(chatSections).where(eq(chatSections.actorId, me.id))).toEqual([])
+		expect(
+			await db.select().from(chatSectionItems).where(eq(chatSectionItems.actorId, me.id)),
+		).toEqual([])
+		expect(
+			await db.select().from(conversations).where(eq(conversations.id, filedChat.id)),
+		).toHaveLength(1)
 	})
 
 	async function pushRowsFor(actorId: string, workspaceId: string, tag: string) {

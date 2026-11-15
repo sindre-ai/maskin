@@ -42,6 +42,7 @@ import apiKeysRoutes from './routes/api-keys'
 import authRoutes from './routes/auth'
 import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
+import chatSectionsRoutes from './routes/chat-sections'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 // import desktopTeachRoutes from './routes/desktop-teach'
@@ -605,6 +606,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/internal/mcp-guard', mcpGuardRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/conversations', conversationsRoutes)
+	app.route('/api/chat-sections', chatSectionsRoutes)
 	app.route('/api/search', searchRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)

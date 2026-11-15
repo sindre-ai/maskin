@@ -66,7 +66,7 @@ describe('GET /api/workspaces/counts', () => {
 		}
 	})
 
-	/** A chat the caller is in, with `fromOthers` messages from someone else past `readMarker`. */
+	/** A chat the caller is in, with `fromOthers` messages from someone else that mention the caller. */
 	async function chat(
 		workspaceId: string,
 		opts: {
@@ -91,7 +91,13 @@ describe('GET /api/workspaces/counts', () => {
 		for (let i = 0; i < (opts.fromOthers ?? 0); i++) {
 			const [row] = await db
 				.insert(messages)
-				.values({ conversationId: conversation.id, actorId: otherHumanId, content: `hi ${i}` })
+				.values({
+					conversationId: conversation.id,
+					actorId: otherHumanId,
+					content: `hi ${i}`,
+					// Only a mention counts as unread in a topic chat (see chat-unread.ts).
+					metadata: { mentions: [callerId] },
+				})
 				.returning()
 			lastId = row?.id ?? lastId
 		}

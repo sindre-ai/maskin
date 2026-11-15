@@ -18,12 +18,12 @@ type Answer = {
 
 // A function, not a constant: it reads the messages table, and a module that touches it on
 // import breaks every test that stubs the schema without it.
-function notAnswered() {
+export function notAnswered() {
 	return sql`(${messages.metadata} -> 'card_resolved') IS NULL`
 }
 
 // Parenthesised: it sits inside an AND, and a bare OR would swallow the conditions before it.
-function isRequestCard() {
+export function isRequestCard() {
 	const kinds = REQUEST_CARD_METADATA_KEYS.map(
 		(key) => sql`(${messages.metadata} -> ${key}::text) IS NOT NULL`,
 	)

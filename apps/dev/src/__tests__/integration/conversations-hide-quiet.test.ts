@@ -17,8 +17,9 @@ const { default: conversationsRoutes } = await import('../../routes/conversation
 
 /**
  * GET /api/conversations?hide_quiet=true leaves out empty direct messages with agents, chats with
- * retired agents and topic chats quiet for about 14 days. Pinned chats, unread chats, group chats,
- * people-only chats and rooms are never left out, and without the flag nothing is.
+ * retired agents and topic chats quiet for 7 days. Pinned chats, unread chats (a mention or an open
+ * card for the caller), chats in one of the caller's sections, group chats, people-only chats and
+ * rooms are never left out, and without the flag nothing is.
  */
 
 type Env = { Variables: { db: Database; actorId: string; actorType: string } }
@@ -83,6 +84,8 @@ describe('GET /api/conversations hide_quiet', () => {
 			pinned?: boolean
 			subject?: boolean
 			room?: boolean
+			/** The message mentions the caller, which is what makes a topic chat unread. */
+			mention?: boolean
 		} = {},
 	) {
 		const chat = await insertConversation(db, workspaceId, humanId, {
@@ -99,9 +102,12 @@ describe('GET /api/conversations hide_quiet', () => {
 				...others.map((actorId) => ({ conversationId: chat.id, actorId })),
 			])
 		if (opts.messageFrom) {
-			await db
-				.insert(messages)
-				.values({ conversationId: chat.id, actorId: opts.messageFrom, content: `${label} hello` })
+			await db.insert(messages).values({
+				conversationId: chat.id,
+				actorId: opts.messageFrom,
+				content: `${label} hello`,
+				metadata: opts.mention ? { mentions: [humanId] } : null,
+			})
 		}
 		return chat.id
 	}
@@ -133,9 +139,9 @@ describe('GET /api/conversations hide_quiet', () => {
 		expect(shown).not.toContain('retired topic')
 	})
 
-	it('leaves out a topic chat quiet for 14 days, and brings it back on a new message', async () => {
-		const quiet = await seedChat('quiet topic', [agentId], { messageFrom: humanId, daysAgo: 20 })
-		await seedChat('recent topic', [agentId], { messageFrom: humanId, daysAgo: 13 })
+	it('leaves out a topic chat quiet for 7 days, and brings it back on a new message', async () => {
+		const quiet = await seedChat('quiet topic', [agentId], { messageFrom: humanId, daysAgo: 9 })
+		await seedChat('recent topic', [agentId], { messageFrom: humanId, daysAgo: 6 })
 		const shown = await titles('hide_quiet=true')
 		expect(shown).not.toContain('quiet topic')
 		expect(shown).toContain('recent topic')
@@ -152,7 +158,7 @@ describe('GET /api/conversations hide_quiet', () => {
 		const otherHuman = (await insertActor(db, { type: 'human', name: 'people empty dm' })).id
 		await seedChat('pinned quiet', [agentId], { messageFrom: humanId, daysAgo: 30, pinned: true })
 		await seedChat('pinned retired', [retiredId], { messageFrom: humanId, pinned: true })
-		await seedChat('unread quiet', [agentId], { messageFrom: agentId, daysAgo: 30 })
+		await seedChat('unread quiet', [agentId], { messageFrom: agentId, daysAgo: 30, mention: true })
 		await seedChat('group quiet', [agentId, retiredId], { messageFrom: humanId, daysAgo: 30 })
 		await seedChat('subject quiet', [agentId], {
 			messageFrom: humanId,

@@ -20,6 +20,7 @@ import {
 	tokenRegexEscape,
 } from '../lib/search-rank'
 import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
+import { unreadChatCondition } from './chat-unread'
 
 /** A source that takes longer than this is reported as partial instead of failing the request. */
 const SOURCE_TIMEOUT_MS = 5000
@@ -167,12 +168,11 @@ export const SEARCH_SOURCES: SearchSource[] = [
 		// chats only (the candidates carry what it reads).
 		lateStatus: ({ callerId }) => sql`CASE
 			WHEN s.archived THEN 'archived'
-			WHEN EXISTS (
-				SELECT 1 FROM messages um
-				WHERE um.conversation_id = s.id
-					AND um.actor_id <> ${callerId}
-					AND um.id > COALESCE(s.last_read, 0)
-			) THEN 'unread'
+			WHEN ${unreadChatCondition({
+				callerId,
+				conversationId: sql`s.id`,
+				lastRead: sql`s.last_read`,
+			})} THEN 'unread'
 			ELSE 'read'
 		END`,
 		// The same chats the candidates number for the cap, counted without the per-chat lookups.
