@@ -53,6 +53,7 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'me-1', name: 'You', type: 'human' }),
+	getApiKey: () => null,
 }))
 
 const trackChatSessionStartedMock = vi.hoisted(() => vi.fn())

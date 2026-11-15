@@ -8,7 +8,10 @@ import { createWorkspaceWrapper } from '../../setup'
 const mockMutateAsync = vi.fn()
 const flag = vi.hoisted(() => ({ on: true }))
 
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => flag.on }))
+// Only undo send is switched on: the formatting box (a rich editor) does not run in jsdom.
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id === 'chat-undo-send' && flag.on,
+}))
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 vi.mock('@/hooks/use-actors', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/hooks/use-actors')>()),
