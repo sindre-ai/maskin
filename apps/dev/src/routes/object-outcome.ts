@@ -103,9 +103,17 @@ const acceptRoute = createRoute({
 			description: 'The outcome after the change',
 			content: { 'application/json': { schema: outcomeStateResponseSchema } },
 		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: { description: 'Not a person', content: { 'application/json': { schema: errorSchema } } },
 		404: {
 			description: 'Object not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Conflict',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -148,9 +156,17 @@ const endRoute = createRoute({
 			description: 'The outcome after the change',
 			content: { 'application/json': { schema: outcomeStateResponseSchema } },
 		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: { description: 'Not a person', content: { 'application/json': { schema: errorSchema } } },
 		404: {
 			description: 'Object not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Conflict',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -201,6 +217,10 @@ const blindRoute = createRoute({
 		403: { description: 'Not a person', content: { 'application/json': { schema: errorSchema } } },
 		404: {
 			description: 'Object not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Conflict',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},

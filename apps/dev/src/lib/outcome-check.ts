@@ -88,7 +88,7 @@ interface ObjectRef {
 	workspaceId: string
 	type: string
 	status: string | null
-	title: string
+	title: string | null
 	content: string | null
 }
 
@@ -322,7 +322,7 @@ export async function runOutcomeCheck(
 			? await checker({
 					workspaceId: object.workspaceId,
 					lines: checkerLines.map((l) => ({ id: l.id, text: l.text })),
-					thing: { title: object.title, content: object.content ?? '' },
+					thing: { title: object.title ?? '', content: object.content ?? '' },
 				})
 			: { model: null, verdicts: new Map() }
 
@@ -494,7 +494,7 @@ export async function runOutcomeCheck(
 		checkId: stored_.id,
 		round: stored_.round ?? undefined,
 		lines: reports,
-		message: buildMessage(stored_.verdict, stored_.round, reports),
+		message: buildMessage(stored_.verdict, stored_.round ?? undefined, reports),
 	}
 	if (stored_.verdict === 'round_limit_reached' || stored_.verdict === 'waiting_for_person') {
 		await askPersonToLook(db, { object, actorId, result, flags })
