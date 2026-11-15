@@ -20,6 +20,7 @@ import { createApp } from './app-factory'
 import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
+import { LumaRegistrationsSyncJob } from './jobs/luma-registrations-sync'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
@@ -463,6 +464,22 @@ if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
 	})
 	telnyxRecordingSyncJob.start()
 	logger.info('Telnyx recording sync started')
+}
+
+// Luma registrations: every 30 minutes reads the guest list of each Luma event between planned
+// and live and writes the approved count as a luma.registrations reading. No model in the path.
+// Off unless LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID and _ACTOR_ID (the agent granted the Luma key)
+// are set. Optional: _KEY_NAME (Keychain name, default Luma). With no key it logs once and waits.
+const lumaSyncWorkspaceId = process.env.LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID
+const lumaSyncActorId = process.env.LUMA_REGISTRATIONS_SYNC_ACTOR_ID
+if (lumaSyncWorkspaceId && lumaSyncActorId) {
+	const lumaRegistrationsSyncJob = new LumaRegistrationsSyncJob(db, {
+		workspaceId: lumaSyncWorkspaceId,
+		actorId: lumaSyncActorId,
+		keyName: process.env.LUMA_REGISTRATIONS_SYNC_KEY_NAME || 'Luma',
+	})
+	lumaRegistrationsSyncJob.start()
+	logger.info('Luma registrations sync started')
 }
 
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
