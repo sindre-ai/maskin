@@ -124,3 +124,70 @@ test.describe('Undo send at phone and tablet widths', () => {
 		})
 	}
 })
+
+test.describe('Undo send on the new-chat page', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => localStorage.setItem('ff:chat-undo-send', 'on'))
+	})
+
+	// Counts the create-conversation requests the page makes (POST only; the list is a GET).
+	function countCreates(page: import('@playwright/test').Page) {
+		const state = { count: 0 }
+		page.on('request', (req) => {
+			if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/conversations') {
+				state.count += 1
+			}
+		})
+		return state
+	}
+
+	test('the first message is held: no chat is created, Undo puts the text back', async ({
+		page,
+		account,
+	}) => {
+		const agent = await account.api.createAgentActor(`E2E Undo New ${Date.now()}`)
+		const creates = countCreates(page)
+		await page.goto(`/${account.workspaceId}/chats/new?agentId=${agent.id}`)
+		const input = page.getByLabel('First message')
+		await expect(input).toBeVisible({ timeout: 15_000 })
+		await input.fill('hold my first message')
+		await input.press('Enter')
+
+		const undo = page.locator('output').getByRole('button', { name: 'Undo' })
+		await expect(undo).toBeVisible()
+		await expect(input).toHaveValue('')
+		await page.screenshot({ path: 'test-results/undo-send-new-chat-held.png' })
+
+		await undo.click()
+		await expect(undo).toBeHidden()
+		await expect(input).toHaveValue('hold my first message')
+		// Past the window: still no chat, and still on the new-chat page.
+		await page.waitForTimeout(6_000)
+		expect(creates.count).toBe(0)
+		await expect(page).toHaveURL(/\/chats\/new/)
+	})
+
+	test('a second send while the first is held is refused and keeps its text', async ({
+		page,
+		account,
+	}) => {
+		const agent = await account.api.createAgentActor(`E2E Undo Twice ${Date.now()}`)
+		const creates = countCreates(page)
+		await page.goto(`/${account.workspaceId}/chats/new?agentId=${agent.id}`)
+		const input = page.getByLabel('First message')
+		await expect(input).toBeVisible({ timeout: 15_000 })
+		await input.fill('first one')
+		await input.press('Enter')
+		await expect(page.locator('output').getByRole('button', { name: 'Undo' })).toBeVisible()
+
+		await input.fill('second one')
+		await input.press('Enter')
+		await expect(page.getByText('Undo your first message, or wait for it to send')).toBeVisible()
+		await expect(input).toHaveValue('second one')
+		expect(creates.count).toBe(0)
+
+		// The window ends: exactly one chat is created, from the first message, and the page opens it.
+		await expect(page).toHaveURL(/\/chats\/(?!new)[^/]+$/, { timeout: 15_000 })
+		expect(creates.count).toBe(1)
+	})
+})
