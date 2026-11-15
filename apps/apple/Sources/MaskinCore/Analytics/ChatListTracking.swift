@@ -10,6 +10,8 @@ import Foundation
 public enum ChatListTracking {
 	public enum Section: String, Sendable {
 		case pinned, unread, agent, recent, room, search
+		/// A row of one of the person's own sections, and a row of an open view.
+		case custom, waiting, running, quiet
 	}
 
 	/// `list` for a row opened from the list as it stands, `search` for one opened from the
@@ -79,6 +81,10 @@ extension TeamLayout {
 				switch section.kind {
 				case .rooms: .room
 				case .unread: .unread
+				case .custom: .custom
+				case .view(.waiting): .waiting
+				case .view(.running): .running
+				case .view(.quiet): .quiet
 				// The Agents view's rows; a chat folded under an agent reports its agent row's place.
 				case .people where section.id == "agents": .agent
 				default: .recent
@@ -88,7 +94,7 @@ extension TeamLayout {
 				switch row.kind {
 				case .conversation(let c) where c.id == conversationID:
 					// The Pinned chip lists pinned chats as ordinary rows.
-					return place(c.pinned && area != .room ? .pinned : area, position)
+					return place(c.pinned && area != .room && area != .custom ? .pinned : area, position)
 				case .person(let p) where p.conversations.contains(where: { $0.id == conversationID }):
 					return place(area, position)
 				default: break

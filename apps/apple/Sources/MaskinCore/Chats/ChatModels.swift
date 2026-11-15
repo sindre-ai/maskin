@@ -74,13 +74,27 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public var participants: [ChatParticipant]
 	/// The caller's read cursor (detail responses only).
 	public var lastReadMessageID: Int?
+	/// The caller's own section this chat sits in (list responses only). Personal: nobody else sees it.
+	public var sectionID: String?
+	/// Unread messages that mention the caller, and open cards (a question, a key, an access, a
+	/// server, a computer) nobody has answered. Together they are what waits on you.
+	public var mentionsUnread: Int
+	public var openCards: Int
+	/// One line about the newest open card (list responses only).
+	public var cardText: String?
+	/// An agent has an open turn in this chat right now (list responses only).
+	public var agentRunning: Bool
+	/// New messages with nothing for the caller: the row shows a hollow dot, never a number. Set by
+	/// `TeamLayout` when it swaps `unreadCount` for the number that waits on you.
+	public var showsQuietDot: Bool
 
 	public init(
 		id: String, title: String, lastMessageAt: Date? = nil, createdAt: Date? = nil,
 		pinned: Bool = false, archived: Bool = false, unreadCount: Int = 0, snippet: String? = nil,
 		snippetActorName: String? = nil, snippetActorID: String? = nil, directPairKey: String? = nil,
 		participants: [ChatParticipant] = [], lastReadMessageID: Int? = nil,
-		roomKind: RoomKind? = nil, flowID: String? = nil
+		roomKind: RoomKind? = nil, flowID: String? = nil, sectionID: String? = nil, mentionsUnread: Int = 0,
+		openCards: Int = 0, cardText: String? = nil, agentRunning: Bool = false, showsQuietDot: Bool = false
 	) {
 		self.id = id
 		self.title = title
@@ -97,6 +111,12 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 		self.lastReadMessageID = lastReadMessageID
 		self.roomKind = roomKind
 		self.flowID = flowID
+		self.sectionID = sectionID
+		self.mentionsUnread = mentionsUnread
+		self.openCards = openCards
+		self.cardText = cardText
+		self.agentRunning = agentRunning
+		self.showsQuietDot = showsQuietDot
 	}
 
 	/// The date the list sorts and groups by.
@@ -105,6 +125,14 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	/// The pair's direct message, as opposed to a topical chat with the same two people.
 	public var isDirect: Bool { directPairKey != nil }
 	public var isRoom: Bool { roomKind != nil }
+
+	/// What waits on the caller in this chat: unread mentions plus open cards. New messages alone add 0.
+	public var waitingCount: Int { mentionsUnread + openCards }
+	/// The number on the row's badge once sections are on. A direct chat with an agent still counts
+	/// every unread message, since the agent is talking to you.
+	public var badgeCount: Int { isDirect ? unreadCount : waitingCount }
+	/// New messages with nothing for the caller: a hollow dot, never a number.
+	public var hasQuietNews: Bool { unreadCount > 0 && waitingCount == 0 && !isDirect }
 }
 
 /// What kind of room a chat is. The Rooms group of the list is every chat that has one.

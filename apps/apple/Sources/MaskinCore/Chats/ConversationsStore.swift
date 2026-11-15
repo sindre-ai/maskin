@@ -79,6 +79,35 @@ public final class ConversationsStore {
 	/// Conversations whose unread messages mention you. No API reports this yet.
 	public var mentionConversationIDs: Set<String> = []
 
+	// MARK: Sections and views (bet: Chat list sections)
+
+	/// The sectioned list is on for this person (a feature flag). Off draws the list as before.
+	public var sectionsEnabled = false {
+		didSet {
+			guard sectionsEnabled != oldValue else { return }
+			if sectionsEnabled {
+				Task {
+					await refreshSections()
+					await refreshViews()
+				}
+			} else {
+				activeView = nil
+			}
+		}
+	}
+	/// The person's own sections, in order.
+	public private(set) var sections: [ChatSection] = []
+	/// The open automatic view; nil is the whole list.
+	public var activeView: TeamView?
+	/// The chats of each automatic view (first page). The tiles count them, the open view lists them.
+	public private(set) var viewRows: [TeamView: [ConversationSummary]] = [:]
+	/// More chats exist for the view than the first page holds, so its tile reads "40+".
+	public private(set) var viewHasMore: Set<TeamView> = []
+	/// Views whose last load failed and have nothing to show (the view says "Couldn't load").
+	public private(set) var viewFailed: Set<TeamView> = []
+	/// This person dismissed the first-view note about chats that left the list.
+	public private(set) var quietNoteSeen: Bool
+
 	/// Told after every successful reload of the active, unfiltered list (first load, events,
 	/// pull-to-refresh). The thread prefetcher hangs off this.
 	@ObservationIgnored public var onListLoaded: (@MainActor ([ConversationSummary]) -> Void)?
@@ -109,6 +138,7 @@ public final class ConversationsStore {
 		self.displayOptions = preferences?.displayOptions ?? .default
 		self.pinOrder = preferences?.pinOrder ?? []
 		self.pinnedFlowIDs = preferences?.pinnedFlowIDs ?? []
+		self.quietNoteSeen = preferences?.quietNoteSeen ?? false
 		hydrateIfNeeded()
 	}
 
@@ -185,14 +215,20 @@ public final class ConversationsStore {
 			TeamLayout.Input(
 				conversations: ConversationGrouping.filter(conversations, agentID: agentFilterID), flowRooms: rooms,
 				archived: archivedConversations, options: displayOptions,
-				chip: Self.effectiveChip(displayOptions, chip), query: query, currentActorID: currentActorID,
+				chip: Self.effectiveChip(displayOptions, chip, sectionsEnabled: sectionsEnabled), query: query, currentActorID: currentActorID,
 				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs,
-				workingAgentIDs: working, mentionedConversationIDs: mentionConversationIDs, now: now))
+				workingAgentIDs: working, mentionedConversationIDs: mentionConversationIDs,
+				sectionsEnabled: sectionsEnabled, sections: sections, view: sectionsEnabled ? activeView : nil,
+				viewConversations: activeView.flatMap { viewRows[$0] } ?? [], now: now))
 	}
 
 	/// The Unread filter in Display wins over the chip row; otherwise the chip counts only while the
 	/// chips are shown.
-	nonisolated static func effectiveChip(_ options: TeamDisplayOptions, _ chip: TeamFilterChip) -> TeamFilterChip {
+	nonisolated static func effectiveChip(
+		_ options: TeamDisplayOptions, _ chip: TeamFilterChip, sectionsEnabled: Bool = false
+	) -> TeamFilterChip {
+		// With sections on, Waiting on you replaces the Unread filter and the Unread chip.
+		if sectionsEnabled { return options.showsFilterChips && chip != .unread ? chip : .all }
 		if options.unreadOnly { return .unread }
 		return options.showsFilterChips ? chip : .all
 	}
@@ -255,9 +291,13 @@ public final class ConversationsStore {
 						await self.refresh()
 						await self.refreshArchived()
 						await self.refreshThreads()
+						await self.refreshSections()
+						await self.refreshViews()
 					case .event(let event) where event.entityType == .conversation:
 						await self.refresh()
 						await self.refreshThreads()
+						await self.refreshSections()
+						await self.refreshViews()
 					case .event(let event) where event.entityType == .session || event.entityType == .actor:
 						// Working state on rows and avatars follows the agents' runs.
 						await self.refreshActors()
@@ -273,7 +313,9 @@ public final class ConversationsStore {
 		async let flows: Void = refreshFlowRooms()
 		async let people: Void = refreshActors()
 		async let threadRows: Void = refreshThreads()
-		_ = await (main, archived, flows, people, threadRows)
+		async let sectionRows: Void = refreshSections()
+		async let viewLists: Void = refreshViews()
+		_ = await (main, archived, flows, people, threadRows, sectionRows, viewLists)
 	}
 
 	public func stop() {
@@ -388,6 +430,205 @@ public final class ConversationsStore {
 	public func refreshFlowRooms() async {
 		guard let flowSource else { return }
 		if let rooms = try? await flowSource.flowRooms() { flowRooms = rooms }
+	}
+
+	// MARK: - Sections and views
+
+	/// The person's sections. Failure keeps what is shown; sections are secondary to the list.
+	public func refreshSections() async {
+		guard sectionsEnabled else { return }
+		if let fresh = try? await api.sections() { sections = fresh.sorted { $0.position < $1.position } }
+	}
+
+	/// The first page of each automatic view, for the tiles and the open view.
+	public func refreshViews() async {
+		guard sectionsEnabled else { return }
+		for view in TeamView.allCases {
+			do {
+				let page = try await api.list(view: view, limit: Self.viewPageSize, offset: 0)
+				viewRows[view] = page.conversations.filter { !locallyDeleted.contains($0.id) }
+				if page.hasMore { viewHasMore.insert(view) } else { viewHasMore.remove(view) }
+				viewFailed.remove(view)
+			} catch {
+				if viewRows[view] == nil { viewFailed.insert(view) }
+			}
+		}
+	}
+
+	static let viewPageSize = 100
+
+	/// What a tile shows, and whether more than a page exists. Nil while the view has not loaded.
+	public func tileCount(_ view: TeamView) -> (count: Int, more: Bool)? {
+		guard let rows = viewRows[view] else { return nil }
+		return (TeamViewRules.tileCount(view, rows), viewHasMore.contains(view))
+	}
+
+	/// Quiet chats that left the list, for the first-view note and the footer line.
+	public var quietChatCount: Int { viewRows[.quiet]?.count ?? 0 }
+
+	public func section(id: String) -> ChatSection? { sections.first { $0.id == id } }
+
+	/// The section a chat sits in, if any.
+	public func section(containing conversationID: String) -> ChatSection? {
+		sections.first { $0.conversationIDs.contains(conversationID) }
+	}
+
+	public func dismissQuietNote() {
+		quietNoteSeen = true
+		preferences?.quietNoteSeen = true
+	}
+
+	/// A new section, last in the order. With `chatID` the chat moves in at once. Nil on failure, with
+	/// the reason in `notice`.
+	@discardableResult
+	public func addSection(named name: String, moving chatID: String? = nil) async -> ChatSection? {
+		let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return nil }
+		guard !TeamViewRules.hasSection(named: trimmed, in: sections) else {
+			notice = TeamViewRules.duplicateMessage(trimmed)
+			return nil
+		}
+		do {
+			var created = try await api.createSection(name: trimmed)
+			created.position = sections.count
+			sections.append(created)
+			if let chatID { await move(chatID, to: created.id) }
+			return section(id: created.id) ?? created
+		} catch {
+			notice = Self.message(error)
+			return nil
+		}
+	}
+
+	@discardableResult
+	public func renameSection(_ id: String, to name: String) async -> Bool {
+		let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard let before = section(id: id), !trimmed.isEmpty, trimmed != before.name else { return false }
+		guard !TeamViewRules.hasSection(named: trimmed, in: sections, excluding: id) else {
+			notice = TeamViewRules.duplicateMessage(trimmed)
+			return false
+		}
+		return await mutateSection(id, apply: { $0.name = trimmed }) {
+			_ = try await self.api.updateSection(id: id, name: trimmed, collapsed: nil)
+		}
+	}
+
+	/// Fold or open a section. The server keeps the choice, so it is the same on every device.
+	@discardableResult
+	public func setSectionCollapsed(_ id: String, _ collapsed: Bool) async -> Bool {
+		await mutateSection(id, apply: { $0.collapsed = collapsed }) {
+			_ = try await self.api.updateSection(id: id, name: nil, collapsed: collapsed)
+		}
+	}
+
+	/// Move a section one place up (-1) or down (+1).
+	@discardableResult
+	public func moveSection(_ id: String, by offset: Int) async -> Bool {
+		guard let from = sections.firstIndex(where: { $0.id == id }) else { return false }
+		let to = from + offset
+		guard sections.indices.contains(to) else { return false }
+		let before = sections
+		var reordered = sections
+		reordered.insert(reordered.remove(at: from), at: to)
+		sections = reordered.enumerated().map { index, section in
+			var section = section
+			section.position = index
+			return section
+		}
+		do {
+			try await api.reorderSections(ids: sections.map(\.id))
+			return true
+		} catch {
+			sections = before
+			notice = Self.message(error)
+			return false
+		}
+	}
+
+	/// Delete a section; its chats go back to the list. Returns what was removed, for Undo.
+	@discardableResult
+	public func deleteSection(_ id: String) async -> ChatSection? {
+		guard let removed = section(id: id) else { return nil }
+		let before = sections
+		let beforeRows = conversations
+		sections.removeAll { $0.id == id }
+		clearSectionID(of: removed.conversationIDs)
+		do {
+			try await api.deleteSection(id: id)
+			return removed
+		} catch {
+			sections = before
+			conversations = beforeRows
+			notice = Self.message(error)
+			return nil
+		}
+	}
+
+	/// Undo for a delete: the section comes back under its name with its chats, in its old place.
+	@discardableResult
+	public func restoreSection(_ removed: ChatSection) async -> Bool {
+		guard let created = await addSection(named: removed.name) else { return false }
+		for chatID in removed.conversationIDs { await move(chatID, to: created.id) }
+		while let index = sections.firstIndex(where: { $0.id == created.id }), index > removed.position {
+			guard await moveSection(created.id, by: -1) else { break }
+		}
+		return true
+	}
+
+	/// Puts a chat in a section, or back in the list with a nil section. Returns the section it was
+	/// in, so Undo can put it back; nil when nothing changed or the server refused.
+	@discardableResult
+	public func move(_ conversationID: String, to sectionID: String?) async -> MoveOutcome? {
+		let previous = section(containing: conversationID)?.id
+		guard previous != sectionID else { return nil }
+		let before = sections
+		let beforeRows = conversations
+		for index in sections.indices { sections[index].conversationIDs.removeAll { $0 == conversationID } }
+		if let sectionID, let index = sections.firstIndex(where: { $0.id == sectionID }) {
+			sections[index].conversationIDs.insert(conversationID, at: 0)
+		}
+		update(conversationID) { $0.sectionID = sectionID }
+		do {
+			if let sectionID {
+				try await api.putChat(conversationID, inSection: sectionID)
+			} else if let previous {
+				try await api.removeChat(conversationID, fromSection: previous)
+			}
+			// A chat in a section never goes quiet, and one taken out may be quiet again.
+			await refreshViews()
+			return MoveOutcome(previousSectionID: previous)
+		} catch {
+			sections = before
+			conversations = beforeRows
+			notice = Self.message(error)
+			return nil
+		}
+	}
+
+	public struct MoveOutcome: Equatable, Sendable {
+		/// The section the chat was in before, nil when it sat in none.
+		public var previousSectionID: String?
+	}
+
+	private func clearSectionID(of ids: [String]) {
+		for id in ids { update(id) { $0.sectionID = nil } }
+	}
+
+	@discardableResult
+	private func mutateSection(
+		_ id: String, apply: (inout ChatSection) -> Void, request: () async throws -> Void
+	) async -> Bool {
+		guard let index = sections.firstIndex(where: { $0.id == id }) else { return false }
+		let before = sections[index]
+		apply(&sections[index])
+		do {
+			try await request()
+			return true
+		} catch {
+			if let current = sections.firstIndex(where: { $0.id == id }) { sections[current] = before }
+			notice = Self.message(error)
+			return false
+		}
 	}
 
 	// MARK: - Create

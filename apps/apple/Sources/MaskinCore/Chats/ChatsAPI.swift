@@ -56,9 +56,46 @@ public protocol ConversationsAPI: Sendable {
 		flowID: String, title: String, participantIDs: [String], initialMessage: String,
 		initialMetadata: ChatSendMetadata?, idempotencyKey: String
 	) async throws -> ConversationSummary
+	/// One automatic view of the caller's chats (`GET /api/conversations?view=`): waiting on you,
+	/// running, or quiet. Combines with nothing else; the rows carry the same fields as the list.
+	func list(view: TeamView, limit: Int, offset: Int) async throws -> ConversationPage
+	/// The caller's own sections, in order, each with its chats (`GET /api/chat-sections`).
+	func sections() async throws -> [ChatSection]
+	/// `POST /api/chat-sections`: a new section, last in the order. A taken name is a `ChatsError`.
+	func createSection(name: String) async throws -> ChatSection
+	/// `PATCH /api/chat-sections/:id`: rename it, fold it or open it.
+	func updateSection(id: String, name: String?, collapsed: Bool?) async throws -> ChatSection
+	/// `DELETE /api/chat-sections/:id`: its chats go back to the list.
+	func deleteSection(id: String) async throws
+	/// `PUT /api/chat-sections/order`: every section id once, in the order to show.
+	func reorderSections(ids: [String]) async throws
+	/// `PUT /api/chat-sections/:id/chats/:conversationId`: the chat moves in, out of any other section.
+	func putChat(_ conversationID: String, inSection sectionID: String) async throws
+	/// `DELETE /api/chat-sections/:id/chats/:conversationId`: the chat goes back to the list.
+	func removeChat(_ conversationID: String, fromSection sectionID: String) async throws
 }
 
 extension ConversationsAPI {
+	/// Sources without sections (test doubles) have none, and refuse changes to them.
+	public func list(view: TeamView, limit: Int, offset: Int) async throws -> ConversationPage {
+		ConversationPage(conversations: [], hasMore: false)
+	}
+	public func sections() async throws -> [ChatSection] { [] }
+	public func createSection(name: String) async throws -> ChatSection {
+		throw ChatsError("Sections aren't available here.")
+	}
+	public func updateSection(id: String, name: String?, collapsed: Bool?) async throws -> ChatSection {
+		throw ChatsError("Sections aren't available here.")
+	}
+	public func deleteSection(id: String) async throws { throw ChatsError("Sections aren't available here.") }
+	public func reorderSections(ids: [String]) async throws { throw ChatsError("Sections aren't available here.") }
+	public func putChat(_ conversationID: String, inSection sectionID: String) async throws {
+		throw ChatsError("Sections aren't available here.")
+	}
+	public func removeChat(_ conversationID: String, fromSection sectionID: String) async throws {
+		throw ChatsError("Sections aren't available here.")
+	}
+
 	public func create(
 		title: String, participantIDs: [String], initialMessage: String?,
 		initialMetadata: ChatSendMetadata?, idempotencyKey: String
