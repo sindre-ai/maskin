@@ -32,6 +32,7 @@ const ALL_TOOL_NAMES = [
 	'update_next_step',
 	'record_go_ahead',
 	'take_back_go_ahead',
+	'skip_done_when',
 	'list_objects',
 	'search_objects',
 	'create_relationship',

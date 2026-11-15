@@ -1,5 +1,7 @@
+import { DoneWhenCardLines } from '@/components/objects/done-when-lines'
 import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { useCreateComment } from '@/hooks/use-events'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { secondsSince, trackForyouCardAction } from '@/lib/analytics'
 import type { EventResponse } from '@/lib/api'
 import { decisionOfEvent, defaultOnSilenceLine } from '@/lib/comment-decision'
@@ -35,6 +37,7 @@ export function CommentDecisionBlock({
 	replies?: EventResponse[]
 }) {
 	const decision = decisionOfEvent(event)
+	const doneWhenOn = useFeatureFlag('done-when-list')
 	const createComment = useCreateComment(workspaceId, objectId)
 	const [pendingId, setPendingId] = useState<string | null>(null)
 
@@ -109,6 +112,7 @@ export function CommentDecisionBlock({
 					{decision.ask}
 				</p>
 			)}
+			{decision.done_when && doneWhenOn && <DoneWhenCardLines block={decision.done_when} />}
 			<DecisionOptions
 				options={options}
 				pendingId={pendingId}

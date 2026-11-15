@@ -96,6 +96,7 @@ import oauthClientMetadataRoutes from './routes/oauth-client-metadata'
 import oauthDiscoveryRoutes from './routes/oauth-discovery'
 import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
+import objectDoneWhenRoutes from './routes/object-done-when'
 import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
 import objectsRoutes from './routes/objects'
@@ -542,6 +543,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectApprovalsRoutes)
+	app.route('/api/objects', objectDoneWhenRoutes)
 	app.route('/api/objects', objectGoAheadRoutes)
 	app.route('/api/objects', objectNextStepRoutes)
 	app.route('/api/objects', objectsRoutes)

@@ -4578,6 +4578,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'skip_done_when',
+		{
+			description: tools.skip_done_when.description,
+			inputSchema: tools.skip_done_when.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/objects/${object_id}/done-when/skip`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('skip_done_when', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_object',
 		{
 			description: tools.delete_object.description,

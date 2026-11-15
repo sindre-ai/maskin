@@ -65,6 +65,7 @@ import {
 } from '../lib/analytics/knowledge-events'
 import { trackObjectCreated } from '../lib/analytics/object-events'
 import { trackSupportItemOpened, trackSupportItemResolved } from '../lib/analytics/support-events'
+import { getDoneWhen } from '../lib/done-when'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
@@ -2041,6 +2042,7 @@ app.openapi(getObjectRoute, async (c) => {
 		lastSession,
 		nextStep,
 		goAhead,
+		doneWhen,
 	] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
@@ -2066,6 +2068,7 @@ app.openapi(getObjectRoute, async (c) => {
 		loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
 		getLiveNextStep(db, id),
 		getLiveGoAhead(db, id),
+		getDoneWhen(db, id),
 	])
 
 	return c.json(
@@ -2073,6 +2076,7 @@ app.openapi(getObjectRoute, async (c) => {
 			...serialize(object),
 			next_step: nextStep ? serializeNextStep(nextStep) : null,
 			go_ahead: goAhead,
+			done_when: doneWhen,
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
 			last_session: lastSession,

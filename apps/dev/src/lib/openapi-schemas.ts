@@ -2,6 +2,7 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	doneWhenResponseSchema,
 	goAheadResponseSchema,
 	messagePlanSchema,
 	messageProposedEditSchema,
@@ -103,6 +104,10 @@ export const objectResponseSchema = z.object({
 	// for each step), null when there is none or the job is closed. Written through
 	// POST/DELETE /objects/{id}/go-ahead, never a field of the object itself.
 	go_ahead: goAheadResponseSchema.nullable().optional(),
+	// Detail endpoint only: the job's done-when list (approved when there is one, else the draft)
+	// with each line's state, null when the job has none. Written through a decision card and
+	// PATCH /objects/{id}/done-when/lines/{lineId}, never a field of the object itself.
+	done_when: doneWhenResponseSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({

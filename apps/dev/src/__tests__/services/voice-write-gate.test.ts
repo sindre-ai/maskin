@@ -709,6 +709,7 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'rename_file_tag',
 		'set_loop_view',
 		'show_computer',
+		'skip_done_when',
 		'stop_chat_agent',
 		'take_back_go_ahead',
 		'transcribe_file',
