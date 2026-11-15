@@ -21,6 +21,7 @@ import {
 	isGatedCloseStatus,
 } from '@maskin/shared'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
+import { trackOutcomeChecked } from './analytics/outcome-check-events'
 import { postComment } from './comments'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
@@ -473,6 +474,21 @@ export async function runOutcomeCheck(
 		}
 	}
 
+	void trackOutcomeChecked({
+		workspaceId: object.workspaceId,
+		actorId,
+		objectType: object.type,
+		ending:
+			stored_.verdict === 'waiting_for_person'
+				? 'waiting_for_person'
+				: stored_.verdict === 'passed'
+					? 'checks_passed'
+					: stored_.verdict,
+		round: stored_.round,
+		checkedBy: [...new Set(marks.map((m) => m.by))],
+		flagged: flags.length > 0,
+	})
+
 	const result: OutcomeCheckResult = {
 		verdict: stored_.verdict,
 		checkId: stored_.id,
@@ -684,9 +700,13 @@ export async function endOutcomeByPerson(
 	db: Database,
 	params: { objectId: string; actorId: string; ending: 'list_does_not_fit' | 'stopped_by_person' },
 ): Promise<OutcomeStateResponse> {
+	let objectType = ''
+	let workspaceId = ''
 	await db.transaction(async (tx) => {
 		await requireHuman(tx, params.actorId, 'end the check')
 		const object = await lockJob(tx, params.objectId)
+		objectType = object.type
+		workspaceId = object.workspaceId
 		const now = new Date()
 		await tx
 			.insert(jobOutcomes)
@@ -708,6 +728,15 @@ export async function endOutcomeByPerson(
 			entityId: object.id,
 			data: { ending: params.ending, verdict: null, round: null, checked_by: ['person'] },
 		})
+	})
+	void trackOutcomeChecked({
+		workspaceId,
+		actorId: params.actorId,
+		objectType,
+		ending: params.ending,
+		round: null,
+		checkedBy: ['person'],
+		flagged: false,
 	})
 	return getOutcomeState(db, params.objectId)
 }
