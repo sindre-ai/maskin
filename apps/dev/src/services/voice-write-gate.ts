@@ -285,6 +285,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'update_trigger',
 	'create_loop',
 	'update_loop',
+	'create_sub_chat',
 	// Runs a command, changes access or credentials, creates or edits actors
 	'desktop_run',
 	'connect_integration',

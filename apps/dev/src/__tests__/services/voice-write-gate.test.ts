@@ -693,7 +693,6 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 		'ask_user_question',
 		'create_chat',
 		'create_file',
-		'create_sub_chat',
 		'create_workspace',
 		'create_workspace_field',
 		'desktop_close_port',
@@ -755,6 +754,17 @@ describe('every tool of the real toolkit has a write-gate decision', () => {
 
 	it('holds the tools that send a message out', () => {
 		expect(isRiskyTool('resend_send_email')).toBe(true)
+	})
+
+	it('holds starting an agent by voice until the person says a clear yes', async () => {
+		expect(isRiskyTool('create_sub_chat')).toBe(true)
+		const gate = createWriteGate({ voiceSessionId: 's1', isReadOnlyTool: () => false })
+		const args = { actor_id: 'a', action_prompt: 'go' }
+		const hold = await gate.review('create_sub_chat', args, null)
+		if (hold.kind !== 'hold') throw new Error('expected a hold')
+		gate.noteSpeechStarted('i1')
+		gate.noteUserLine('yes', 'i1')
+		expect(await gate.review('create_sub_chat', args, hold.id)).toMatchObject({ kind: 'run' })
 	})
 
 	it('holds an unknown write when it is delegated but runs it when called directly', async () => {
