@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
 import { DELIVERED_ACTION, hasDelivered } from './object-delivery'
-import { requiresOutcomeCheck } from './outcome-check'
+import { recordPendingSendRound, requiresOutcomeCheck } from './outcome-check'
 
 /**
  * A send tool that is given the task it carries out ends that task itself, so the workspace
@@ -118,13 +118,21 @@ export async function recordSendOutcome(
 			if (!current || FINISHED_TASK_STATUSES.includes(current.status)) return
 
 			// A job with an approved done-when list closes only behind the outcome check when an
-			// agent closes it, so an agent's send leaves it open for the check.
+			// agent closes it, so an agent's send leaves it open and stores a pending check round.
 			const [sender] = await tx
 				.select({ type: actors.type })
 				.from(actors)
 				.where(eq(actors.id, actorId))
 				.limit(1)
-			if (sender?.type === 'agent' && (await requiresOutcomeCheck(tx, current, 'done'))) return
+			if (sender?.type === 'agent' && (await requiresOutcomeCheck(tx, current, 'done'))) {
+				await recordPendingSendRound(tx, {
+					workspaceId,
+					objectId: current.id,
+					actorId,
+					toStatus: 'done',
+				})
+				return
+			}
 
 			const [row] = await tx
 				.update(objects)

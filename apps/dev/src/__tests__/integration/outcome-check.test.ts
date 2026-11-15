@@ -287,6 +287,41 @@ describe('the hold point refuses a close that skipped the check', () => {
 		expect(out.task_closed).toBe(false)
 		expect(await statusOf(job.id)).toBe('in_review')
 	})
+
+	it('stores one pending round when an agent send leaves the job open', async () => {
+		const { agent, workspace, job } = await setup([
+			{ text: 'A person approves the tone', checkedBy: 'person' },
+		])
+		const send = () =>
+			recordSendOutcome(db, {
+				workspaceId: workspace.id,
+				actorId: agent.id,
+				target: { id: job.id, type: 'task' } as never,
+				provider: 'test',
+			})
+
+		await send()
+		await send()
+
+		const state = await getOutcomeState(db, job.id)
+		expect(state.rounds).toHaveLength(1)
+		expect(state.rounds[0]).toMatchObject({
+			kind: 'round',
+			round: null,
+			ending: null,
+			marks: [],
+			flags: ['send_pending'],
+		})
+		expect(state.ending).toBeNull()
+
+		// The pending round has no number, so the agent's next ask still runs a normal check.
+		const next = await runOutcomeCheck(db, {
+			object: job as never,
+			toStatus: 'done',
+			actorId: agent.id,
+		})
+		expect(next.verdict).toBe('waiting_for_person')
+	})
 })
 
 describe('code lines and readings', () => {
