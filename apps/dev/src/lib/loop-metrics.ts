@@ -70,7 +70,9 @@ type FlowWithTargets = { id: string; targets: LoopTargetView[] | null }
 /**
  * Replaces `actual` with a live count on every target whose source is a known
  * `metric:phone_sales.<key>`, ignoring the stored number, and sets `manual` on every
- * row: false for those, true for the rest. Runs on the finished
+ * row: false for those, true for the rest. A row that already carries a checked
+ * `reading` keeps the reading's number (`manual` false), and the live count fills in
+ * only where there is none. Runs on the finished
  * targets of each flow, so it does not matter where the rows came from. Other
  * rows (plain-text sources, event: sources, unknown metric keys) keep the stored
  * number. One grouped query covers every flow in the response, and none runs when
@@ -87,6 +89,10 @@ export async function applyLiveTargets(
 		for (const row of flow.targets ?? []) {
 			// Manual until a live count replaces the number below (also if that query fails).
 			row.manual = true
+			if (row.reading) {
+				row.manual = false
+				continue
+			}
 			const key = metricKeyOf(row.source)
 			if (key === null) continue
 			wanted.set(flow.id, (wanted.get(flow.id) ?? new Set()).add(key))
@@ -127,6 +133,7 @@ export async function applyLiveTargets(
 	for (const flow of flows) {
 		const counts = countsByLoop.get(flow.id)
 		for (const row of flow.targets ?? []) {
+			if (row.reading) continue
 			const key = metricKeyOf(row.source)
 			if (key === null) continue
 			// A flow with no people linked yet has no group row: its live count is 0.
