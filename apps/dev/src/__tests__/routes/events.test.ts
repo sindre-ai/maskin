@@ -1094,6 +1094,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
@@ -1191,6 +1192,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup — the object has a driver, and they are a thread
 					// participant, so the fallback ladder (case 2) will handle them.
@@ -1264,6 +1266,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
@@ -1351,6 +1354,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
@@ -1423,6 +1427,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
@@ -1502,6 +1507,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Mention resolution inside postComment
 					[{ id: agentAId }],
