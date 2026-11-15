@@ -353,6 +353,7 @@ describe('Loops read API integration', () => {
 					actual: 6,
 					target: 8,
 					ownerActorId: actorId,
+					manual: true,
 				},
 			])
 		})
@@ -424,7 +425,9 @@ describe('Loops read API integration', () => {
 			)
 			const byId = new Map(((await res.json()) as TargetsBody).loops.map((l) => [l.id, l.targets]))
 			expect(byId.get(withObjects.id)?.map((t) => t.label)).toEqual(['Object'])
-			expect(byId.get(withRows.id)).toEqual([{ label: 'Row', source: 'row', actual: 1, target: 2 }])
+			expect(byId.get(withRows.id)).toEqual([
+				{ label: 'Row', source: 'row', actual: 1, target: 2, manual: true },
+			])
 		})
 
 		it('ignores target objects with a missing number, and returns null with nothing left', async () => {
