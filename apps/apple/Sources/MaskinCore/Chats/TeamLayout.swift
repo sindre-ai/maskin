@@ -137,6 +137,13 @@ public struct TeamLayout: Equatable, Sendable {
 		public var workingAgentIDs: Set<String>
 		/// Conversations whose unread messages mention you; with a trailing question they need you.
 		public var mentionedConversationIDs: Set<String>
+		/// The sectioned list is on: the person's sections, the three views and the waiting-on-you
+		/// badge numbers. Off draws the list as it always was.
+		public var sectionsEnabled: Bool
+		public var sections: [ChatSection]
+		/// The open automatic view, with the chats the server put in it.
+		public var view: TeamView?
+		public var viewConversations: [ConversationSummary]
 		public var now: Date
 		public var calendar: Calendar
 
@@ -146,7 +153,8 @@ public struct TeamLayout: Equatable, Sendable {
 			chip: TeamFilterChip = .all, query: String = "", currentActorID: String? = nil,
 			pinOrder: [String] = [], pinnedFlowIDs: Set<String> = [], expandedSectionIDs: Set<String> = [],
 			workingAgentIDs: Set<String> = [], mentionedConversationIDs: Set<String> = [],
-			now: Date = Date(), calendar: Calendar = .current
+			sectionsEnabled: Bool = false, sections: [ChatSection] = [], view: TeamView? = nil,
+			viewConversations: [ConversationSummary] = [], now: Date = Date(), calendar: Calendar = .current
 		) {
 			self.conversations = conversations
 			self.flowRooms = flowRooms
@@ -160,6 +168,10 @@ public struct TeamLayout: Equatable, Sendable {
 			self.expandedSectionIDs = expandedSectionIDs
 			self.workingAgentIDs = workingAgentIDs
 			self.mentionedConversationIDs = mentionedConversationIDs
+			self.sectionsEnabled = sectionsEnabled
+			self.sections = sections
+			self.view = view
+			self.viewConversations = viewConversations
 			self.now = now
 			self.calendar = calendar
 		}
@@ -225,12 +237,24 @@ public struct TeamLayout: Equatable, Sendable {
 	}
 
 	public struct Section: Identifiable, Equatable, Sendable {
-		public enum Kind: Equatable, Sendable { case rooms, working, unread, flows, people, time, all, filtered }
+		public enum Kind: Equatable, Sendable {
+			case rooms, working, unread, flows, people, time, all, filtered
+			/// One of the person's own sections; `sectionID` names it.
+			case custom
+			/// An open automatic view: Waiting on you, Running or Quiet.
+			case view(TeamView)
+		}
 		public var id: String
 		public var kind: Kind
 		public var label: String
 		public var count: Int
 		public var rows: [Row]
+		/// The person's section behind a `.custom` section.
+		public var sectionID: String?
+		/// Folded: the header stays, the rows hide. Follows the server value.
+		public var collapsed = false
+		/// What waits on you inside a section: the header's number.
+		public var badge = 0
 		public var showsMarkAllRead = false
 		/// "All 9 flows" when the section is capped and the rest can be shown.
 		public var moreLabel: String?
@@ -332,11 +356,18 @@ public struct TeamLayout: Equatable, Sendable {
 		let query = input.query.trimmingCharacters(in: .whitespacesAndNewlines)
 		let isFiltering = !query.isEmpty || input.chip != .all
 		let pinnedFlowKeys = Set(input.pinnedFlowIDs.map(flowPinKey))
-		let active = input.conversations.filter { !$0.archived }
 		let me = input.currentActorID
+		if input.sectionsEnabled, let view = input.view {
+			return viewLayout(view, input: input)
+		}
+		let active = input.conversations.filter { !$0.archived }.map { input.sectionsEnabled ? badged($0) : $0 }
+		// Chats in a section list there and nowhere else (not in Pinned, Rooms or an agent row), while
+		// nothing narrows the list. A search or a chip still finds them where they are.
+		let sectioning = input.sectionsEnabled && input.chip == .all && query.isEmpty
+		let inSection: Set<String> = sectioning ? Set(input.sections.flatMap(\.conversationIDs)) : []
 
 		// Pinned tiles, in the persisted order, then by recency for anything not yet ordered.
-		var tiles: [Tile] = active.filter(\.pinned).map { c in
+		var tiles: [Tile] = active.filter { $0.pinned && !inSection.contains($0.id) }.map { c in
 			Tile(
 				id: c.id, kind: .conversation(c), title: tileTitle(c, me: me),
 				subtitle: ChatPreviewText.plain(c.title), unreadCount: c.unreadCount)
@@ -370,7 +401,7 @@ public struct TeamLayout: Equatable, Sendable {
 
 		// A quiet flow room leaves the list; a search still finds it (see `isRoomListed`).
 		let unpinned = active.filter { c in
-			!c.pinned
+			!c.pinned && !inSection.contains(c.id)
 				&& (!query.isEmpty
 					|| isRoomListed(c, now: input.now, calendar: input.calendar, workingAgentIDs: input.workingAgentIDs))
 		}
@@ -426,6 +457,8 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 		sections = sections.filter { !$0.rows.isEmpty }
 		if !query.isEmpty { sections = ranked(sections, query: query, me: me) }
+		// The person's own sections come first, empty ones too, so an empty one can take a chat.
+		if sectioning { sections = customSections(input, active: active) + sections }
 
 		let archivedMatches =
 			!query.isEmpty && input.chip == .all ? input.archived.filter { matches($0, query: query) } : []
@@ -447,6 +480,55 @@ public struct TeamLayout: Equatable, Sendable {
 			showsArchived: (!isFiltering && !input.archived.isEmpty) || !archivedMatches.isEmpty,
 			archivedMatches: archivedMatches, empty: empty,
 			unreadCount: totalUnread, isFiltering: isFiltering)
+	}
+
+	// MARK: Sections and views
+
+	/// With sections on, a row's badge is what waits on you (mentions plus open cards, or every
+	/// message in a direct chat with an agent). New messages alone leave the number at 0 and set the
+	/// hollow dot instead. Applied once, to the raw rows from the server.
+	static func badged(_ c: ConversationSummary) -> ConversationSummary {
+		var c = c
+		c.showsQuietDot = c.hasQuietNews
+		c.unreadCount = c.badgeCount
+		return c
+	}
+
+	/// The person's sections as list sections, in their order. A chat sits in the first section that
+	/// names it; pinned chats come first inside a section, the rest keep the server's order. A chat the
+	/// list has not loaded yet is left out until it arrives.
+	private static func customSections(_ input: Input, active: [ConversationSummary]) -> [Section] {
+		let byID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+		var placed: Set<String> = []
+		return input.sections.sorted { $0.position < $1.position }.map { section in
+			var chats: [ConversationSummary] = []
+			for id in section.conversationIDs {
+				guard let chat = byID[id], placed.insert(id).inserted else { continue }
+				chats.append(chat)
+			}
+			let ordered = chats.filter(\.pinned) + chats.filter { !$0.pinned }
+			var result = Section(
+				id: "section:\(section.id)", kind: .custom, label: section.name, count: ordered.count,
+				rows: ordered.map(conversationRow))
+			result.sectionID = section.id
+			result.collapsed = section.collapsed
+			result.badge = ordered.reduce(0) { $0 + $1.unreadCount }
+			return result
+		}
+	}
+
+	/// An open view: one flat list, newest first, with no tiles above it. The server decides what is in it.
+	private static func viewLayout(_ view: TeamView, input: Input) -> TeamLayout {
+		let rows = byRecency(input.viewConversations.filter { !$0.archived }.map { conversationRow(badged($0)) })
+		let section = Section(
+			id: "view-\(view.rawValue)", kind: .view(view), label: view.label, count: rows.count, rows: rows,
+			showsMarkAllRead: view == .waiting && rows.contains { row in
+				if case .conversation(let c) = row.kind { return c.mentionsUnread > 0 }
+				return false
+			})
+		return TeamLayout(
+			tiles: [], sections: [section], archivedCount: 0, showsArchived: false, archivedMatches: [], empty: nil,
+			unreadCount: rows.filter(\.isUnread).count, isFiltering: true)
 	}
 
 	// MARK: Sections layout
@@ -477,18 +559,20 @@ public struct TeamLayout: Equatable, Sendable {
 		if !working.isEmpty {
 			sections.append(
 				Section(
-					id: "working", kind: .working, label: "Working", count: working.count,
+					id: "working", kind: .working, label: input.sectionsEnabled ? "Running" : "Working", count: working.count,
 					rows: byRecency(working.map(conversationRow))))
 		}
 
 		// UNREAD: conversations (or people, when grouping by person) and flows with unread.
-		let unreadConversations = conversations.filter(\.isUnread)
+		// With sections on there is no Unread group: Waiting on you replaces it, and a chat with news
+		// stays in its time group with a hollow dot.
+		let unreadConversations = input.sectionsEnabled ? [] : conversations.filter(\.isUnread)
 		let unreadRows: [Row]
 		switch input.options.grouping {
 		case .byPerson: unreadRows = personRows(unreadConversations, me: me)
 		case .byTime, .newestFirst, .byAgent: unreadRows = unreadConversations.map(conversationRow)
 		}
-		let unread = byRecency(unreadRows + flows.filter { $0.unreadCount > 0 }.map(flowRow))
+		let unread = byRecency(unreadRows + (input.sectionsEnabled ? [] : flows.filter { $0.unreadCount > 0 }.map(flowRow)))
 		if !unread.isEmpty {
 			sections.append(
 				Section(
@@ -497,7 +581,7 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 
 		// FLOWS: the rest of the flows, capped unless filtering or opened.
-		let restFlows = byRecency(flows.filter { $0.unreadCount == 0 }.map(flowRow))
+		let restFlows = byRecency(flows.filter { input.sectionsEnabled || $0.unreadCount == 0 }.map(flowRow))
 		if !restFlows.isEmpty {
 			let open = isFiltering || input.expandedSectionIDs.contains("flows")
 			let capped = open ? restFlows : Array(restFlows.prefix(sectionCap))
@@ -509,7 +593,7 @@ public struct TeamLayout: Equatable, Sendable {
 		}
 
 		// Everything read, by the chosen grouping.
-		let read = conversations.filter { !$0.isUnread }
+		let read = input.sectionsEnabled ? conversations : conversations.filter { !$0.isUnread }
 		switch input.options.grouping {
 		case .byTime, .byAgent:
 			sections += timeSections(read, input: input)
@@ -598,7 +682,7 @@ public struct TeamLayout: Equatable, Sendable {
 
 	/// An agent in the conversation is running right now.
 	public static func isWorking(_ c: ConversationSummary, workingAgentIDs: Set<String>) -> Bool {
-		c.participants.contains { $0.kind == .agent && workingAgentIDs.contains($0.id) }
+		c.agentRunning || c.participants.contains { $0.kind == .agent && workingAgentIDs.contains($0.id) }
 	}
 
 	/// One list: an ALL card mixing flows and conversations, newest first.
@@ -833,6 +917,12 @@ public struct TeamPreferences: Sendable {
 	public var pinOrder: [String] {
 		get { defaults.value.stringArray(forKey: "\(scope).pinOrder") ?? [] }
 		nonmutating set { defaults.value.set(newValue, forKey: "\(scope).pinOrder") }
+	}
+
+	/// The first-view note about chats that left the list was dismissed. Per person, on this device.
+	public var quietNoteSeen: Bool {
+		get { defaults.value.bool(forKey: "\(scope).quietNoteSeen") }
+		nonmutating set { defaults.value.set(newValue, forKey: "\(scope).quietNoteSeen") }
 	}
 
 	/// Flows have no server-side pin yet, so a pinned flow is remembered here.

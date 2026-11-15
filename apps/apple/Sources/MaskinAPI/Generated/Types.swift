@@ -40,7 +40,7 @@ public protocol APIProtocol: Sendable {
     func get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph(_ input: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Input) async throws -> Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output
     /// Bounded multi-hop graph traversal from an object
     ///
-    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.
+    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.
     ///
     /// - Remark: HTTP `GET /api/objects/{id}/graph/traverse`.
     /// - Remark: Generated from `#/paths//api/objects/{id}/graph/traverse/get`.
@@ -517,6 +517,43 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PATCH /api/conversations/{id}/me`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/me/patch`.
     func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me(_ input: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me.Input) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me.Output
+    /// List the caller's own chat sections, in order
+    ///
+    /// - Remark: HTTP `GET /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/get`.
+    func get_sol_api_sol_chat_hyphen_sections(_ input: Operations.get_sol_api_sol_chat_hyphen_sections.Input) async throws -> Operations.get_sol_api_sol_chat_hyphen_sections.Output
+    /// Create a section, last in the caller’s order
+    ///
+    /// - Remark: HTTP `POST /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/post`.
+    func post_sol_api_sol_chat_hyphen_sections(_ input: Operations.post_sol_api_sol_chat_hyphen_sections.Input) async throws -> Operations.post_sol_api_sol_chat_hyphen_sections.Output
+    /// Put the caller’s sections in a new order
+    ///
+    /// Send every one of the caller’s section ids exactly once, in the order they should show.
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/order`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/order/put`.
+    func put_sol_api_sol_chat_hyphen_sections_sol_order(_ input: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input) async throws -> Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output
+    /// Rename a section, or fold or unfold it
+    ///
+    /// - Remark: HTTP `PATCH /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch`.
+    func patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(_ input: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input) async throws -> Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output
+    /// Delete a section; its chats go back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/delete`.
+    func delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(_ input: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input) async throws -> Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output
+    /// Put a chat in a section, out of any other section it was in
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/put`.
+    func put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(_ input: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input) async throws -> Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output
+    /// Take a chat out of a section; it goes back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/delete`.
+    func delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(_ input: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input) async throws -> Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output
     /// List sessions (lean by default; pass verbose=true for the full shape)
     ///
     /// - Remark: HTTP `GET /api/sessions`.
@@ -814,7 +851,7 @@ extension APIProtocol {
     }
     /// Bounded multi-hop graph traversal from an object
     ///
-    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.
+    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.
     ///
     /// - Remark: HTTP `GET /api/objects/{id}/graph/traverse`.
     /// - Remark: Generated from `#/paths//api/objects/{id}/graph/traverse/get`.
@@ -2039,6 +2076,95 @@ extension APIProtocol {
             path: path,
             headers: headers,
             body: body
+        ))
+    }
+    /// List the caller's own chat sections, in order
+    ///
+    /// - Remark: HTTP `GET /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/get`.
+    public func get_sol_api_sol_chat_hyphen_sections(headers: Operations.get_sol_api_sol_chat_hyphen_sections.Input.Headers) async throws -> Operations.get_sol_api_sol_chat_hyphen_sections.Output {
+        try await get_sol_api_sol_chat_hyphen_sections(Operations.get_sol_api_sol_chat_hyphen_sections.Input(headers: headers))
+    }
+    /// Create a section, last in the caller’s order
+    ///
+    /// - Remark: HTTP `POST /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/post`.
+    public func post_sol_api_sol_chat_hyphen_sections(
+        headers: Operations.post_sol_api_sol_chat_hyphen_sections.Input.Headers,
+        body: Operations.post_sol_api_sol_chat_hyphen_sections.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_chat_hyphen_sections.Output {
+        try await post_sol_api_sol_chat_hyphen_sections(Operations.post_sol_api_sol_chat_hyphen_sections.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Put the caller’s sections in a new order
+    ///
+    /// Send every one of the caller’s section ids exactly once, in the order they should show.
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/order`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/order/put`.
+    public func put_sol_api_sol_chat_hyphen_sections_sol_order(
+        headers: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Headers,
+        body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input.Body? = nil
+    ) async throws -> Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output {
+        try await put_sol_api_sol_chat_hyphen_sections_sol_order(Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Rename a section, or fold or unfold it
+    ///
+    /// - Remark: HTTP `PATCH /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch`.
+    public func patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(
+        path: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Headers,
+        body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Body? = nil
+    ) async throws -> Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output {
+        try await patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Delete a section; its chats go back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/delete`.
+    public func delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(
+        path: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Path,
+        headers: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output {
+        try await delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Put a chat in a section, out of any other section it was in
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/put`.
+    public func put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(
+        path: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Path,
+        headers: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Headers
+    ) async throws -> Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output {
+        try await put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Take a chat out of a section; it goes back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/delete`.
+    public func delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(
+        path: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Path,
+        headers: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output {
+        try await delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input(
+            path: path,
+            headers: headers
         ))
     }
     /// List sessions (lean by default; pass verbose=true for the full shape)

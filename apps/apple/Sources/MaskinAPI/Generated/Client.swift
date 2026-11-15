@@ -984,7 +984,7 @@ public struct Client: APIProtocol {
     }
     /// Bounded multi-hop graph traversal from an object
     ///
-    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.
+    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.
     ///
     /// - Remark: HTTP `GET /api/objects/{id}/graph/traverse`.
     /// - Remark: Generated from `#/paths//api/objects/{id}/graph/traverse/get`.
@@ -1357,6 +1357,28 @@ public struct Client: APIProtocol {
                         preconditionFailure("bestContentType chose an invalid content type.")
                     }
                     return .notFound(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
                 default:
                     return .undocumented(
                         statusCode: response.status.code,
@@ -10024,6 +10046,13 @@ public struct Client: APIProtocol {
                     in: &request,
                     style: .form,
                     explode: true,
+                    name: "view",
+                    value: input.query.view
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
                     name: "limit",
                     value: input.query.limit
                 )
@@ -11585,6 +11614,660 @@ public struct Client: APIProtocol {
                     case "application/json":
                         body = try await converter.getResponseBodyAsJSON(
                             Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// List the caller's own chat sections, in order
+    ///
+    /// - Remark: HTTP `GET /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/get`.
+    public func get_sol_api_sol_chat_hyphen_sections(_ input: Operations.get_sol_api_sol_chat_hyphen_sections.Input) async throws -> Operations.get_sol_api_sol_chat_hyphen_sections.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.get_sol_api_sol_chat_hyphen_sections.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections",
+                    parameters: []
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .get
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.get_sol_api_sol_chat_hyphen_sections.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Create a section, last in the caller’s order
+    ///
+    /// - Remark: HTTP `POST /api/chat-sections`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/post`.
+    public func post_sol_api_sol_chat_hyphen_sections(_ input: Operations.post_sol_api_sol_chat_hyphen_sections.Input) async throws -> Operations.post_sol_api_sol_chat_hyphen_sections.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.post_sol_api_sol_chat_hyphen_sections.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections",
+                    parameters: []
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .post
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 201:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_chat_hyphen_sections.Output.Created.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .created(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.post_sol_api_sol_chat_hyphen_sections.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Put the caller’s sections in a new order
+    ///
+    /// Send every one of the caller’s section ids exactly once, in the order they should show.
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/order`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/order/put`.
+    public func put_sol_api_sol_chat_hyphen_sections_sol_order(_ input: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Input) async throws -> Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections/order",
+                    parameters: []
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .put
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 400:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_chat_hyphen_sections_sol_order.Output.BadRequest.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .badRequest(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Rename a section, or fold or unfold it
+    ///
+    /// - Remark: HTTP `PATCH /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/patch`.
+    public func patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(_ input: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input) async throws -> Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections/{}",
+                    parameters: [
+                        input.path.id
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .patch
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                let body: OpenAPIRuntime.HTTPBody?
+                switch input.body {
+                case .none:
+                    body = nil
+                case let .json(value):
+                    body = try converter.setOptionalRequestBodyAsJSON(
+                        value,
+                        headerFields: &request.headerFields,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                }
+                return (request, body)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                case 409:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.patch_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .conflict(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Delete a section; its chats go back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/delete`.
+    public func delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_(_ input: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Input) async throws -> Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections/{}",
+                    parameters: [
+                        input.path.id
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .delete
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Put a chat in a section, out of any other section it was in
+    ///
+    /// - Remark: HTTP `PUT /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/put`.
+    public func put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(_ input: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input) async throws -> Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections/{}/chats/{}",
+                    parameters: [
+                        input.path.id,
+                        input.path.conversationId
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .put
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.put_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .notFound(.init(body: body))
+                default:
+                    return .undocumented(
+                        statusCode: response.status.code,
+                        .init(
+                            headerFields: response.headerFields,
+                            body: responseBody
+                        )
+                    )
+                }
+            }
+        )
+    }
+    /// Take a chat out of a section; it goes back to the list
+    ///
+    /// - Remark: HTTP `DELETE /api/chat-sections/{id}/chats/{conversationId}`.
+    /// - Remark: Generated from `#/paths//api/chat-sections/{id}/chats/{conversationId}/delete`.
+    public func delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_(_ input: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Input) async throws -> Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output {
+        try await client.send(
+            input: input,
+            forOperation: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.id,
+            serializer: { input in
+                let path = try converter.renderedPath(
+                    template: "/api/chat-sections/{}/chats/{}",
+                    parameters: [
+                        input.path.id,
+                        input.path.conversationId
+                    ]
+                )
+                var request: HTTPTypes.HTTPRequest = .init(
+                    soar_path: path,
+                    method: .delete
+                )
+                suppressMutabilityWarning(&request)
+                try converter.setHeaderFieldAsURI(
+                    in: &request.headerFields,
+                    name: "x-workspace-id",
+                    value: input.headers.x_hyphen_workspace_hyphen_id
+                )
+                converter.setAcceptHeader(
+                    in: &request.headerFields,
+                    contentTypes: input.headers.accept
+                )
+                return (request, nil)
+            },
+            deserializer: { response, responseBody in
+                switch response.status.code {
+                case 200:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.Ok.Body.jsonPayload.self,
+                            from: responseBody,
+                            transforming: { value in
+                                .json(value)
+                            }
+                        )
+                    default:
+                        preconditionFailure("bestContentType chose an invalid content type.")
+                    }
+                    return .ok(.init(body: body))
+                case 404:
+                    let contentType = converter.extractContentTypeIfPresent(in: response.headerFields)
+                    let body: Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body
+                    let chosenContentType = try converter.bestContentType(
+                        received: contentType,
+                        options: [
+                            "application/json"
+                        ]
+                    )
+                    switch chosenContentType {
+                    case "application/json":
+                        body = try await converter.getResponseBodyAsJSON(
+                            Operations.delete_sol_api_sol_chat_hyphen_sections_sol__lcub_id_rcub__sol_chats_sol__lcub_conversationId_rcub_.Output.NotFound.Body.jsonPayload.self,
                             from: responseBody,
                             transforming: { value in
                                 .json(value)

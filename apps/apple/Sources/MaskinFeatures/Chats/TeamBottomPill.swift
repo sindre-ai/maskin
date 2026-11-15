@@ -71,7 +71,8 @@ struct TeamBottomAccessory: View {
 		if let store = model.store {
 			TeamFilterChips(
 				chip: Bindable(store).chip, unreadCount: model.unreadCount,
-				threadsUnread: store.threadSections.unreadCount, onThreads: model.onThreads, onGlass: true)
+				threadsUnread: store.threadSections.unreadCount, onThreads: model.onThreads, onGlass: true,
+				hidesUnread: store.sectionsEnabled)
 		}
 	}
 }
@@ -82,11 +83,12 @@ struct TeamFloatingPill: View {
 	let unreadCount: Int
 	var threadsUnread = 0
 	var onThreads: (() -> Void)?
+	var hidesUnread = false
 
 	var body: some View {
 		TeamFilterChips(
 			chip: $chip, unreadCount: unreadCount, threadsUnread: threadsUnread, onThreads: onThreads,
-			onGlass: true
+			onGlass: true, hidesUnread: hidesUnread
 		)
 		.padding(.vertical, MaskinSpace.s1)
 		.maskinGlassCapsule()
