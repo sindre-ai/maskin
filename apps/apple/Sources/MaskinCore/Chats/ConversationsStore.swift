@@ -217,7 +217,8 @@ public final class ConversationsStore {
 				archived: archivedConversations, options: displayOptions,
 				chip: Self.effectiveChip(displayOptions, chip, sectionsEnabled: sectionsEnabled), query: query, currentActorID: currentActorID,
 				pinOrder: pinOrder, pinnedFlowIDs: pinnedFlowIDs, expandedSectionIDs: expandedSectionIDs,
-				workingAgentIDs: working, mentionedConversationIDs: mentionConversationIDs,
+				workingAgentIDs: working,
+				mentionedConversationIDs: sectionsEnabled ? Set(conversations.filter { $0.mentionsUnread > 0 }.map(\.id)) : mentionConversationIDs,
 				sectionsEnabled: sectionsEnabled, sections: sections, view: sectionsEnabled ? activeView : nil,
 				viewConversations: activeView.flatMap { viewRows[$0] } ?? [], now: now))
 	}
@@ -308,6 +309,9 @@ public final class ConversationsStore {
 				}
 			}
 		}
+		// The feature flag is read once here, so every screen that holds a store agrees.
+		let enabled = await api.sectionsEnabled()
+		if enabled != sectionsEnabled { sectionsEnabled = enabled }
 		async let main: Void = refresh()
 		async let archived: Void = refreshArchived()
 		async let flows: Void = refreshFlowRooms()

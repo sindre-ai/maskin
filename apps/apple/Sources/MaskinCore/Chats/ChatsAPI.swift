@@ -59,6 +59,9 @@ public protocol ConversationsAPI: Sendable {
 	/// One automatic view of the caller's chats (`GET /api/conversations?view=`): waiting on you,
 	/// running, or quiet. Combines with nothing else; the rows carry the same fields as the list.
 	func list(view: TeamView, limit: Int, offset: Int) async throws -> ConversationPage
+	/// The sectioned list is on for this person (the `chat-list-sections` feature flag). The one place
+	/// the flag is read; the store keeps the answer. Off, or unreachable, draws the list as it was.
+	func sectionsEnabled() async -> Bool
 	/// The caller's own sections, in order, each with its chats (`GET /api/chat-sections`).
 	func sections() async throws -> [ChatSection]
 	/// `POST /api/chat-sections`: a new section, last in the order. A taken name is a `ChatsError`.
@@ -80,6 +83,7 @@ extension ConversationsAPI {
 	public func list(view: TeamView, limit: Int, offset: Int) async throws -> ConversationPage {
 		ConversationPage(conversations: [], hasMore: false)
 	}
+	public func sectionsEnabled() async -> Bool { false }
 	public func sections() async throws -> [ChatSection] { [] }
 	public func createSection(name: String) async throws -> ChatSection {
 		throw ChatsError("Sections aren't available here.")

@@ -31,6 +31,13 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 			limit: limit, offset: offset, flowID: nil)
 	}
 
+	/// One automatic view (`?view=`): the server picks the chats, the rows carry the same fields.
+	public func list(view: TeamView, limit: Int, offset: Int) async throws -> ConversationPage {
+		try await fetchList(
+			archived: false, pinnedOnly: false, unreadOnly: false, hideQuiet: false, limit: limit,
+			offset: offset, flowID: nil, view: view)
+	}
+
 	/// A flow's room: the one chat whose subject is the flow (a flow is an object of type loop).
 	public func flowConversation(flowID: String, archived: Bool) async throws -> ConversationSummary? {
 		try await fetchList(
@@ -41,7 +48,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 
 	private func fetchList(
 		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int,
-		flowID: String?
+		flowID: String?, view: TeamView? = nil
 	) async throws -> ConversationPage {
 		let subjectType: Operations.get_sol_api_sol_conversations.Input.Query.subject_typePayload? =
 			flowID == nil ? nil : .object
@@ -53,6 +60,7 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 					pinned: pinnedOnly ? true : nil, archived: archived ? true : nil,
 					unread_only: unreadOnly ? true : nil, subject_type: subjectType, subject_id: flowID,
 					hide_quiet: hideQuiet ? true : nil,
+					view: view.flatMap { Operations.get_sol_api_sol_conversations.Input.Query.viewPayload(rawValue: $0.rawValue) },
 					limit: min(limit, ChatLimits.maxConversationsPage), offset: offset),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		switch output {
@@ -70,7 +78,9 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 							ChatParticipant(id: $0.actorId, name: $0.actorName, actorType: $0.actorType)
 						},
 						roomKind: Self.roomKind(row.roomKind?.rawValue),
-						flowID: row.roomKind?.rawValue == RoomKind.flow.rawValue ? row.subjectId : nil)
+						flowID: row.roomKind?.rawValue == RoomKind.flow.rawValue ? row.subjectId : nil,
+						sectionID: row.sectionId, mentionsUnread: Int(row.mentions_unread),
+						openCards: Int(row.open_cards), cardText: row.card_text, agentRunning: row.agent_running)
 				},
 				hasMore: body.has_more)
 		default:

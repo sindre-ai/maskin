@@ -13,7 +13,11 @@ final class ShellBadges {
 	@ObservationIgnored private var prefetcher: ThreadPrefetcher?
 	@ObservationIgnored private var workspaceID: String?
 
-	var unreadChats: Int { chats?.conversations.unreadChatCount ?? 0 }
+	/// With sections on the badge is what waits on you (mentions plus open cards), not how many chats have news.
+	var unreadChats: Int {
+		guard let chats else { return 0 }
+		return chats.sectionsEnabled ? chats.conversations.waitingBadgeTotal : chats.conversations.unreadChatCount
+	}
 
 	func start(environment: AppEnvironment) async {
 		guard let workspaceID = environment.workspaceId else {

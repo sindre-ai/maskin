@@ -17,6 +17,8 @@ struct TeamFilterChips: View {
 	/// ends, the selected chip is scrolled into view when the row appears, and only the pill's
 	/// chips are drawn.
 	var onGlass = false
+	/// Waiting on you replaces Unread once sections are on, so the Unread chip is not drawn.
+	var hidesUnread = false
 
 	/// The chips the bottom pill draws, in order; Threads sits after Unread.
 	static let pillChips: [TeamFilterChip] = [.all, .unread, .pinned]
@@ -24,7 +26,7 @@ struct TeamFilterChips: View {
 	/// The filter chips in order; Threads sits after Unread.
 	private static let allChips = TeamFilterChip.allCases.filter { $0 != .flows }
 
-	private var chips: [TeamFilterChip] { onGlass ? Self.pillChips : Self.allChips }
+	private var chips: [TeamFilterChip] { (onGlass ? Self.pillChips : Self.allChips).filter { !(hidesUnread && $0 == .unread) } }
 
 	@ViewBuilder
 	private func chipButton(_ item: TeamFilterChip) -> some View {

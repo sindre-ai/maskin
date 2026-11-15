@@ -25,6 +25,8 @@ struct TeamRowActions {
 	/// Room changes: "Make this a room" on an ordinary chat; "Make this a flow" and "Turn back into
 	/// a chat" on a room. Empty for direct messages, people, flows and a flow's own room.
 	var roomActions: [RoomAction] = []
+	/// Opens the Move to section sheet. Nil when sections are off, and for people and flows.
+	var moveToSection: (() -> Void)? = nil
 
 	struct RoomAction: Identifiable {
 		var title: String
@@ -109,6 +111,9 @@ struct TeamRowMenuItems: View {
 			Button(
 				actions.readMenuLabel, systemImage: actions.isUnread ? "envelope.open" : "envelope.badge",
 				action: actions.toggleRead)
+		}
+		if let moveToSection = actions.moveToSection {
+			Button("Move to section", systemImage: "folder", action: moveToSection)
 		}
 		if let earlier = actions.moveEarlier {
 			Button("Move earlier", systemImage: "arrow.up", action: earlier)

@@ -40,6 +40,16 @@ struct ConversationListView: View {
 	@State private var expandedSections: Set<String> = []
 	@State private var menuTarget: TeamRowMenuTarget?
 	@State private var deleteTarget: DeleteTarget?
+	@State private var moveTarget: ConversationSummary?
+	@State private var nameRequest: SectionNameRequest?
+	@State private var addChatsTarget: ChatSection?
+
+	/// What the name sheet is for: a new section (with a chat to move in, or none) or a rename.
+	private struct SectionNameRequest: Identifiable {
+		enum Kind { case new(movingChatID: String?), rename(ChatSection) }
+		let id = UUID()
+		var kind: Kind
+	}
 
 	private struct DeleteTarget: Identifiable {
 		var id: String
@@ -128,12 +138,39 @@ struct ConversationListView: View {
 			if pillPlacement == .floating, store.displayOptions.showsFilterChips, !picking.isActive {
 				TeamFloatingPill(
 					chip: $store.chip, unreadCount: layout.unreadCount,
-					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads,
+					hidesUnread: store.sectionsEnabled)
 			}
 		}
 		.onChange(of: layout.unreadCount, initial: true) { _, count in pill?.unreadCount = count }
 		.onChange(of: picking.isActive, initial: true) { _, active in pill?.isSelecting = active }
 		.teamRowMenu($menuTarget)
+		.sheet(item: $moveTarget) { chat in
+			MoveToSectionSheet(
+				chatTitle: TeamLayout.title(of: chat, me: currentActorID), sections: store.sections,
+				currentSectionID: store.section(containing: chat.id)?.id,
+				onPick: { sectionID in moveChat(chat, to: sectionID) },
+				onNewSection: { nameRequest = SectionNameRequest(kind: .new(movingChatID: chat.id)) })
+		}
+		.sheet(item: $nameRequest) { request in
+			switch request.kind {
+			case .new(let chatID):
+				SectionNameSheet(title: "New section", confirmLabel: "Add section", sections: store.sections) { name in
+					addSection(named: name, moving: chatID)
+				}
+			case .rename(let section):
+				SectionNameSheet(
+					title: "Rename", confirmLabel: "Rename", sections: store.sections, renaming: section
+				) { name in
+					Task { await store.renameSection(section.id, to: name) }
+				}
+			}
+		}
+		.sheet(item: $addChatsTarget) { section in
+			AddChatsSheet(
+				sectionName: section.name, candidates: chatsAvailableForSections, currentActorID: currentActorID
+			) { ids in addChats(ids, to: section) }
+		}
 		.confirmationDialog(
 			deleteTarget.map { $0.conversationIDs.count > 1 ? "Delete \($0.conversationIDs.count) conversations with \($0.title)?" : "Delete this conversation?" } ?? "",
 			isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
@@ -268,7 +305,15 @@ struct ConversationListView: View {
 	}
 
 	private func status(for row: TeamLayout.Row) -> ConversationRowStatus {
-		rawStatus(for: row).applying(store.displayOptions)
+		var status = rawStatus(for: row).applying(store.displayOptions)
+		// An open view says why the chat is there, in place of the latest message.
+		if store.sectionsEnabled, let view = store.activeView, case .conversation(let c) = row.kind,
+			let reason = TeamViewRules.reason(for: view, c, now: now ?? Date())
+		{
+			status.preview = reason
+			status.previewPieces = nil
+		}
+		return status
 	}
 
 	private func rawStatus(for row: TeamLayout.Row) -> ConversationRowStatus {
@@ -332,7 +377,8 @@ struct ConversationListView: View {
 			delete: { deleteTarget = DeleteTarget(id: c.id, title: TeamLayout.title(of: c, me: currentActorID), conversationIDs: [c.id]) },
 			more: { menuTarget = TeamRowMenuTarget(id: c.id, title: TeamLayout.title(of: c, me: currentActorID), actions: actions(for: c)) },
 			select: { picking.enter(selecting: c.id) },
-			roomActions: roomActions(for: c))
+			roomActions: roomActions(for: c),
+			moveToSection: store.sectionsEnabled ? { moveTarget = c } : nil)
 	}
 
 	/// "Make this a room" on an ordinary chat; "Make this a flow" and "Turn back into a chat" on a
@@ -456,6 +502,29 @@ struct ConversationListView: View {
 	/// The active chats: filter chips, the Pinned rows, then the day or person sections.
 	@ViewBuilder
 	private func activeContent(layout: TeamLayout, now: Date) -> some View {
+		if store.sectionsEnabled, let view = store.activeView {
+			openView(view, layout: layout, now: now)
+		} else {
+			defaultContent(layout: layout, now: now)
+		}
+	}
+
+	@ViewBuilder
+	private func defaultContent(layout: TeamLayout, now: Date) -> some View {
+			if store.sectionsEnabled, !layout.isFiltering, !picking.isActive {
+				TeamViewTiles(active: $store.activeView, counts: store.tileCount)
+					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+				if !store.quietNoteSeen, store.quietChatCount > 0 {
+					QuietNote(
+						count: store.quietChatCount,
+						onView: {
+							store.dismissQuietNote()
+							store.activeView = .quiet
+						},
+						onDismiss: { store.dismissQuietNote() })
+						.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+				}
+			}
 			if store.displayOptions.isSectioned, !layout.isFiltering, !picking.isActive {
 				TeamListViewSwitch(selection: $store.displayOptions.listView)
 					.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
@@ -463,7 +532,8 @@ struct ConversationListView: View {
 			if store.displayOptions.showsFilterChips, pillPlacement == .top, !picking.isActive {
 				TeamFilterChips(
 					chip: $store.chip, unreadCount: layout.unreadCount,
-					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
+					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads,
+					hidesUnread: store.sectionsEnabled)
 					.plainRow(insets: EdgeInsets(top: 0, leading: 0, bottom: MaskinSpace.s4, trailing: 0))
 			}
 			if let onThreads, !store.displayOptions.showsFilterChips, !store.threads.isEmpty, !picking.isActive {
@@ -480,20 +550,158 @@ struct ConversationListView: View {
 				}
 			}
 			ForEach(layout.sections) { section in
-				Section {
-					ForEach(section.rows) { row in
-						rowView(row, now: now)
+				if section.kind == .custom {
+					customSection(section, now: now)
+				} else {
+					Section {
+						ForEach(section.rows) { row in
+							rowView(row, now: now)
+						}
+						sectionFooter(section)
+					} header: {
+						TeamSectionHeader(
+							label: section.label, count: section.count,
+							countColor: section.kind == .unread ? MaskinColor.sig : MaskinColor.inkPlaceholder)
 					}
-					sectionFooter(section)
-				} header: {
-					TeamSectionHeader(
-						label: section.label, count: section.count,
-						countColor: section.kind == .unread ? MaskinColor.sig : MaskinColor.inkPlaceholder)
+				}
+			}
+			if store.sectionsEnabled, !layout.isFiltering, !picking.isActive {
+				Button { nameRequest = SectionNameRequest(kind: .new(movingChatID: nil)) } label: {
+					Label("New section", systemImage: "plus")
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.sigInk)
+						.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin - MaskinSpace.s12, alignment: .leading)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed)
+				.rowChrome()
+				if store.quietNoteSeen, store.quietChatCount > 0 {
+					QuietFooter(count: store.quietChatCount) { store.activeView = .quiet }
+						.plainRow(insets: EdgeInsets(top: MaskinSpace.s4, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 				}
 			}
 			if let empty = layout.empty, store.phase == .loaded {
 				TeamEmptyState(empty: empty, onSuggestion: onSuggestion) { act(on: empty, query: search) }.plainRow()
 			}
+	}
+
+	// MARK: Sections and views
+
+	/// One of the person's sections: a folding header, its chats, or the empty-section prompt.
+	@ViewBuilder
+	private func customSection(_ section: TeamLayout.Section, now: Date) -> some View {
+		let sections = store.sections
+		let index = sections.firstIndex { $0.id == section.sectionID }
+		Section {
+			if !section.collapsed {
+				if section.rows.isEmpty {
+					EmptySectionRow(name: section.label) { addChatsTarget = sections.first { $0.id == section.sectionID } }
+						.rowChrome()
+				}
+				ForEach(section.rows) { row in
+					rowView(row, now: now)
+				}
+			}
+		} header: {
+			CustomSectionHeader(
+				section: section, canMoveUp: (index ?? 0) > 0, canMoveDown: index.map { $0 < sections.count - 1 } ?? false,
+				onToggle: {
+					guard let id = section.sectionID else { return }
+					withAnimation(MaskinMotion.standard) { Task { await store.setSectionCollapsed(id, !section.collapsed) } }
+				},
+				onRename: { if let found = sections.first(where: { $0.id == section.sectionID }) { nameRequest = SectionNameRequest(kind: .rename(found)) } },
+				onMoveUp: { if let id = section.sectionID { Task { await store.moveSection(id, by: -1) } } },
+				onMoveDown: { if let id = section.sectionID { Task { await store.moveSection(id, by: 1) } } },
+				onDelete: { if let id = section.sectionID { deleteSection(id) } })
+		}
+	}
+
+	/// An open view: the way back, the title and intro, then the flat list or its empty, loading or error state.
+	@ViewBuilder
+	private func openView(_ view: TeamView, layout: TeamLayout, now: Date) -> some View {
+		let rows = layout.sections.first?.rows ?? []
+		TeamViewHeader(
+			view: view, count: rows.count, onBack: { store.activeView = nil },
+			onMarkMentionsRead: view == .waiting && layout.sections.first?.showsMarkAllRead == true
+				? { markMentionsRead(rows) } : nil)
+			.plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
+		if store.viewRows[view] == nil, !store.viewFailed.contains(view) {
+			LoadingSkeleton(rows: 5).plainRow(insets: EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
+		} else if store.viewFailed.contains(view), rows.isEmpty {
+			EmptyState(
+				symbol: "wifi.exclamationmark", title: "Couldn\u{2019}t load \(view.label)",
+				message: "Check your connection and try again.") {
+				VStack(spacing: MaskinSpace.s5) {
+					Button("Try again") { Task { await store.refreshViews() } }.buttonStyle(.secondaryAction)
+					Button("Back to all chats") { store.activeView = nil }.buttonStyle(.secondaryAction)
+				}
+			}
+			.plainRow()
+		} else if rows.isEmpty {
+			EmptyState(symbol: "tray", title: view.emptyTitle, message: view.emptyMessage) {
+				Button("Back to all chats") { store.activeView = nil }.buttonStyle(.secondaryAction)
+			}
+			.plainRow()
+		} else {
+			ForEach(rows) { row in rowView(row, now: now) }
+		}
+	}
+
+	/// Waiting on you, "Mark mentions read": open cards stay until they are answered.
+	private func markMentionsRead(_ rows: [TeamLayout.Row]) {
+		let ids = rows.compactMap { row -> String? in
+			if case .conversation(let c) = row.kind, c.mentionsUnread > 0 { return c.id }
+			return nil
+		}
+		MaskinHaptics.play(.selection)
+		Task {
+			_ = await store.markRead(ids)
+			await store.refreshViews()
+		}
+	}
+
+	/// Chats a section can take: loaded, not archived, in no section yet.
+	private var chatsAvailableForSections: [ConversationSummary] {
+		store.conversations.filter { !$0.archived && store.section(containing: $0.id) == nil }
+	}
+
+	private func moveChat(_ chat: ConversationSummary, to sectionID: String?) {
+		Task {
+			guard let outcome = await store.move(chat.id, to: sectionID) else { return }
+			let message = sectionID.flatMap { store.section(id: $0) }.map { "Moved to \($0.name)." } ?? "Back in your list."
+			undoOffer = UndoOffer(message: "\(message) Undo.") { _ = await store.move(chat.id, to: outcome.previousSectionID) }
+		}
+	}
+
+	private func addSection(named name: String, moving chatID: String?) {
+		Task {
+			guard let created = await store.addSection(named: name, moving: chatID) else { return }
+			let message = chatID == nil ? "Added \(created.name)." : "Added \(created.name) and moved the chat in."
+			undoOffer = UndoOffer(message: "\(message) Undo.") { _ = await store.deleteSection(created.id) }
+		}
+	}
+
+	private func addChats(_ ids: [String], to section: ChatSection) {
+		Task {
+			var moved: [(id: String, previous: String?)] = []
+			for id in ids {
+				if let outcome = await store.move(id, to: section.id) { moved.append((id, outcome.previousSectionID)) }
+			}
+			guard !moved.isEmpty else { return }
+			let undoing = moved
+			undoOffer = UndoOffer(message: "Moved to \(section.name). Undo.") {
+				for item in undoing { _ = await store.move(item.id, to: item.previous) }
+			}
+		}
+	}
+
+	private func deleteSection(_ id: String) {
+		Task {
+			guard let removed = await store.deleteSection(id) else { return }
+			undoOffer = UndoOffer(
+				message: "\(TeamViewRules.deletedMessage(name: removed.name, chats: removed.conversationIDs.count)) Undo."
+			) { _ = await store.restoreSection(removed) }
+		}
 	}
 
 	/// The archive, reached from Display > Chats > Archived: a flat list, each row opens or unarchives.
@@ -584,9 +792,12 @@ struct ChatsDisplaySheet: View {
 				DisplayChoice(
 					label: "Chats", options: [(false, "Active"), (true, "Archived")],
 					selection: $store.showsArchivedList)
-				DisplayChoice(
-					label: "Show", options: [(false, "All chats"), (true, "Unread")],
-					selection: $store.displayOptions.unreadOnly)
+				// Waiting on you replaces the Unread filter once sections are on.
+				if !store.sectionsEnabled {
+					DisplayChoice(
+						label: "Show", options: [(false, "All chats"), (true, "Unread")],
+						selection: $store.displayOptions.unreadOnly)
+				}
 				DisplayChoice(
 					label: "Quick filters", options: [(false, "Hide"), (true, "Show")],
 					selection: $store.displayOptions.showsFilterChips)

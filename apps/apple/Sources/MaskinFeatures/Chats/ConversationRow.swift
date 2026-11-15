@@ -45,6 +45,8 @@ struct TeamRow: View {
 					CountBadge(text: "@").accessibilityLabel("Mentions you")
 				} else if row.isUnread {
 					UnreadBadge(count: row.unreadCount)
+				} else if showsQuietDot {
+					QuietNewsDot()
 				}
 				if canExpand { chevron }
 			}
@@ -85,6 +87,12 @@ struct TeamRow: View {
 	}
 
 	private var title: String { TeamLayout.displayedTitle(of: row.kind, me: currentActorID) }
+
+	/// New messages with nothing for you: a hollow dot, never a number (sectioned list only).
+	private var showsQuietDot: Bool {
+		if case .conversation(let c) = row.kind { return c.showsQuietDot }
+		return false
+	}
 
 	/// A 1:1 conversation with its own title keeps the person's name beside it.
 	private var role: String? {
@@ -131,7 +139,7 @@ struct TeamRow: View {
 		if let role { parts.append(role) }
 		if let subtitle { parts.append(subtitle) }
 		parts.append(status.accessibilityText)
-		if row.isUnread { parts.append("\(row.unreadCount) unread") }
+		if row.isUnread { parts.append("\(row.unreadCount) unread") } else if showsQuietDot { parts.append("New messages, nothing needs you") }
 		return parts.joined(separator: ", ")
 	}
 }
@@ -290,6 +298,16 @@ struct UnreadBadge: View {
 	let count: Int
 	var body: some View {
 		CountBadge(text: count > 99 ? "99+" : "\(count)")
+			.accessibilityHidden(true)
+	}
+}
+
+/// "New messages, nothing needs you": a ring, not a number, so the count stays about what waits on you.
+struct QuietNewsDot: View {
+	var body: some View {
+		Circle()
+			.strokeBorder(MaskinColor.ink5, lineWidth: MaskinSpace.s1 / 2)
+			.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
 			.accessibilityHidden(true)
 	}
 }
