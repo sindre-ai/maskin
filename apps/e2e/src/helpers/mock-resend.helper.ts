@@ -42,3 +42,24 @@ export async function waitForInviteLink(to: string): Promise<string> {
 		.not.toBe('')
 	return link
 }
+
+/** The reset-password URL from the newest email sent to `to`, once one arrives. */
+export async function waitForPasswordResetLink(to: string): Promise<string> {
+	let link = ''
+	await expect
+		.poll(
+			async () => {
+				const mail = (await sentEmails()).filter((m) => [m.to].flat().includes(to)).at(-1)
+				link = mail?.text.match(/https?:\/\/\S+\/reset-password\?token=\S+/)?.[0] ?? ''
+				return link
+			},
+			{ message: `password reset email for ${to}`, timeout: 15000 },
+		)
+		.not.toBe('')
+	return link
+}
+
+/** How many emails have been sent to `to` so far. */
+export async function countSentEmails(to: string): Promise<number> {
+	return (await sentEmails()).filter((m) => [m.to].flat().includes(to)).length
+}

@@ -131,6 +131,15 @@ public enum SignUpError: Error, Sendable, Equatable {
 	case network(String)
 }
 
+/// Why asking for a password reset link failed. The server answers the same 200 whether or not the
+/// email has an account, so there is deliberately no "no such account" case.
+public enum PasswordResetError: Error, Sendable, Equatable {
+	/// 429.
+	case rateLimited
+	case server(status: Int)
+	case network(String)
+}
+
 /// Sign-in and sign-up. A protocol so `AuthSession` is testable without a server.
 public protocol Authenticating: Sendable {
 	/// `POST /api/auth/login`.
@@ -142,6 +151,9 @@ public protocol Authenticating: Sendable {
 		name: String, organization: String, role: String, email: String, password: String,
 		idempotencyKey: String
 	) async throws -> SignUpResult
+	/// `POST /api/auth/forgot-password`. Returns normally for any email the server accepts, known or
+	/// not; the link goes to the inbox and opens the web reset page.
+	func requestPasswordReset(email: String) async throws
 }
 
 extension Authenticating {
@@ -151,6 +163,10 @@ extension Authenticating {
 		idempotencyKey: String
 	) async throws -> SignUpResult {
 		throw SignUpError.network("Sign-up isn't available here.")
+	}
+
+	public func requestPasswordReset(email: String) async throws {
+		throw PasswordResetError.network("Password reset isn't available here.")
 	}
 }
 
@@ -170,6 +186,9 @@ public final class AuthSession {
 	/// Set by a sign-up that created the account but not its first workspace. The account and key
 	/// are saved; the shell's workspace refresh is the retry. Cleared by the next sign-in/up.
 	public private(set) var workspaceProvisioningFailed = false
+	/// True from a successful sign-up until the shell takes it: the card step opens once, right
+	/// after sign-up, and not again on a later launch.
+	public private(set) var justSignedUp = false
 	/// The server rejected the stored key (revoked or rotated) and the session was ended for it.
 	/// The login screen should say so; cleared by the next sign-in.
 	public private(set) var sessionExpired = false
@@ -243,6 +262,18 @@ public final class AuthSession {
 		state = .signedIn(stored)
 	}
 
+	/// Asks the server to email a reset link. The same call succeeds for an unknown email, so the
+	/// caller shows one neutral message either way.
+	public func requestPasswordReset(email: String) async throws {
+		do {
+			try await authenticator.requestPasswordReset(email: email)
+		} catch let error as PasswordResetError {
+			throw error
+		} catch {
+			throw PasswordResetError.network(error.localizedDescription)
+		}
+	}
+
 	public func signIn(email: String, password: String) async {
 		guard !isSigningIn else { return }
 		isSigningIn = true
@@ -288,6 +319,7 @@ public final class AuthSession {
 		lastError = nil
 		lastSignUpError = nil
 		workspaceProvisioningFailed = false
+		justSignedUp = false
 		sessionExpired = false
 		defer { isSigningUp = false }
 		do {
@@ -302,12 +334,19 @@ public final class AuthSession {
 			signOutMarker.set(false)
 			firstUse.markPending(actorId: stored.actorId)
 			workspaceProvisioningFailed = result.workspaceProvisioningFailed
+			justSignedUp = true
 			state = .signedIn(stored)
 		} catch let error as SignUpError {
 			lastSignUpError = error
 		} catch {
 			lastSignUpError = .network(error.localizedDescription)
 		}
+	}
+
+	/// Whether this launch's sign-up has not been acted on yet; reading it clears it.
+	public func takeJustSignedUp() -> Bool {
+		defer { justSignedUp = false }
+		return justSignedUp
 	}
 
 	/// Take a session another device of the same person already holds (the iPhone handing its

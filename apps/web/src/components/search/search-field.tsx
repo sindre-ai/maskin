@@ -132,7 +132,7 @@ export function SearchField({
 					? 'min-h-14 px-4.5 py-1'
 					: row
 						? 'min-h-9 rounded-full bg-muted px-3.5 py-0.5 transition-colors focus-within:ring-2 focus-within:ring-ring/30'
-						: 'min-h-[50px] rounded-lg border border-input bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
+						: 'min-h-[50px] rounded-lg border border-control bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
 			)}
 		>
 			{/* Pills and the input wrap onto more lines on a narrow screen, so none is hidden; the clear button stays at the end of the first line. */}

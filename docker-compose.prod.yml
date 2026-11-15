@@ -117,10 +117,12 @@ services:
       # at boot, so a change needs a restart. Empty means every flag is off for
       # everyone. FF_TESTER_ACTOR_IDS is comma separated actor ids,
       # FF_TESTER_FEATURES is comma separated flag ids, and
-      # FF_WORKSPACE_FEATURES is comma separated workspaceId:flagId pairs.
+      # FF_WORKSPACE_FEATURES is comma separated workspaceId:flagId pairs, and
+      # FF_SIGNUP_FEATURES is comma separated flag ids that are on for every new sign-up.
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
       FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
       FF_WORKSPACE_FEATURES: ${FF_WORKSPACE_FEATURES:-}
+      FF_SIGNUP_FEATURES: ${FF_SIGNUP_FEATURES:-}
       # POST /mcp rate limit (apps/dev/src/lib/mcp-rate-limit.ts). Read once at
       # boot, so a change needs a restart. MODE is log-only, enforce or off; empty
       # or anything else is log-only. The boot line mcp_rate_limit_config shows the

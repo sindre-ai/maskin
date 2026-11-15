@@ -2022,6 +2022,51 @@ describe('stall detection wiring', () => {
 		expect(stallTracker.counts().undelivered).toBe(1)
 	})
 
+	it('delivers images after the text as content blocks, and refuses an image it cannot trust', async () => {
+		const { app } = setup()
+
+		const ok = await app.request('/sessions/sess-wire-image/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({
+				content: 'Done.',
+				images: [{ media_type: 'image/jpeg', data: 'QUJD' }],
+			}),
+		})
+		expect(ok.status).toBe(200)
+
+		const stream = await app.request('/sessions/sess-wire-image/input/stream')
+		const reader = stream.body?.getReader()
+		if (!reader) throw new Error('stream response has no body')
+		const first = await reader.read()
+		const turn = JSON.parse(JSON.parse(new TextDecoder().decode(first.value)).turn)
+		expect(turn).toEqual({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{ type: 'text', text: 'Done.' },
+					{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } },
+				],
+			},
+		})
+		await reader.cancel()
+
+		for (const images of [
+			[{ media_type: 'text/html', data: 'QUJD' }],
+			[{ media_type: 'image/png', data: 'not base64!' }],
+			Array.from({ length: 5 }, () => ({ media_type: 'image/png', data: 'QUJD' })),
+			'QUJD',
+		]) {
+			const bad = await app.request('/sessions/sess-wire-image-bad/input', {
+				method: 'POST',
+				headers: auth,
+				body: JSON.stringify({ content: 'Done.', images }),
+			})
+			expect(bad.status).toBe(400)
+		}
+	})
+
 	it('queues a model switch as a control request without opening a pending turn', async () => {
 		const { app, stallTracker, advance } = setup()
 		stallTracker.trackSession('sess-wire-model', { interactive: true })

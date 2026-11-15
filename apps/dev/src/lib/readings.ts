@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm'
 
 /**
  * Readings: numbers only server code can write, each with the time it was read and where it
- * came from (registrations from Luma, payments from Stripe). See 0150_readings.sql.
+ * came from (registrations from Luma, payments from Stripe). See 0156_readings.sql.
  *
  * `recordReading` is the only writer. Call it from webhook handlers and scheduled jobs. Do not
  * expose it through a route or an MCP tool: that there is no such path is what makes a reading

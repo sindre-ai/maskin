@@ -9,6 +9,7 @@ import {
 	DISCOVERY_ACTOR_IDS,
 	DISCOVERY_LOOP,
 	DISCOVERY_TRIGGER_IDS,
+	DISCOVERY_VIEW_IDS,
 } from '../../lib/marketplace-loops/discovery-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
@@ -267,6 +268,9 @@ describe('seedMarketplaceIfEmpty', () => {
 		)
 		expect(discoveryItems.filter((i) => i.itemType === 'trigger').length).toBe(
 			DISCOVERY_TRIGGER_IDS.length,
+		)
+		expect(discoveryItems.filter((i) => i.itemType === 'view').length).toBe(
+			DISCOVERY_VIEW_IDS.length,
 		)
 	})
 })

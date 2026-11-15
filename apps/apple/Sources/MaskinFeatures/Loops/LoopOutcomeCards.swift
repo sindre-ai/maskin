@@ -79,6 +79,9 @@ struct LoopTargetsSection: View {
 							if let source = FlowTargetSource.label(card.target.source) {
 								Text("Source: \(source)").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 							}
+							if card.target.isManual == true {
+								Text("Manual").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+							}
 							Spacer(minLength: 0)
 							if let owner = directory.actor(card.target.ownerID) {
 								ActorAvatar(

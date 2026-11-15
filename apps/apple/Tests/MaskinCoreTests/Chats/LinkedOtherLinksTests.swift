@@ -185,11 +185,11 @@ struct LinkedOtherLinksTests {
 
 	// MARK: Settings
 
-	@Test("a settings page is not a card, a chip or an app route, so it stays a plain link")
+	@Test("a settings page is not a card or a chip, but it is an app route")
 	func settings() {
 		for address in ["https://maskin.io/\(here)/settings", "https://maskin.io/\(here)/settings/billing"] {
 			#expect(LinkedTarget.parse(href: address) == nil, "\(address)")
-			#expect(DeepLink(string: address) == nil, "\(address)")
+			#expect(DeepLink(string: address) != nil, "\(address)")
 			#expect(github(address) == nil, "\(address)")
 		}
 	}

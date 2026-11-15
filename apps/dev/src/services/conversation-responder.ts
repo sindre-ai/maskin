@@ -23,6 +23,7 @@ import {
 	loadThreadSeed,
 	takeSessionDigests,
 } from './chat-session-context'
+import { computerHandbackForMessage } from './computer-handback'
 import { insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
@@ -760,7 +761,29 @@ export async function deliverTurnToAgent(params: {
 	}
 	if (existing) {
 		try {
-			await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
+			// A Done on this agent's computer card: its next turn starts with a screenshot taken now.
+			const handback = await computerHandbackForMessage(db, {
+				workspaceId,
+				conversationId,
+				messageId,
+				agentId,
+			}).catch((err: unknown) => {
+				logger.warn('Could not check the turn for a computer handback', {
+					conversationId,
+					messageId,
+					error: String(err),
+				})
+				return null
+			})
+			if (handback) turnPayload.message.content += `\n\n${handback.note}`
+			await sessionManager.writeInput(
+				existing.id,
+				turnPayload,
+				undefined,
+				messageId,
+				undefined,
+				handback?.images,
+			)
 			return 'wrote_to_running_session'
 		} catch (err) {
 			logger.warn(

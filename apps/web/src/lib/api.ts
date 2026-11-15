@@ -265,6 +265,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	}
 
 	reportServerOk()
+	// 204 No Content has no body to parse; `res.json()` would throw on it and a call
+	// that worked would look failed.
+	if (res.status === 204) return undefined as T
 	return res.json()
 }
 
@@ -632,6 +635,10 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+		forgotPassword: (email: string) =>
+			request<{ ok: true }>('/auth/forgot-password', { method: 'POST', body: { email } }),
+		resetPassword: (data: { token: string; password: string }) =>
+			request<{ ok: true }>('/auth/reset-password', { method: 'POST', body: data }),
 	},
 
 	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These
@@ -1303,6 +1310,29 @@ export const api = {
 			}),
 		usage: (workspaceId: string) =>
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		trial: {
+			setup: (workspaceId: string) =>
+				request<TrialSetupResponse>('/billing/trial/setup', { method: 'POST', workspaceId }),
+			start: (workspaceId: string, setupIntentId: string) =>
+				request<TrialStartResponse>('/billing/trial/start', {
+					method: 'POST',
+					body: { setup_intent_id: setupIntentId },
+					workspaceId,
+				}),
+			// Looks only; nothing is used up until startWithPromo.
+			checkPromo: (workspaceId: string, code: string) =>
+				request<TrialPromoCheckResponse>('/billing/trial/promo/check', {
+					method: 'POST',
+					body: { code },
+					workspaceId,
+				}),
+			startWithPromo: (workspaceId: string, code: string) =>
+				request<TrialStartResponse>('/billing/trial/start', {
+					method: 'POST',
+					body: { promo_code: code },
+					workspaceId,
+				}),
+		},
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 		dailyBudget: (workspaceId: string) =>
@@ -2002,11 +2032,11 @@ export interface ClaudeOAuthImportInput {
 	nickname?: string
 }
 
-export type BillingPlan = 'trial' | 'pro' | 'team' | 'enterprise'
+export type BillingPlan = 'trial' | 'starter' | 'pro' | 'team' | 'ultra' | 'enterprise'
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
-	plan: 'pro' | 'team'
+	plan: 'starter' | 'pro' | 'team' | 'ultra'
 	success_url: string
 	cancel_url: string
 }
@@ -2028,6 +2058,23 @@ export interface LinkedInIdentityAddonLine {
 	monthly_total_usd_cents: number
 }
 
+export interface TrialSetupResponse {
+	client_secret: string
+	publishable_key: string
+}
+
+export interface TrialPromoCheckResponse {
+	valid: boolean
+	// Days the trial lasts with this code; null when it is not valid.
+	trial_days: number | null
+}
+
+export interface TrialStartResponse {
+	trial_state: 'started'
+	// Unix seconds.
+	trial_ends_at: number | null
+}
+
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
@@ -2040,8 +2087,8 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
-	// False when the credit top-up Price isn't configured on the server; the
-	// "Buy usage credits" entry points are hidden in that case.
+	// Always false now that the top-up is closed; the "Buy usage credits" entry
+	// points are hidden on false.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no
@@ -2049,6 +2096,8 @@ export interface BillingUsageResponse {
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null
+	// Card-at-sign-up trial: null on every workspace that did not go through the card step.
+	trial_state?: 'awaiting_card' | 'started' | null
 }
 
 // Types derived from backend response schemas
@@ -2383,6 +2432,9 @@ export interface CreateActorInput {
 	// Agents only: the workspace the new agent is born into (the caller must be a
 	// member). Humans sign up without it.
 	workspace_id?: string
+	// Humans only: this client shows the card step after sign-up. The server honours it only
+	// while the trial-card-percent flag is on for new sign-ups.
+	card_step?: boolean
 }
 
 export interface UpdateActorInput {

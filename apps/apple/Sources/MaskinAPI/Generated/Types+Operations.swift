@@ -9710,6 +9710,8 @@ public enum Operations {
                         public var tags: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/starter_prompts`.
                         public var starter_prompts: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/initials`.
+                        public var initials: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -9761,6 +9763,7 @@ public enum Operations {
                         ///   - avatar_url:
                         ///   - tags:
                         ///   - starter_prompts:
+                        ///   - initials:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -9777,6 +9780,7 @@ public enum Operations {
                             avatar_url: Swift.String? = nil,
                             tags: [Swift.String]? = nil,
                             starter_prompts: [Swift.String]? = nil,
+                            initials: Swift.String? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -9793,6 +9797,7 @@ public enum Operations {
                             self.avatar_url = avatar_url
                             self.tags = tags
                             self.starter_prompts = starter_prompts
+                            self.initials = initials
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -9810,6 +9815,7 @@ public enum Operations {
                             case avatar_url
                             case tags
                             case starter_prompts
+                            case initials
                             case workspaces
                             case skills
                         }
@@ -10305,6 +10311,8 @@ public enum Operations {
                     public var llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/auto_create_workspace`.
                     public var auto_create_workspace: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/card_step`.
+                    public var card_step: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/workspace_id`.
                     public var workspace_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/first_stepsPayload`.
@@ -10361,6 +10369,7 @@ public enum Operations {
                     ///   - llm_provider:
                     ///   - llm_config:
                     ///   - auto_create_workspace:
+                    ///   - card_step:
                     ///   - workspace_id:
                     ///   - first_steps:
                     ///   - needed_integrations:
@@ -10376,6 +10385,7 @@ public enum Operations {
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload? = nil,
                         auto_create_workspace: Swift.Bool? = nil,
+                        card_step: Swift.Bool? = nil,
                         workspace_id: Swift.String? = nil,
                         first_steps: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.first_stepsPayload? = nil,
                         needed_integrations: [Swift.String]? = nil
@@ -10391,6 +10401,7 @@ public enum Operations {
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
                         self.auto_create_workspace = auto_create_workspace
+                        self.card_step = card_step
                         self.workspace_id = workspace_id
                         self.first_steps = first_steps
                         self.needed_integrations = needed_integrations
@@ -10407,6 +10418,7 @@ public enum Operations {
                         case llm_provider
                         case llm_config
                         case auto_create_workspace
+                        case card_step
                         case workspace_id
                         case first_steps
                         case needed_integrations
@@ -12357,6 +12369,8 @@ public enum Operations {
                     public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/starter_prompts`.
                     public var starter_prompts: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/initials`.
+                    public var initials: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -12372,6 +12386,7 @@ public enum Operations {
                     ///   - default_workspace_id:
                     ///   - tags:
                     ///   - starter_prompts:
+                    ///   - initials:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -12384,7 +12399,8 @@ public enum Operations {
                         mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil,
                         tags: [Swift.String]? = nil,
-                        starter_prompts: [Swift.String]? = nil
+                        starter_prompts: [Swift.String]? = nil,
+                        initials: Swift.String? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -12398,6 +12414,7 @@ public enum Operations {
                         self.default_workspace_id = default_workspace_id
                         self.tags = tags
                         self.starter_prompts = starter_prompts
+                        self.initials = initials
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -12412,6 +12429,7 @@ public enum Operations {
                         case default_workspace_id
                         case tags
                         case starter_prompts
+                        case initials
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -16537,6 +16555,297 @@ public enum Operations {
             }
         }
     }
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    public enum post_sol_api_sol_auth_sol_forgot_hyphen_password {
+        public static let id: Swift.String = "post/api/auth/forgot-password"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers
+            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/json/email`.
+                    public var email: Swift.String
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - email:
+                    public init(email: Swift.String) {
+                        self.email = email
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case email
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/content/application\/json`.
+                case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body.jsonPayload)
+            }
+            public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers = .init(),
+                body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/json/ok`.
+                        public var ok: Swift.Bool
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - ok:
+                        public init(ok: Swift.Bool) {
+                            self.ok = ok
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case ok
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// If the email has an account, a link was sent
+            ///
+            /// - Remark: Generated from `#/paths//api/auth/forgot-password/post/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct TooManyRequests: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body
+                /// Creates a new `TooManyRequests`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body) {
+                    self.body = body
+                }
+            }
+            /// Too many requests from this IP
+            ///
+            /// - Remark: Generated from `#/paths//api/auth/forgot-password/post/responses/429`.
+            ///
+            /// HTTP response code: `429 tooManyRequests`.
+            case tooManyRequests(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests)
+            /// The associated value of the enum case if `self` is `.tooManyRequests`.
+            ///
+            /// - Throws: An error if `self` is not `.tooManyRequests`.
+            /// - SeeAlso: `.tooManyRequests`.
+            public var tooManyRequests: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests {
+                get throws {
+                    switch self {
+                    case let .tooManyRequests(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "tooManyRequests",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// List skills for an agent
     ///
     /// - Remark: HTTP `GET /api/actors/{actorId}/skills`.
@@ -19774,8 +20083,10 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/plan`.
                             @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case trial = "trial"
+                                case starter = "starter"
                                 case pro = "pro"
                                 case team = "team"
+                                case ultra = "ultra"
                                 case enterprise = "enterprise"
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/plan`.
@@ -19790,6 +20101,24 @@ public enum Operations {
                             public var period_end: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/hard_cap_usd_cents`.
                             public var hard_cap_usd_cents: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_state`.
+                            @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case awaiting_card = "awaiting_card"
+                                case started = "started"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_state`.
+                            public var trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
+                            @frozen public enum trial_walletPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case apple_pay = "apple_pay"
+                                case google_pay = "google_pay"
+                                case other = "other"
+                                case none = "none"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
+                            public var trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_promo_code_id`.
+                            public var trial_promo_code_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -19814,6 +20143,9 @@ public enum Operations {
                             ///   - period_start:
                             ///   - period_end:
                             ///   - hard_cap_usd_cents:
+                            ///   - trial_state:
+                            ///   - trial_wallet:
+                            ///   - trial_promo_code_id:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -19825,6 +20157,9 @@ public enum Operations {
                                 period_start: Swift.Double? = nil,
                                 period_end: Swift.Double? = nil,
                                 hard_cap_usd_cents: Swift.Double? = nil,
+                                trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
+                                trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
+                                trial_promo_code_id: Swift.String? = nil,
                                 status: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -19836,6 +20171,9 @@ public enum Operations {
                                 self.period_start = period_start
                                 self.period_end = period_end
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
+                                self.trial_state = trial_state
+                                self.trial_wallet = trial_wallet
+                                self.trial_promo_code_id = trial_promo_code_id
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -19848,6 +20186,9 @@ public enum Operations {
                                 case period_start
                                 case period_end
                                 case hard_cap_usd_cents
+                                case trial_state
+                                case trial_wallet
+                                case trial_promo_code_id
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -19858,101 +20199,244 @@ public enum Operations {
                         public var billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget`.
                         public struct daily_budgetPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/unit`.
-                            @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
-                                case tokens = "tokens"
-                                case dollars = "dollars"
-                            }
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/unit`.
-                            public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/amount`.
-                            public var amount: Swift.Double
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share`.
-                            public struct stop_sharePayload: Codable, Hashable, Sendable {
-                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value1`.
-                                public var value1: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value2`.
-                                public var value2: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value3`.
-                                public var value3: Swift.Double?
-                                /// Creates a new `stop_sharePayload`.
-                                ///
-                                /// - Parameters:
-                                ///   - value1:
-                                ///   - value2:
-                                ///   - value3:
-                                public init(
-                                    value1: Swift.Double? = nil,
-                                    value2: Swift.Double? = nil,
-                                    value3: Swift.Double? = nil
-                                ) {
-                                    self.value1 = value1
-                                    self.value2 = value2
-                                    self.value3 = value3
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1`.
+                            public struct Value1Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case percent = "percent"
                                 }
-                                public init(from decoder: any Swift.Decoder) throws {
-                                    var errors: [any Swift.Error] = []
-                                    do {
-                                        self.value1 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/unit`.
+                                public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
                                     }
-                                    do {
-                                        self.value2 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
                                     }
-                                    do {
-                                        self.value3 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
-                                    }
-                                    try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
-                                        [
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
                                             self.value1,
                                             self.value2,
                                             self.value3
-                                        ],
-                                        type: Self.self,
-                                        codingPath: decoder.codingPath,
-                                        errors: errors
-                                    )
+                                        ])
+                                    }
                                 }
-                                public func encode(to encoder: any Swift.Encoder) throws {
-                                    try encoder.encodeFirstNonNilValueToSingleValueContainer([
-                                        self.value1,
-                                        self.value2,
-                                        self.value3
-                                    ])
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value1Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
                                 }
                             }
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share`.
-                            public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload?
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/timezone`.
-                            public var timezone: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1`.
+                            public var value1: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2`.
+                            public struct Value2Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case tokens = "tokens"
+                                    case dollars = "dollars"
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/unit`.
+                                public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
+                                    }
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
+                                    }
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                            self.value1,
+                                            self.value2,
+                                            self.value3
+                                        ])
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value2Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2`.
+                            public var value2: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload?
                             /// Creates a new `daily_budgetPayload`.
                             ///
                             /// - Parameters:
-                            ///   - unit:
-                            ///   - amount:
-                            ///   - stop_share:
-                            ///   - timezone:
+                            ///   - value1:
+                            ///   - value2:
                             public init(
-                                unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload,
-                                amount: Swift.Double,
-                                stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload? = nil,
-                                timezone: Swift.String? = nil
+                                value1: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload? = nil,
+                                value2: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload? = nil
                             ) {
-                                self.unit = unit
-                                self.amount = amount
-                                self.stop_share = stop_share
-                                self.timezone = timezone
+                                self.value1 = value1
+                                self.value2 = value2
                             }
-                            public enum CodingKeys: String, CodingKey {
-                                case unit
-                                case amount
-                                case stop_share
-                                case timezone
+                            public init(from decoder: any Swift.Decoder) throws {
+                                var errors: [any Swift.Error] = []
+                                do {
+                                    self.value1 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self.value2 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                    [
+                                        self.value1,
+                                        self.value2
+                                    ],
+                                    type: Self.self,
+                                    codingPath: decoder.codingPath,
+                                    errors: errors
+                                )
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try self.value1?.encode(to: encoder)
+                                try self.value2?.encode(to: encoder)
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget`.
@@ -21874,8 +22358,10 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/plan`.
                             @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case trial = "trial"
+                                case starter = "starter"
                                 case pro = "pro"
                                 case team = "team"
+                                case ultra = "ultra"
                                 case enterprise = "enterprise"
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/plan`.
@@ -21890,6 +22376,24 @@ public enum Operations {
                             public var period_end: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/hard_cap_usd_cents`.
                             public var hard_cap_usd_cents: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_state`.
+                            @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case awaiting_card = "awaiting_card"
+                                case started = "started"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_state`.
+                            public var trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
+                            @frozen public enum trial_walletPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case apple_pay = "apple_pay"
+                                case google_pay = "google_pay"
+                                case other = "other"
+                                case none = "none"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
+                            public var trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_promo_code_id`.
+                            public var trial_promo_code_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -21914,6 +22418,9 @@ public enum Operations {
                             ///   - period_start:
                             ///   - period_end:
                             ///   - hard_cap_usd_cents:
+                            ///   - trial_state:
+                            ///   - trial_wallet:
+                            ///   - trial_promo_code_id:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -21925,6 +22432,9 @@ public enum Operations {
                                 period_start: Swift.Double? = nil,
                                 period_end: Swift.Double? = nil,
                                 hard_cap_usd_cents: Swift.Double? = nil,
+                                trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
+                                trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
+                                trial_promo_code_id: Swift.String? = nil,
                                 status: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -21936,6 +22446,9 @@ public enum Operations {
                                 self.period_start = period_start
                                 self.period_end = period_end
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
+                                self.trial_state = trial_state
+                                self.trial_wallet = trial_wallet
+                                self.trial_promo_code_id = trial_promo_code_id
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -21948,6 +22461,9 @@ public enum Operations {
                                 case period_start
                                 case period_end
                                 case hard_cap_usd_cents
+                                case trial_state
+                                case trial_wallet
+                                case trial_promo_code_id
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -21958,101 +22474,244 @@ public enum Operations {
                         public var billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget`.
                         public struct daily_budgetPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/unit`.
-                            @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
-                                case tokens = "tokens"
-                                case dollars = "dollars"
-                            }
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/unit`.
-                            public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/amount`.
-                            public var amount: Swift.Double
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share`.
-                            public struct stop_sharePayload: Codable, Hashable, Sendable {
-                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value1`.
-                                public var value1: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value2`.
-                                public var value2: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value3`.
-                                public var value3: Swift.Double?
-                                /// Creates a new `stop_sharePayload`.
-                                ///
-                                /// - Parameters:
-                                ///   - value1:
-                                ///   - value2:
-                                ///   - value3:
-                                public init(
-                                    value1: Swift.Double? = nil,
-                                    value2: Swift.Double? = nil,
-                                    value3: Swift.Double? = nil
-                                ) {
-                                    self.value1 = value1
-                                    self.value2 = value2
-                                    self.value3 = value3
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1`.
+                            public struct Value1Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case percent = "percent"
                                 }
-                                public init(from decoder: any Swift.Decoder) throws {
-                                    var errors: [any Swift.Error] = []
-                                    do {
-                                        self.value1 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/unit`.
+                                public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
                                     }
-                                    do {
-                                        self.value2 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
                                     }
-                                    do {
-                                        self.value3 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
-                                    }
-                                    try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
-                                        [
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
                                             self.value1,
                                             self.value2,
                                             self.value3
-                                        ],
-                                        type: Self.self,
-                                        codingPath: decoder.codingPath,
-                                        errors: errors
-                                    )
+                                        ])
+                                    }
                                 }
-                                public func encode(to encoder: any Swift.Encoder) throws {
-                                    try encoder.encodeFirstNonNilValueToSingleValueContainer([
-                                        self.value1,
-                                        self.value2,
-                                        self.value3
-                                    ])
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value1Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
                                 }
                             }
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share`.
-                            public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload?
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/timezone`.
-                            public var timezone: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1`.
+                            public var value1: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2`.
+                            public struct Value2Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case tokens = "tokens"
+                                    case dollars = "dollars"
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/unit`.
+                                public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
+                                    }
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
+                                    }
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                            self.value1,
+                                            self.value2,
+                                            self.value3
+                                        ])
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value2Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2`.
+                            public var value2: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload?
                             /// Creates a new `daily_budgetPayload`.
                             ///
                             /// - Parameters:
-                            ///   - unit:
-                            ///   - amount:
-                            ///   - stop_share:
-                            ///   - timezone:
+                            ///   - value1:
+                            ///   - value2:
                             public init(
-                                unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload,
-                                amount: Swift.Double,
-                                stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload? = nil,
-                                timezone: Swift.String? = nil
+                                value1: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload? = nil,
+                                value2: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload? = nil
                             ) {
-                                self.unit = unit
-                                self.amount = amount
-                                self.stop_share = stop_share
-                                self.timezone = timezone
+                                self.value1 = value1
+                                self.value2 = value2
                             }
-                            public enum CodingKeys: String, CodingKey {
-                                case unit
-                                case amount
-                                case stop_share
-                                case timezone
+                            public init(from decoder: any Swift.Decoder) throws {
+                                var errors: [any Swift.Error] = []
+                                do {
+                                    self.value1 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self.value2 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                    [
+                                        self.value1,
+                                        self.value2
+                                    ],
+                                    type: Self.self,
+                                    codingPath: decoder.codingPath,
+                                    errors: errors
+                                )
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try self.value1?.encode(to: encoder)
+                                try self.value2?.encode(to: encoder)
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget`.
@@ -47734,8 +48393,10 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/plan`.
                         @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case trial = "trial"
+                            case starter = "starter"
                             case pro = "pro"
                             case team = "team"
+                            case ultra = "ultra"
                             case enterprise = "enterprise"
                         }
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/plan`.
@@ -47796,6 +48457,13 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon`.
                         public var linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload?
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/trial_state`.
+                        @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case awaiting_card = "awaiting_card"
+                            case started = "started"
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/trial_state`.
+                        public var trial_state: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.trial_statePayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -47810,6 +48478,7 @@ public enum Operations {
                         ///   - credit_balance_cents:
                         ///   - credit_topup_available:
                         ///   - linkedin_identity_addon:
+                        ///   - trial_state:
                         public init(
                             plan: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.planPayload,
                             status: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.statusPayload,
@@ -47821,7 +48490,8 @@ public enum Operations {
                             stripe_subscription_id: Swift.String? = nil,
                             credit_balance_cents: Swift.Int,
                             credit_topup_available: Swift.Bool,
-                            linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil
+                            linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil,
+                            trial_state: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.trial_statePayload? = nil
                         ) {
                             self.plan = plan
                             self.status = status
@@ -47834,6 +48504,7 @@ public enum Operations {
                             self.credit_balance_cents = credit_balance_cents
                             self.credit_topup_available = credit_topup_available
                             self.linkedin_identity_addon = linkedin_identity_addon
+                            self.trial_state = trial_state
                         }
                         public enum CodingKeys: String, CodingKey {
                             case plan
@@ -47847,6 +48518,7 @@ public enum Operations {
                             case credit_balance_cents
                             case credit_topup_available
                             case linkedin_identity_addon
+                            case trial_state
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/application\/json`.
@@ -48746,7 +49418,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace cannot be charged automatically yet
+            /// Workspace cannot be charged automatically yet, or auto top-up is closed on plans
             ///
             /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/400`.
             ///

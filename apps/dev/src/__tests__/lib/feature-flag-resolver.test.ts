@@ -3,6 +3,7 @@ import {
 	type FeatureFlagConfig,
 	isFlagEnabled,
 	isFlagEnabledForWorkspace,
+	isSignupFlagEnabled,
 	parseFeatureFlagConfig,
 } from '../../lib/feature-flags'
 
@@ -165,5 +166,26 @@ describe('isFlagEnabled — actor-scoped signature is unchanged', () => {
 		const flagConfig = config({ FF_WORKSPACE_FEATURES: `${WORKSPACE_A}:${FLAG}` })
 		expect(isFlagEnabled(NON_TESTER, FLAG, flagConfig, REGISTRY)).toBe(false)
 		expect(isFlagEnabled(TESTER, FLAG, flagConfig, REGISTRY)).toBe(false)
+	})
+})
+
+describe('isSignupFlagEnabled', () => {
+	it('is off for every flag when FF_SIGNUP_FEATURES is unset', () => {
+		expect(isSignupFlagEnabled(FLAG, config({}), REGISTRY)).toBe(false)
+	})
+
+	it('is on for a registered flag listed in FF_SIGNUP_FEATURES, whoever signs up', () => {
+		const flagConfig = config({ FF_SIGNUP_FEATURES: ` ${FLAG} ,other-flag` })
+		expect(isSignupFlagEnabled(FLAG, flagConfig, REGISTRY)).toBe(true)
+	})
+
+	it('never invents a flag: an id missing from the registry stays off', () => {
+		const flagConfig = config({ FF_SIGNUP_FEATURES: 'other-flag' })
+		expect(isSignupFlagEnabled('other-flag', flagConfig, REGISTRY)).toBe(false)
+	})
+
+	it('is not switched on by the tester lists', () => {
+		const flagConfig = config({ FF_TESTER_ACTOR_IDS: TESTER, FF_TESTER_FEATURES: FLAG })
+		expect(isSignupFlagEnabled(FLAG, flagConfig, REGISTRY)).toBe(false)
 	})
 })

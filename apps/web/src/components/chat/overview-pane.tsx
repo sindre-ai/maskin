@@ -89,7 +89,7 @@ export function OverviewPane({
 						<TabsList>
 							<TabsTrigger value="threads" className="gap-1">
 								<Hand size={13} aria-hidden />
-								Sessions
+								Background sessions
 								<CountPill n={threadsCount} />
 							</TabsTrigger>
 							<TabsTrigger value="produced" className="gap-1">

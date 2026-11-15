@@ -19,14 +19,13 @@ struct SettingsRouteView: View {
 		case .notifications: SettingsNotificationsPage(environment: environment)
 		case .workspace:
 			WorkspaceSettingsView(
-				store: services.workspaceStore(), workspaceId: services.workspaceId ?? "",
+				store: services.workspaceStore(), general: services.generalSettingsStore(),
+				workspaceId: services.workspaceId ?? "",
 				currentName: services.workspace?.name ?? "", role: services.role)
 		case .members:
 			MembersView(store: services.membersStore(), invitations: services.invitationsStore())
 		case .integrations:
-			IntegrationsView(
-				store: services.integrationsStore(), webSetupURL: services.webURL("integrations"),
-				services: services)
+			IntegrationsView(store: services.integrationsStore(), services: services)
 		case .files: FilesListScreen(environment: environment)
 		case .skills: SkillsView(store: services.skillsStore())
 		case .objectTypes:

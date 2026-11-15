@@ -10535,6 +10535,9 @@
 									"auto_create_workspace": {
 										"type": "boolean"
 									},
+									"card_step": {
+										"type": "boolean"
+									},
 									"workspace_id": {
 										"type": "string",
 										"format": "uuid"
@@ -11298,6 +11301,12 @@
 													"type": "string"
 												}
 											},
+											"initials": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
 											"workspaces": {
 												"type": "array",
 												"items": {
@@ -11812,6 +11821,13 @@
 											"maxLength": 60
 										},
 										"maxItems": 4
+									},
+									"initials": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 3
 									}
 								}
 							}
@@ -14430,6 +14446,282 @@
 					},
 					"401": {
 						"description": "Invalid credentials",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/auth/forgot-password": {
+			"post": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Email a password reset link",
+				"description": "Always answers the same 200, whether or not the email has an account with a password.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"format": "email"
+									}
+								},
+								"required": [
+									"email"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "If the email has an account, a link was sent",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"ok": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"ok"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many requests from this IP",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/auth/reset-password": {
+			"post": {
+				"tags": [
+					"Auth"
+				],
+				"summary": "Set a new password with a reset link token",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"token": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200
+									},
+									"password": {
+										"type": "string",
+										"minLength": 8
+									}
+								},
+								"required": [
+									"token",
+									"password"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Password changed; existing sign-ins ended",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"ok": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"ok"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The link is invalid, used or expired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many attempts from this IP",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -19166,8 +19458,10 @@
 														"type": "string",
 														"enum": [
 															"trial",
+															"starter",
 															"pro",
 															"team",
+															"ultra",
 															"enterprise"
 														]
 													},
@@ -19201,6 +19495,26 @@
 															"null"
 														]
 													},
+													"trial_state": {
+														"type": "string",
+														"enum": [
+															"awaiting_card",
+															"started"
+														]
+													},
+													"trial_wallet": {
+														"type": "string",
+														"enum": [
+															"apple_pay",
+															"google_pay",
+															"other",
+															"none"
+														]
+													},
+													"trial_promo_code_id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"status": {
 														"type": "string",
 														"enum": [
@@ -19232,53 +19546,106 @@
 												]
 											},
 											"daily_budget": {
-												"type": "object",
-												"properties": {
-													"unit": {
-														"type": "string",
-														"enum": [
-															"tokens",
-															"dollars"
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
+																"enum": [
+																	"percent"
+																]
+															},
+															"amount": {
+																"type": "number",
+																"exclusiveMinimum": 0,
+																"maximum": 100
+															},
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
+															}
+														},
+														"required": [
+															"unit",
+															"amount"
 														]
 													},
-													"amount": {
-														"type": "number",
-														"exclusiveMinimum": 0,
-														"maximum": 1000000000000
-													},
-													"stop_share": {
-														"anyOf": [
-															{
-																"type": "number",
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
 																"enum": [
-																	80
+																	"tokens",
+																	"dollars"
 																]
 															},
-															{
+															"amount": {
 																"type": "number",
-																"enum": [
-																	90
-																]
+																"exclusiveMinimum": 0,
+																"maximum": 1000000000000
 															},
-															{
-																"type": "number",
-																"enum": [
-																	100
-																]
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
 															}
-														],
-														"default": 100
-													},
-													"timezone": {
-														"type": "string",
-														"minLength": 1,
-														"maxLength": 64,
-														"default": "UTC"
+														},
+														"required": [
+															"unit",
+															"amount"
+														]
 													}
-												},
-												"required": [
-													"unit",
-													"amount"
 												]
 											},
 											"agent_daily_budget": {
@@ -20369,8 +20736,10 @@
 														"type": "string",
 														"enum": [
 															"trial",
+															"starter",
 															"pro",
 															"team",
+															"ultra",
 															"enterprise"
 														]
 													},
@@ -20404,6 +20773,26 @@
 															"null"
 														]
 													},
+													"trial_state": {
+														"type": "string",
+														"enum": [
+															"awaiting_card",
+															"started"
+														]
+													},
+													"trial_wallet": {
+														"type": "string",
+														"enum": [
+															"apple_pay",
+															"google_pay",
+															"other",
+															"none"
+														]
+													},
+													"trial_promo_code_id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"status": {
 														"type": "string",
 														"enum": [
@@ -20435,53 +20824,106 @@
 												]
 											},
 											"daily_budget": {
-												"type": "object",
-												"properties": {
-													"unit": {
-														"type": "string",
-														"enum": [
-															"tokens",
-															"dollars"
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
+																"enum": [
+																	"percent"
+																]
+															},
+															"amount": {
+																"type": "number",
+																"exclusiveMinimum": 0,
+																"maximum": 100
+															},
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
+															}
+														},
+														"required": [
+															"unit",
+															"amount"
 														]
 													},
-													"amount": {
-														"type": "number",
-														"exclusiveMinimum": 0,
-														"maximum": 1000000000000
-													},
-													"stop_share": {
-														"anyOf": [
-															{
-																"type": "number",
+													{
+														"type": "object",
+														"properties": {
+															"unit": {
+																"type": "string",
 																"enum": [
-																	80
+																	"tokens",
+																	"dollars"
 																]
 															},
-															{
+															"amount": {
 																"type": "number",
-																"enum": [
-																	90
-																]
+																"exclusiveMinimum": 0,
+																"maximum": 1000000000000
 															},
-															{
-																"type": "number",
-																"enum": [
-																	100
-																]
+															"stop_share": {
+																"anyOf": [
+																	{
+																		"type": "number",
+																		"enum": [
+																			80
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			90
+																		]
+																	},
+																	{
+																		"type": "number",
+																		"enum": [
+																			100
+																		]
+																	}
+																],
+																"default": 100
+															},
+															"timezone": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64,
+																"default": "UTC"
 															}
-														],
-														"default": 100
-													},
-													"timezone": {
-														"type": "string",
-														"minLength": 1,
-														"maxLength": 64,
-														"default": "UTC"
+														},
+														"required": [
+															"unit",
+															"amount"
+														]
 													}
-												},
-												"required": [
-													"unit",
-													"amount"
 												]
 											},
 											"agent_daily_budget": {
@@ -41605,8 +42047,7 @@
 														"unit": {
 															"type": "string",
 															"enum": [
-																"tokens",
-																"dollars"
+																"percent"
 															]
 														},
 														"amount": {
@@ -43409,8 +43850,10 @@
 											"type": "string",
 											"enum": [
 												"trial",
+												"starter",
 												"pro",
 												"team",
+												"ultra",
 												"enterprise"
 											]
 										},
@@ -43490,6 +43933,16 @@
 												"unit_price_usd_cents",
 												"monthly_total_usd_cents"
 											]
+										},
+										"trial_state": {
+											"type": [
+												"string",
+												"null"
+											],
+											"enum": [
+												"awaiting_card",
+												"started"
+											]
 										}
 									},
 									"required": [
@@ -43503,7 +43956,8 @@
 										"stripe_subscription_id",
 										"credit_balance_cents",
 										"credit_topup_available",
-										"linkedin_identity_addon"
+										"linkedin_identity_addon",
+										"trial_state"
 									]
 								}
 							}
@@ -44085,8 +44539,10 @@
 									"plan": {
 										"type": "string",
 										"enum": [
+											"starter",
 											"pro",
-											"team"
+											"team",
+											"ultra"
 										]
 									},
 									"success_url": {
@@ -44304,6 +44760,980 @@
 					},
 					"500": {
 						"description": "Stripe misconfigured or upstream failure",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/trial/setup": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Start a Stripe card setup (no charge) for a workspace waiting for its trial card",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Secret for the browser card form",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"client_secret": {
+											"type": "string"
+										},
+										"publishable_key": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"client_secret",
+										"publishable_key"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The card setup is not finished or does not belong to this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Stripe is not configured or failed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/trial/promo/check": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Check a promo code for the 7-day trial. Looks only; nothing is used up.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								},
+								"required": [
+									"code"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Whether the code could start a trial with no card right now",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"valid": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"valid"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The workspace is not waiting for a card",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many promo code tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/billing/trial/start": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"billing"
+				],
+				"summary": "Start the 7-day trial from a finished card setup, or from a promo code with no card",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"setup_intent_id": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 255
+									},
+									"promo_code": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 100
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The trial has started",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"trial_state": {
+											"type": "string",
+											"enum": [
+												"started"
+											]
+										},
+										"trial_ends_at": {
+											"type": [
+												"integer",
+												"null"
+											]
+										}
+									},
+									"required": [
+										"trial_state",
+										"trial_ends_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "The card setup is not finished or does not belong to this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human workspace admin or owner",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The workspace is not waiting for a card, or the card already started a free trial (code TRIAL_CARD_ALREADY_USED)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too many promo code tries",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Stripe is not configured or failed",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -44892,7 +46322,7 @@
 				"tags": [
 					"billing"
 				],
-				"summary": "The workspace daily target and whether the dollar unit can be used",
+				"summary": "The workspace daily target, as a percent of the plan",
 				"parameters": [
 					{
 						"schema": {
@@ -44906,7 +46336,7 @@
 				],
 				"responses": {
 					"200": {
-						"description": "Current daily target (null when off) and the dollar-unit check",
+						"description": "Current daily target (null when off), in percent of the plan",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -44921,14 +46351,13 @@
 												"unit": {
 													"type": "string",
 													"enum": [
-														"tokens",
-														"dollars"
+														"percent"
 													]
 												},
 												"amount": {
 													"type": "number",
 													"exclusiveMinimum": 0,
-													"maximum": 1000000000000
+													"maximum": 100
 												},
 												"stop_share": {
 													"anyOf": [
@@ -44965,53 +46394,36 @@
 												"amount"
 											]
 										},
-										"dollar_unit": {
-											"type": "object",
+										"earlier_target": {
+											"type": [
+												"object",
+												"null"
+											],
 											"properties": {
-												"available": {
-													"type": "boolean"
-												},
-												"reason": {
-													"type": [
-														"string",
-														"null"
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
 													]
 												},
-												"days": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"date": {
-																"type": "string"
-															},
-															"ended_sessions": {
-																"type": "integer",
-																"minimum": 0
-															},
-															"zero_cost_sessions": {
-																"type": "integer",
-																"minimum": 0
-															}
-														},
-														"required": [
-															"date",
-															"ended_sessions",
-															"zero_cost_sessions"
-														]
-													}
+												"converted": {
+													"type": "boolean"
 												}
 											},
 											"required": [
-												"available",
-												"reason",
-												"days"
+												"unit",
+												"converted"
 											]
+										},
+										"plan_limit_known": {
+											"type": "boolean"
 										}
 									},
 									"required": [
 										"daily_budget",
-										"dollar_unit"
+										"earlier_target",
+										"plan_limit_known"
 									]
 								}
 							}
@@ -45109,14 +46521,13 @@
 											"unit": {
 												"type": "string",
 												"enum": [
-													"tokens",
-													"dollars"
+													"percent"
 												]
 											},
 											"amount": {
 												"type": "number",
 												"exclusiveMinimum": 0,
-												"maximum": 1000000000000
+												"maximum": 100
 											},
 											"stop_share": {
 												"anyOf": [
@@ -45178,14 +46589,13 @@
 												"unit": {
 													"type": "string",
 													"enum": [
-														"tokens",
-														"dollars"
+														"percent"
 													]
 												},
 												"amount": {
 													"type": "number",
 													"exclusiveMinimum": 0,
-													"maximum": 1000000000000
+													"maximum": 100
 												},
 												"stop_share": {
 													"anyOf": [
@@ -45222,53 +46632,36 @@
 												"amount"
 											]
 										},
-										"dollar_unit": {
-											"type": "object",
+										"earlier_target": {
+											"type": [
+												"object",
+												"null"
+											],
 											"properties": {
-												"available": {
-													"type": "boolean"
-												},
-												"reason": {
-													"type": [
-														"string",
-														"null"
+												"unit": {
+													"type": "string",
+													"enum": [
+														"tokens",
+														"dollars"
 													]
 												},
-												"days": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"date": {
-																"type": "string"
-															},
-															"ended_sessions": {
-																"type": "integer",
-																"minimum": 0
-															},
-															"zero_cost_sessions": {
-																"type": "integer",
-																"minimum": 0
-															}
-														},
-														"required": [
-															"date",
-															"ended_sessions",
-															"zero_cost_sessions"
-														]
-													}
+												"converted": {
+													"type": "boolean"
 												}
 											},
 											"required": [
-												"available",
-												"reason",
-												"days"
+												"unit",
+												"converted"
 											]
+										},
+										"plan_limit_known": {
+											"type": "boolean"
 										}
 									},
 									"required": [
 										"daily_budget",
-										"dollar_unit"
+										"earlier_target",
+										"plan_limit_known"
 									]
 								}
 							}
@@ -45333,63 +46726,6 @@
 					},
 					"404": {
 						"description": "Workspace not found",
-						"content": {
-							"application/json": {
-								"schema": {
-									"type": "object",
-									"properties": {
-										"error": {
-											"type": "object",
-											"properties": {
-												"code": {
-													"type": "string"
-												},
-												"message": {
-													"type": "string"
-												},
-												"details": {
-													"type": "array",
-													"items": {
-														"type": "object",
-														"properties": {
-															"field": {
-																"type": "string"
-															},
-															"message": {
-																"type": "string"
-															},
-															"expected": {
-																"type": "string"
-															},
-															"received": {
-																"type": "string"
-															}
-														},
-														"required": [
-															"field",
-															"message"
-														]
-													}
-												},
-												"suggestion": {
-													"type": "string"
-												}
-											},
-											"required": [
-												"code",
-												"message"
-											]
-										}
-									},
-									"required": [
-										"error"
-									]
-								}
-							}
-						}
-					},
-					"409": {
-						"description": "The dollar unit is locked until cost numbers are reliable",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -45733,7 +47069,7 @@
 						}
 					},
 					"400": {
-						"description": "Workspace cannot be charged automatically yet",
+						"description": "Workspace cannot be charged automatically yet, or auto top-up is closed on plans",
 						"content": {
 							"application/json": {
 								"schema": {

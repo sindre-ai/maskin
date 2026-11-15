@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopBlockError } from '@/components/loops/loop-block-error'
-import { LoopBriefingStage } from '@/components/loops/loop-briefing-stage'
+import { LoopBriefingTab } from '@/components/loops/loop-briefing-tab'
 import { itemsNeedingYou } from '@/components/loops/loop-counters'
 import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
@@ -183,21 +183,33 @@ function LoopDetailRoute() {
 	const [tab, setTab] = useState('overview')
 
 	// Custom views: an agent pins HTML files with set_loop_view
-	// (metadata.views). Each is its own tab between Overview and Items. A tab
+	// (metadata.views). Each is its own tab, ahead of the built-in tabs. A tab
 	// that is no longer there falls back to Overview.
 	const views = useMemo(() => readLoopViews(object?.metadata), [object?.metadata])
-	const viewTabs = useMemo(() => views.map((view, i) => ({ ...view, value: `view-${i}` })), [views])
-	const activeViewIndex = viewTabs.findIndex((v) => v.value === tab)
-	const activeView = viewTabs[activeViewIndex]
-	// Briefings the flow's own agents wrote show as one more view, after the pinned ones.
-	const briefingPages = useLoopBriefingPages(workspaceId, membership?.fileIds ?? NO_IDS)
-	const [briefingId, setBriefingId] = useState<string | null>(null)
-	const activeBriefing = briefingPages.find((b) => b.id === briefingId) ?? briefingPages[0]
+	const allViewTabs = useMemo(
+		() => views.map((view, i) => ({ ...view, value: `view-${i}` })),
+		[views],
+	)
+	// The flow has one briefing tab. It holds every briefing page attached to the flow and any
+	// pinned view that is a briefing, latest first, so a pinned "Briefing" view is not a second tab.
+	const briefingFileIds = useMemo(
+		() => [...(membership?.fileIds ?? NO_IDS), ...views.map((view) => view.fileId)],
+		[membership?.fileIds, views],
+	)
+	const briefingPages = useLoopBriefingPages(workspaceId, briefingFileIds)
+	const briefingPageIds = useMemo(() => new Set(briefingPages.map((b) => b.id)), [briefingPages])
+	const pinnedBriefing = allViewTabs.find((v) => briefingPageIds.has(v.fileId))
+	const viewTabs = useMemo(
+		() => allViewTabs.filter((v) => !briefingPageIds.has(v.fileId)),
+		[allViewTabs, briefingPageIds],
+	)
+	const activeView = viewTabs.find((v) => v.value === tab)
+	const hasBriefings = briefingPages.length > 0
 	const activeTab =
 		tab === 'overview' ||
 		['items', 'activity', 'setup'].includes(tab) ||
 		activeView ||
-		(tab === 'briefings' && activeBriefing)
+		(tab === 'briefings' && hasBriefings)
 			? tab
 			: 'overview'
 
@@ -831,15 +843,21 @@ function LoopDetailRoute() {
 				<div className="mt-6">
 					<LoopDetailTabs
 						tabs={[
-							{ value: 'overview', label: 'Overview', count: needsYouRows.length },
+							// Custom views come first, the briefing ahead of the rest, with a hairline
+							// between them and the built-in tabs.
+							...(hasBriefings
+								? [{ value: 'briefings', label: pinnedBriefing?.name ?? 'Briefings' }]
+								: []),
+							...viewTabs.map((v) => ({ value: v.value, label: v.name })),
+							{
+								value: 'overview',
+								label: 'Overview',
+								count: needsYouRows.length,
+								startsGroup: hasBriefings || viewTabs.length > 0,
+							},
 							{ value: 'items', label: 'Items', count: childIds.length },
 							{ value: 'activity', label: 'Activity' },
 							{ value: 'setup', label: 'Setup' },
-							// Custom views sit after the fixed tabs, set apart by a hairline.
-							...viewTabs.map((v, i) => ({ value: v.value, label: v.name, startsGroup: i === 0 })),
-							...(activeBriefing
-								? [{ value: 'briefings', label: 'Briefings', startsGroup: viewTabs.length === 0 }]
-								: []),
 						]}
 						value={activeTab}
 						onChange={setTab}
@@ -918,28 +936,9 @@ function LoopDetailRoute() {
 					</div>
 				)}
 
-				{activeTab === 'briefings' && activeBriefing && (
+				{activeTab === 'briefings' && hasBriefings && (
 					<div role="tabpanel" className="mt-8 min-w-0">
-						{briefingPages.length > 1 && (
-							<div className="mb-4 flex flex-wrap gap-1.5 px-1">
-								{briefingPages.map((b) => (
-									<Button
-										key={b.id}
-										size="sm"
-										variant={b.id === activeBriefing.id ? 'default' : 'outline'}
-										className="rounded-full"
-										onClick={() => setBriefingId(b.id)}
-									>
-										{b.name.replace(/\.html?$/i, '')}
-									</Button>
-								))}
-							</div>
-						)}
-						<LoopBriefingStage
-							key={activeBriefing.id}
-							workspaceId={workspaceId}
-							fileId={activeBriefing.id}
-						/>
+						<LoopBriefingTab workspaceId={workspaceId} pages={briefingPages} />
 					</div>
 				)}
 

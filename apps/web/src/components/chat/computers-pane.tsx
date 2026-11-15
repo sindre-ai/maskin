@@ -74,6 +74,7 @@ export function ComputersPane({
 								workspaceId={workspaceId}
 								agentId={agent.actorId}
 								agentName={agent.actorName}
+								from="chat_computers_pane"
 								actions={
 									task ? (
 										<Button

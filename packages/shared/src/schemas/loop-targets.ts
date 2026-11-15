@@ -64,8 +64,14 @@ export const loopTargetReadingSchema = z.object({
 })
 export type LoopTargetReading = z.infer<typeof loopTargetReadingSchema>
 
-/** A target as the flows list returns it: the stored row plus its reading, if any. Not a write shape. */
+/**
+ * A target row as the flows list returns it: the stored row plus `manual` and `reading`, both
+ * set on read and never stored. `manual` is `true` when the number is the one an agent typed in
+ * (plain text, `event:` or unknown `metric:` source); `false` when it was counted live.
+ * `reading` is the newest checked reading behind a `metric:` target, if any. Not a write shape.
+ */
 export const loopTargetViewSchema = loopTargetSchema.extend({
+	manual: z.boolean().optional(),
 	reading: loopTargetReadingSchema.optional(),
 })
 export type LoopTargetView = z.infer<typeof loopTargetViewSchema>

@@ -44,10 +44,11 @@ const REFINE_CONTEXT_MESSAGES = 10
  */
 const TITLE_CALL_TIMEOUT_MS = 15_000
 /**
- * Well under CONVERSATION_TITLE_MAX_LENGTH (200) — that's the storage limit,
- * this is what actually fits a sidebar row without truncating.
+ * Well under CONVERSATION_TITLE_MAX_LENGTH (200), the storage limit. The cut is
+ * stored, so the header can never show more than this; keep it roomy enough for
+ * the wide thread header and let the narrow sidebar row truncate in CSS.
  */
-const TITLE_MAX_CHARS = 32
+const TITLE_MAX_CHARS = 80
 
 type TitleAutoState = 'none' | 'initial' | 'refined' | 'manual'
 

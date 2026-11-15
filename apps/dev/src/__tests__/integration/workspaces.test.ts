@@ -17,6 +17,7 @@ import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
 import { __resetTeamMemberForTesting, configureTeamMember } from '../../lib/analytics/team-member'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -305,6 +306,80 @@ describe('Workspaces Integration', () => {
 				(w: { id: string }) => w.id === workspace.id,
 			) as { memberCount: number }
 			expect(pairedRow.memberCount).toBe(2)
+		})
+	})
+
+	describe('card step for a new workspace (bet "A card to start a 7-day trial")', () => {
+		async function billingOf(workspaceId: string) {
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, workspaceId))
+			return (row?.settings as { billing?: Record<string, unknown> }).billing ?? {}
+		}
+
+		function switchOn() {
+			process.env.FF_SIGNUP_FEATURES = FLAGS.TRIAL_CARD_PERCENT
+			_resetFeatureFlagConfig()
+			onTestFinished(() => {
+				Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
+				_resetFeatureFlagConfig()
+			})
+		}
+
+		it('makes a workspace that waits for its card when the sign-up switch is on', async () => {
+			switchOn()
+			const app = createApp()
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Second try' }))
+
+			expect(res.status).toBe(201)
+			const created = await res.json()
+			expect(await billingOf(created.id)).toMatchObject({
+				plan: 'trial',
+				trial_state: 'awaiting_card',
+			})
+		})
+
+		it('makes a workspace that waits for its card after the first one was deleted', async () => {
+			switchOn()
+			const app = createApp()
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'First' }))
+			).json()
+			// A new workspace already has audit events pointing at it, so a bare row delete is refused.
+			const removed = await app.request(
+				jsonRequest('POST', `/api/workspaces/${first.id}/delete`, { confirm_name: 'First' }),
+			)
+			expect(removed.status).toBe(200)
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Again' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBe('awaiting_card')
+		})
+
+		it('lets a person who already pays for a workspace make another without a card step', async () => {
+			switchOn()
+			const app = createApp()
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Paid' }))
+			).json()
+			await setWorkspacePlan(db, first.id, 'pro')
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Another' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBeUndefined()
+		})
+
+		it('does not ask for a card when the sign-up switch is off', async () => {
+			const app = createApp()
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'No card' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBeUndefined()
 		})
 	})
 

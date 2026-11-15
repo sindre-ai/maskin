@@ -14,7 +14,7 @@
 -- New, empty table, additive, not on the hot-tables list (see MIGRATIONS.md), so plain DDL is
 -- fine and there is nothing to backfill. Row-level security is switched on because
 -- 0111_enable_rls_public_tables ran before this table existed.
--- Down: drizzle/down/0150_readings_down.sql.
+-- Down: drizzle/down/0156_readings_down.sql.
 
 CREATE TABLE IF NOT EXISTS "readings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

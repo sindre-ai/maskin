@@ -39,7 +39,12 @@ export function AgentComputerSection({ agent }: { agent: ActorResponse }) {
 			<AgentSectionHeading title="Computer" note={note} />
 
 			{live ? (
-				<ExpandableDesktop workspaceId={workspaceId} agentId={agent.id} agentName={agent.name} />
+				<ExpandableDesktop
+					workspaceId={workspaceId}
+					agentId={agent.id}
+					agentName={agent.name}
+					from="agent_page"
+				/>
 			) : (
 				<div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-card px-4 py-8 text-center">
 					<Monitor size={20} className="text-muted-foreground" aria-hidden />

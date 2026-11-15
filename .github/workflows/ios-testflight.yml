@@ -35,8 +35,8 @@ name: iOS TestFlight
 # App Review: a merge that changes MARKETING_VERSION in apps/apple/project.yml also sends that
 # version to App Review, once the upload is processed (job app-review, .github/scripts/
 # asc-submit-review.mjs). Any other merge only uploads, as before. The what's-new text comes from
-# apps/apple/release-notes.md ("# <version>" on the first line). The release type is manual: after
-# Apple approves, a person releases the version in App Store Connect.
+# apps/apple/release-notes.md ("# <version>" on the first line). The release type is automatic: the
+# version goes live as soon as Apple approves it, with no one pressing Release.
 #
 # Started by hand (Actions, Run workflow) the workflow does not archive. It reads App Store Connect:
 # "dry run" prints what a submission would do and creates nothing; "submit_version" submits that

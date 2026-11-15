@@ -29,6 +29,7 @@ import {
 import { and, asc, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { applyLiveTargets } from '../lib/loop-metrics'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { expectedByNow, latestReadings, readingKey } from '../lib/readings'
 import { serializeArray } from '../lib/serialize'
@@ -786,6 +787,9 @@ app.openapi(listLoopsRoute, (async (c) => {
 			}
 		}),
 	}
+
+	// `metric:` targets read a live count, whatever number is stored on the row.
+	await applyLiveTargets(db, workspaceId, response.loops)
 
 	return c.json(response)
 }) as RouteHandler<typeof listLoopsRoute, Env>)

@@ -5,6 +5,7 @@ accessModifier: public
 filter:
   paths:
     - /api/auth/login
+    - /api/auth/forgot-password
     - /api/actors
     - /api/actors/{id}
     - /api/workspaces

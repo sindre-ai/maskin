@@ -105,6 +105,13 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			actions.onStop = { stopTarget = $0 }
 			if retryPrompt != nil { actions.onRetry = { retry($0) } }
 		}
+		if hasSource {
+			actions.onOpenOriginSession = { origin in
+				// The session that produced the item; its state is not in the graph, so it opens as a finished log.
+				logSession = AgentSession(
+					id: origin.sessionId, actorID: origin.actorId ?? "", status: "completed", startedAt: origin.spawnedAt)
+			}
+		}
 		if let appRuntime {
 			actions.onOpenChat = { id in
 				appRuntime.openChat(id)
@@ -159,8 +166,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		MaskinComposerConfig(
 			variant: .floating,
 			placeholder: composerMode.placeholder(
-				commentPlaceholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? "Comment — @ to tag, / to link",
-				agentName: messageTarget?.name),
+				commentPlaceholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" }
+					?? ObjectComposerMode.commentPlaceholder(compact: sizeClass == .compact),
+				agentName: messageTarget?.name, compact: sizeClass == .compact),
 			suggestions: { query in
 				CommentMentions.candidates(
 					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
@@ -182,6 +190,20 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// Sending jumps to Activity, where the thread is.
 	private var messageTarget: ActorRef? {
 		ObjectComposerMode.target(object: store.object, actor: { store.directory.actor(for: $0) })
+	}
+
+	/// The Comment / Message chip inside the bar; hidden when no agent can be messaged.
+	private var modeChip: AnyView? {
+		guard let agent = messageTarget, appRuntime != nil else { return nil }
+		return AnyView(ObjectComposerModeChip(mode: $composerMode, agentName: agent.name, compact: sizeClass == .compact))
+	}
+
+	/// "Answer" on the question line: the question is answered in the comment bar, so open Activity
+	/// and put the cursor there.
+	private func answerAsk() {
+		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity }
+		composerMode = .comment
+		composer.requestFocus()
 	}
 
 	private func sendComment() {
@@ -244,10 +266,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.padding(.horizontal, MaskinSpace.s5)
 					}
-					if let agent = messageTarget, appRuntime != nil {
-						ObjectComposerModeToggle(mode: $composerMode, agentName: agent.name)
-					}
-					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
+					MaskinComposer(model: composer, config: composerConfig, topAccessory: modeChip, onSend: sendComment)
 				}
 				.frame(maxWidth: ReadingColumn.maxWidth)
 				.frame(maxWidth: .infinity)
@@ -269,12 +288,6 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		.toolbar {
 			ToolbarItemGroup(placement: .primaryAction) {
 				if let object = store.object {
-					Button {
-						MaskinHaptics.play(.selection)
-						Task { await store.toggleStar() }
-					} label: {
-						Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
-					}
 					Menu {
 						ShareLink(item: shareText(object)) { Label("Share", systemImage: "square.and.arrow.up") }
 						if let link = objectLink(object) {
@@ -436,7 +449,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
 					ObjectDetailContent(
 							store: store, part: .header, onEdit: { editing = true },
-							onMessage: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } },
+							onAnswer: answerAsk,
 							sessionActions: sessionActions
 						) { EmptyView() }
 						.padding(.horizontal, MaskinSpace.s11)

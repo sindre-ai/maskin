@@ -17,10 +17,10 @@
 import { createPrivateKey, sign } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 
-// MANUAL: Apple approves, then a person clicks Release in App Store Connect. A wrong version bump
-// then costs a click, not a public release. After one clean cycle the CTO can change this to
-// 'AFTER_APPROVAL' to release as soon as Apple approves.
-const RELEASE_TYPE = 'MANUAL'
+// AFTER_APPROVAL: the version goes to customers as soon as Apple approves it, with no one pressing
+// Release. The version number is a deliberate edit of MARKETING_VERSION, so a bump is the decision
+// to ship. To hold releases for a click again, change this to 'MANUAL'.
+const RELEASE_TYPE = 'AFTER_APPROVAL'
 
 const BUNDLE_ID = 'io.maskin.app'
 const PLATFORM = 'IOS'

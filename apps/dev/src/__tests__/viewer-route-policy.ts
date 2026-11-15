@@ -30,6 +30,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'human signup stays open, the caller has no workspace yet; the agent branch is gated in the handler (a viewer naming a workspace gets 403)',
 	],
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
+	['POST', '/api/auth/forgot-password', 'signed out by nature; always answers the same 200'],
+	[
+		'POST',
+		'/api/auth/reset-password',
+		'signed out by nature; the emailed one-time token is the credential',
+	],
 	[
 		'POST',
 		'/api/email/stop',

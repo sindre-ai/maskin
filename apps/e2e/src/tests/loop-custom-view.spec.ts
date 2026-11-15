@@ -140,10 +140,7 @@ test.describe('Loop page — custom view tabs', () => {
 		})
 	}
 
-	test('two views give two tabs between Overview and Items, in order', async ({
-		page,
-		account,
-	}) => {
+	test('two views give two tabs ahead of Overview, in order', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1280, height: 800 })
 		const { loop } = await seedLoopWithView(account)
 		const second = await account.api.createFile(account.workspaceId, {
@@ -172,7 +169,7 @@ test.describe('Loop page — custom view tabs', () => {
 		const tabNames = (await page.getByRole('tab').allTextContents()).map((t) =>
 			t.replace(/\d+$/, ''),
 		)
-		expect(tabNames).toEqual(['Overview', 'Items', 'Activity', 'Setup', 'Results', 'Pipeline view'])
+		expect(tabNames).toEqual(['Results', 'Pipeline view', 'Overview', 'Items', 'Activity', 'Setup'])
 
 		await openTab(page, 'Pipeline view')
 		await expect(viewFrame(page).getByText('Second view heading')).toBeVisible({

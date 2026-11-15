@@ -111,6 +111,14 @@ now") runs that same push for one install right away. Forked installs belong to 
 are refused (409). An update keeps the workspace's own `llm_config` keys, such as its `apiKey`;
 only `provider` and `model` come from the catalog snapshot.
 
+A template can also carry custom views (the extra tabs on the loop page) as `view` items. Install
+writes each one as a new HTML file in the installer's workspace and pins it on the loop object in
+the template's tab order; a push rewrites a page whose published copy changed (unless the
+workspace has edited it since) and drops the files of views the template no longer publishes;
+uninstall deletes the files the install created. A page may hold `__MASKIN_LOOP_ID__`, which
+install replaces with the new loop object's id. Which files an install created is kept on the
+loop object as `metadata.installed_views`. Code: `apps/dev/src/services/loop-views-provisioning.ts`.
+
 ## Event steps and dynamic types
 
 Loop steps are event triggers matched by `apps/dev/src/services/trigger-runner.ts`. The runner

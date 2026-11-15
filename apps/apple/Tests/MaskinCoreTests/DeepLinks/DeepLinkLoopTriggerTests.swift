@@ -28,10 +28,8 @@ struct DeepLinkLoopTriggerTests {
 		#expect(DeepLink.trigger(workspaceId: ws, id: id).universalURL().absoluteString == "https://maskin.io/\(ws)/triggers/\(id)")
 	}
 
-	@Test("a list address, a sub-page or an unsafe id is not a loop or trigger link")
+	@Test("a sub-page or an unsafe id is not a loop or trigger link")
 	func rejects() {
-		#expect(DeepLink(string: "maskin://\(ws)/loops") == nil)
-		#expect(DeepLink(string: "maskin://\(ws)/triggers") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/loops/\(id)/steps") == nil)
 		#expect(DeepLink(string: "https://maskin.io/\(ws)/loops/../x") == nil)
 		#expect(DeepLink(string: "https://evil.example/\(ws)/triggers/\(id)") == nil)

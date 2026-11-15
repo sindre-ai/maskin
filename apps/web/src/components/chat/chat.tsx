@@ -1179,7 +1179,7 @@ export function Composer({
 				!alignStart && 'mx-auto',
 				// The secret and vault cards keep a box of their own; the bar is the box otherwise.
 				(secretFlow || vaultFlow) &&
-					'rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
+					'rounded-2xl border border-control bg-card px-3 py-2.5 shadow-sm',
 				vaultFlow?.blocking && 'border-brand bg-brand-subtle ring-2 ring-brand/30',
 			)}
 		>

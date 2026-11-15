@@ -17,17 +17,20 @@
 import discoveryActorsData from './data/discovery-actors.json'
 import discoverySkillsData from './data/discovery-skills.json'
 import discoveryTriggersData from './data/discovery-triggers.json'
+import discoveryViewsData from './data/discovery-views.json'
 import marketWatchActorsData from './data/market-watch-actors.json'
 import marketWatchSkillsData from './data/market-watch-skills.json'
 import marketWatchTriggersData from './data/market-watch-triggers.json'
 import meetingLoopActorsData from './data/meeting-loop-actors.json'
 import meetingLoopSkillsData from './data/meeting-loop-skills.json'
 import meetingLoopTriggersData from './data/meeting-loop-triggers.json'
+import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
 	SkillSnapshotSource,
 	TriggerSnapshotSource,
 } from './loop-snapshot'
+import type { ViewSnapshotSource } from './view-snapshot'
 
 export interface ActorData extends ActorSnapshotSource {
 	id: string
@@ -47,6 +50,12 @@ export interface SkillData extends SkillSnapshotSource {
 	attachedActorIds: string[]
 }
 
+// A custom view (tab) a bundle ships. The id is a stable id minted for the tab:
+// it is the source_item_id the install and version-push paths match on.
+export interface ViewData extends ViewSnapshotSource {
+	id: string
+}
+
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
 // ./market-watch-loop, ./meeting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
@@ -57,10 +66,14 @@ export interface MarketplaceLoopSeedConfig {
 		version: string
 		useCase: string
 		description: string
+		// Entry/close conditions, tags and starter targets for the loop page. Optional.
+		settings?: LoopSettings
 	}
 	actorIds: readonly string[]
 	triggerIds: readonly string[]
 	skillIds: readonly string[]
+	// Custom views the bundle ships, in tab order. Optional: most bundles ship none.
+	viewIds?: readonly string[]
 }
 
 const actorsById: Record<string, ActorData> = {
@@ -79,6 +92,10 @@ const skillsById: Record<string, SkillData> = {
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
+}
+
+const viewsById: Record<string, ViewData> = {
+	...(discoveryViewsData as Record<string, ViewData>),
 }
 
 export function getActorData(id: string): ActorData {
@@ -114,4 +131,10 @@ export function skillIdsForActor(actorId: string): string[] {
 	return Object.values(skillsById)
 		.filter((skill) => skill.attachedActorIds.includes(actorId))
 		.map((skill) => skill.id)
+}
+
+export function getViewData(id: string): ViewData {
+	const view = viewsById[id]
+	if (!view) throw new Error(`view ${id} not found in the captured view data`)
+	return view
 }

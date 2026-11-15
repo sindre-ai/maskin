@@ -1036,6 +1036,29 @@ export const apiKeys = pgTable(
 )
 export type ApiKey = typeof apiKeys.$inferSelect
 
+// ── Password Reset Tokens ──────────────────────────────────────────────────
+
+/**
+ * One-time links for "Forgot password". token_hash is the hex SHA-256 of the token in the emailed
+ * link; the token itself is never stored. A row works while used_at is null and expires_at is in
+ * the future. A newer request deletes the actor's older unused rows (lib/password-reset).
+ */
+export const passwordResetTokens = pgTable(
+	'password_reset_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [index('password_reset_tokens_actor_idx').on(t.actorId)],
+)
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect
+
 // ── Comment Responder Claims ───────────────────────────────────────────────
 // One responder session per (comment event, actor). The thread-reply spawn and the
 // CommentDispatcher fallback ladder both claim here before starting a session; the INSERT that
@@ -1112,7 +1135,7 @@ export const forYouWithdrawals = pgTable('for_you_withdrawals', {
 
 // The next step on a driven object: action, owner, due time. At most one open or blocked step
 // per object (partial unique index); done and skipped rows stay as history. A blocked step
-// names exactly one thing it waits on (check constraint). See 0149_next_steps.sql.
+// names exactly one thing it waits on (check constraint). See 0155_next_steps.sql.
 export const nextSteps = pgTable(
 	'next_steps',
 	{
@@ -1169,7 +1192,7 @@ export const nextSteps = pgTable(
 // Numbers only server code can write (registrations, payments), each with the time it was read
 // and where it came from. Append-only: a trigger refuses UPDATE, and the newest row per subject
 // and measure is the current reading. Written through apps/dev/src/lib/readings.ts by webhook
-// handlers and scheduled jobs; there is no REST or MCP write path. See 0150_readings.sql.
+// handlers and scheduled jobs; there is no REST or MCP write path. See 0156_readings.sql.
 export const readings = pgTable(
 	'readings',
 	{
@@ -1208,7 +1231,7 @@ export const readings = pgTable(
 // What the sweep for overdue or missing next steps decided about an object in a time bucket.
 // The unique indexes are the claim: one decision per object, reason and bucket across all server
 // instances (a day bucket for recorded rows, an hour bucket for the rest). mode: recorded (record-only period, nothing started), woken, or refused by the
-// self-start limits. No actor foreign key: it is a log. See 0151_next_step_sweep_claims.sql.
+// self-start limits. No actor foreign key: it is a log. See 0157_next_step_sweep_claims.sql.
 export const nextStepSweepClaims = pgTable(
 	'next_step_sweep_claims',
 	{
@@ -1246,7 +1269,7 @@ export const nextStepSweepClaims = pgTable(
 // yes. At most one live row per object (taken_back_at is null). It ends when the job closes; that
 // is read from the object's status, never stored. via: chat (a person's message, quoted by
 // message_id) or card (a person approved a card). No actor foreign key on taken_back_by: it is a
-// record. See 0153_job_go_aheads.sql.
+// record. See 0158_job_go_aheads.sql.
 export const jobGoAheads = pgTable(
 	'job_go_aheads',
 	{
@@ -2566,6 +2589,10 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// What the loop page needs beyond a title: entry condition, close condition, tags and
+	// starter targets (camelCase keys, see apps/dev/src/lib/marketplace-loops/loop-settings.ts).
+	// Null for a loop that ships none. Copied onto the installer's loop object.
+	loopSettings: jsonb('loop_settings'),
 	// Set by seedMarketplaceLoops when the slug is no longer in the code-defined seed list.
 	// A retired loop is hidden from the marketplace and refused for new installs, but the
 	// row stays so existing installs (installed_loops.source_loop_id) keep updating.
@@ -2581,7 +2608,7 @@ export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 //
 // Frozen snapshots of each element that ships with a published marketplace
 // loop. `source_item_id` is the original actor/trigger/skill/integration id in
-// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// the publishing workspace (for a `view`, a stable id minted for that tab) — kept so intra-loop wiring inside `item_snapshot`
 // (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
@@ -2602,7 +2629,7 @@ export const marketplaceLoopItems = pgTable(
 		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
 			'marketplace_loop_items_item_type_check',
-			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration', 'view')`,
 		),
 	],
 )
@@ -3253,6 +3280,48 @@ export const liveActivityFollows = pgTable(
 )
 
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+// ── Trial cards (bet "A card to start a 7-day trial", task T2) ──────────────
+//
+// One row per plain-entry card that has started a free trial, keyed by the Stripe card
+// fingerprint. The unique index is what refuses a second trial on the same card, even when two
+// requests race. Wallet cards (Apple Pay, Google Pay) are never stored: their fingerprint comes
+// from a device number. workspace_id is SET NULL on workspace delete so the card stays used.
+export const trialCards = pgTable(
+	'trial_cards',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fingerprint: text('fingerprint').notNull(),
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_cards_fingerprint_uniq').on(t.fingerprint)],
+)
+
+export type TrialCard = typeof trialCards.$inferSelect
+
+// ── Trial promo codes (bet "A card to start a 7-day trial", task "Promo code on the start-trial page") ──
+//
+// A code starts the trial with no card, for `trial_days` days. Stored upper case. `redemptions` is raised by one
+// conditional UPDATE inside the transaction that starts the trial, so `max_redemptions` holds even
+// when two requests race. No code is created by the app; a person adds rows by hand.
+export const trialPromoCodes = pgTable(
+	'trial_promo_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		code: text('code').notNull(),
+		maxRedemptions: integer('max_redemptions').notNull(),
+		redemptions: integer('redemptions').notNull().default(0),
+		// How long the trial lasts for a person who starts it with this code. A code gives 14 unless set otherwise.
+		trialDays: integer('trial_days').notNull().default(14),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		active: boolean('active').notNull().default(true),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_promo_codes_code_uniq').on(t.code)],
+)
+
+export type TrialPromoCode = typeof trialPromoCodes.$inferSelect
+
 export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 

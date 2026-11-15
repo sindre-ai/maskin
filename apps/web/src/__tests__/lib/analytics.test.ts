@@ -40,6 +40,7 @@ import {
 	trackLoopViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
+	trackNotificationOpened,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectUpdated,
@@ -1200,7 +1201,67 @@ describe('email_return', () => {
 	})
 })
 
+describe('notification_opened', () => {
+	beforeEach(() => {
+		sessionStorage.clear()
+		__setInitializedForTesting(true)
+	})
+
+	it('fires once with the id, type and source after arriving from a browser notification', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackNotificationOpened('?notification=n-1&notification_type=needs_input')).toBe(true)
+		expect(capture).toHaveBeenCalledWith('notification_opened', {
+			notification_id: 'n-1',
+			type: 'needs_input',
+			source: 'web_push',
+		})
+	})
+
+	it('does not fire a second time for a reload of the same link, but does for another notification', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackNotificationOpened('?notification=n-1&notification_type=message')).toBe(true)
+		expect(trackNotificationOpened('?notification=n-1&notification_type=message')).toBe(false)
+		expect(trackNotificationOpened()).toBe(false)
+		expect(trackNotificationOpened('?notification=n-2&notification_type=message')).toBe(true)
+		expect(capture).toHaveBeenCalledTimes(2)
+	})
+
+	it('drops a type that is not a plain category and sends nothing for a malformed id', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackNotificationOpened('?notification=n-3&notification_type=Hello%20there')).toBe(true)
+		expect(capture).toHaveBeenLastCalledWith('notification_opened', {
+			notification_id: 'n-3',
+			source: 'web_push',
+		})
+		sessionStorage.clear()
+		expect(trackNotificationOpened('?notification=a%20b%20c')).toBe(false)
+		expect(trackNotificationOpened('?surface=web')).toBe(false)
+		expect(capture).toHaveBeenCalledTimes(1)
+	})
+})
+
 describe('flow_step and flow_error', () => {
+	it('flow_step carries where the flow started and a timed duration when given', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({
+			flow: 'agent_computer',
+			step: 'first_frame',
+			flowId: 'flow-e',
+			durationMs: 812.6,
+			from: 'agent_page',
+		})
+
+		expect(capture).toHaveBeenCalledWith('flow_step', {
+			flow: 'agent_computer',
+			step: 'first_frame',
+			flow_id: 'flow-e',
+			surface: 'web',
+			duration_ms: 813,
+			from: 'agent_page',
+		})
+	})
+
 	it('flow_step carries flow, step, flow_id, surface and a null duration on the first step', () => {
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 

@@ -184,7 +184,9 @@ export function NewMenu({
 									size="sm"
 									aria-label="New"
 									disabled={isDisabled}
-									className={cn('h-8 gap-1.5 rounded-full px-3.5 text-[13px] font-semibold')}
+									className={cn(
+										'touch-hit relative h-8 gap-1.5 rounded-full px-3.5 text-[13px] font-semibold',
+									)}
 								>
 									<Plus aria-hidden className="size-[13px]" />
 									<span className="hidden sm:inline">New</span>

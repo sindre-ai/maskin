@@ -74,6 +74,7 @@ import {
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
+import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
@@ -173,6 +174,7 @@ import {
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
 	type LlmRoute,
+	type MaskinPlan,
 	type ModelSource,
 	type PinnedModel,
 	PlanCapExceededError,
@@ -180,6 +182,7 @@ import {
 	ceilCents,
 	checkPlanCap,
 	creditBalanceCents,
+	effectivePeriodEnd,
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
@@ -216,7 +219,13 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
-import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import {
+	ContainerManager,
+	type LogChunk,
+	type StreamJsonUserMessage,
+	type TurnImage,
+	userTurnWithImages,
+} from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
 import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
@@ -1459,6 +1468,8 @@ export class SessionManager extends EventEmitter {
 		 * it apart from the human sending the same thing again.
 		 */
 		logTags?: Record<string, unknown>,
+		/** Images the agent sees with this turn. Not kept in the session log: only the text is. */
+		images?: TurnImage[],
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1476,9 +1487,12 @@ export class SessionManager extends EventEmitter {
 				throw new Error(`Agent server ${session.agentServerId} not found`)
 			}
 			const client = new AgentServerClient({ server: serverRow })
-			await client.sendInput(sessionId, payload)
+			await client.sendInput(sessionId, payload, images)
 		} else {
-			await this.containers.write(sessionId, payload)
+			await this.containers.write(
+				sessionId,
+				images && images.length > 0 ? userTurnWithImages(payload, images) : payload,
+			)
 		}
 
 		// The CLI does not echo the user turn back to stdout — only the
@@ -5269,8 +5283,9 @@ ${cont.continues_prompt}
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const billing = wsSettings.billing
-		const plan = billing?.plan
-		if (plan !== 'pro' && plan !== 'team') return
+		// Every plan the Maskin-funded route serves has a cap: trial, Starter, Pro, Team and
+		// Ultra. A workspace with no billing block is on the trial. Enterprise has none.
+		const plan = (billing?.plan ?? 'trial') as MaskinPlan
 
 		const capCents = getWorkspacePlanCap(wsSettings)
 		if (capCents === null) return
@@ -5303,20 +5318,13 @@ ${cont.continues_prompt}
 		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
 		if (totalUsedCents < capCents) return
 
-		let stopReason: string | null = null
-		if (!canUseCreditBalance(plan, billing)) {
-			// Mirrors checkPlanCap's block condition exactly — a new session
-			// dispatched for this workspace right now would already be
-			// rejected, so this one shouldn't be allowed to keep running either.
-			stopReason = 'usage exceeded the plan cap and no usage credits are available'
-		} else {
+		// Same rule as checkPlanCap: at 100% the session stops unless the workspace still holds
+		// a credit balance that covers the overage. The wording is the same either way.
+		const stopReason = 'your plan is used up'
+		if (canUseCreditBalance(plan, billing)) {
 			const costCentsNeeded = totalUsedCents - capCents
-			const balance = creditBalanceCents(billing)
-			if (costCentsNeeded > balance) {
-				stopReason = 'usage exceeded the plan cap and your remaining usage credits'
-			}
+			if (costCentsNeeded <= creditBalanceCents(billing)) return
 		}
-		if (!stopReason) return
 
 		logger.warn('Stopping running session over budget', {
 			sessionId: session.id,
@@ -5324,6 +5332,14 @@ ${cont.continues_prompt}
 			totalUsedCents,
 			capCents,
 			reason: stopReason,
+		})
+		void trackPlanLimitReached({
+			workspaceId: session.workspaceId,
+			plan,
+			periodEnd: effectivePeriodEnd(
+				periodStartMs,
+				typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined,
+			),
 		})
 		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
 			logger.warn('Failed to write budget-stop system log', {

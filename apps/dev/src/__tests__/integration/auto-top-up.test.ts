@@ -3,9 +3,10 @@ import type { Database } from '@maskin/db'
 import { events, awaitingVies, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import Stripe from 'stripe'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { creditedAmountUsdMinor, debitCreditForSession } from '../../lib/credit-billing'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { insertSession, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -216,6 +217,42 @@ describe('auto top-up (Integration)', () => {
 		await seed(0, { ...RULE, enabled: false })
 		await maybeAutoTopUp({ db, workspaceId, actorId })
 		expect(calls).toEqual([])
+	})
+
+	describe('with the trial-card-percent switch on (plans have no top-up)', () => {
+		function switchOn() {
+			process.env.FF_SIGNUP_FEATURES = FLAGS.TRIAL_CARD_PERCENT
+			_resetFeatureFlagConfig()
+			onTestFinished(() => {
+				Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
+				_resetFeatureFlagConfig()
+			})
+		}
+
+		it('never charges, and leaves the saved rule exactly as it was', async () => {
+			await seed(400)
+			switchOn()
+			await maybeAutoTopUp({ db, workspaceId, actorId })
+
+			expect(calls).toEqual([])
+			expect(await topUpRows()).toHaveLength(0)
+			const settings = await readSettings()
+			expect(settings.billing.credit_balance_cents).toBe(400)
+			expect(settings.auto_top_up).toEqual(RULE)
+		})
+
+		it('charges as before once the switch is off again', async () => {
+			await seed(400)
+			switchOn()
+			await maybeAutoTopUp({ db, workspaceId, actorId })
+			expect(calls).toEqual([])
+
+			Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
+			_resetFeatureFlagConfig()
+			await maybeAutoTopUp({ db, workspaceId, actorId })
+			expect(calls.filter((c) => c === 'invoices.pay')).toHaveLength(1)
+			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
+		})
 	})
 
 	it('fires once when several debits cross the threshold at the same time', async () => {
@@ -576,6 +613,40 @@ describe('auto top-up (Integration)', () => {
 			expect(settings.auto_top_up.status).toBe('ok')
 			expect(settings.auto_top_up.failure_reason).toBeNull()
 			expect(settings.auto_top_up.in_flight).toBeDefined()
+		})
+
+		describe('with the trial-card-percent switch on', () => {
+			function switchOn() {
+				process.env.FF_SIGNUP_FEATURES = FLAGS.TRIAL_CARD_PERCENT
+				_resetFeatureFlagConfig()
+				onTestFinished(() => {
+					Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
+					_resetFeatureFlagConfig()
+				})
+			}
+
+			it('refuses to turn the rule on, with a plain reason, and writes nothing', async () => {
+				await seed(400, null)
+				switchOn()
+				const res = await makeApp().request(
+					jsonRequest('PUT', '/api/billing/auto-top-up', RULE, headers()),
+				)
+				expect(res.status).toBe(400)
+				const body = (await res.json()) as { error: { message: string } }
+				expect(body.error.message).toContain('not available on a plan')
+				expect((await readSettings()).auto_top_up).toBeUndefined()
+				expect(await eventActions()).not.toContain('workspace_auto_top_up_updated')
+			})
+
+			it('still lets a saved rule be turned off, and keeps it', async () => {
+				await seed(400)
+				switchOn()
+				const res = await makeApp().request(
+					jsonRequest('PUT', '/api/billing/auto-top-up', { ...RULE, enabled: false }, headers()),
+				)
+				expect(res.status).toBe(200)
+				expect((await readSettings()).auto_top_up).toMatchObject({ ...RULE, enabled: false })
+			})
 		})
 
 		it('refuses to turn it on for a workspace with no Stripe customer', async () => {

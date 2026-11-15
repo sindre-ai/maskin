@@ -1,6 +1,7 @@
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { type ComputerViewFrom, createComputerViewFlow } from '@/lib/computer-view-flow'
 import { Minimize2 } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 
@@ -23,16 +24,26 @@ export function ExpandableDesktop({
 	agentName,
 	onOpenAgent,
 	actions,
+	from,
 }: {
 	workspaceId: string
 	agentId: string
 	agentName: string
+	/** Where this view sits, for the analytics flow (mode changes only). */
+	from: ComputerViewFrom
 	onOpenAgent?: (agentId: string) => void
 	/** Buttons shown under the view, inline and in the popup (the chat's Done). */
 	actions?: ReactNode
 }) {
 	const [expanded, setExpanded] = useState(false)
 	const [settled, setSettled] = useState(false)
+	// One flow for the whole view: the inline picture and the popup share it.
+	const [flow] = useState(() => createComputerViewFlow(from))
+
+	useEffect(() => {
+		flow.opened()
+		return () => flow.closed()
+	}, [flow])
 
 	useEffect(() => {
 		if (!expanded) {
@@ -73,6 +84,7 @@ export function ExpandableDesktop({
 							variant="preview"
 							onOpen={() => setExpanded(true)}
 							onOpenAgent={onOpenAgent}
+							flow={flow}
 						/>
 					</div>
 					<p className="text-center text-sm text-muted-foreground">{agentName}'s screen</p>
@@ -113,6 +125,7 @@ export function ExpandableDesktop({
 								agentId={agentId}
 								onOpenAgent={onOpenAgent}
 								variant="immersive"
+								flow={flow}
 								toolbarEnd={popupEnd}
 							/>
 						) : (

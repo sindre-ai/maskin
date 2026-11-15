@@ -530,7 +530,7 @@ function CommentInputForm({
 							overLimit
 								? 'border-error'
 								: isBar
-									? 'border-input focus-within:border-border-strong'
+									? 'border-control focus-within:border-foreground'
 									: 'border-border',
 						)}
 					>

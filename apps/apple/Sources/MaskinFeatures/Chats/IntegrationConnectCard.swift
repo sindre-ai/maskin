@@ -4,17 +4,17 @@ import MaskinUI
 import SwiftUI
 
 /// An agent's ask to connect a provider (the web's `IntegrationConnectCard`). It is the same
-/// connect Settings → Integrations offers: Slack, GitHub and LinkedIn connect in the system
-/// sign-in sheet, the rest finish in the browser. Status is read live rather than stored on the
+/// connect Settings → Integrations offers: OAuth providers connect in the system sign-in sheet,
+/// key providers on a form, and the rest say they are set up from a computer. Status is read live rather than stored on the
 /// message, so the card turns to "Connected" by itself and a scrolled-back chat never shows a
 /// stale Connect button.
 struct IntegrationConnectCard: View {
 	let request: IntegrationConnectRequest
 
-	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var ownStore: IntegrationsStore?
+	@State private var keyForm: ConnectWithKeyStore?
 	/// A store shared with the caller (an intro's tool rows load one list for all of them).
 	var sharedStore: IntegrationsStore?
 
@@ -37,7 +37,7 @@ struct IntegrationConnectCard: View {
 						Text("Connect \(provider.displayName)")
 							.maskinText(.headline).foregroundStyle(MaskinColor.ink)
 						if let error = store.actionError { Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3) }
-						if let notice = store.connectNotice, notice.kind == .failure {
+						if let notice = store.connectNotice, notice.kind != .success {
 							Text(notice.text).maskinText(.caption).foregroundStyle(MaskinColor.ink3)
 						}
 						if !store.canManage {
@@ -46,7 +46,7 @@ struct IntegrationConnectCard: View {
 						} else {
 							RequestCardButton(
 								title: store.connectPhase.provider == provider.id ? "Connecting…" : "Connect \(provider.displayName)",
-								primary: true, disabled: store.isConnectInFlight
+								primary: true, disabled: store.isConnectInFlight || !store.canStartConnect(provider.id)
 							) { connect(provider, store) }
 						}
 					}
@@ -55,7 +55,12 @@ struct IntegrationConnectCard: View {
 			}
 		}
 		.task { await prepare() }
-		// Back from the browser: pick up whatever the web flow just connected.
+		.sheet(item: $keyForm) { form in
+			NavigationStack {
+				ConnectWithKeyView(store: form) { if let store { Task { await store.load() } } }
+			}
+		}
+		// Back in the app: pick up anything that changed while it was away.
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active, let store { Task { await store.load() } }
 		}
@@ -72,14 +77,15 @@ struct IntegrationConnectCard: View {
 		await made.load()
 	}
 
-	/// Native providers connect in the sheet; the rest keep the browser hand-off to Settings.
+	/// OAuth providers connect in the sheet, key providers on a form, the rest explain themselves.
 	private func connect(_ provider: IntegrationProvider, _ store: IntegrationsStore) {
 		if store.supportsNativeConnect(provider.id) {
 			Task { await store.connect(providerID: provider.id) }
-		} else if let runtime,
-			let url = SettingsServices(environment: runtime.environment).webURL("integrations")
-		{
-			openURL(url)
+		} else if store.connectsWithKey(provider.id), let runtime {
+			keyForm = SettingsServices(environment: runtime.environment)
+				.connectWithKeyStore(providerID: provider.id, providerName: provider.displayName)
+		} else {
+			store.explainComputerOnly(provider.id)
 		}
 	}
 }

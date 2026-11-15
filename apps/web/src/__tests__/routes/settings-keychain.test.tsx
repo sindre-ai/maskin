@@ -466,7 +466,7 @@ describe('KeychainPage: credential cards', () => {
 			).not.toBeInTheDocument()
 			await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
 			await user.click(await screen.findByRole('option', { name: 'No access' }))
-			expect(mockRemoveGrant).toHaveBeenCalledWith('agent-1')
+			expect(mockRemoveGrant).toHaveBeenCalledWith('agent-1', expect.any(Object))
 			expect(mockSetGrant).not.toHaveBeenCalled()
 		})
 
@@ -477,7 +477,7 @@ describe('KeychainPage: credential cards', () => {
 			await user.click(screen.getByRole('combobox', { name: 'Access for Infra & DevOps' }))
 			await user.click(await screen.findByRole('option', { name: 'Full access' }))
 			// Full access is the default here, so there is nothing of its own to keep.
-			expect(mockRemoveGrant).toHaveBeenCalledWith('agent-1')
+			expect(mockRemoveGrant).toHaveBeenCalledWith('agent-1', expect.any(Object))
 		})
 
 		it('is read-only for a plain member who did not save the key', async () => {

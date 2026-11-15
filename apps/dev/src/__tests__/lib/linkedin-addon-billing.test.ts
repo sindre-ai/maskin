@@ -15,8 +15,7 @@ const env: StripeEnv = {
 	webhookSecret: 'whsec_test',
 	pricePro: 'price_pro',
 	priceTeam: 'price_team',
-	proHardCapUsdCents: 1000,
-	teamHardCapUsdCents: 2000,
+	priceDkk: { starter: null, pro: null, team: null, ultra: null },
 	priceLinkedinIdentity: 'price_linkedin',
 }
 

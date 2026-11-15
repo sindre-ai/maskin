@@ -16,7 +16,7 @@
 -- New, empty table, additive, not on the hot-tables list (see MIGRATIONS.md), so plain DDL is fine
 -- and there is nothing to backfill. Row-level security is switched on because
 -- 0111_enable_rls_public_tables ran before this table existed.
--- Down: drizzle/down/0151_next_step_sweep_claims_down.sql.
+-- Down: drizzle/down/0157_next_step_sweep_claims_down.sql.
 
 CREATE TABLE IF NOT EXISTS "next_step_sweep_claims" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

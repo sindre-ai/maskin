@@ -22,8 +22,15 @@ export const FLOW_STEPS = {
 	// Key capture cards inside chat have no route of their own. Built-in sign-in
 	// providers use the integration_* server events instead (row 7).
 	integration_key_capture: ['card_shown', 'key_submitted', 'connected'],
-	// Agent computer view and take-over, on mode changes only (row 12).
-	agent_computer: ['view_opened', 'take_over_started', 'take_over_ended', 'view_closed'],
+	// Agent computer view and take-over, on mode changes only (row 12). first_frame is the
+	// connection reaching a live picture: its duration_ms is the time to first frame.
+	agent_computer: [
+		'view_opened',
+		'first_frame',
+		'take_over_started',
+		'take_over_ended',
+		'view_closed',
+	],
 	// First launch of the iPhone app (row 11).
 	iphone_first_launch: [
 		'first_launch',
@@ -72,6 +79,8 @@ export type FlowStepProps = {
 	surface: FlowSurface
 	/** Milliseconds since the previous step of the same flow_id; null on the first step. */
 	duration_ms: number | null
+	/** Where the flow was started from, a fixed name (never text). Only on a step that says so. */
+	from?: string
 }
 
 export type FlowErrorProps = {
@@ -108,6 +117,7 @@ export function buildFlowStepProps(p: {
 	flowId: string
 	surface: FlowSurface
 	durationMs: number | null
+	from?: string
 }): FlowStepProps | null {
 	if (!p.flowId || !isFlowStep(p.flow, p.step)) return null
 	return {
@@ -116,6 +126,7 @@ export function buildFlowStepProps(p: {
 		flow_id: p.flowId,
 		surface: p.surface,
 		duration_ms: p.durationMs,
+		...(p.from ? { from: p.from } : {}),
 	}
 }
 

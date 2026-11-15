@@ -112,6 +112,7 @@ struct ThreadNavAvatars: View {
 	var leadID: String?
 	var limit = 4
 	var size: CGFloat = MaskinSpace.s14
+	@Environment(\.actorPictures) private var pictures
 
 	var body: some View {
 		let shown = Array(participants.prefix(limit))
@@ -119,7 +120,7 @@ struct ThreadNavAvatars: View {
 			ForEach(shown) { p in
 				Group {
 					if p.id == leadID {
-						let initials = ActorIdentity.initials(for: p.name)
+						let initials = ActorIdentity.initials(for: p.name, chosen: pictures.initials(p.id))
 						Text(initials)
 							.font(MaskinTypeface.sans(size * (initials.count > 2 ? 0.3 : 0.38), weight: .semibold, relativeTo: .caption))
 							.lineLimit(1)

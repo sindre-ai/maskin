@@ -25,7 +25,12 @@ const yesterdayNoon = new Date('2026-03-09T11:00:00Z')
 async function setup(settings: Record<string, unknown> | null) {
 	const owner = await insertActor(db, { type: 'human' })
 	const ownerId = owner?.id as string
-	const ws = await insertWorkspace(db, ownerId, settings ? { settings } : undefined)
+	// The factory grants enterprise by default; an enterprise workspace has no plan limit and gets
+	// no card, so seed these as ordinary metered workspaces.
+	const ws = await insertWorkspace(db, ownerId, {
+		...(settings ? { settings } : {}),
+		enterpriseGranted: false,
+	})
 	const workspaceId = ws?.id as string
 	const agent = await insertActor(db, { type: 'agent', name: 'Researcher' })
 	const agentId = agent?.id as string
@@ -33,7 +38,9 @@ async function setup(settings: Record<string, unknown> | null) {
 	return { ownerId, workspaceId, agentId }
 }
 
-const target = { unit: 'dollars', amount: 10, stop_share: 100, timezone: 'Europe/Oslo' }
+// 5% of the plan a day. The plan limit is $20, so one dollar is 5% of the plan.
+const target = { unit: 'percent', amount: 5, stop_share: 100, timezone: 'Europe/Oslo' }
+const plan = { plan: 'pro', hard_cap_usd_cents: 2000 }
 
 async function cards(workspaceId: string) {
 	return db
@@ -48,8 +55,37 @@ async function cards(workspaceId: string) {
 }
 
 describe('daily budget card scheduler', () => {
+	it('turns an earlier dollar target into percent, and explains the default for a token target', async () => {
+		const dollars = await setup({
+			daily_budget: { ...target, unit: 'dollars', amount: 1 },
+			billing: plan,
+		})
+		const tokens = await setup({
+			daily_budget: { ...target, unit: 'tokens', amount: 2_000_000 },
+			billing: plan,
+		})
+		await new DailyBudgetCardScheduler(db).tick(day1)
+
+		// $1 a day of a $20 plan is 5%.
+		const [dollarCard] = await cards(dollars.workspaceId)
+		expect(dollarCard?.content).toContain('Today: ░░░░░░░░░░ 0% of 5% so far.')
+		expect(dollarCard?.content).not.toContain('could not be turned into a percent')
+		const [tokenCard] = await cards(tokens.workspaceId)
+		expect(tokenCard?.content).toContain('0% of 3.3% so far.')
+		expect(tokenCard?.content).toContain('earlier daily target could not be turned into a percent')
+	})
+
+	it('sends nothing for an unmetered (enterprise) plan, which has no limit to take a percent of', async () => {
+		const { workspaceId } = await setup({
+			daily_budget: target,
+			billing: { plan: 'enterprise' },
+		})
+		await new DailyBudgetCardScheduler(db).tick(day1)
+		expect(await cards(workspaceId)).toHaveLength(0)
+	})
+
 	it('writes one For You card per owner at the day start, and not again the same day', async () => {
-		const { ownerId, workspaceId, agentId } = await setup({ daily_budget: target })
+		const { ownerId, workspaceId, agentId } = await setup({ daily_budget: target, billing: plan })
 		const trigger = await insertTrigger(db, workspaceId, ownerId, agentId, {
 			name: 'Nightly draft',
 		})
@@ -79,7 +115,7 @@ describe('daily budget card scheduler', () => {
 			targetActorId: ownerId,
 			sourceActorId: agentId,
 			objectId: null,
-			title: 'Yesterday: 3 runs, $4.00 (cost unknown for 1).',
+			title: 'Yesterday: 3 runs, 20% of plan (cost unknown for 1).',
 		})
 		expect(rows[0]?.metadata).toMatchObject({
 			kind: FOR_YOU_KIND,
@@ -87,11 +123,14 @@ describe('daily budget card scheduler', () => {
 			budget_date: '2026-03-10',
 		})
 		expect(rows[0]?.metadata).not.toHaveProperty('push_force')
-		// 2 runs in 14 days at $2 each, projected over the 31 days of March.
-		expect(rows[0]?.content).toContain('Today: ░░░░░░░░░░ $0.00 of $10.00 so far.')
-		expect(rows[0]?.content).toContain('Month forecast (approximate): $8.86 of $310.00 (3%).')
+		// 2 runs in 14 days at $2 (10% of the plan) each, projected over the 31 days of March.
+		expect(rows[0]?.content).toContain('Today: ░░░░░░░░░░ 0% of 5% so far.')
+		expect(rows[0]?.content).toContain(
+			'Month forecast (approximate): 44.3% of plan. Your daily target adds up to 155% over the month.',
+		)
 		expect(rows[0]?.content).toContain('Heaviest triggers:')
-		expect(rows[0]?.content).toContain('- Nightly draft: $8.86')
+		expect(rows[0]?.content).toContain('- Nightly draft: 44.3%')
+		expect(`${rows[0]?.title}${rows[0]?.content}`).not.toMatch(/token|\$|dollar/i)
 		expect(rows[0]?.content).toContain('- Not started by a trigger: Estimate unknown')
 
 		// A fresh process (empty memory) a minute later still finds the day taken.
@@ -100,7 +139,7 @@ describe('daily budget card scheduler', () => {
 	})
 
 	it('does not send a card someone deleted again, and sends again the next local day', async () => {
-		const { workspaceId } = await setup({ daily_budget: target })
+		const { workspaceId } = await setup({ daily_budget: target, billing: plan })
 		await new DailyBudgetCardScheduler(db).tick(day1)
 		const [first] = await cards(workspaceId)
 		await db.delete(notifications).where(eq(notifications.id, first?.id as string))
@@ -115,7 +154,7 @@ describe('daily budget card scheduler', () => {
 	})
 
 	it('says Estimate unknown, never zero, when nothing has a recorded cost', async () => {
-		const { ownerId, workspaceId, agentId } = await setup({ daily_budget: target })
+		const { ownerId, workspaceId, agentId } = await setup({ daily_budget: target, billing: plan })
 		await insertSession(db, workspaceId, agentId, ownerId, {
 			status: 'completed',
 			totalCostUsd: '0',
@@ -130,9 +169,10 @@ describe('daily budget card scheduler', () => {
 	it('sends nothing without a target, with a timezone that does not exist, or outside the day start', async () => {
 		const none = await setup(null)
 		const badTimezone = await setup({
-			daily_budget: { unit: 'dollars', amount: 10, stop_share: 100, timezone: 'Not/AZone' },
+			daily_budget: { unit: 'percent', amount: 5, stop_share: 100, timezone: 'Not/AZone' },
+			billing: plan,
 		})
-		const outside = await setup({ daily_budget: target })
+		const outside = await setup({ daily_budget: target, billing: plan })
 		await new DailyBudgetCardScheduler(db).tick(day1)
 		// 05:30 local: the three hour catch-up window after the day start is over.
 		await new DailyBudgetCardScheduler(db).tick(new Date('2026-03-10T04:30:00Z'))
@@ -144,7 +184,7 @@ describe('daily budget card scheduler', () => {
 	})
 
 	it('records the card in the audit events that carry the claim', async () => {
-		const { workspaceId } = await setup({ daily_budget: target })
+		const { workspaceId } = await setup({ daily_budget: target, billing: plan })
 		await new DailyBudgetCardScheduler(db).tick(day1)
 		const created = await db
 			.select()

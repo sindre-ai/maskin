@@ -37,6 +37,7 @@ describe('admitPosthogEvent', () => {
 	it('never caps tier 1 events', () => {
 		for (const event of [
 			'agent_session_started',
+			'plan_limit_reached',
 			'chat_session_started',
 			'chat_session_seeded',
 			'integration_connect_started',
@@ -45,8 +46,11 @@ describe('admitPosthogEvent', () => {
 			'signup_completed',
 			'workspace_created',
 			'checkout_session_completed',
+			'trial_started',
+			'trial_card_rejected_duplicate',
 			'support_item_opened',
 			'support_item_resolved',
+			'notification_sent',
 		]) {
 			for (let i = 0; i < 10; i++) expect(admitPosthogEvent(event)).toEqual({ send: true })
 		}
