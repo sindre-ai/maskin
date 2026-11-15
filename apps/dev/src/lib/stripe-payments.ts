@@ -3,6 +3,12 @@ const REQUEST_TIMEOUT_MS = 30_000
 const PAGE_SIZE = 100
 /** Bounds one listing so a runaway account cannot hold a run forever; the rest waits for the next. */
 const MAX_PAGES = 50
+/**
+ * Stripe lists invoices by the day they were created, not paid. An invoice can be paid long after
+ * (net-30 terms, a retried card), so the listing reaches this far back before `since` and the
+ * paid time decides what is kept.
+ */
+const INVOICE_LOOKBACK_MS = 45 * 24 * 60 * 60 * 1000
 
 /**
  * A payment Stripe says was received: a paid invoice or a completed checkout, reduced to what
@@ -131,13 +137,17 @@ export async function checkStripeKeyAccess(
 	return null
 }
 
-/** Paid invoices created at or after `since`. Zero-amount invoices are not payments. */
+/**
+ * Invoices paid at or after `since`. Zero-amount invoices are not payments. They are listed from
+ * INVOICE_LOOKBACK_MS before `since` because Stripe filters on created, then kept by paid time.
+ */
 export async function listPaidInvoices(
 	apiKey: string,
 	since: Date,
 	fetchFn: typeof fetch = fetch,
 ): Promise<StripePayment[]> {
-	const rows = await listAll(apiKey, '/invoices', since, { status: 'paid' }, fetchFn)
+	const listFrom = new Date(since.getTime() - INVOICE_LOOKBACK_MS)
+	const rows = await listAll(apiKey, '/invoices', listFrom, { status: 'paid' }, fetchFn)
 	const out: StripePayment[] = []
 	for (const raw of rows) {
 		const id = str(raw.id)
@@ -145,13 +155,15 @@ export async function listPaidInvoices(
 		const currency = str(raw.currency)
 		if (!id || !currency || amount === null || amount <= 0) continue
 		const transitions = raw.status_transitions as { paid_at?: unknown } | null | undefined
+		const paidAt = fromUnix(transitions?.paid_at) ?? fromUnix(raw.created) ?? new Date(0)
+		if (paidAt < since) continue
 		out.push({
 			id,
 			kind: 'invoice',
 			email: str(raw.customer_email),
 			amount,
 			currency,
-			paidAt: fromUnix(transitions?.paid_at) ?? fromUnix(raw.created) ?? new Date(0),
+			paidAt,
 		})
 	}
 	return out

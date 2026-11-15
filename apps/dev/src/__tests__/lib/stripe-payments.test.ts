@@ -73,7 +73,8 @@ describe('listPaidInvoices', () => {
 			return json(invoiceList)
 		}) as unknown as typeof fetch
 
-		const out = await listPaidInvoices('k', new Date('2026-11-01T00:00:00Z'), fetchFn)
+		const since = new Date('2025-11-01T00:00:00Z')
+		const out = await listPaidInvoices('k', since, fetchFn)
 
 		expect(out).toEqual([
 			{
@@ -88,8 +89,37 @@ describe('listPaidInvoices', () => {
 		expect(calls[0]?.pathname).toBe('/v1/invoices')
 		expect(calls[0]?.searchParams.get('status')).toBe('paid')
 		expect(calls[0]?.searchParams.get('created[gte]')).toBe(
-			String(Date.parse('2026-11-01T00:00:00Z') / 1000),
+			String((since.getTime() - 45 * 24 * 60 * 60 * 1000) / 1000),
 		)
+	})
+
+	it('reads an invoice created before the window but paid inside it', async () => {
+		const since = new Date('2026-11-12T00:00:00Z')
+		const createdAt = Date.parse('2026-10-20T00:00:00Z') / 1000
+		const fetchFn = (async (url: URL) => {
+			// Stripe filters on created, so honour created[gte] like the real API does.
+			const from = Number(url.searchParams.get('created[gte]'))
+			const base = { status: 'paid', amount_paid: 5000, currency: 'dkk', customer_email: 'a@b.dk' }
+			const rows = [
+				{
+					...base,
+					id: 'in_paid_late',
+					created: createdAt,
+					status_transitions: { paid_at: Date.parse('2026-11-12T08:00:00Z') / 1000 },
+				},
+				{
+					...base,
+					id: 'in_paid_early',
+					created: createdAt,
+					status_transitions: { paid_at: Date.parse('2026-10-25T08:00:00Z') / 1000 },
+				},
+			].filter((r) => r.created >= from)
+			return json({ has_more: false, data: rows })
+		}) as unknown as typeof fetch
+
+		const out = await listPaidInvoices('k', since, fetchFn)
+
+		expect(out.map((p) => p.id)).toEqual(['in_paid_late'])
 	})
 
 	it('follows starting_after until Stripe says there is no more', async () => {
