@@ -144,12 +144,11 @@ export function lumaSlug(raw: string): string | null {
 const LUMA_URL_RE = /https?:\/\/(?:www\.)?(?:luma\.com|lu\.ma)\/[^\s)\]>"']+/gi
 
 /** The first Luma page URL the event carries: in its metadata, else in its text. */
-export function findLumaListingUrl(
-	metadata: Record<string, unknown> | null,
-	content: string | null,
-): string | null {
-	for (const v of Object.values(metadata ?? {})) {
-		if (typeof v === 'string' && lumaSlug(v)) return v.trim()
+export function findLumaListingUrl(metadata: unknown, content: string | null): string | null {
+	if (metadata && typeof metadata === 'object') {
+		for (const v of Object.values(metadata)) {
+			if (typeof v === 'string' && lumaSlug(v)) return v.trim()
+		}
 	}
 	for (const m of (content ?? '').matchAll(LUMA_URL_RE)) {
 		// Trailing sentence punctuation is not part of the URL.
