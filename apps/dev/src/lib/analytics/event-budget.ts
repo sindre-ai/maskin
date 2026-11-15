@@ -26,6 +26,7 @@ const TIER1_EXACT = new Set([
 const TIER1_PREFIXES = [
 	'foryou_card_',
 	'signup_',
+	'onboarding_',
 	'workspace_',
 	'checkout_',
 	'trial_',
