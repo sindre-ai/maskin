@@ -62,6 +62,9 @@ const PASSED_ROUND_TTL_MS = 10 * 60 * 1000
 
 export const READ_ONLY_RUN_FLAG = 'read_only_run'
 
+/** Marks a round stored when an agent's send left a job open: the check is owed, no line was marked. */
+export const SEND_PENDING_FLAG = 'send_pending'
+
 export interface LineReport {
 	line_id: string
 	text: string
@@ -215,6 +218,41 @@ export async function requiresOutcomeCheck(
 		.where(and(eq(doneWhenLines.objectId, current.id), eq(doneWhenLines.listStatus, 'approved')))
 		.limit(1)
 	return !!row
+}
+
+/**
+ * Stores a pending round for a job an agent's send left open: no lines marked, no ending, no
+ * number (so it does not use up one of the three rounds). A person looking at the job sees a check
+ * is owed, and the agent's next ask to close runs it. Stored once per job.
+ */
+export async function recordPendingSendRound(
+	db: DbOrTx,
+	params: { workspaceId: string; objectId: string; actorId: string; toStatus: string },
+): Promise<void> {
+	const [existing] = await db
+		.select({ id: outcomeChecks.id })
+		.from(outcomeChecks)
+		.where(
+			and(
+				eq(outcomeChecks.objectId, params.objectId),
+				eq(outcomeChecks.kind, 'round'),
+				sql`${outcomeChecks.ending} is null`,
+				sql`${outcomeChecks.flags} @> ${JSON.stringify([SEND_PENDING_FLAG])}::jsonb`,
+			),
+		)
+		.limit(1)
+	if (existing) return
+	await db.insert(outcomeChecks).values({
+		workspaceId: params.workspaceId,
+		objectId: params.objectId,
+		kind: 'round',
+		round: null,
+		marks: [],
+		ending: null,
+		flags: [SEND_PENDING_FLAG],
+		requestedStatus: params.toStatus,
+		createdBy: params.actorId,
+	})
 }
 
 /** True when the id is a passed round for this job and this status, run a moment ago. */
