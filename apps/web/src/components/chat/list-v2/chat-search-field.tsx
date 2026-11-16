@@ -1,12 +1,8 @@
 import { useActors } from '@/hooks/use-actors'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
-import {
-	type OperatorToken,
-	SEARCH_IS_VALUES,
-	SEARCH_OPERATOR_HINTS,
-	operatorBeingTyped,
-} from '@/lib/chat-list-v2'
+import { type OperatorToken, SEARCH_OPERATOR_HINTS, operatorBeingTyped } from '@/lib/chat-list-v2'
 import { cn } from '@/lib/cn'
+import { CHAT_SEARCH_IS_VALUES } from '@maskin/shared'
 import { Search } from 'lucide-react'
 import { type KeyboardEvent, type Ref, useId, useMemo, useState } from 'react'
 
@@ -31,9 +27,13 @@ export function suggestionsFor(
 	}
 	if (!token) return []
 	const partial = token.partial.toLowerCase()
-	const prefix = token.operator === 'agent' ? '@' : `${token.operator}:`
+	const prefix = `${token.operator}:`
 	const pool =
-		token.operator === 'is' ? [...SEARCH_IS_VALUES] : token.operator === 'team' ? teams : agents
+		token.operator === 'is'
+			? [...CHAT_SEARCH_IS_VALUES]
+			: token.operator === 'team'
+				? teams
+				: agents
 	return pool
 		.filter((name) => name.toLowerCase().startsWith(partial) && name.toLowerCase() !== partial)
 		.slice(0, MAX_SUGGESTIONS)

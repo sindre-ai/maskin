@@ -5,7 +5,6 @@ import {
 	operatorBeingTyped,
 	pillCounts,
 	previewMarker,
-	searchOperatorsUsed,
 	trackedMarker,
 } from '@/lib/chat-list-v2'
 import { describe, expect, it } from 'vitest'
@@ -42,7 +41,9 @@ describe('previewMarker', () => {
 		expect(previewMarker(chat({ working }))).toBe('working')
 		expect(previewMarker(chat({ working, needs_you: true }))).toBe('needs_you')
 		expect(
-			previewMarker(chat({ working, needs_you: true, error: { reason: 'other', message_id: 4 } })),
+			previewMarker(
+				chat({ working, needs_you: true, error: { reason: 'other', last_person_message_id: 4 } }),
+			),
 		).toBe('error')
 		expect(previewMarker(chat())).toBe('none')
 	})
@@ -65,7 +66,7 @@ describe('trackedMarker', () => {
 describe('pills', () => {
 	const rows = [
 		chat({ id: 'a', needs_you: true }),
-		chat({ id: 'b', error: { reason: 'usage_limit', message_id: 9 } }),
+		chat({ id: 'b', error: { reason: 'usage_limit', last_person_message_id: 9 } }),
 		chat({ id: 'c', unread_count: 3 }),
 		chat({ id: 'd', working: [{ agent_id: 'a1', session_id: 's1' }] }),
 		chat({ id: 'e', later: true, unread_count: 1, needs_you: true }),
@@ -108,7 +109,7 @@ describe('groupChats', () => {
 		const groups = groupChats(
 			[
 				chat({ id: 'ask', needs_you: true }),
-				chat({ id: 'stopped', error: { reason: 'connection', message_id: 1 } }),
+				chat({ id: 'stopped', error: { reason: 'connection', last_person_message_id: 1 } }),
 				chat({ id: 'quiet' }),
 				chat({ id: 'new', unread_count: 1 }),
 			],
@@ -169,27 +170,16 @@ describe('groupChats', () => {
 	})
 })
 
-describe('search operators', () => {
-	it('lists each operator used once and never the words after it', () => {
-		expect(searchOperatorsUsed('from:forge is:unread is:later')).toEqual(['from', 'is'])
-		expect(searchOperatorsUsed('@forge team:growth "launch plan" -draft')).toEqual([
-			'phrase',
-			'agent',
-			'team',
-			'exclude',
-		])
-		expect(searchOperatorsUsed('with:sage')).toEqual(['with'])
-	})
-
-	it('reads plain words, a lone dash and a dash inside a word as no operator', () => {
-		expect(searchOperatorsUsed('billing retries')).toEqual([])
-		expect(searchOperatorsUsed('e-mail - draft')).toEqual([])
-	})
-
+describe('operatorBeingTyped', () => {
 	it('finds the operator being typed at the end of the text', () => {
 		expect(operatorBeingTyped('billing is:un')).toEqual({ operator: 'is', partial: 'un', start: 8 })
-		expect(operatorBeingTyped('@fo')).toEqual({ operator: 'agent', partial: 'fo', start: 0 })
+		expect(operatorBeingTyped('agent:fo')).toEqual({ operator: 'agent', partial: 'fo', start: 0 })
+		expect(operatorBeingTyped('FROM:')).toEqual({ operator: 'from', partial: '', start: 0 })
+	})
+
+	it('reads a finished word, plain words and an unknown key as nothing being typed', () => {
 		expect(operatorBeingTyped('from:forge ')).toBeNull()
 		expect(operatorBeingTyped('billing')).toBeNull()
+		expect(operatorBeingTyped('foo:ba')).toBeNull()
 	})
 })

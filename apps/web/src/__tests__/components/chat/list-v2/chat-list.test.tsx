@@ -117,7 +117,7 @@ describe('ChatListV2', () => {
 		mockList({
 			priority: [
 				chat({ id: 'ask', needs_you: true }),
-				chat({ id: 'stopped', error: { reason: 'other', message_id: 1 } }),
+				chat({ id: 'stopped', error: { reason: 'other', last_person_message_id: 1 } }),
 			],
 			recent: [chat({ id: 'new', unread_count: 1 }), chat({ id: 'quiet' })],
 			later: [chat({ id: 'l', later: true })],

@@ -223,32 +223,6 @@ export function groupChats(
 	return unnamed ? [...order, unnamed] : order
 }
 
-export const SEARCH_IS_VALUES = ['unread', 'needs', 'working', 'later', 'archived'] as const
-
-export type SearchOperator = 'agent' | 'from' | 'with' | 'team' | 'is' | 'phrase' | 'exclude'
-
-/** The operators a query used, once each, in the order they first appear. Never the words after them. */
-export function searchOperatorsUsed(text: string): SearchOperator[] {
-	const used: SearchOperator[] = []
-	const add = (op: SearchOperator) => {
-		if (!used.includes(op)) used.push(op)
-	}
-	// A quoted phrase is one token, so blank it before reading the words around it.
-	const withoutPhrases = text.replace(/"[^"]*"/g, () => {
-		add('phrase')
-		return ' '
-	})
-	for (const token of withoutPhrases.split(/\s+/)) {
-		if (/^@\S/.test(token)) add('agent')
-		else if (/^from:\S/i.test(token)) add('from')
-		else if (/^with:\S/i.test(token)) add('with')
-		else if (/^team:\S/i.test(token)) add('team')
-		else if (/^is:\S/i.test(token)) add('is')
-		else if (/^-\S/.test(token)) add('exclude')
-	}
-	return used
-}
-
 export interface OperatorToken {
 	operator: 'agent' | 'from' | 'with' | 'team' | 'is'
 	/** What was typed after the operator so far. */
@@ -260,16 +234,14 @@ export interface OperatorToken {
 /** The operator being typed at the end of the text, if the last word is one. */
 export function operatorBeingTyped(text: string): OperatorToken | null {
 	const start = text.lastIndexOf(' ') + 1
-	const word = text.slice(start)
-	if (word.startsWith('@')) return { operator: 'agent', partial: word.slice(1), start }
-	const m = /^(from|with|team|is):(.*)$/i.exec(word)
+	const m = /^(agent|from|with|team|is):(.*)$/i.exec(text.slice(start))
 	if (!m) return null
 	return { operator: m[1].toLowerCase() as OperatorToken['operator'], partial: m[2], start }
 }
 
 /** The operators listed when the field has focus and is empty, each with its hint. */
 export const SEARCH_OPERATOR_HINTS: Array<{ token: string; hint: string }> = [
-	{ token: '@agent', hint: 'Chats with that agent or person' },
+	{ token: 'agent:', hint: 'Chats with that agent' },
 	{ token: 'from:', hint: 'Chats with a message from them' },
 	{ token: 'with:', hint: 'Chats they are in' },
 	{ token: 'team:', hint: 'Chats tagged with a team' },

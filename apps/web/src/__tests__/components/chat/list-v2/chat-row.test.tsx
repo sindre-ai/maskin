@@ -73,7 +73,7 @@ describe('ChatRow', () => {
 			chat({
 				needs_you: true,
 				working: [{ agent_id: 'agent-1', session_id: 's1' }],
-				error: { reason: 'usage_limit', message_id: 7 },
+				error: { reason: 'usage_limit', last_person_message_id: 7 },
 			}),
 		)
 		expect(screen.getByText('Stopped. Usage limit reached.')).toBeInTheDocument()
@@ -86,7 +86,7 @@ describe('ChatRow', () => {
 		['other', 'Stopped. Something went wrong.'],
 		['connection', 'Stopped. Connection dropped.'],
 	] as const)('reads the %s reason verbatim', (reason, copy) => {
-		renderRow(chat({ error: { reason, message_id: 1 } }))
+		renderRow(chat({ error: { reason, last_person_message_id: 1 } }))
 		expect(screen.getByText(copy)).toBeInTheDocument()
 	})
 
@@ -104,11 +104,17 @@ describe('ChatRow', () => {
 
 	it('offers Retry first on a stopped chat and runs it from the row', async () => {
 		const user = userEvent.setup()
-		const a = renderRow(chat({ error: { reason: 'other', message_id: 3 } }))
+		const a = renderRow(chat({ error: { reason: 'other', last_person_message_id: 3 } }))
 		const buttons = screen.getAllByRole('button').map((b) => b.textContent)
 		expect(buttons.slice(0, 3)).toEqual(['Retry', 'Done', 'Later'])
 		await user.click(screen.getByRole('button', { name: 'Retry' }))
 		expect(a.retry).toHaveBeenCalledWith(expect.objectContaining({ id: 'conv-1' }), 'hover')
+	})
+
+	it('offers no Retry when the person never wrote in the stopped chat', () => {
+		renderRow(chat({ error: { reason: 'other', last_person_message_id: null } }))
+		expect(screen.getByText('Stopped. Something went wrong.')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
 
 	it('has no Retry on a chat that did not stop', () => {
@@ -127,7 +133,9 @@ describe('ChatRow', () => {
 
 	it('reaches Retry, Done, Later, Pin and Read from the ··· menu', async () => {
 		const user = userEvent.setup()
-		const a = renderRow(chat({ unread_count: 1, error: { reason: 'other', message_id: 3 } }))
+		const a = renderRow(
+			chat({ unread_count: 1, error: { reason: 'other', last_person_message_id: 3 } }),
+		)
 		await user.click(screen.getByRole('button', { name: 'Actions for Billing retries' }))
 		expect(screen.getByRole('menuitem', { name: 'Retry' })).toBeInTheDocument()
 		expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeInTheDocument()

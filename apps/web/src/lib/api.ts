@@ -3072,7 +3072,7 @@ export interface ConversationListItemResponse {
 	working?: ChatListWorking[]
 	/** The caller's own Later flag. Cleared by the server when a new message arrives. */
 	later?: boolean
-	/** The last turn failed. `message_id` is the last person message, the one Retry re-runs. */
+	/** The last turn failed. `last_person_message_id` is the person's last message, the one Retry re-runs. */
 	error?: ChatListError | null
 }
 
@@ -3085,7 +3085,8 @@ export type ChatListErrorReason = 'usage_limit' | 'other' | 'connection'
 
 export interface ChatListError {
 	reason: ChatListErrorReason
-	message_id: number
+	/** Null when the person never wrote in the chat: there is nothing to retry. */
+	last_person_message_id: number | null
 }
 
 export interface ConversationListResponse {

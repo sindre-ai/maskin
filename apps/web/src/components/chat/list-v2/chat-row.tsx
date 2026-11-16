@@ -67,6 +67,7 @@ export function ChatRow({
 	const isUnread = conversation.unread_count > 0
 	const marker = previewMarker(conversation)
 	const error = conversation.error
+	const canRetry = error?.last_person_message_id != null
 	const workingIds = new Set((conversation.working ?? []).map((w) => w.agent_id))
 	const workingNames = conversation.participants
 		.filter((p) => workingIds.has(p.actorId))
@@ -89,7 +90,7 @@ export function ChatRow({
 		<div
 			data-testid="chat-row"
 			className="group/row relative border-t border-border first:border-t-0"
-			style={{ '--cluster-w': error ? '176px' : '128px' } as React.CSSProperties}
+			style={{ '--cluster-w': canRetry ? '176px' : '128px' } as React.CSSProperties}
 		>
 			{isUnread ? (
 				<span
@@ -184,7 +185,7 @@ export function ChatRow({
 					'can-hover:opacity-0 can-hover:focus-within:opacity-100 can-hover:group-hover/row:opacity-100',
 				)}
 			>
-				{error ? (
+				{canRetry ? (
 					<button
 						type="button"
 						className={HOVER_BUTTON}
@@ -218,7 +219,7 @@ export function ChatRow({
 						</button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end">
-						{error ? (
+						{canRetry ? (
 							<DropdownMenuItem onSelect={() => actions.retry(conversation, 'menu')}>
 								Retry
 							</DropdownMenuItem>

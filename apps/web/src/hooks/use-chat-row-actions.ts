@@ -53,7 +53,8 @@ export function useChatRowActions(workspaceId: string) {
 	// The same call the Retry button in the thread makes, for the last person message. The marker
 	// clears at once; if the turn fails again the list's live updates bring it back with its new reason.
 	const retry = async (c: ConversationListItemResponse, via: ChatRowActionVia) => {
-		if (!c.error) return
+		const messageId = c.error?.last_person_message_id
+		if (messageId == null) return
 		trackChatRowAction({ action: 'retry', via })
 		const key = queryKeys.conversations.listInfinitePrefix(workspaceId)
 		const snapshots = queryClient.getQueriesData<InfiniteData<ConversationListResponse>>({
@@ -71,7 +72,7 @@ export function useChatRowActions(workspaceId: string) {
 		}
 		toast(RETRY_TOAST)
 		try {
-			await api.conversations.retryMessage(c.id, workspaceId, c.error.message_id)
+			await api.conversations.retryMessage(c.id, workspaceId, messageId)
 		} catch {
 			for (const [k, cache] of snapshots) queryClient.setQueryData(k, cache)
 			toast.error('Failed to retry')

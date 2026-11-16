@@ -18,11 +18,11 @@ import {
 	groupChats,
 	matchesPill,
 	pillCounts,
-	searchOperatorsUsed,
 	trackedMarker,
 } from '@/lib/chat-list-v2'
 import { cn } from '@/lib/cn'
 import { type LoadedList, activityTime } from '@/lib/conversation-search'
+import { parseChatSearch } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { MessageCircle, MessageCircleWarning } from 'lucide-react'
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
@@ -208,7 +208,7 @@ export function ChatListV2({
 	const settledQuery = needle !== '' && answered ? needle : ''
 	useEffect(() => {
 		if (!settledQuery) return
-		const used = searchOperatorsUsed(settledQuery)
+		const used = parseChatSearch(settledQuery).operators
 		const timer = setTimeout(
 			() =>
 				trackChatListSearchUsed({

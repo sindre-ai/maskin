@@ -22,7 +22,7 @@ import { api } from '@/lib/api'
 
 const row = {
 	id: 'conv-1',
-	error: { reason: 'usage_limit', message_id: 42 },
+	error: { reason: 'usage_limit', last_person_message_id: 42 },
 } as unknown as ConversationListItemResponse
 
 describe('useChatRowActions', () => {
@@ -62,6 +62,17 @@ describe('useChatRowActions', () => {
 		expect(api.conversations.retryMessage).toHaveBeenCalledWith('conv-1', 'ws-1', 42)
 		expect(toast).toHaveBeenCalledWith('Retrying')
 		expect(track).toHaveBeenCalledWith({ action: 'retry', via: 'hover' })
+	})
+
+	it('Retry does nothing when there is no person message to re-run', async () => {
+		const { result } = renderHook(() => useChatRowActions('ws-1'), { wrapper: TestWrapper })
+		const noMessage = {
+			id: 'conv-2',
+			error: { reason: 'other', last_person_message_id: null },
+		} as unknown as ConversationListItemResponse
+		await act(() => result.current.retry(noMessage, 'menu'))
+		expect(api.conversations.retryMessage).not.toHaveBeenCalled()
+		expect(track).not.toHaveBeenCalled()
 	})
 
 	it('Retry tells the person when the call fails', async () => {
