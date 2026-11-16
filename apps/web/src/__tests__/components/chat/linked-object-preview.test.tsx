@@ -11,11 +11,12 @@ const useObject = vi.fn()
 const updateMutate = vi.fn()
 const approveMutate = vi.fn()
 const sendMutate = vi.fn()
+let sendPending = false
 const chatMessages = vi.fn()
 
 vi.mock('@/hooks/use-conversation', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/hooks/use-conversation')>()),
-	useSendMessage: () => ({ mutate: sendMutate, isPending: false }),
+	useSendMessage: () => ({ mutate: sendMutate, isPending: sendPending }),
 	useConversationMessages: () => ({ data: chatMessages() }),
 }))
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
@@ -160,6 +161,7 @@ describe('LinkedObjectCard', () => {
 		updateMutate.mockReset()
 		approveMutate.mockReset()
 		sendMutate.mockReset()
+		sendPending = false
 		chatMessages.mockReset()
 	})
 
@@ -293,6 +295,18 @@ describe('LinkedObjectCard', () => {
 			await expand()
 			expect(screen.queryByText('Skipped')).not.toBeInTheDocument()
 			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+		})
+
+		it('cannot be approved while the skip is still being sent', async () => {
+			sendPending = true
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({ pages: [{ messages: [] }] })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			const approve = screen.getByRole('button', { name: /Approve draft/ })
+			expect(approve).toBeDisabled()
+			await userEvent.click(approve)
+			expect(approveMutate).not.toHaveBeenCalled()
 		})
 
 		it('is not offered outside a chat, where nobody can be told', async () => {
