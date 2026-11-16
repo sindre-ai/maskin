@@ -73,6 +73,27 @@ export function showsObjectCard(
 	)
 }
 
+/**
+ * Whether a message that links this object still has an Approve button for it: it gets a card
+ * (see {@link showsObjectCard}) and has not been approved or sent. A question asked beside such a
+ * draft is the same decision twice, so the question is not drawn.
+ */
+export function canStillApproveDraft(
+	object:
+		| {
+				workspaceId: string
+				content?: string | null
+				preview?: { delivery?: { state?: string | null } | null } | null
+		  }
+		| null
+		| undefined,
+	workspaceId: string,
+): boolean {
+	if (!showsObjectCard(object, workspaceId)) return false
+	const state = object?.preview?.delivery?.state
+	return state !== 'sent' && state !== 'approved'
+}
+
 /** Types that are people or organisations to point at, not text to read or change: their link stays a reference. */
 const REFERENCE_ONLY_TYPES = new Set(['contact', 'company'])
 

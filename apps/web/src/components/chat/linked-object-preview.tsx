@@ -24,6 +24,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { useActors } from '@/hooks/use-actors'
+import { useSendMessage } from '@/hooks/use-conversation'
 import { useApproveDraft, useDraftEdit } from '@/hooks/use-draft-editor'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -43,6 +44,9 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
 import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
+
+/** What Skip tells the agent: the draft is not to be sent. A plain message, the draft gets no new state. */
+const SKIP_MESSAGE = 'Skip this draft, do not send it'
 
 /** A tap this soon after "Read full draft to approve" opened the text is the same double tap, not a yes. */
 const REVEAL_SETTLE_MS = 500
@@ -390,17 +394,26 @@ export function LinkedObjectCard({
 									Approved, waiting for send
 								</span>
 							) : (
-								<Button
-									type="button"
-									size="sm"
-									disabled={
-										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
-									}
-									onClick={approveDraft}
-								>
-									{gated ? 'Read full draft to approve' : 'Approve draft'}
-									<ArrowRight size={14} aria-hidden />
-								</Button>
+								<>
+									{inChat && conversationId ? (
+										<SkipDraftButton
+											workspaceId={workspaceId}
+											conversationId={conversationId}
+											disabled={approve.isPending}
+										/>
+									) : null}
+									<Button
+										type="button"
+										size="sm"
+										disabled={
+											!canAct || approve.isPending || update.isPending || preview.missing.length > 0
+										}
+										onClick={approveDraft}
+									>
+										{gated ? 'Read full draft to approve' : 'Approve draft'}
+										<ArrowRight size={14} aria-hidden />
+									</Button>
+								</>
 							)}
 						</div>
 					) : canAct && nextStatus ? (
@@ -434,6 +447,40 @@ export function LinkedObjectCard({
 				</p>
 			) : null}
 		</div>
+	)
+}
+
+/** The way to say no to a draft in chat: tells the agent not to send it, and reads Skipped on this device afterwards. */
+function SkipDraftButton({
+	workspaceId,
+	conversationId,
+	disabled,
+}: {
+	workspaceId: string
+	conversationId: string
+	disabled: boolean
+}) {
+	const send = useSendMessage(conversationId, workspaceId)
+	const [skipped, setSkipped] = useState(false)
+	return (
+		<>
+			{send.isError ? (
+				<span role="alert" className="text-xs text-destructive">
+					Could not skip
+				</span>
+			) : null}
+			<Button
+				type="button"
+				size="sm"
+				variant="outline"
+				disabled={disabled || skipped || send.isPending}
+				onClick={() =>
+					send.mutate({ content: SKIP_MESSAGE }, { onSuccess: () => setSkipped(true) })
+				}
+			>
+				{skipped ? 'Skipped' : 'Skip'}
+			</Button>
+		</>
 	)
 }
 

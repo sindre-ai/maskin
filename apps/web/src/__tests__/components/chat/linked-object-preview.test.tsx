@@ -10,6 +10,13 @@ const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TestWrapper 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
 const approveMutate = vi.fn()
+// Skip sends a plain chat message; the mock reports it as sent, as the server would.
+const sendMutate = vi.fn((_input: unknown, options?: { onSuccess?: () => void }) =>
+	options?.onSuccess?.(),
+)
+vi.mock('@/hooks/use-conversation', () => ({
+	useSendMessage: () => ({ mutate: sendMutate, isPending: false, isError: false }),
+}))
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: (id: string) => useObject(id),
@@ -148,6 +155,7 @@ describe('LinkedObjectCard', () => {
 		useObject.mockReset()
 		updateMutate.mockReset()
 		approveMutate.mockReset()
+		sendMutate.mockClear()
 	})
 
 	// What the server adds to an object an integration can deliver.
@@ -175,6 +183,36 @@ describe('LinkedObjectCard', () => {
 		expect(screen.queryByRole('button', { name: /Move to/ })).not.toBeInTheDocument()
 		await userEvent.click(screen.getByRole('button', { name: /Approve draft/ }))
 		expect(approveMutate).toHaveBeenCalledWith(approvedAs('hash-1'))
+	})
+
+	it('offers Skip beside Approve, which tells the agent not to send and then reads Skipped', async () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: 'Skip' }))
+		expect(sendMutate).toHaveBeenCalledWith(
+			{ content: 'Skip this draft, do not send it' },
+			expect.anything(),
+		)
+		expect(approveMutate).not.toHaveBeenCalled()
+		expect(screen.getByRole('button', { name: 'Skipped' })).toBeDisabled()
+	})
+
+	it('has no Skip on a sent or an approved draft, or on a card outside a chat', async () => {
+		for (const state of ['sent', 'approved']) {
+			useObject.mockReturnValue({
+				data: objectRow({ preview: previewOf({ delivery: { state, at: null } }) }),
+			})
+			const { unmount } = renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(screen.queryByRole('button', { name: /^Skip/ })).not.toBeInTheDocument()
+			unmount()
+		}
+		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+		renderCard()
+		await expand()
+		expect(screen.queryByRole('button', { name: /^Skip/ })).not.toBeInTheDocument()
 	})
 
 	it('shows what the draft answers and who it goes to, above the text', async () => {

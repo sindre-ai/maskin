@@ -108,6 +108,12 @@ vi.mock('@/hooks/use-files', () => ({
 	}),
 }))
 
+// Whether the message links a draft that still has its own Approve; the hook itself is tested by what it hides here.
+const draftLinked = vi.hoisted(() => ({ value: false }))
+vi.mock('@/hooks/use-linked-draft', () => ({
+	useLinksApprovableDraft: () => draftLinked.value,
+}))
+
 import { MessageBubble } from '@/components/chat/message-bubble'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
@@ -893,5 +899,34 @@ describe('MessageBubble — own bubble fits its text', () => {
 	it('does not fit a message from someone else', () => {
 		const { container } = renderBubble(buildMessage({ content: 'a long line' }))
 		expect(container.querySelector('[style*="width"]')).toBeNull()
+	})
+})
+
+describe('MessageBubble question beside a draft', () => {
+	const question = {
+		session_id: 'sess-1',
+		questions: [
+			{
+				header: 'Approve send',
+				question: 'Send this reply?',
+				multi_select: false,
+				options: [{ label: 'Send it' }, { label: 'Hold' }],
+			},
+		],
+	}
+	afterEach(() => {
+		draftLinked.value = false
+	})
+
+	it('draws the question card when no draft is linked', () => {
+		renderBubble(buildMessage({ content: 'Reply is ready.', metadata: { question } }))
+		expect(screen.getByRole('button', { name: 'Send it' })).toBeInTheDocument()
+	})
+
+	it('does not draw the question card when the same message links a draft that can be approved', () => {
+		draftLinked.value = true
+		renderBubble(buildMessage({ content: 'Reply is ready.', metadata: { question } }))
+		expect(screen.queryByRole('button', { name: 'Send it' })).not.toBeInTheDocument()
+		expect(screen.getByText('Reply is ready.')).toBeInTheDocument()
 	})
 })

@@ -22,6 +22,7 @@ import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import { useFitTextWidth } from '@/hooks/use-fit-text-width'
 import { useLinkedChat } from '@/hooks/use-linked-chat'
+import { useLinksApprovableDraft } from '@/hooks/use-linked-draft'
 import { useLoop } from '@/hooks/use-loops'
 import { useToggleReaction } from '@/hooks/use-message-reactions'
 import { useObject } from '@/hooks/use-objects'
@@ -226,6 +227,13 @@ export function MessageBubble({
 	// have no card). Here the card shows every question and option description itself, so the
 	// twin is not drawn above it. Words the agent wrote of its own never match and stay.
 	const question = message.metadata?.question
+	// A draft linked in the same message already has its Approve (and Skip); asking the same thing
+	// again in a second card made the person answer twice, so the question is not drawn.
+	const linksApprovableDraft = useLinksApprovableDraft(
+		question ? message.content : '',
+		workspaceId,
+		shownLinkedObjectIds,
+	)
 	const isQuestionTwin =
 		question !== undefined && message.content === formatQuestionsAsMarkdown(question.questions)
 	const shownContent =
@@ -610,7 +618,7 @@ export function MessageBubble({
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
 				    the questions and each option's description; the message's markdown twin
 				    (`isQuestionTwin`) is only for readers that have no card. */}
-				{message.metadata?.question ? (
+				{message.metadata?.question && !linksApprovableDraft ? (
 					<QuestionOptions
 						conversationId={message.conversationId}
 						workspaceId={workspaceId}

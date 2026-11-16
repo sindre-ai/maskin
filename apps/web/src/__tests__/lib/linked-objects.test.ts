@@ -1,5 +1,6 @@
 import {
 	CHIP_MAX_LENGTH,
+	canStillApproveDraft,
 	chatSummary,
 	cutLabel,
 	extractLinkedFileIds,
@@ -88,6 +89,29 @@ describe('showsObjectCard', () => {
 		expect(showsObjectCard(draft, 'other')).toBe(false)
 		expect(showsObjectCard({ ...draft, content: '  ' }, 'ws')).toBe(false)
 		expect(showsObjectCard(undefined, 'ws')).toBe(false)
+	})
+})
+
+describe('canStillApproveDraft', () => {
+	const draft = (state: string) => ({
+		workspaceId: 'ws',
+		content: 'Hej',
+		preview: { body: 'Hej', delivery: { state } },
+	})
+
+	it('is true for a draft that has not been approved or sent', () => {
+		expect(canStillApproveDraft(draft('draft'), 'ws')).toBe(true)
+	})
+
+	it('is false once the draft is approved or sent', () => {
+		expect(canStillApproveDraft(draft('approved'), 'ws')).toBe(false)
+		expect(canStillApproveDraft(draft('sent'), 'ws')).toBe(false)
+	})
+
+	it('is false for what gets no approval card', () => {
+		expect(canStillApproveDraft({ ...draft('draft'), preview: null }, 'ws')).toBe(false)
+		expect(canStillApproveDraft(draft('draft'), 'other')).toBe(false)
+		expect(canStillApproveDraft(undefined, 'ws')).toBe(false)
 	})
 })
 
