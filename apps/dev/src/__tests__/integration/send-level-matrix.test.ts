@@ -404,7 +404,12 @@ describe('send level matrix: Resend send tools through the gateway', () => {
 	async function callResend(level: Level, mode: Mode, tool = 'send-email') {
 		const s = await agentInWorkspace()
 		await connectIntegration(s, 'resend', { accessToken: 're_live_key' }, level)
-		await insertSendMode(db, { workspaceId: s.ws.id, agentId: s.agent.id, kind: 'email', mode })
+		await insertSendMode(db, {
+			workspaceId: s.ws.id,
+			agentId: s.agent.id,
+			kind: 'agent_email',
+			mode,
+		})
 		const res = await appFor(s.agent.id).request('/api/integrations/resend/gateway', {
 			method: 'POST',
 			headers: {

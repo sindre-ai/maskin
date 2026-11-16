@@ -169,6 +169,13 @@ describe('resolveSendMode', () => {
 			kind: 'slack_message',
 		})
 		expect(slack.mode).toBe('always_allow')
+		// An agent's own address starts on a person's yes, apart from Gmail's email.
+		const ownAddress = await resolveSendMode(db, {
+			workspaceId: ws.id,
+			agentId: agent.id,
+			kind: 'agent_email',
+		})
+		expect(ownAddress).toEqual({ mode: 'ask_first', source: 'starting', settingId: null })
 		const unknown = await resolveSendMode(db, {
 			workspaceId: ws.id,
 			agentId: agent.id,
