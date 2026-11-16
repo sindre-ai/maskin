@@ -949,9 +949,11 @@ describe('MessageBubble question asked with a draft', () => {
 	it('draws the question as a note in the draft card and no second question card', async () => {
 		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
 		renderBubble(linkingMessage())
+		// The question card shows until the draft has loaded; then it becomes a note in the draft's card.
 		await waitFor(() =>
-			expect(screen.getByText('Send this reply to Liz today?')).toBeInTheDocument(),
+			expect(screen.queryByRole('button', { name: 'Send today' })).not.toBeInTheDocument(),
 		)
+		expect(screen.getByText('Send this reply to Liz today?')).toBeInTheDocument()
 		expect(screen.getByText('She asked for an answer by Friday.')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Send today' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
