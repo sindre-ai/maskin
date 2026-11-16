@@ -25,7 +25,7 @@ import { and, eq, isNotNull } from 'drizzle-orm'
 import { isInternalWorkspace } from '../lib/analytics/team-member'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
-import { button, headline, paragraph, renderEmail } from './email-layout'
+import { headline, paragraph, paragraphWithLink, renderEmail } from './email-layout'
 
 export const PLAN_LIMIT_EMAIL_KIND = 'plan_used_up'
 
@@ -83,22 +83,28 @@ export function buildPlanLimitEmail(input: PlanLimitEmailInput): PlanLimitEmail 
 	const subject = isTrial
 		? 'Your Maskin trial usage is used up'
 		: 'Your Maskin plan is used up for this month'
-	const body = isTrial
-		? [
-				`${input.workspaceName} has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.`,
-				'To keep going, pick a plan. Work starts again as soon as you do.',
-			]
-		: [
-				`${input.workspaceName} has used 100% of its ${planName} plan. New work waits until your plan renews on ${renewalDate(input.periodEnd)}. Nothing is lost, and everything already done stays where it is.`,
-				'If you want to keep going before then, you can change plan.',
-			]
-	const buttonLabel = isTrial ? 'Choose a plan' : 'Change plan'
+	const intro = isTrial
+		? `${input.workspaceName} has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.`
+		: `${input.workspaceName} has used 100% of its ${planName} plan. New work waits until your plan renews on ${renewalDate(input.periodEnd)}. Nothing is lost, and everything already done stays where it is.`
+	// The plan words are the link, so there is no separate button.
+	const link = isTrial
+		? {
+				before: 'To keep going, ',
+				label: 'pick a plan',
+				after: '. Work starts again as soon as you do.',
+			}
+		: {
+				before: 'If you want to keep going before then, you can ',
+				label: 'change plan',
+				after: '.',
+			}
 	const text = [
 		greeting,
 		'',
-		...body.flatMap((p) => [p, '']),
-		`${buttonLabel}:`,
-		input.planUrl,
+		intro,
+		'',
+		// Plain text has no inline links, so the address follows the plan words in brackets.
+		`${link.before}${link.label} (${input.planUrl})${link.after}`,
 		'',
 		'Best,',
 		'Maskin',
@@ -109,8 +115,8 @@ export function buildPlanLimitEmail(input: PlanLimitEmailInput): PlanLimitEmail 
 			: 'New work waits until your plan renews.',
 		blocks: [
 			headline(greeting),
-			...body.map(paragraph),
-			button(input.planUrl, buttonLabel),
+			paragraph(intro),
+			paragraphWithLink(link.before, link.label, input.planUrl, link.after),
 			paragraph('Best,'),
 			paragraph('Maskin'),
 		],
