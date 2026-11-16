@@ -2235,6 +2235,13 @@ export interface SubscribersResponse {
 	actors: Array<{ id: string; type: string; name: string }>
 }
 
+/** The event or bet a For You card's object belongs to. */
+export interface ForYouContext {
+	id: string
+	type: 'event' | 'bet'
+	title: string | null
+}
+
 export interface UnreadItem {
 	entity_type: string
 	entity_id: string
@@ -2250,6 +2257,11 @@ export interface UnreadItem {
 	max_unread_attention: number | null
 	latest_event_id: number | null
 	latest_activity_at: string | null
+	// When the person must decide by: the writer's expiry on an answer card, the due date on a
+	// curated card. Absent or null when the card has no deadline.
+	due_at?: string | null
+	// The event (else bet) the card's object belongs to, so the card can say what it is for.
+	context?: ForYouContext | null
 	object?: ObjectResponse
 	// The comment that put this item in the feed. Absent only for entities with
 	// no joined event payload (a subscription whose events were pruned).
@@ -2341,6 +2353,8 @@ export interface ForYouItem {
 	latest_event_id: number | null
 	headline: string
 	rationale: string | null
+	due_at?: string | null
+	context?: ForYouContext | null
 	created_at: string | null
 	entity_type: 'object' | null
 	entity_id: string | null

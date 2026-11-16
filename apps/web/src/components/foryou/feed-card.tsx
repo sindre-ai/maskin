@@ -27,6 +27,13 @@ import type {
 import { cn } from '@/lib/cn'
 import { defaultOnSilenceLine } from '@/lib/comment-decision'
 import {
+	cardContextLabel,
+	cardDeadline,
+	cardWhyYou,
+	deadlineChipText,
+	deadlineRowText,
+} from '@/lib/foryou-card-context'
+import {
 	type CardAction,
 	type CardKind,
 	cardActions,
@@ -38,7 +45,7 @@ import {
 import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { ArrowUpRight, CalendarDays, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
@@ -100,6 +107,7 @@ export function FeedCard({
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
 	const doneWhenOn = useFeatureFlag('done-when-list')
+	const contextOn = useFeatureFlag('foryou-card-context')
 	// The ask leads, not the object. `cardHeadline` falls back through the
 	// comment's first line to the object title, so a card still reads sensibly
 	// for a mention with no decision and for an item with no mention payload.
@@ -160,6 +168,16 @@ export function FeedCard({
 	// last so it lands under the filled bar. A plain mention has nothing to
 	// decide and shows only the composer.
 	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
+
+	// What the card is for and by when. Left out, never printed empty, when the card lacks it.
+	const contextLabel = contextOn ? cardContextLabel(item) : null
+	const deadline = contextOn ? cardDeadline(item) : null
+	const whyYou = contextOn ? cardWhyYou(item) : null
+	// A card with nothing to tap still gives the reader a way to act on it.
+	const openTheTask = contextOn && !objectless && options.length === 0
+	// The message box names who a reply goes to, so it needs an author. Without one it would say
+	// "the agent", which is not an answer.
+	const showComposer = !objectless && (!contextOn || Boolean(senderId))
 
 	// The card is waiting on an agent once the reader has answered it.
 	const waiting = !decided && replied
@@ -252,6 +270,14 @@ export function FeedCard({
 						<span className="mt-[3px] flex w-full items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
 							{status && <StatusBadge status={status} variant="word" />}
 							<span className="min-w-0 truncate">{bylineName(sender?.name)}</span>
+							{contextLabel && item.context?.title && (
+								<span className="hidden min-w-0 truncate sm:inline">{item.context.title}</span>
+							)}
+							{deadline && (
+								<span className="shrink-0 text-status-in_review-text">
+									{deadlineRowText(deadline)}
+								</span>
+							)}
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
 					</button>
@@ -308,6 +334,25 @@ export function FeedCard({
 					)}
 				</div>
 
+				{(contextLabel || deadline) && (
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px]">
+						{contextLabel && item.context && (
+							<Link
+								to="/$workspaceId/objects/$objectId"
+								params={{ workspaceId, objectId: item.context.id }}
+								className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline"
+							>
+								<CalendarDays size={13} aria-hidden className="shrink-0" />
+								<span className="truncate">{contextLabel}</span>
+							</Link>
+						)}
+						{deadline && (
+							<span className="inline-flex shrink-0 items-center rounded-full bg-status-in_review-bg px-2.5 py-0.5 text-[12px] font-semibold text-status-in_review-text">
+								{deadlineChipText(deadline)}
+							</span>
+						)}
+					</div>
+				)}
 				{/* The headline is the object itself; in List view clicking it folds
 				    the card back down, the way the mockup's hero does. */}
 				<div
@@ -334,11 +379,21 @@ export function FeedCard({
 				{decision ? (
 					<div className="flex flex-col gap-3">
 						<div className="flex flex-col gap-1.5 rounded-xl bg-muted/60 px-4 py-3">
-							<p className="text-[15px] leading-[1.5] text-pretty text-foreground">
+							<p
+								className={cn(
+									'text-[15px] leading-[1.5] text-pretty text-foreground',
+									contextOn && 'max-w-[68ch]',
+								)}
+							>
 								{decision.summary}
 							</p>
 							{objectLine}
 						</div>
+						{whyYou && (
+							<p className="max-w-[62ch] text-[13px] leading-[1.45] text-muted-foreground">
+								<span className="font-semibold text-foreground">Why you:</span> {whyYou}
+							</p>
+						)}
 						{decision.done_when && doneWhenOn ? (
 							<DoneWhenCardLines block={decision.done_when} />
 						) : null}
@@ -375,6 +430,7 @@ export function FeedCard({
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
+						consequenceUnderEach={contextOn}
 						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
@@ -382,7 +438,18 @@ export function FeedCard({
 					/>
 				)}
 
-				{!objectless && (
+				{openTheTask && (
+					<Button
+						asChild
+						className="h-auto min-h-12 w-full rounded-xl px-4 py-3 text-[14px] font-bold"
+					>
+						<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
+							{object?.type === 'task' ? 'Open the task' : 'Open the item'}
+						</Link>
+					</Button>
+				)}
+
+				{showComposer && (
 					<CommentInput
 						workspaceId={workspaceId}
 						objectId={objectId}

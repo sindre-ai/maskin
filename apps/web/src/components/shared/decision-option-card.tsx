@@ -46,6 +46,7 @@ export function DecisionOptions({
 	onChoose,
 	variant = 'card',
 	defaultLine = null,
+	consequenceUnderEach = false,
 }: {
 	/** `row` is the For You feed: no "Suggested" line, the recommended option's first consequence sits under its bar. */
 	variant?: 'card' | 'row'
@@ -55,6 +56,8 @@ export function DecisionOptions({
 	onChoose: (option: DecisionOption) => void
 	/** What happens if nobody answers, when the card names a default (see `defaultOnSilenceLine`). */
 	defaultLine?: string | null
+	/** `row` only: the first consequence sits under every option, not just the recommended one. */
+	consequenceUnderEach?: boolean
 }) {
 	// Answering posts a comment, which a viewer cannot do.
 	const canWrite = useCanWrite()
@@ -92,17 +95,23 @@ export function DecisionOptions({
 				{others.length > 0 && (
 					<div className="flex flex-wrap gap-2">
 						{others.map((option) => (
-							<Button
-								key={option.id}
-								type="button"
-								variant="secondary"
-								data-action-id={option.id}
-								disabled={pendingId !== null || !canWrite}
-								onClick={() => onChoose(option)}
-								className="h-auto min-h-11 min-w-[8rem] flex-1 whitespace-normal rounded-xl px-3 py-2.5 text-center text-[13px] font-semibold"
-							>
-								{label(option)}
-							</Button>
+							<div key={option.id} className="flex min-w-[8rem] flex-1 flex-col gap-1.5">
+								<Button
+									type="button"
+									variant="secondary"
+									data-action-id={option.id}
+									disabled={pendingId !== null || !canWrite}
+									onClick={() => onChoose(option)}
+									className="h-auto min-h-11 w-full whitespace-normal rounded-xl px-3 py-2.5 text-center text-[13px] font-semibold"
+								>
+									{label(option)}
+								</Button>
+								{variant === 'row' && consequenceUnderEach && option.consequences[0] && (
+									<p className="text-[13px] leading-[1.45] text-muted-foreground">
+										{option.consequences[0]}
+									</p>
+								)}
+							</div>
 						))}
 					</div>
 				)}

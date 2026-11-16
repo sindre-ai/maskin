@@ -1,8 +1,8 @@
 import { z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects } from '@maskin/db/schema'
+import { events, objects, relationships } from '@maskin/db/schema'
 import { isDecisionExpired, parseCommentDecision } from '@maskin/shared'
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { feedDecisionSchema, fillDraftBodies, toLatestMention } from '../routes/subscriptions'
 import { dueAtOf } from '../services/push-policy'
 import {
@@ -21,6 +21,14 @@ import { serialize } from './serialize'
 const DECISION_WINDOW_DAYS = 14
 const DECISION_SCAN_LIMIT = 300
 
+const contextSchema = z.object({
+	id: z.string().uuid(),
+	type: z.enum(['event', 'bet']),
+	title: z.string().nullable(),
+})
+
+export type ForYouContext = z.infer<typeof contextSchema>
+
 export const forYouItemSchema = z.object({
 	// Null for a decision card, which comes straight from an agent's comment and has no
 	// notification behind it.
@@ -35,9 +43,12 @@ export const forYouItemSchema = z.object({
 	latest_event_id: z.number().nullable(),
 	headline: z.string(),
 	rationale: z.string().nullable(),
-	// When the person must decide by (ISO time the Chief of Staff set as metadata.due_at); null
-	// when the card does not expire.
+	// When the person must decide by: the Chief of Staff's metadata.due_at on a curated card, the
+	// decision's expires_at on an answer card. Null when the card does not expire.
 	due_at: z.string().nullable(),
+	// The event (else bet) the card's object belongs to, so the card can say what it is for.
+	// Null when the object is linked to neither.
+	context: contextSchema.nullable(),
 	created_at: z.string().nullable(),
 	entity_type: z.literal('object').nullable(),
 	entity_id: z.string().uuid().nullable(),
@@ -92,6 +103,7 @@ export async function buildForYouItems(
 			headline: meta.headline,
 			rationale: meta.rationale ?? null,
 			due_at: dueAtOf((row.metadata ?? {}) as Record<string, unknown>)?.toISOString() ?? null,
+			context: null as ForYouContext | null,
 			created_at: row.createdAt ? row.createdAt.toISOString() : null,
 			entity_type: row.objectId ? ('object' as const) : null,
 			entity_id: row.objectId ?? null,
@@ -213,7 +225,9 @@ export async function buildForYouItems(
 			latest_event_id: mention.event_id,
 			headline: mention.decision?.title ?? 'Needs your call',
 			rationale: null,
-			due_at: null,
+			// The writer's expiry is the deadline: once it passes the card leaves the list.
+			due_at: mention.decision?.expires_at ?? null,
+			context: null as ForYouContext | null,
 			created_at: mention.created_at,
 			entity_type: 'object' as const,
 			entity_id: event.entityId,
@@ -225,6 +239,15 @@ export async function buildForYouItems(
 
 	const items = [...curatedItems, ...decisionItems]
 
+	const contextByObject = await findContextObjects(
+		db,
+		workspaceId,
+		items.flatMap((i) => (i.entity_id ? [i.entity_id] : [])),
+	)
+	for (const item of items) {
+		item.context = (item.entity_id && contextByObject.get(item.entity_id)) || null
+	}
+
 	// Drafts show the object's description as it is now, not as it was when the card was posted.
 	await fillDraftBodies(
 		db,
@@ -234,4 +257,64 @@ export async function buildForYouItems(
 	)
 
 	return items
+}
+
+/**
+ * The event each object belongs to, else its bet: the first one linked (oldest edge first), in
+ * either direction. One lookup for the whole list, so a long feed costs two queries, not one per card.
+ */
+async function findContextObjects(
+	db: Database,
+	workspaceId: string,
+	objectIds: string[],
+): Promise<Map<string, ForYouContext>> {
+	const ids = [...new Set(objectIds)]
+	const found = new Map<string, ForYouContext>()
+	if (ids.length === 0) return found
+
+	const edges = await db
+		.select({
+			sourceId: relationships.sourceId,
+			targetId: relationships.targetId,
+		})
+		.from(relationships)
+		.where(
+			and(
+				eq(relationships.sourceType, 'object'),
+				eq(relationships.targetType, 'object'),
+				or(inArray(relationships.sourceId, ids), inArray(relationships.targetId, ids)),
+			),
+		)
+		.orderBy(asc(relationships.createdAt))
+	if (edges.length === 0) return found
+
+	const idSet = new Set(ids)
+	const linked = new Map<string, string[]>()
+	for (const { sourceId, targetId } of edges) {
+		if (idSet.has(sourceId)) linked.set(sourceId, [...(linked.get(sourceId) ?? []), targetId])
+		if (idSet.has(targetId)) linked.set(targetId, [...(linked.get(targetId) ?? []), sourceId])
+	}
+
+	const otherIds = [...new Set([...linked.values()].flat())]
+	const others = await db
+		.select({ id: objects.id, type: objects.type, title: objects.title })
+		.from(objects)
+		.where(
+			and(
+				eq(objects.workspaceId, workspaceId),
+				inArray(objects.id, otherIds),
+				inArray(objects.type, ['event', 'bet']),
+			),
+		)
+	const otherById = new Map(others.map((o) => [o.id, o]))
+
+	for (const [objectId, neighbours] of linked) {
+		const candidates = neighbours.flatMap((id) => {
+			const o = otherById.get(id)
+			return o ? [{ id: o.id, type: o.type as 'event' | 'bet', title: o.title }] : []
+		})
+		const pick = candidates.find((c) => c.type === 'event') ?? candidates[0]
+		if (pick) found.set(objectId, pick)
+	}
+	return found
 }
