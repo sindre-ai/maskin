@@ -116,6 +116,6 @@ export const GROWTH_LOOP_OPS_KNOWLEDGE_DESCRIPTION =
 // turns outcomes into follow-up actions and CRM updates.
 
 export const GROWTH_LOOP_MEETING_SLUG = 'meeting-loop'
-export const GROWTH_LOOP_MEETING_NAME = 'Meeting Loop'
+export const GROWTH_LOOP_MEETING_NAME = 'Meeting Flow'
 export const GROWTH_LOOP_MEETING_DESCRIPTION =
 	'Prepares briefs ahead of meetings and turns meeting outcomes into follow-up actions and CRM updates.'

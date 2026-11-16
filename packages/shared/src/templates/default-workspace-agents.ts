@@ -1391,7 +1391,7 @@ export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = [
 		$id: 'workspace_improvements',
 		name: 'Workspace improvements',
 		content:
-			"Turns Workspace Coach's coaching insights into actionable, clustered recommendations for the user. Coach files [workspace-improvements] insights (from onboarding reviews and daily sweeps); Chief of Staff clusters them daily by theme and posts a single consolidated recommendation comment on this loop object; Coach captures outcomes when an insight closes, so future coaching learns from what got applied vs. rejected.",
+			"Turns Workspace Coach's coaching insights into actionable, clustered recommendations for the user. Coach files [workspace-improvements] insights (from onboarding reviews and daily sweeps); Chief of Staff clusters them daily by theme and posts a single consolidated recommendation comment on this flow object; Coach captures outcomes when an insight closes, so future coaching learns from what got applied vs. rejected.",
 		entryCondition:
 			'An insight is created with title starting `[workspace-improvements]` (status=new).',
 		closeCondition: 'The insight reaches status scored, parked, or discarded.',
@@ -1410,7 +1410,7 @@ export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = [
 		entryCondition:
 			'A new knowledge object is created in the workspace (a brief, topic page, playbook, profile, or changelog) OR the twice-weekly digest cron fires.',
 		closeCondition:
-			"The digest is compiled, posted as one comment on the loop, and the Homepage + Status page are refreshed. (Folding is continuous; the loop never fully 'closes' a member object — each pass leaves the wiki current.)",
+			"The digest is compiled, posted as one comment on the flow, and the Homepage + Status page are refreshed. (Folding is continuous; the flow never fully 'closes' a member object — each pass leaves the wiki current.)",
 		triggerNames: ['Fold new knowledge into the wiki', 'Compile the twice-weekly digest'],
 	},
 ]
