@@ -179,13 +179,17 @@ public final class AppRuntime {
 		public let live: Bool
 		/// Text for the new chat's message box (item detail's Message mode).
 		public let draft: String
+		/// Where it started, for `chat_session_started`.
+		public let entryPoint: String
 	}
 	public var agentChatRequest: AgentChatRequest?
 
-	public func startChat(with agent: ChatParticipant, live: Bool = false, draft: String = "") {
+	public func startChat(
+		with agent: ChatParticipant, live: Bool = false, draft: String = "", entryPoint: String = "agent_one_shot"
+	) {
 		presentation = nil
 		selectedTab = .chats
-		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft)
+		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft, entryPoint: entryPoint)
 	}
 
 	public func buildInChat(_ text: String) {

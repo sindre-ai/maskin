@@ -23,7 +23,12 @@ struct SettingsRouteView: View {
 				workspaceId: services.workspaceId ?? "",
 				currentName: services.workspace?.name ?? "", role: services.role)
 		case .members:
-			MembersView(store: services.membersStore(), invitations: services.invitationsStore())
+			MembersView(
+				store: services.membersStore(), invitations: services.invitationsStore(),
+				onMessage: runtime.map { runtime in
+					{ runtime.startChat(with: $0, entryPoint: "person_message_row") }
+				},
+				canMessage: environment.workspaces.selected?.role != "viewer")
 		case .integrations:
 			IntegrationsView(store: services.integrationsStore(), services: services)
 		case .files: FilesListScreen(environment: environment)
