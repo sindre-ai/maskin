@@ -287,6 +287,9 @@ struct MaskinComposer: View {
 			.padding(.leading, config.showsAttach && !isDictating ? 0 : MaskinSpace.s5)
 			.padding(.trailing, MaskinSpace.s1)
 			.frame(maxWidth: .infinity)
+			#if os(iOS)
+			.background { ComposerImagePasteHook { model.attach([.image($0)]) } }
+			#endif
 	}
 
 	// MARK: Last slot
@@ -575,8 +578,8 @@ struct MaskinComposer: View {
 					}
 					composer.photoItems = []
 				}
-			// Drop and paste both land in `addFiles`. On iPhone the field only takes text, so an image
-			// from the keyboard's "Paste from Screenshots" or the edit menu's Paste reaches the bar here.
+			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone a pasted image reaches
+			// the bar through `ComposerImagePasteHook` on the field.
 			#if os(macOS)
 			base
 				.dropDestination(for: ComposerDrop.self) { items, _ in
@@ -590,7 +593,6 @@ struct MaskinComposer: View {
 					composer.addFiles(items)
 					return !items.isEmpty
 				} isTargeted: { composer.dropTargeted = $0 }
-				.pasteDestination(for: ComposerDrop.self) { composer.addFiles($0) }
 			#else
 			base
 			#endif
