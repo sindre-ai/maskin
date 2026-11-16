@@ -928,6 +928,12 @@ export const sessions = pgTable(
 		index('sessions_spawned_by_message_id_idx')
 			.on(t.spawnedByMessageId)
 			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
+		// Self-reference FKs. Without these every session deleted by an agent delete scans all of
+		// sessions. Built CONCURRENTLY in migrations 0160 and 0161.
+		index('sessions_retried_session_id_idx')
+			.on(t.retriedSessionId)
+			.where(sql`${t.retriedSessionId} IS NOT NULL`),
+		index('sessions_retry_of_idx').on(t.retryOf).where(sql`${t.retryOf} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
@@ -2032,6 +2038,10 @@ export const notifications = pgTable(
 	(t) => [
 		index('notifications_ws_status_idx').on(t.workspaceId, t.status),
 		index('notifications_target_actor_idx').on(t.targetActorId, t.status),
+		// ON DELETE SET NULL FK to sessions. Built CONCURRENTLY in migration 0162.
+		index('notifications_session_id_idx')
+			.on(t.sessionId)
+			.where(sql`${t.sessionId} IS NOT NULL`),
 	],
 )
 
