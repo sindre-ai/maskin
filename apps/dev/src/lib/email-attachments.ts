@@ -22,9 +22,6 @@ import { and, eq, inArray } from 'drizzle-orm'
 export const EMAIL_ATTACHMENT_MAX_FILES = 5
 export const EMAIL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
 
-/** The detail line of the preview that lists the files. The hash covers its value (the ids). */
-export const ATTACHMENTS_DETAIL_LABEL = 'Attachments'
-
 export class EmailAttachmentError extends Error {
 	constructor(message: string) {
 		super(message)
@@ -130,29 +127,32 @@ export async function loadEmailAttachments(
 }
 
 /**
- * Shows file names where a preview lists file ids. Display only: the content hash was
- * computed from the ids and is left as it is, so an approval does not depend on a name.
+ * Warns when a file the draft lists to be sent is not a file of this workspace (deleted, or
+ * another workspace's), because the card draws only the files it can find and a person approving
+ * must not miss that one is gone. Display only: warnings are not part of the content hash, and
+ * no id is put in the words.
  */
-export async function withAttachmentNames(
+export async function withMediaWarnings(
 	db: Database,
 	workspaceId: string,
 	preview: ObjectPreview,
 ): Promise<ObjectPreview> {
-	if (preview.kind !== 'email') return preview
-	const line = preview.details.find((d) => d.label === ATTACHMENTS_DETAIL_LABEL)
-	if (!line) return preview
-	const ids = line.value.split(',').map((s) => s.trim())
+	const ids = preview.media_file_ids ?? []
+	if (ids.length === 0) return preview
 	const valid = ids.filter((id) => UUID.test(id))
 	const rows = valid.length
 		? await db
-				.select({ id: files.id, name: files.name })
+				.select({ id: files.id })
 				.from(files)
 				.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, valid)))
 		: []
-	const names = new Map(rows.map((r) => [r.id, r.name]))
-	const shown = ids.map((id) => names.get(id) ?? `missing file (${id})`).join(', ')
+	const found = new Set(rows.map((r) => r.id))
+	const missing = ids.filter((id) => !found.has(id)).length
+	if (missing === 0) return preview
+	const what =
+		missing === 1 ? 'A file this draft lists is' : `${missing} files this draft lists are`
 	return {
 		...preview,
-		details: preview.details.map((d) => (d === line ? { ...d, value: shown } : d)),
+		warnings: [...preview.warnings, `${what} missing from the workspace, so it cannot be sent.`],
 	}
 }

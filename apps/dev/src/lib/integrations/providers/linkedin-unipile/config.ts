@@ -116,7 +116,7 @@ export const config: ProviderConfig = {
 				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text' },
 				// The one workspace file (PDF, PNG or JPEG) sent with the message. Shown for the
 				// same reason: swapping the file withdraws the approval.
-				{ key: 'attachment_file_id', label: 'Attachment', type: 'text' },
+				{ key: 'attachment_file_id', label: 'Attachment', type: 'text', slot: 'media' },
 			],
 		},
 		{
@@ -145,7 +145,7 @@ export const config: ProviderConfig = {
 				// approves: hidden fields are not hashed, and an edited recipient must withdraw the approval.
 				{ key: 'recipient_provider_id', label: 'LinkedIn id', type: 'text', required: true },
 				// One approved workspace file; a detail line too, so it is hashed into the approval.
-				{ key: 'attachment_file_id', label: 'Attachment', type: 'text' },
+				{ key: 'attachment_file_id', label: 'Attachment', type: 'text', slot: 'media' },
 			],
 		},
 		{
@@ -202,7 +202,7 @@ export const config: ProviderConfig = {
 				{ key: 'scheduled_date', label: 'Scheduled', type: 'text' },
 				// The images posted: workspace file ids of PNG or JPEG files, separated by commas.
 				// A detail line too, so swapping an image withdraws the approval.
-				{ key: 'attachment_file_ids', label: 'Images', type: 'text' },
+				{ key: 'attachment_file_ids', label: 'Images', type: 'text', slot: 'media' },
 			],
 		},
 	],

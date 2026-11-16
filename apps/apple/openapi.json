@@ -534,6 +534,12 @@
 														"null"
 													]
 												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
 												"body": {
 													"type": "string"
 												},
@@ -966,6 +972,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -2709,6 +2721,12 @@
 														"null"
 													]
 												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
 												"body": {
 													"type": "string"
 												},
@@ -3586,6 +3604,12 @@
 															"string",
 															"null"
 														]
+													},
+													"media_file_ids": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
 													},
 													"body": {
 														"type": "string"
@@ -5043,6 +5067,12 @@
 															"null"
 														]
 													},
+													"media_file_ids": {
+														"type": "array",
+														"items": {
+															"type": "string"
+														}
+													},
 													"body": {
 														"type": "string"
 													},
@@ -5551,6 +5581,12 @@
 																"null"
 															]
 														},
+														"media_file_ids": {
+															"type": "array",
+															"items": {
+																"type": "string"
+															}
+														},
 														"body": {
 															"type": "string"
 														},
@@ -6031,6 +6067,12 @@
 																	"string",
 																	"null"
 																]
+															},
+															"media_file_ids": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
 															},
 															"body": {
 																"type": "string"
@@ -6890,6 +6932,12 @@
 														"null"
 													]
 												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
 												"body": {
 													"type": "string"
 												},
@@ -7434,6 +7482,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -8214,6 +8268,12 @@
 														"null"
 													]
 												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
+												},
 												"body": {
 													"type": "string"
 												},
@@ -8898,6 +8958,12 @@
 														"string",
 														"null"
 													]
+												},
+												"media_file_ids": {
+													"type": "array",
+													"items": {
+														"type": "string"
+													}
 												},
 												"body": {
 													"type": "string"
@@ -64827,6 +64893,12 @@
 																			"null"
 																		]
 																	},
+																	"media_file_ids": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -65237,6 +65309,12 @@
 																								"null"
 																							]
 																						},
+																						"media_file_ids": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -65464,6 +65542,12 @@
 																							"string",
 																							"null"
 																						]
+																					},
+																					"media_file_ids": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
 																					},
 																					"body": {
 																						"type": "string"
@@ -69320,6 +69404,12 @@
 																			"null"
 																		]
 																	},
+																	"media_file_ids": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	},
 																	"body": {
 																		"type": "string"
 																	},
@@ -69730,6 +69820,12 @@
 																								"null"
 																							]
 																						},
+																						"media_file_ids": {
+																							"type": "array",
+																							"items": {
+																								"type": "string"
+																							}
+																						},
 																						"body": {
 																							"type": "string"
 																						},
@@ -69957,6 +70053,12 @@
 																							"string",
 																							"null"
 																						]
+																					},
+																					"media_file_ids": {
+																						"type": "array",
+																						"items": {
+																							"type": "string"
+																						}
 																					},
 																					"body": {
 																						"type": "string"
@@ -70426,6 +70528,12 @@
 																	"string",
 																	"null"
 																]
+															},
+															"media_file_ids": {
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
 															},
 															"body": {
 																"type": "string"

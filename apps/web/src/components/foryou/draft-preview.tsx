@@ -1,6 +1,7 @@
 import { DraftTextEditor } from '@/components/shared/draft-text-editor'
 import { FilePreview } from '@/components/shared/file-preview'
 import { ObjectPreviewMeta } from '@/components/shared/object-preview-meta'
+import { DraftMedia } from '@/components/shared/preview-media'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import type { LatestMentionDecisionDraft } from '@/lib/api'
 
@@ -63,6 +64,8 @@ export function DraftPreview({ workspaceId, draft }: DraftPreviewProps) {
 			) : (
 				<DraftText text={body} />
 			)}
+			{/* The files that go out with the text, after it and before the decision buttons. */}
+			{draft.preview ? <DraftMedia preview={draft.preview} workspaceId={workspaceId} /> : null}
 		</section>
 	)
 }

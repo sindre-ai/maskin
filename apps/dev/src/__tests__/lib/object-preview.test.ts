@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { listProviders } from '../../lib/integrations/registry'
-import { buildObjectPreview, listDeliverableKinds } from '../../lib/object-preview'
+import {
+	buildObjectPreview,
+	listDeliverableKinds,
+	previewContentHash,
+} from '../../lib/object-preview'
 
 describe('buildObjectPreview', () => {
 	it('returns null for an object without a declared kind', () => {
@@ -452,5 +456,61 @@ describe('deliverables declarations, matching', () => {
 			'manual_message',
 			'slack_message',
 		])
+	})
+})
+
+describe('buildObjectPreview media', () => {
+	const post = (attachment_file_ids?: unknown) => ({
+		content: 'A carousel.',
+		metadata: { kind: 'linkedin_post', account: 'Maskin', attachment_file_ids },
+	})
+
+	it('lists the files a post sends, in order, from a list or a comma separated string', () => {
+		expect(buildObjectPreview(post(['f-1', 'f-2', 'f-3']))?.media_file_ids).toEqual([
+			'f-1',
+			'f-2',
+			'f-3',
+		])
+		expect(buildObjectPreview(post('f-3, f-1 ,,f-3'))?.media_file_ids).toEqual(['f-3', 'f-1'])
+	})
+
+	it('has no media when none is listed, and never reads other files on the object', () => {
+		expect(buildObjectPreview(post())?.media_file_ids).toEqual([])
+	})
+
+	it('draws the files, not a detail line of ids', () => {
+		const preview = buildObjectPreview(post(['f-1']))
+		expect(preview?.details.map((d) => d.label)).not.toContain('Images')
+		expect(preview?.media_file_ids).toEqual(['f-1'])
+	})
+
+	it('keeps the content hash an approval was given against, and changes it when a file changes', () => {
+		const preview = buildObjectPreview(post(['f-1', 'f-2']))
+		// What the hash was before files had their own place: the ids were a detail line.
+		const before = previewContentHash({
+			kind: 'linkedin_post',
+			recipients: [],
+			subject: null,
+			details: [
+				{ label: 'Posting as', value: 'Maskin' },
+				{ label: 'Images', value: 'f-1, f-2' },
+			],
+			body: 'A carousel.',
+		})
+		expect(preview?.content_hash).toBe(before)
+		expect(buildObjectPreview(post(['f-1', 'f-9']))?.content_hash).not.toBe(before)
+	})
+
+	it('carries the one attachment of a LinkedIn message and the files of an email', () => {
+		const message = buildObjectPreview({
+			content: 'Hi',
+			metadata: { kind: 'linkedin_message', to: 'Liz', attachment_file_id: 'f-pdf' },
+		})
+		expect(message?.media_file_ids).toEqual(['f-pdf'])
+		const email = buildObjectPreview({
+			content: 'Hi',
+			metadata: { kind: 'email', to: 'a@b.dk', subject: 'S', attachment_file_ids: ['f-1', 'f-2'] },
+		})
+		expect(email?.media_file_ids).toEqual(['f-1', 'f-2'])
 	})
 })

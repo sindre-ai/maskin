@@ -66,6 +66,7 @@ struct DraftPreview: View {
 				.lineSpacing(MaskinSpace.s2)
 				.foregroundStyle(MaskinColor.ink)
 				.frame(maxWidth: .infinity, alignment: .leading)
+			if let preview = draft.preview { PreviewMediaStrip(ids: preview.mediaFileIDs) }
 			if showsReadOnlyNote, receipt == nil {
 				Text("Approve sends this draft as written. To change it, use Discuss or edit it on the web.")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12))
