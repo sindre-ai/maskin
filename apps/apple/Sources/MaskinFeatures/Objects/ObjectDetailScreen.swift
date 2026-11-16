@@ -65,7 +65,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		let env = services.environment
 		_composer = State(
 			initialValue: ChatComposerModel(
-				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? ""),
+				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? "", largeUploads: env.largeUploads),
 				selfActorID: env.auth.session?.actorId ?? ""))
 		environment = services.environment
 		self.onOpenObject = onOpenObject

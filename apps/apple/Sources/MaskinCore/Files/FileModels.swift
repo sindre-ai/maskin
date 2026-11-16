@@ -140,12 +140,18 @@ public struct FileDetail: Identifiable, Sendable, Equatable {
 	public var annotations: [FileAnnotation]
 	/// Lowercase labels, A to Z; empty for a file with none.
 	public var tags: [String]
+	/// True for a file over `FileUploadLimits.maxInlineBytes`: the server sends no bytes (`data` is
+	/// empty), only a short-lived `downloadURL`. Never preview or export `data` for one.
+	public var contentOmitted: Bool
+	public var downloadURL: URL?
 
 	public init(
 		id: String, name: String, description: String? = nil, mimeType: String, sizeBytes: Int,
 		createdAt: Date? = nil, updatedAt: Date? = nil, data: Data, annotations: [FileAnnotation] = [],
-		tags: [String] = []
+		tags: [String] = [], contentOmitted: Bool = false, downloadURL: URL? = nil
 	) {
+		self.contentOmitted = contentOmitted
+		self.downloadURL = downloadURL
 		self.id = id
 		self.name = name
 		self.description = description

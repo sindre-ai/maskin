@@ -176,7 +176,7 @@ private struct ChatsContainer: View {
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
 				initialRecipient: request.recipient,
-				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 			) { created, live in
 				selection = created.id
 				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
@@ -410,7 +410,7 @@ private struct ChatThreadHost: View {
 	private func make() -> (chat: ChatStore, composer: ChatComposerModel) {
 		let conversationID = conversationID
 		let session = environment.auth.session
-		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 		let chat = ChatStore(
 			conversationID: conversationID, currentActorID: session?.actorId ?? "",
 			currentActorName: session?.name ?? "You", api: source,

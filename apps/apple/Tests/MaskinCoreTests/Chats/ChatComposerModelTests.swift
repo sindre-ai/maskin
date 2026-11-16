@@ -17,6 +17,13 @@ private actor FakeUploader: ChatFileUploading {
 		gate = nil
 	}
 
+	var streamed: [(name: String, sizeBytes: Int)] = []
+
+	func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws -> ChatAttachmentRef {
+		streamed.append((name, sizeBytes))
+		return ChatAttachmentRef(fileID: "big-\(streamed.count)", name: name, mimeType: mimeType, sizeBytes: sizeBytes)
+	}
+
 	func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef {
 		if hold { await withCheckedContinuation { gate = $0 } }
 		if !failures.isEmpty { throw failures.removeFirst() }
@@ -178,14 +185,41 @@ struct ChatComposerModelTests {
 		#expect(m.canSend)
 	}
 
-	@Test("a file over the server's size cap fails before uploading")
+	@Test("a file over the 1 GB cap fails before uploading")
 	func oversize() async {
 		let uploader = FakeUploader()
 		let m = model(uploader)
-		m.attach(name: "big.bin", mimeType: "application/octet-stream", prepare: file("big.bin", bytes: ChatLimits.maxFileBytes + 1))
+		let tooBig = ChatLimits.maxFileBytes + 1
+		m.attach(
+			name: "big.bin", mimeType: "application/octet-stream",
+			prepare: {
+				PreparedChatFile(
+					name: "big.bin", mimeType: "application/octet-stream",
+					fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+					sizeBytes: tooBig)
+			})
 		#expect(await eventually { m.hasFailedAttachment })
 		#expect(await uploader.uploaded.isEmpty)
-		if case .failed(let reason)? = m.attachments.first?.state { #expect(reason.contains("10 MB")) }
+		#expect(await uploader.streamed.isEmpty)
+		if case .failed(let reason)? = m.attachments.first?.state { #expect(reason.contains("1 GB")) }
+	}
+
+	@Test("a 200 MB file on disk uploads from the file and the temp copy is removed afterwards")
+	func largeFileUploads() async throws {
+		let uploader = FakeUploader()
+		let m = model(uploader)
+		let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).pdf")
+		try Data("stand-in".utf8).write(to: url)
+		let size = 200 * 1024 * 1024
+		m.attach(
+			name: "Report.pdf", mimeType: "application/pdf",
+			prepare: { PreparedChatFile(name: "Report.pdf", mimeType: "application/pdf", fileURL: url, sizeBytes: size) })
+		#expect(await eventually { m.canSend })
+		#expect(m.attachments.first?.ref?.fileID == "big-1")
+		#expect(m.attachments.first?.ref?.sizeBytes == size)
+		#expect(await uploader.uploaded.isEmpty)
+		#expect(await uploader.streamed.first?.sizeBytes == size)
+		#expect(!FileManager.default.fileExists(atPath: url.path))
 	}
 
 	@Test("no more than ten attachments")
