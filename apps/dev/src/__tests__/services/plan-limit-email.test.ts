@@ -15,11 +15,11 @@ describe('buildPlanLimitEmail', () => {
 
 		expect(mail.subject).toBe('Your Maskin plan is used up for this month')
 		expect(mail.text).toContain('Hey Anna,')
-		expect(mail.text).toContain('Acme has used 100% of its Pro plan.')
+		expect(mail.text).toContain('Your Acme workspace has used 100% of its Pro plan.')
 		expect(mail.text).toContain('New work waits until your plan renews on 3 December 2026.')
-		expect(mail.text).toContain(
-			`If you want to keep going before then, you can change plan (${base.planUrl}).`,
-		)
+		expect(mail.text).toContain('Change plan:')
+		expect(mail.text).toContain(base.planUrl)
+		expect(mail.html).toContain('Change plan')
 		expect(mail.html).toContain('Acme')
 	})
 
@@ -28,29 +28,12 @@ describe('buildPlanLimitEmail', () => {
 
 		expect(mail.subject).toBe('Your Maskin trial usage is used up')
 		expect(mail.text).toContain(
-			'Acme has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.',
+			'Your Acme workspace has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.',
 		)
-		expect(mail.text).toContain(
-			`To keep going, pick a plan (${base.planUrl}). Work starts again as soon as you do.`,
-		)
+		expect(mail.text).toContain('To keep going, pick a plan. Work starts again as soon as you do.')
+		expect(mail.text).toContain('Choose a plan:')
 		expect(mail.text).not.toContain('renews')
 		expect(mail.text).not.toContain('100%')
-	})
-
-	it('makes the plan words the link inside the sentence, with no separate button', () => {
-		const paid = buildPlanLimitEmail({ ...base, plan: 'pro' })
-		const trial = buildPlanLimitEmail({ ...base, plan: 'trial' })
-		const href = `href="${base.planUrl.replace(/&/g, '&amp;')}"`
-
-		expect(paid.html).toMatch(/you can <a [^>]*>change plan<\/a>\./)
-		expect(trial.html).toMatch(/To keep going, <a [^>]*>pick a plan<\/a>\. Work starts again/)
-		for (const { html, text } of [paid, trial]) {
-			expect(html.split(href)).toHaveLength(2)
-			expect(html).not.toContain('Change plan')
-			expect(html).not.toContain('Choose a plan')
-			expect(text).not.toContain('Change plan')
-			expect(text).not.toContain('Choose a plan')
-		}
 	})
 
 	it('signs off both versions with Best, then Maskin', () => {

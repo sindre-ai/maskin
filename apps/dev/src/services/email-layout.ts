@@ -121,16 +121,6 @@ export function paragraph(text: string): string {
 	return `<p class="m-text" style="margin: 0 0 8px; font-family: ${FONT}; font-size: 15px; line-height: 22px; color: ${C.text};">${escapeHtml(text)}</p>`
 }
 
-/** A paragraph with one brand-coloured link inside the sentence: `before`, the linked words, `after`. */
-export function paragraphWithLink(
-	before: string,
-	label: string,
-	url: string,
-	after: string,
-): string {
-	return `<p class="m-text" style="margin: 0 0 8px; font-family: ${FONT}; font-size: 15px; line-height: 22px; color: ${C.text};">${escapeHtml(before)}<a class="m-brand" href="${escapeHtml(url)}" style="color: ${C.brand}; text-decoration: underline;">${escapeHtml(label)}</a>${escapeHtml(after)}</p>`
-}
-
 /** The one brand-coloured button. */
 export function button(url: string, label: string): string {
 	return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 24px 0 0;"><tr><td class="m-btn" bgcolor="${C.brand}" style="background-color: ${C.brand}; border-radius: 6px;"><a class="m-btn-text" href="${escapeHtml(url)}" style="display: inline-block; padding: 13px 24px; font-family: ${FONT}; font-size: 16px; line-height: 20px; font-weight: 600; color: #ffffff; text-decoration: none;">${escapeHtml(label)}</a></td></tr></table>`
