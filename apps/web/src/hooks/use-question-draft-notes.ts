@@ -23,9 +23,11 @@ function askedAsYesNo(question: MessageQuestion): boolean {
 }
 
 /**
- * When one message links a draft that can still be approved and also asks a question, the draft
- * card carries the question and the question card is not drawn: one decision, one card. Returns
- * the draft's id and the note, or nothing when the message links no such draft. `heldElsewhere`
+ * When one message links a draft and also asks a question, the draft card carries the question
+ * and the question card is not drawn: one decision, one card. That stays true once the draft is
+ * approved, sent or skipped; the card then drops the note, and the question does not come back
+ * as a second card. Returns the draft's id and the note, or nothing when the message links no
+ * such draft. `heldElsewhere`
  * are links another message draws the card for; those are chips here, so there is no card to hold
  * the note and the question card stays.
  */
@@ -50,11 +52,7 @@ export function useQuestionDraftNote(
 	})
 	return useMemo(() => {
 		if (!question) return null
-		const index = objects.findIndex(
-			(q) =>
-				showsObjectCard(q.data, workspaceId) &&
-				(q.data?.preview?.delivery?.state ?? 'draft') === 'draft',
-		)
+		const index = objects.findIndex((q) => showsObjectCard(q.data, workspaceId))
 		if (index < 0) return null
 		// Agents put the option they suggest first, with the reason in its description.
 		const asked = question.questions.map((q) => q.question).join(' ')
