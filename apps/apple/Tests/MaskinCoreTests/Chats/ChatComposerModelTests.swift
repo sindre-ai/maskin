@@ -208,6 +208,7 @@ struct ChatComposerModelTests {
 	func largeFileUploads() async throws {
 		let uploader = FakeUploader()
 		let m = model(uploader)
+		m.text = "see attached"
 		let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).pdf")
 		try Data("stand-in".utf8).write(to: url)
 		let size = 200 * 1024 * 1024
