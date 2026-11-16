@@ -8,7 +8,6 @@ import {
 	notifications,
 	objects,
 	readState,
-	relationships,
 	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
@@ -352,76 +351,6 @@ describe('GET /api/for-you', () => {
 	})
 
 	describe('decision cards addressed to the person', () => {
-		it("passes the writer's expiry through as the card's deadline", async () => {
-			const withDeadline = await insertObject(db, workspaceId, humanId, {
-				type: 'task',
-				status: 'backlog',
-			})
-			const expires = new Date(Date.now() + 2 * 86_400_000).toISOString()
-			await decisionComment(withDeadline.id, { decision: { ...DECISION, expires_at: expires } })
-			const without = await insertObject(db, workspaceId, humanId, {
-				type: 'task',
-				status: 'backlog',
-			})
-			await decisionComment(without.id)
-
-			const items = (await list()) as Array<{ entity_id: string; due_at: string | null }>
-			expect(items.find((i) => i.entity_id === withDeadline.id)?.due_at).toBe(expires)
-			expect(items.find((i) => i.entity_id === without.id)?.due_at).toBeNull()
-		})
-
-		it('names the first linked event, else the bet, in one lookup for the whole list', async () => {
-			const link = (sourceId: string, targetId: string, type: string) =>
-				db.insert(relationships).values({
-					sourceType: 'object',
-					sourceId,
-					targetType: 'object',
-					targetId,
-					type,
-					createdBy: humanId,
-				})
-			const bet = await insertObject(db, workspaceId, humanId, {
-				type: 'bet',
-				status: 'active',
-				title: 'Autumn events',
-			})
-			const event = await insertObject(db, workspaceId, humanId, {
-				type: 'event',
-				status: 'planned',
-				title: 'Product evening',
-			})
-			const onEvent = await insertObject(db, workspaceId, humanId, {
-				type: 'task',
-				status: 'backlog',
-			})
-			const onBet = await insertObject(db, workspaceId, humanId, {
-				type: 'task',
-				status: 'backlog',
-			})
-			const alone = await insertObject(db, workspaceId, humanId, {
-				type: 'task',
-				status: 'backlog',
-			})
-			// The bet is linked first, but the event wins. Edges are read in either direction.
-			await link(bet.id, onEvent.id, 'breaks_into')
-			await link(onEvent.id, event.id, 'relates_to')
-			await link(bet.id, onBet.id, 'breaks_into')
-			for (const o of [onEvent, onBet, alone]) await decisionComment(o.id)
-
-			const items = (await list()) as Array<{
-				entity_id: string
-				context: { id: string; type: string; title: string } | null
-			}>
-			const contextOf = (id: string) => items.find((i) => i.entity_id === id)?.context
-			expect(contextOf(onEvent.id)).toEqual({
-				id: event.id,
-				type: 'event',
-				title: 'Product evening',
-			})
-			expect(contextOf(onBet.id)).toEqual({ id: bet.id, type: 'bet', title: 'Autumn events' })
-			expect(contextOf(alone.id)).toBeNull()
-		})
-
 		it('lists an unread decision card with no notification behind it', async () => {
 			const obj = await insertObject(db, workspaceId, humanId, { type: 'task', status: 'backlog' })
 			await decisionComment(obj.id)

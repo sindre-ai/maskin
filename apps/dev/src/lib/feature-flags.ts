@@ -144,12 +144,11 @@ export const FLAGS = {
 	 */
 	DONE_WHEN_LIST: 'done-when-list',
 	/**
-	 * Gates the context on a For You card (task [Give For You cards their context](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8ac3f27a-4f3f-4c9e-9e90-d43a03ffe71b)):
-	 * the line naming the event or bet it is for, the deadline chip, the Why you line, a
-	 * consequence line under every answer button and the Open the task fallback. UI only, read
-	 * where the card draws. Off means the card looks as it does today. The two extra fields the
-	 * feed carries (the deadline on answer cards and the event or bet) are additive and safe with
-	 * the flag off. Retire once it is on for everyone.
+	 * Gates the simpler For You card (task [Give For You cards their context](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8ac3f27a-4f3f-4c9e-9e90-d43a03ffe71b)):
+	 * the object the card is about on its first line, the chat composer as the message box, plain
+	 * summary text, no Recommended tag on a lone answer, Open the task to decide when there are no
+	 * buttons, and Open chat on the reply receipt. UI only, read where the card draws. Off means
+	 * the card looks as it does today. Retire once it is on for everyone.
 	 */
 	FOR_YOU_CARD_CONTEXT: 'foryou-card-context',
 	/**

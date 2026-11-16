@@ -1,4 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
+import { Composer } from '@/components/chat/chat'
+import { typeIconOf } from '@/components/chat/linked-card-face'
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { DoneWhenCardLines } from '@/components/objects/done-when-lines'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -10,7 +12,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
-import { useEntityEvents } from '@/hooks/use-events'
+import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	secondsSince,
@@ -24,15 +26,9 @@ import type {
 	LatestMentionDecisionDraft,
 	UnreadItem,
 } from '@/lib/api'
+import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { defaultOnSilenceLine } from '@/lib/comment-decision'
-import {
-	cardContextLabel,
-	cardDeadline,
-	cardWhyYou,
-	deadlineChipText,
-	deadlineRowText,
-} from '@/lib/foryou-card-context'
 import {
 	type CardAction,
 	type CardKind,
@@ -45,8 +41,8 @@ import {
 import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, CalendarDays, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
 
@@ -169,10 +165,6 @@ export function FeedCard({
 	// decide and shows only the composer.
 	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
 
-	// What the card is for and by when. Left out, never printed empty, when the card lacks it.
-	const contextLabel = contextOn ? cardContextLabel(item) : null
-	const deadline = contextOn ? cardDeadline(item) : null
-	const whyYou = contextOn ? cardWhyYou(item) : null
 	// A card with nothing to tap still gives the reader a way to act on it.
 	const openTheTask = contextOn && !objectless && options.length === 0
 	// The message box names who a reply goes to, so it needs an author. Without one it would say
@@ -183,8 +175,9 @@ export function FeedCard({
 	const waiting = !decided && replied
 	const held = decided || waiting ? '' : heldNote(item.latest_activity_at)
 
-	// The object the card is about, named once: under the message, not in the header.
-	const objectLine = objectless ? null : (
+	// The object the card is about, named once. With the context flag on it is the first line of
+	// the card; off, it sits under the message as it always has.
+	const objectLink = objectless ? null : (
 		<Link
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId }}
@@ -194,6 +187,8 @@ export function FeedCard({
 			<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
 		</Link>
 	)
+	const objectLine = contextOn ? null : objectLink
+	const ObjectIcon = typeIconOf(object?.type ?? '')
 
 	const [pendingId, setPendingId] = useState<string | null>(null)
 	// The acknowledgement beat below posts a real reply when it fires, so the
@@ -249,6 +244,21 @@ export function FeedCard({
 					label={repliedText || 'Reply sent'}
 					who={sender?.name}
 					multiline
+					chat={
+						contextOn && senderId && !objectless
+							? {
+									workspaceId,
+									agentId: senderId,
+									agentName: sender?.name,
+									object: {
+										id: objectId,
+										title: object?.title ?? null,
+										type: object?.type ?? null,
+									},
+									text: repliedText ?? '',
+								}
+							: undefined
+					}
 				/>
 			</CardShell>
 		)
@@ -270,14 +280,6 @@ export function FeedCard({
 						<span className="mt-[3px] flex w-full items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
 							{status && <StatusBadge status={status} variant="word" />}
 							<span className="min-w-0 truncate">{bylineName(sender?.name)}</span>
-							{contextLabel && item.context?.title && (
-								<span className="hidden min-w-0 truncate sm:inline">{item.context.title}</span>
-							)}
-							{deadline && (
-								<span className="shrink-0 text-status-in_review-text">
-									{deadlineRowText(deadline)}
-								</span>
-							)}
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
 					</button>
@@ -296,6 +298,16 @@ export function FeedCard({
 	return (
 		<CardShell expanded shellRef={shellRef}>
 			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
+				{contextOn && objectLink && (
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId }}
+						className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:underline"
+					>
+						<ObjectIcon size={13} aria-hidden className="shrink-0" />
+						<span className="min-w-0 truncate">{object?.title?.trim() || 'Open'}</span>
+					</Link>
+				)}
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 					<ActorAvatar
 						id={senderId ?? undefined}
@@ -334,25 +346,6 @@ export function FeedCard({
 					)}
 				</div>
 
-				{(contextLabel || deadline) && (
-					<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px]">
-						{contextLabel && item.context && (
-							<Link
-								to="/$workspaceId/objects/$objectId"
-								params={{ workspaceId, objectId: item.context.id }}
-								className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline"
-							>
-								<CalendarDays size={13} aria-hidden className="shrink-0" />
-								<span className="truncate">{contextLabel}</span>
-							</Link>
-						)}
-						{deadline && (
-							<span className="inline-flex shrink-0 items-center rounded-full bg-status-in_review-bg px-2.5 py-0.5 text-[12px] font-semibold text-status-in_review-text">
-								{deadlineChipText(deadline)}
-							</span>
-						)}
-					</div>
-				)}
 				{/* The headline is the object itself; in List view clicking it folds
 				    the card back down, the way the mockup's hero does. */}
 				<div
@@ -378,22 +371,22 @@ export function FeedCard({
 				    the comment as written. */}
 				{decision ? (
 					<div className="flex flex-col gap-3">
-						<div className="flex flex-col gap-1.5 rounded-xl bg-muted/60 px-4 py-3">
+						<div
+							className={cn(
+								'flex flex-col gap-1.5',
+								!contextOn && 'rounded-xl bg-muted/60 px-4 py-3',
+							)}
+						>
 							<p
 								className={cn(
 									'text-[15px] leading-[1.5] text-pretty text-foreground',
-									contextOn && 'max-w-[68ch]',
+									contextOn && 'max-w-[62ch]',
 								)}
 							>
 								{decision.summary}
 							</p>
 							{objectLine}
 						</div>
-						{whyYou && (
-							<p className="max-w-[62ch] text-[13px] leading-[1.45] text-muted-foreground">
-								<span className="font-semibold text-foreground">Why you:</span> {whyYou}
-							</p>
-						)}
 						{decision.done_when && doneWhenOn ? (
 							<DoneWhenCardLines block={decision.done_when} />
 						) : null}
@@ -430,7 +423,7 @@ export function FeedCard({
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
-						consequenceUnderEach={contextOn}
+						hideTagWhenAlone={contextOn}
 						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
@@ -444,25 +437,99 @@ export function FeedCard({
 						className="h-auto min-h-12 w-full rounded-xl px-4 py-3 text-[14px] font-bold"
 					>
 						<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
-							{object?.type === 'task' ? 'Open the task' : 'Open the item'}
+							{object?.type === 'task' ? 'Open the task to decide' : 'Open the item to decide'}
 						</Link>
 					</Button>
 				)}
 
-				{showComposer && (
-					<CommentInput
-						workspaceId={workspaceId}
-						objectId={objectId}
-						// The composer answers the comment that put this card in the feed,
-						// so a typed reply threads under it exactly as a taken option does.
-						parentEventId={item.latest_mention?.event_id}
-						variant="bar"
-						placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
-						onSubmitted={onReplied}
-					/>
-				)}
+				{showComposer &&
+					(contextOn ? (
+						<CardReply
+							workspaceId={workspaceId}
+							objectId={objectId}
+							parentEventId={item.latest_mention?.event_id}
+							agentName={sender?.name}
+							onSubmitted={onReplied}
+						/>
+					) : (
+						<CommentInput
+							workspaceId={workspaceId}
+							objectId={objectId}
+							// The composer answers the comment that put this card in the feed,
+							// so a typed reply threads under it exactly as a taken option does.
+							parentEventId={item.latest_mention?.event_id}
+							variant="bar"
+							placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
+							onSubmitted={onReplied}
+						/>
+					))}
 			</div>
 		</CardShell>
+	)
+}
+
+// The card's message box: the chat composer, answering the comment that raised the card. It does
+// what the comment box did here (post under the card's thread, then tell the card it was sent, so
+// the card settles into its receipt) and nothing more.
+function CardReply({
+	workspaceId,
+	objectId,
+	parentEventId,
+	agentName,
+	onSubmitted,
+}: {
+	workspaceId: string
+	objectId: string
+	parentEventId?: number
+	agentName?: string
+	onSubmitted: (text: string) => void
+}) {
+	const createComment = useCreateComment(workspaceId, objectId)
+	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
+	const [error, setError] = useState<string | null>(null)
+
+	const send = useCallback(
+		async (content: string) => {
+			setError(null)
+			try {
+				await createComment.mutateAsync({
+					entity_id: objectId,
+					content,
+					parent_event_id: parentEventId,
+					...(selection.agents.length > 0 ? { mentions: selection.agents } : {}),
+					...(selection.files.length > 0
+						? { attachment_file_ids: selection.files.map((file) => file.fileId) }
+						: {}),
+				})
+			} catch (err) {
+				// The composer keeps the text when this rejects; say why under the box.
+				setError(err instanceof Error ? err.message : 'Could not send your reply')
+				throw err
+			}
+			dispatchSelection({ type: 'clear_all' })
+			onSubmitted(content)
+		},
+		[createComment, objectId, parentEventId, selection, onSubmitted],
+	)
+
+	return (
+		<Composer
+			workspaceId={workspaceId}
+			onSend={send}
+			disabled={false}
+			pending={createComment.isPending}
+			surface="pulse-bar"
+			placeholder={`Message ${agentName ?? 'the agent'}`}
+			textareaLabel={`Message ${agentName ?? 'the agent'}`}
+			selection={selection}
+			onDispatchSelection={dispatchSelection}
+			onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
+			onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
+			onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
+			onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
+			externalError={error}
+			onDismissExternalError={() => setError(null)}
+		/>
 	)
 }
 
@@ -500,11 +567,20 @@ function Receipt({
 	label,
 	who,
 	multiline = false,
+	chat,
 }: {
 	testId: string
 	label: string
 	who?: string
 	multiline?: boolean
+	/** A reply receipt offers to carry on in a chat, with the typed message already in the box. */
+	chat?: {
+		workspaceId: string
+		agentId: string
+		agentName?: string
+		object: { id: string; title: string | null; type: string | null }
+		text: string
+	}
 }) {
 	return (
 		<div data-testid={testId} className="flex items-center gap-2.5 bg-status-done-bg px-4 py-3">
@@ -524,6 +600,24 @@ function Receipt({
 					{who ? `Sent to ${who}` : 'Reply sent'}
 				</div>
 			</div>
+			{chat && (
+				<Button asChild variant="secondary" size="sm" className="shrink-0 rounded-full">
+					<Link
+						to="/$workspaceId/chats/new"
+						params={{ workspaceId: chat.workspaceId }}
+						search={{
+							agentId: chat.agentId,
+							agentName: chat.agentName,
+							objectId: chat.object.id,
+							objectTitle: chat.object.title ?? undefined,
+							objectType: chat.object.type ?? undefined,
+							text: chat.text || undefined,
+						}}
+					>
+						{chat.agentName ? `Open chat with ${chat.agentName}` : 'Open chat'}
+					</Link>
+				</Button>
+			)}
 		</div>
 	)
 }

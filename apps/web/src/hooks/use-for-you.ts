@@ -22,8 +22,6 @@ export function forYouItemToFeedItem(item: ForYouItem): UnreadItem | null {
 		max_unread_attention: item.latest_mention?.attention ?? null,
 		latest_event_id: item.latest_mention?.event_id ?? item.latest_event_id,
 		latest_activity_at: item.latest_mention?.created_at ?? item.created_at,
-		due_at: item.due_at ?? null,
-		context: item.context ?? null,
 		object: item.object,
 		latest_mention: item.latest_mention,
 		curated: {
