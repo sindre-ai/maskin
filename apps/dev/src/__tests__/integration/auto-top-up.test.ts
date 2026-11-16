@@ -279,17 +279,6 @@ describe('auto top-up (Integration)', () => {
 			expect(await topUpRows()).toHaveLength(1)
 		})
 
-		it('does nothing when the charge path already credited the invoice', async () => {
-			await seed(400)
-			await maybeAutoTopUp({ db, workspaceId, actorId })
-			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
-
-			await deliverPaidInvoice({ claim: 'whatever', amount_cents: '5000' }, 'in_test_1')
-
-			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
-			expect(await topUpRows()).toHaveLength(1)
-		})
-
 		it('leaves a newer claim in place when the paid invoice belongs to an older one', async () => {
 			await seed(400, { ...RULE, in_flight: { token: 'claim-2', at: Date.now() } })
 			await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })

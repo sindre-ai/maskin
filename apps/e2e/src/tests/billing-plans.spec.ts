@@ -139,7 +139,7 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			await expect(page.getByText('Pro — 249 kr/mo')).toBeVisible()
-			await expect(page.getByText('$4.00 usage credits')).toBeVisible()
+			await expect(page.getByText('Usage credits from earlier top-ups left')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Buy usage credits' })).toBeVisible()
 
 			// Over-cap-with-a-balance is expected, already-paid-for usage, not a

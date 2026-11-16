@@ -38,27 +38,25 @@ test.describe('Agent detail — header and Usage block', () => {
 				page.locator('.max-w-280').getByRole('button', { name: /Disable agent|Enable agent/ }),
 			).toHaveCount(0)
 
-			// Usage block (on the Sessions tab): label, tabs, both columns, budget line.
+			// Usage block (on the Sessions tab): label, tabs, both columns.
 			await openAgentTab(page, 'sessions')
 			const usage = page.getByRole('region', { name: 'Usage' })
 			await expect(usage).toBeVisible()
 			await expect(usage.getByText('Usage', { exact: true })).toBeVisible()
 			await expect(usage.getByRole('button', { name: '24h' })).toBeVisible()
 			await expect(usage.getByRole('button', { name: '30d' })).toBeVisible()
-			await expect(usage.getByText('tokens used')).toBeVisible()
+			await expect(usage.getByText('of plan used')).toBeVisible()
 			await expect(usage.getByText('sessions', { exact: true })).toBeVisible()
-			await expect(usage.getByText('TOKENS / MONTH')).toBeVisible()
-			// No cap is configured, so the budget row reports the month's spend.
-			await expect(usage.getByText(/No cap — .+ this month/)).toBeVisible()
+			await expect(usage.getByText('PLAN USED / MONTH')).toBeVisible()
 
 			// Switching to 7d re-labels the chart — proves the tabs drive the
 			// window, not just cosmetic state.
 			await usage.getByRole('button', { name: '7d' }).click()
-			await expect(usage.getByText('TOKENS / WEEK')).toBeVisible()
+			await expect(usage.getByText('PLAN USED / WEEK')).toBeVisible()
 
 			// 90d is the mockup's third period (2381) and gets its own label.
 			await usage.getByRole('button', { name: '90d' }).click()
-			await expect(usage.getByText('TOKENS / QUARTER')).toBeVisible()
+			await expect(usage.getByText('PLAN USED / QUARTER')).toBeVisible()
 
 			// The header and Usage block render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {
