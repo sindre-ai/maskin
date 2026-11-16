@@ -8,6 +8,7 @@ import {
 } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { insertConversationMessage } from '../../services/conversation-messages'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -214,6 +215,44 @@ describe('GET /api/conversations needs_you, working, later and error', () => {
 				})
 				.where(eq(messages.id, card.id))
 			expect((await list()).get(chat)?.needs_you).toBe(false)
+		})
+
+		it('ignores a card the agent replaced with a newer one of the same kind', async () => {
+			const answered = await seedChat('replaced then answered')
+			const open = await seedChat('replaced twice')
+			const stamp = {
+				card_resolved: { at: new Date().toISOString(), by_actor_id: humanId, outcome: 'done' },
+			}
+			await say(answered, agentId, 'I need a key', { keychain_request: { name: 'X' } })
+			await say(answered, agentId, 'I need a key', { keychain_request: { name: 'X' }, ...stamp })
+			await say(open, agentId, 'I need a key', { keychain_request: { name: 'X' } })
+			await say(open, agentId, 'I need a key', { keychain_request: { name: 'X' } })
+
+			const rows = await list()
+			expect(rows.get(answered)?.needs_you).toBe(false)
+			expect(rows.get(open)?.needs_you).toBe(true)
+		})
+
+		it('brings a Done chat back when a question, card or failure notice arrives, not for a plain message', async () => {
+			const chat = await seedChat('archived')
+			await patchMe(chat, { archived: true })
+			const post = (content: string, metadata?: object) =>
+				insertConversationMessage(db, {
+					conversationId: chat,
+					workspaceId,
+					actorId: agentId,
+					content,
+					metadata: metadata ?? null,
+					sessionId: null,
+				})
+
+			await post('Just so you know')
+			expect((await list('archived=true')).has(chat)).toBe(true)
+
+			await post('Which one?', question(crypto.randomUUID()))
+			const rows = await list()
+			expect(rows.get(chat)?.needs_you).toBe(true)
+			expect((await list('archived=true')).has(chat)).toBe(false)
 		})
 
 		it('does not light a chat the caller marked Done or Later', async () => {

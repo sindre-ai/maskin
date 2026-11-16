@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { REQUEST_CARD_METADATA_KEYS } from '@maskin/shared'
 import { sql } from 'drizzle-orm'
 import { loadLatestSnippets, loadWorkingByConversation } from './chat-list-rows'
+import { type TurnMetadata, USAGE_LIMIT_TEXT, failureOf } from './chat-needs-person'
 
 /**
  * What a chat is waiting on from the person, read from the chat's own messages. Nothing is
@@ -28,8 +29,12 @@ type AskRow = {
 	id: number
 	conversation_id: string
 	thread_root_id: number | null
+	session_id: string | null
 	is_question: boolean
 	from_helper: boolean
+	/** Set for a request card only: its metadata, to read the kind and what it is about. */
+	card_metadata: Record<string, unknown> | null
+	resolved: boolean
 }
 
 type ReplyRow = { id: number; conversation_id: string; thread_root_id: number | null }
@@ -62,12 +67,17 @@ export async function loadChatsWithOpenAsk(
 	const cardKeys = REQUEST_CARD_METADATA_KEYS.map(
 		(key) => sql`(m.metadata -> ${key}::text) IS NOT NULL`,
 	)
+	// Every card since stamps began is read, answered or not: a card only counts while it is the
+	// latest of its kind (see below), and that needs the answered ones too.
 	const askRows = (await db.execute(sql`
 		SELECT m.id AS id,
 			m.conversation_id AS conversation_id,
 			m.thread_root_id AS thread_root_id,
+			m.session_id AS session_id,
 			(m.metadata -> 'question') IS NOT NULL AS is_question,
-			coalesce(m.metadata -> 'question' ->> 'reply_to_session', 'false') = 'true' AS from_helper
+			coalesce(m.metadata -> 'question' ->> 'reply_to_session', 'false') = 'true' AS from_helper,
+			CASE WHEN (m.metadata -> 'question') IS NULL THEN m.metadata END AS card_metadata,
+			(m.metadata -> 'card_resolved') IS NOT NULL AS resolved
 		FROM messages m
 		WHERE m.conversation_id IN (${conversationList(conversationIds)})
 			AND m.deleted_at IS NULL
@@ -75,10 +85,10 @@ export async function loadChatsWithOpenAsk(
 				(m.metadata -> 'question') IS NOT NULL
 				OR (
 					(${sql.join(cardKeys, sql` OR `)})
-					AND (m.metadata -> 'card_resolved') IS NULL
 					AND m.created_at >= ${CARD_STAMPS_FROM.toISOString()}::timestamptz
 				)
 			)
+		ORDER BY m.id
 	`)) as unknown as AskRow[]
 	// bigint columns can come back from raw SQL as strings, and ids are compared as numbers below.
 	const asks = askRows.map((a) => ({
@@ -87,10 +97,27 @@ export async function loadChatsWithOpenAsk(
 		thread_root_id: a.thread_root_id === null ? null : Number(a.thread_root_id),
 	}))
 
-	const questions = asks.filter((a) => a.is_question)
-	for (const card of asks) {
-		if (!card.is_question) open.add(card.conversation_id)
+	// A card is open when it is the latest of its kind that its session asked (for a card about an
+	// integration, the latest for that integration) and nobody answered it. An older card of the
+	// same kind was replaced by the newer one, which is the one an answer lands on
+	// (card-resolution.ts), so it never reads as waiting.
+	const latestCard = new Map<string, (typeof asks)[number]>()
+	for (const ask of asks) {
+		if (ask.is_question) continue
+		const key = REQUEST_CARD_METADATA_KEYS.find((k) => ask.card_metadata?.[k] != null)
+		if (!key) continue
+		const about = (ask.card_metadata?.[key] as { integration_id?: unknown } | undefined)
+			?.integration_id
+		latestCard.set(
+			`${ask.conversation_id}|${ask.session_id ?? ''}|${key}|${typeof about === 'string' ? about : ''}`,
+			ask,
+		)
 	}
+	for (const card of latestCard.values()) {
+		if (!card.resolved) open.add(card.conversation_id)
+	}
+
+	const questions = asks.filter((a) => a.is_question)
 	if (questions.length === 0) return open
 
 	// Picks: any message that names the question it answers.
@@ -150,38 +177,18 @@ export async function loadChatsWithOpenAsk(
 
 type LastMessage = { content: string; metadata: unknown }
 
-type FinalOutputMetadata = {
-	source?: string
-	credit_balance_low?: boolean
-	final_output?: {
-		is_error?: boolean
-		error_kind?: string
-		retry?: string
-		pseudo_tool_calls?: unknown
-		empty_completion?: unknown
-	}
-}
-
-const USAGE_LIMIT_TEXT =
-	/hit your (?:session |weekly |Opus )?limit|usage limit|credit balance is too low/i
-
 /**
  * Whether the newest message the thread shows is the notice of a failed turn, and why it failed.
- * The same markers the chat's notifications read to tell a failure notice from a real reply
- * (chat-notifications.ts). Null for anything else, so a person's new message clears it.
+ * Null for anything else, so a person's new message clears it.
  *
  * Reason: a spent plan or credit is usage_limit, a model-API blip or a replay that could not reach
  * the agent is connection, anything else is other.
  */
 export function readFailedTurn(last: LastMessage | undefined): { reason: ChatErrorReason } | null {
 	if (!last) return null
-	const meta = (last.metadata ?? null) as FinalOutputMetadata | null
-	if (meta?.source !== 'final_output') return null
-	const f = meta.final_output
+	const f = failureOf(last.metadata)
 	if (!f) return null
-	if (!(f.is_error || f.error_kind || f.retry || f.pseudo_tool_calls || f.empty_completion)) {
-		return null
-	}
+	const meta = last.metadata as TurnMetadata
 	if (meta.credit_balance_low || USAGE_LIMIT_TEXT.test(last.content)) {
 		return { reason: 'usage_limit' }
 	}
