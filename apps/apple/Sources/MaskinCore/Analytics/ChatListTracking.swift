@@ -6,10 +6,45 @@ import Foundation
 ///
 /// `section` is the list section the opened row sat in. `agent` and `room` are set by the rows that
 /// add them; until then direct messages and every dated or person group read as `recent`, like the
-/// web list.
+/// web list. The chat list bet adds `marker`, `filter` and `group_by` to the open, and the
+/// `chat_row_action` event, with the same names and values as web and `surface` set by the app.
 public enum ChatListTracking {
 	public enum Section: String, Sendable {
 		case pinned, unread, agent, recent, room, search
+		case today, yesterday, earlier, working, tag, type
+		case needsYou = "needs_you"
+	}
+
+	/// The marker the opened row carried: its one preview marker, else unread, else later (a row
+	/// under the Later pill shows none), else none.
+	public enum Marker: String, Sendable {
+		case none, unread, working, later, error
+		case needsYou = "needs_you"
+	}
+
+	/// What a row action did. Retry is the red dot's action.
+	public enum RowAction: String, Sendable {
+		case done, later, undo, retry
+	}
+
+	/// How the action was reached on the phone. An Undo reports how the action it takes back was reached.
+	public enum RowActionVia: String, Sendable {
+		case swipe, menu
+	}
+
+	/// The operators a search used, a fixed list: never the words typed.
+	public enum SearchOperator: String, CaseIterable, Sendable {
+		case agent, from, with, team, `is`, phrase, exclude, none
+	}
+
+	public static func marker(of c: ConversationSummary) -> Marker {
+		if c.later { return .later }
+		switch c.previewMarker {
+		case .error: return .error
+		case .needsYou: return .needsYou
+		case .working: return .working
+		case nil: return c.isUnread ? .unread : .none
+		}
 	}
 
 	/// `list` for a row opened from the list as it stands, `search` for one opened from the
@@ -23,10 +58,20 @@ public enum ChatListTracking {
 		public var section: Section
 		/// 1-based place among the rows on screen.
 		public var position: Int
-		public init(source: Source, section: Section, position: Int) {
+		/// Set by the new list; the older places (archive, search) leave them out.
+		public var marker: Marker?
+		public var filter: ChatListFilter?
+		public var groupBy: ChatListGroupBy?
+		public init(
+			source: Source, section: Section, position: Int, marker: Marker? = nil,
+			filter: ChatListFilter? = nil, groupBy: ChatListGroupBy? = nil
+		) {
 			self.source = source
 			self.section = section
 			self.position = position
+			self.marker = marker
+			self.filter = filter
+			self.groupBy = groupBy
 		}
 	}
 
@@ -98,18 +143,29 @@ extension TeamLayout {
 extension Analytics {
 	/// A chat was opened from the list. Only a person's tap sends this, not a deep link or a new chat.
 	public func chatOpenedFromList(_ place: ChatListTracking.Place) {
-		track(
-			"chat_opened_from_list",
-			[
-				"source": .string(place.source.rawValue), "section": .string(place.section.rawValue),
-				"position_bucket": .string(ChatListTracking.positionBucket(place.position)),
-			])
+		var properties: AnalyticsProperties = [
+			"source": .string(place.source.rawValue), "section": .string(place.section.rawValue),
+			"position_bucket": .string(ChatListTracking.positionBucket(place.position)),
+		]
+		if let marker = place.marker { properties["marker"] = .string(marker.rawValue) }
+		if let filter = place.filter { properties["filter"] = .string(filter.rawValue) }
+		if let groupBy = place.groupBy { properties["group_by"] = .string(groupBy.rawValue) }
+		track("chat_opened_from_list", properties)
+	}
+
+	/// A Done, Later, Undo or Retry on a row, by swipe or menu. Categories only.
+	public func chatRowAction(_ action: ChatListTracking.RowAction, via: ChatListTracking.RowActionVia) {
+		track("chat_row_action", ["action": .string(action.rawValue), "via": .string(via.rawValue)])
 	}
 
 	/// The list search settled on a query. Sends how many chats it found, never the text.
-	public func chatListSearchUsed(resultCount: Int) {
+	public func chatListSearchUsed(resultCount: Int, operators: [ChatListTracking.SearchOperator] = []) {
+		let used = operators.isEmpty ? [ChatListTracking.SearchOperator.none] : operators
 		track(
 			"chat_list_search_used",
-			["result_count_bucket": .string(ChatListTracking.resultCountBucket(resultCount))])
+			[
+				"result_count_bucket": .string(ChatListTracking.resultCountBucket(resultCount)),
+				"operators": .strings(used.map(\.rawValue)),
+			])
 	}
 }

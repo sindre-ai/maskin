@@ -1,14 +1,15 @@
 import Foundation
 import Observation
 
-/// A property value an event may carry. Only these four shapes exist, so a name, an address or a
-/// message cannot ride along as an object.
+/// A property value an event may carry. Only these shapes exist (a list holds plain words from a fixed
+/// set), so a name, an address or a message cannot ride along as an object.
 public enum AnalyticsValue: Sendable, Equatable, ExpressibleByStringLiteral,
 	ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral
 {
 	case string(String)
 	case int(Int)
 	case bool(Bool)
+	case strings([String])
 
 	public init(stringLiteral value: String) { self = .string(value) }
 	public init(integerLiteral value: Int) { self = .int(value) }
@@ -19,6 +20,7 @@ public enum AnalyticsValue: Sendable, Equatable, ExpressibleByStringLiteral,
 		case .string(let value): value
 		case .int(let value): value
 		case .bool(let value): value
+		case .strings(let value): value
 		}
 	}
 }
