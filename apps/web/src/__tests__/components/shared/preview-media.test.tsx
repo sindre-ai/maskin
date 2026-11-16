@@ -73,6 +73,17 @@ describe('PreviewMedia', () => {
 		expect(screen.getByText('2 / 3')).toBeInTheDocument()
 	})
 
+	it('keeps the arrow keys working after the button that was pressed disables', () => {
+		serve([listed('a', 'one.png'), listed('b', 'two.png'), listed('c', 'three.png')])
+		render(<PreviewMedia workspaceId="ws" fileIds={IDS} />)
+		const region = screen.getByRole('region', { name: 'Media, 3 items' })
+		fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+		expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
+		// A disabled button stops receiving keys, so focus must already be on the carousel.
+		expect(region).toHaveFocus()
+	})
+
 	it('loads only the slide in view and its neighbours', () => {
 		const ids = ['a', 'b', 'c', 'd', 'e']
 		serve(ids.map((id) => listed(id, `${id}.png`)))

@@ -54,6 +54,7 @@ export function PreviewMedia({ workspaceId, fileIds }: PreviewMediaProps) {
 	const { data, isLoading } = useFiles(workspaceId, { ids: fileIds })
 	const [index, setIndex] = useState(0)
 	const [viewerAt, setViewerAt] = useState<number | null>(null)
+	const region = useRef<HTMLElement>(null)
 	const scroller = useRef<HTMLDivElement>(null)
 	const opener = useRef<HTMLElement | null>(null)
 	// Where a button or arrow key is scrolling to. Until it gets there, scroll events are the
@@ -80,6 +81,9 @@ export function PreviewMedia({ workspaceId, fileIds }: PreviewMediaProps) {
 	const go = (to: number) => {
 		const next = Math.max(0, Math.min(items.length - 1, to))
 		setIndex(next)
+		// The button that took us to the first or last slide is about to disable. A disabled button
+		// stops receiving keys, so hand focus to the carousel and the arrow keys keep working.
+		if (next === 0 || next === items.length - 1) region.current?.focus({ preventScroll: true })
 		const el = scroller.current
 		if (el && typeof el.scrollTo === 'function') {
 			scrollTarget.current = next * el.clientWidth
@@ -109,10 +113,12 @@ export function PreviewMedia({ workspaceId, fileIds }: PreviewMediaProps) {
 
 	return (
 		<section
+			ref={region}
+			tabIndex={many ? -1 : undefined}
 			aria-roledescription={many ? 'carousel' : undefined}
 			aria-label={many ? `Media, ${items.length} items` : 'Media'}
 			onKeyDown={onKeyDown}
-			className="flex flex-col gap-1.5"
+			className="flex flex-col gap-1.5 focus:outline-none"
 		>
 			<div
 				ref={scroller}
