@@ -439,6 +439,23 @@ export const conversationListItemResponseSchema = z.object({
 	// Agents with an open turn in this chat right now (not merely a live session — a chat
 	// session stays running between turns). The list row shows them as working.
 	working_actor_ids: z.array(z.string().uuid()),
+	// The same agents with the session each one is answering in, for the link to that session.
+	working: z.array(z.object({ agent_id: z.string().uuid(), session_id: z.string().uuid() })),
+	// True when the chat waits on the caller: an agent question or request card nobody answered,
+	// or a last turn that failed. Read from this chat's own messages. Never true for a chat the
+	// caller marked Done (archived) or Later.
+	needs_you: z.boolean(),
+	// True while the caller has the chat on Later: set by the caller, ended by the next message.
+	// Only the caller's own mark is ever read.
+	later: z.boolean(),
+	// Set when the chat's last turn failed: why, and the caller's last message in the chat, so
+	// Retry can run the retry route on it (null when the caller never wrote one).
+	error: z
+		.object({
+			reason: z.enum(['usage_limit', 'connection', 'other']),
+			last_person_message_id: z.number().int().nullable(),
+		})
+		.nullable(),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
@@ -448,6 +465,10 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
+		working: true,
+		needs_you: true,
+		later: true,
+		error: true,
 		directPairKey: true,
 	})
 	.extend({
@@ -457,6 +478,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 export const conversationParticipantStateResponseSchema = z.object({
 	pinned: z.boolean(),
 	archived: z.boolean(),
+	later: z.boolean(),
 	last_read_message_id: z.number().nullable(),
 })
 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { STATUS_GROUP_KEYS } from '../search/status-groups'
 import { objectTypeSchema } from './objects'
+import { booleanQueryParam } from './primitives'
 
 /** Cap on rows returned. The launcher passes a smaller limit. */
 export const SEARCH_MAX_LIMIT = 150
@@ -47,6 +48,13 @@ export const searchQuerySchema = z.object({
 	types: csvParam(objectTypeSchema, SEARCH_MAX_TYPES).optional(),
 	statuses: csvParam(statusGroupKeySchema, STATUS_GROUP_KEYS.length).optional(),
 	participants: csvParam(z.string().uuid(), SEARCH_MAX_PARTICIPANTS).optional(),
+	/**
+	 * The chat list's search: read agent:, from:, with:, team:, is:, "phrases" and -words out of `q`
+	 * and apply them to the chats (see search/chat-search.ts). Only chats are searched then, since the
+	 * filters mean nothing for the other sources. Off by default, so the launcher's text is never read
+	 * as filters.
+	 */
+	operators: booleanQueryParam.optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Same meaning as the objects routes. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: z.enum(SEARCH_SORTS).default('rel'),

@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import {
+	type ChatSearchIsValue,
 	SEARCH_SOURCE_GROUPS,
 	STATUS_GROUP_KEYS,
 	type SearchQuery,
@@ -40,9 +41,111 @@ const TYPO_PASS_BELOW = 5
 /** Most rows a source loads for the typo pass. A source with more is reported as partial. */
 const TYPO_CANDIDATE_CAP = 5000
 
+/**
+ * The filters of the chat list's search, already read out of the typed text (see
+ * parseChatSearch). Values are lower-case. `needsIds` and `workingIds` are the chats the caller
+ * must be in for is:needs and is:working, worked out before the search because those states are
+ * read from messages and sessions, not from a column.
+ */
+export interface ChatSearchFilter {
+	agent: string[]
+	from: string[]
+	with: string[]
+	team: string[]
+	is: ChatSearchIsValue[]
+	phrases: string[]
+	exclude: string[]
+	needsIds: string[]
+	workingIds: string[]
+}
+
 export interface SearchContext {
 	workspaceId: string
 	callerId: string
+	/** Only the chats source reads it: the other sources are left out when it is set. */
+	chatFilter?: ChatSearchFilter
+}
+
+/** A chat in the candidate query (`c`) holds a participant whose name matches (and has a type, if given). */
+function participantNamed(pattern: string, callerId: string, type?: 'agent'): SQL {
+	return sql`EXISTS (
+		SELECT 1 FROM conversation_participants fp
+		INNER JOIN actors fa ON fa.id = fp.actor_id
+		WHERE fp.conversation_id = c.id AND fp.left_at IS NULL
+			AND fa.id <> ${callerId}${type ? sql` AND fa.type = ${type}` : sql``}
+			AND fa.name ILIKE ${pattern}
+	)`
+}
+
+/** A chat in the candidate query (`c`) holds a message written by who `from:` names. */
+function writtenBy(value: string, callerId: string): SQL {
+	if (value === 'me') {
+		return sql`EXISTS (SELECT 1 FROM messages fm WHERE fm.conversation_id = c.id AND fm.actor_id = ${callerId} AND fm.deleted_at IS NULL)`
+	}
+	const actorTest =
+		value === 'agent' || value === 'human'
+			? sql`fa.type = ${value}`
+			: sql`fa.name ILIKE ${tokenIlikePattern(value)}`
+	return sql`EXISTS (
+		SELECT 1 FROM messages fm
+		INNER JOIN actors fa ON fa.id = fm.actor_id
+		WHERE fm.conversation_id = c.id AND fm.deleted_at IS NULL AND ${actorTest}
+	)`
+}
+
+/** The title or any message of the chat in the candidate query (`c`) holds the text. */
+function chatHolds(text: string): SQL {
+	const pattern = tokenIlikePattern(text)
+	return sql`(c.title ILIKE ${pattern} OR EXISTS (
+		SELECT 1 FROM messages pm WHERE pm.conversation_id = c.id AND pm.content ILIKE ${pattern}
+	))`
+}
+
+function chatIdIn(ids: string[]): SQL {
+	if (ids.length === 0) return sql`false`
+	return sql`c.id IN (${sql.join(
+		ids.map((id) => sql`${id}::uuid`),
+		sql`, `,
+	)})`
+}
+
+/**
+ * The chat list's search filters as extra conditions on the candidate chats (`c`, the caller's own
+ * participant row `cp`). Every condition is on the caller's own rows and chats, so another person's
+ * Done or Later is never read. Nothing is added when no filter is set.
+ */
+function chatFilterClause(callerId: string, filter: ChatSearchFilter | undefined): SQL {
+	if (!filter) return sql``
+	const parts: SQL[] = []
+	for (const v of filter.agent)
+		parts.push(participantNamed(tokenIlikePattern(v), callerId, 'agent'))
+	for (const v of filter.with) parts.push(participantNamed(tokenIlikePattern(v), callerId))
+	for (const v of filter.from) parts.push(writtenBy(v, callerId))
+	for (const v of filter.team) {
+		parts.push(sql`(CASE WHEN jsonb_typeof(c.tags) = 'array' THEN EXISTS (
+			SELECT 1 FROM jsonb_array_elements_text(c.tags) tg(tag) WHERE tg.tag ILIKE ${tokenIlikePattern(v)}
+		) ELSE false END)`)
+	}
+	for (const v of filter.is) {
+		if (v === 'unread') {
+			parts.push(sql`EXISTS (
+				SELECT 1 FROM messages um
+				WHERE um.conversation_id = c.id AND um.actor_id <> ${callerId}
+					AND um.id > COALESCE(cp.last_read_message_id, 0)
+			)`)
+		} else if (v === 'archived') {
+			parts.push(sql`cp.archived`)
+		} else if (v === 'later') {
+			parts.push(sql`(cp.later_at IS NOT NULL AND cp.later_at >= c.last_message_at)`)
+		} else if (v === 'needs') {
+			parts.push(chatIdIn(filter.needsIds))
+		} else {
+			parts.push(chatIdIn(filter.workingIds))
+		}
+	}
+	for (const v of filter.phrases) parts.push(chatHolds(v))
+	for (const v of filter.exclude) parts.push(sql`NOT ${chatHolds(v)}`)
+	return parts.length === 0 ? sql`` : sql` AND ${sql.join(parts, sql` AND `)}`
 }
 
 /**
@@ -139,7 +242,7 @@ export const SEARCH_SOURCES: SearchSource[] = [
 		statusPairs: () => sql`
 			SELECT 'chat'::text AS type, v.status AS status
 			FROM (VALUES ('archived'), ('unread'), ('read')) AS v(status)`,
-		candidates: ({ workspaceId, callerId }) => sql`
+		candidates: ({ workspaceId, callerId, chatFilter }) => sql`
 			SELECT c.id AS id,
 				'chat'::text AS type,
 				c.title AS title,
@@ -163,7 +266,7 @@ export const SEARCH_SOURCES: SearchSource[] = [
 				ORDER BY m.id DESC
 				LIMIT 1
 			) lm ON true
-			WHERE c.workspace_id = ${workspaceId}`,
+			WHERE c.workspace_id = ${workspaceId}${chatFilterClause(callerId, chatFilter)}`,
 		// The unread flag looks into the messages of the chat, so it is worked out for the matched
 		// chats only (the candidates carry what it reads).
 		lateStatus: ({ callerId }) => sql`CASE
