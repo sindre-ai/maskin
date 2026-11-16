@@ -85,11 +85,11 @@ export function buildPlanLimitEmail(input: PlanLimitEmailInput): PlanLimitEmail 
 		: 'Your Maskin plan is used up for this month'
 	const body = isTrial
 		? [
-				`${input.workspaceName} has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.`,
+				`Your ${input.workspaceName} workspace has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.`,
 				'To keep going, pick a plan. Work starts again as soon as you do.',
 			]
 		: [
-				`${input.workspaceName} has used 100% of its ${planName} plan. New work waits until your plan renews on ${renewalDate(input.periodEnd)}. Nothing is lost, and everything already done stays where it is.`,
+				`Your ${input.workspaceName} workspace has used 100% of its ${planName} plan. New work waits until your plan renews on ${renewalDate(input.periodEnd)}. Nothing is lost, and everything already done stays where it is.`,
 				'If you want to keep going before then, you can change plan.',
 			]
 	const buttonLabel = isTrial ? 'Choose a plan' : 'Change plan'
@@ -244,7 +244,7 @@ export async function notifyPlanLimitReached(
 		for (const person of recipients) {
 			const mail = buildPlanLimitEmail({
 				firstName: firstNameOf(person.name),
-				workspaceName: ws?.name ?? 'Your workspace',
+				workspaceName: ws?.name ?? 'Maskin',
 				plan,
 				periodEnd,
 				planUrl,

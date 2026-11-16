@@ -15,7 +15,7 @@ describe('buildPlanLimitEmail', () => {
 
 		expect(mail.subject).toBe('Your Maskin plan is used up for this month')
 		expect(mail.text).toContain('Hey Anna,')
-		expect(mail.text).toContain('Acme has used 100% of its Pro plan.')
+		expect(mail.text).toContain('Your Acme workspace has used 100% of its Pro plan.')
 		expect(mail.text).toContain('New work waits until your plan renews on 3 December 2026.')
 		expect(mail.text).toContain('Change plan:')
 		expect(mail.text).toContain(base.planUrl)
@@ -28,7 +28,7 @@ describe('buildPlanLimitEmail', () => {
 
 		expect(mail.subject).toBe('Your Maskin trial usage is used up')
 		expect(mail.text).toContain(
-			'Acme has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.',
+			'Your Acme workspace has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.',
 		)
 		expect(mail.text).toContain('To keep going, pick a plan. Work starts again as soon as you do.')
 		expect(mail.text).toContain('Choose a plan:')
