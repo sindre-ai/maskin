@@ -963,6 +963,29 @@ describe('MessageBubble question asked with a draft', () => {
 		expect(await screen.findByRole('button', { name: 'Send today' })).toBeInTheDocument()
 	})
 
+	it('keeps the question card when it has more than two options', async () => {
+		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
+		const [first] = question.questions
+		const three = {
+			...question,
+			questions: [
+				{
+					...first,
+					options: [...first.options, { label: 'Ask Liz', description: 'Check first.' }],
+				},
+			],
+		}
+		renderBubble(buildMessage({ ...linkingMessage(), metadata: { question: three } }))
+		expect(await screen.findByRole('button', { name: 'Ask Liz' })).toBeInTheDocument()
+	})
+
+	it('keeps the question card when it allows several answers', async () => {
+		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
+		const multi = { ...question, questions: [{ ...question.questions[0], multi_select: true }] }
+		renderBubble(buildMessage({ ...linkingMessage(), metadata: { question: multi } }))
+		expect(await screen.findByRole('button', { name: 'Send today' })).toBeInTheDocument()
+	})
+
 	it('keeps the question card when the message links no draft', () => {
 		renderBubble(buildMessage({ content: 'No link here.', metadata: { question } }))
 		expect(screen.getByRole('button', { name: 'Send today' })).toBeInTheDocument()

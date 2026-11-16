@@ -254,7 +254,7 @@ export function LinkedObjectCard({
 			content: SKIP_DRAFT_TEXT,
 			metadata: {
 				hidden_from_chat: true,
-				context_objects: [{ id: object.id, type: object.type, title: object.title.slice(0, 500) }],
+				context_objects: [{ id: object.id, type: object.type, title: object.title?.slice(0, 500) }],
 			},
 		})
 	}
@@ -450,10 +450,7 @@ export function LinkedObjectCard({
 									Approved, waiting for send
 								</span>
 							) : skipped ? (
-								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-									<Check size={13} aria-hidden />
-									Skipped
-								</span>
+								<span className="text-xs text-muted-foreground">Skipped</span>
 							) : (
 								<>
 									{inChat ? (
@@ -461,7 +458,7 @@ export function LinkedObjectCard({
 											type="button"
 											variant="outline"
 											size="sm"
-											disabled={sendMessage.isPending}
+											disabled={sendMessage.isPending || approve.isPending || update.isPending}
 											onClick={skipDraft}
 										>
 											Skip

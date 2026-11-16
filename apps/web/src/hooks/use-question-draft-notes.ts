@@ -12,6 +12,17 @@ export interface QuestionDraftNote {
 }
 
 /**
+ * Approve and Skip can answer one single-choice question with at most two options. Anything
+ * more (several questions, several answers, a third option) keeps its own question card.
+ */
+function askedAsYesNo(question: MessageQuestion): boolean {
+	return (
+		question.questions.length === 1 &&
+		question.questions.every((q) => !q.multi_select && q.options.length <= 2)
+	)
+}
+
+/**
  * When one message links a draft that can still be approved and also asks a question, the draft
  * card carries the question and the question card is not drawn: one decision, one card. Returns
  * the draft's id and the note, or nothing when the message links no such draft. `heldElsewhere`
@@ -26,7 +37,7 @@ export function useQuestionDraftNote(
 ): { draftId: string; note: QuestionDraftNote } | null {
 	const ids = useMemo(
 		() =>
-			question && !question.reply_to_session
+			question && !question.reply_to_session && askedAsYesNo(question)
 				? extractLinkedObjectIds(content).filter((id) => !heldElsewhere?.has(id))
 				: [],
 		[question, content, heldElsewhere],
