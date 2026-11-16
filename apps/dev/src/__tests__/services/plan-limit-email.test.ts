@@ -36,6 +36,17 @@ describe('buildPlanLimitEmail', () => {
 		expect(mail.text).not.toContain('100%')
 	})
 
+	it('signs off both versions with Best, then Maskin', () => {
+		for (const plan of ['trial', 'pro']) {
+			const { text, html } = buildPlanLimitEmail({ ...base, plan })
+
+			expect(text.endsWith('\n\nBest,\nMaskin')).toBe(true)
+			expect(text).not.toContain('Cheers')
+			expect(html).toContain('Best,')
+			expect(html).not.toContain('Cheers')
+		}
+	})
+
 	it('keeps to the pricing rules: no token count, no top-up offer, no price', () => {
 		for (const plan of ['trial', 'starter', 'pro', 'team', 'ultra']) {
 			const { subject, text, html } = buildPlanLimitEmail({ ...base, plan })

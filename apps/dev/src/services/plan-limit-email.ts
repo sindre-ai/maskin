@@ -100,7 +100,7 @@ export function buildPlanLimitEmail(input: PlanLimitEmailInput): PlanLimitEmail 
 		`${buttonLabel}:`,
 		input.planUrl,
 		'',
-		'Cheers,',
+		'Best,',
 		'Maskin',
 	].join('\n')
 	const html = renderEmail({
@@ -111,7 +111,7 @@ export function buildPlanLimitEmail(input: PlanLimitEmailInput): PlanLimitEmail 
 			headline(greeting),
 			...body.map(paragraph),
 			button(input.planUrl, buttonLabel),
-			paragraph('Cheers,'),
+			paragraph('Best,'),
 			paragraph('Maskin'),
 		],
 	})
