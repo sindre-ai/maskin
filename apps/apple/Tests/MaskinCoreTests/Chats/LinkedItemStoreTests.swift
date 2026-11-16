@@ -536,7 +536,7 @@ struct ObjectApprovalResponseTests {
 				"""
 			return try APIObjectsRemote.approvalResult(status: 200, body: body(json))
 		}
-		#expect(try read(#""context": "  Can we meet on Friday?\n",""#).originalMessage == "Can we meet on Friday?")
+		#expect(try read(#""context": "  Can we meet on Friday?\n","#).originalMessage == "Can we meet on Friday?")
 		#expect(try read(#""context": null,"#).originalMessage == nil)
 		#expect(try read(#""context": "  ","#).originalMessage == nil)
 		#expect(try read("").originalMessage == nil)
