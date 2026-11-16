@@ -62,6 +62,51 @@ export class AgentFieldWriteError extends Error {
 	}
 }
 
+/** Thrown when an append or replace cannot be applied. Nothing is written. Maps to a 400. */
+export class BodyEditError extends Error {
+	constructor(message: string) {
+		super(`${message} Nothing was written.`)
+		this.name = 'BodyEditError'
+	}
+}
+
+/**
+ * The new body for an update that sends append or replace, worked out from the body as stored
+ * (the caller holds the row lock). Returns undefined when the update has neither. Throws
+ * BodyEditError when it mixes them with content or with each other, or when the piece to replace
+ * is missing or matches more than once without all.
+ */
+export function editBody(
+	stored: string | null,
+	edit: Pick<ObjectUpdate, 'content' | 'append' | 'replace'>,
+): string | undefined {
+	const { content, append, replace } = edit
+	if (append === undefined && replace === undefined) return undefined
+	if (content !== undefined) {
+		throw new BodyEditError(
+			'Send either content (the whole body) or one of append and replace, not both.',
+		)
+	}
+	if (append !== undefined && replace !== undefined) {
+		throw new BodyEditError('Send append or replace, not both, on one entry.')
+	}
+	const body = stored ?? ''
+	if (append !== undefined) return body + append
+
+	const { find, with: replacement, all } = replace as NonNullable<typeof replace>
+	const pieces = body.split(find)
+	const matches = pieces.length - 1
+	if (matches === 0) {
+		throw new BodyEditError('The text to replace was not found in the body.')
+	}
+	if (matches > 1 && !all) {
+		throw new BodyEditError(
+			`The text to replace was found ${matches} times. Add the words around it so it matches once, or set all to true to replace every match.`,
+		)
+	}
+	return pieces.join(replacement)
+}
+
 const TARGET_GUARDED_METADATA_KEYS: string[] = TARGET_FIELDS.map((f) => f.name)
 const LOOP_GUARDED_METADATA_KEYS = [
 	'targets',
@@ -155,7 +200,11 @@ export async function applyObjectUpdate(
 	input: ApplyObjectUpdateInput,
 ): Promise<ApplyObjectUpdateResult> {
 	const { id, actorId, body, sessionId } = input
-	const updateData: ObjectUpdate & { updatedAt: Date } = { ...body, updatedAt: new Date() }
+	const { append: _append, replace: _replace, ...fields } = body
+	const updateData: Omit<ObjectUpdate, 'append' | 'replace'> & { updatedAt: Date } = {
+		...fields,
+		updatedAt: new Date(),
+	}
 
 	// Re-read the row under FOR UPDATE *inside* the transaction rather than
 	// trusting the pre-transaction `existing` fetch above. `existing` is only
@@ -193,6 +242,11 @@ export async function applyObjectUpdate(
 	if (input.onlyIfStatus !== undefined && current.status !== input.onlyIfStatus) {
 		return { staleStatus: current.status }
 	}
+
+	// An append or replace is applied to the body as stored under the lock, so two edits from
+	// two sessions at the same moment both land, and the caller never sends the unchanged part.
+	const editedContent = editBody(current.content, body)
+	if (editedContent !== undefined) updateData.content = editedContent
 
 	// Shallow-merge metadata against the locked row, not the pre-transaction
 	// read: a writer that committed between that read and the lock would
