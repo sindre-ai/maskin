@@ -162,11 +162,11 @@ function MembersPage() {
 						return (
 							<div
 								key={member.actorId}
-								className="flex flex-wrap items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60 sm:flex-nowrap"
+								className="flex flex-wrap items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60"
 							>
 								<button
 									type="button"
-									className="flex min-w-0 flex-1 items-center gap-3 text-left"
+									className="flex min-w-24 flex-1 items-center gap-3 text-left"
 									onClick={() => {
 										if (member.type === 'agent') {
 											navigate({
@@ -186,74 +186,76 @@ function MembersPage() {
 										</span>
 									</span>
 								</button>
-								{isOwner ? (
-									// The owner's role is not editable here, and `ROLE_OPTIONS` deliberately
-									// excludes 'owner', so a Select would render a blank trigger with no
-									// matching item. Both mutations are backend-400s for this row anyway
-									// (role change wants transfer-ownership; removal wants the billing
-									// owner moved first), so render the role and drop the remove control
-									// rather than offer two buttons that can only fail.
-									<span className="shrink-0 px-3 text-[13.5px] font-semibold capitalize text-muted-foreground">
-										{member.role}
-									</span>
-								) : (
-									<ViewerTooltip>
-										<Select
-											value={member.role}
-											onValueChange={(value) => handleRoleChange(member, value)}
-											disabled={updateRole.isPending || !canWrite}
-										>
-											<SelectTrigger size="pill" aria-label={`Role for ${member.name}`}>
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												{ROLE_OPTIONS.map((role) => (
-													<SelectItem key={role} value={role}>
-														{role}
-													</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
-									</ViewerTooltip>
-								)}
-								{member.type === 'human' && member.actorId !== currentActorId && (
+								<div className="flex shrink-0 items-center gap-3">
+									{isOwner ? (
+										// The owner's role is not editable here, and `ROLE_OPTIONS` deliberately
+										// excludes 'owner', so a Select would render a blank trigger with no
+										// matching item. Both mutations are backend-400s for this row anyway
+										// (role change wants transfer-ownership; removal wants the billing
+										// owner moved first), so render the role and drop the remove control
+										// rather than offer two buttons that can only fail.
+										<span className="shrink-0 px-3 text-[13.5px] font-semibold capitalize text-muted-foreground">
+											{member.role}
+										</span>
+									) : (
+										<ViewerTooltip>
+											<Select
+												value={member.role}
+												onValueChange={(value) => handleRoleChange(member, value)}
+												disabled={updateRole.isPending || !canWrite}
+											>
+												<SelectTrigger size="pill" aria-label={`Role for ${member.name}`}>
+													<SelectValue />
+												</SelectTrigger>
+												<SelectContent>
+													{ROLE_OPTIONS.map((role) => (
+														<SelectItem key={role} value={role}>
+															{role}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</ViewerTooltip>
+									)}
+									{member.type === 'human' && member.actorId !== currentActorId && (
+										<ViewerTooltip>
+											<Button
+												variant="ghost"
+												size="icon"
+												className="shrink-0"
+												aria-label={`Message ${member.name}`}
+												title={`Message ${member.name}`}
+												disabled={!canWrite}
+												onClick={() =>
+													navigate(
+														personMessageLink(
+															workspaceId,
+															{ id: member.actorId, name: member.name },
+															'person_message_row',
+														),
+													)
+												}
+											>
+												<MessageSquare size={14} />
+											</Button>
+										</ViewerTooltip>
+									)}
 									<ViewerTooltip>
 										<Button
 											variant="ghost"
 											size="icon"
-											className="shrink-0"
-											aria-label={`Message ${member.name}`}
-											title={`Message ${member.name}`}
-											disabled={!canWrite}
-											onClick={() =>
-												navigate(
-													personMessageLink(
-														workspaceId,
-														{ id: member.actorId, name: member.name },
-														'person_message_row',
-													),
-												)
-											}
+											className={cn('shrink-0', isOwner && 'invisible')}
+											aria-label={`Remove ${member.name}`}
+											disabled={isOwner || !canWrite}
+											onClick={() => {
+												setRemoveError(null)
+												setPendingRemoval(member)
+											}}
 										>
-											<MessageSquare size={14} />
+											<Trash2 size={14} />
 										</Button>
 									</ViewerTooltip>
-								)}
-								<ViewerTooltip>
-									<Button
-										variant="ghost"
-										size="icon"
-										className={cn('shrink-0', isOwner && 'invisible')}
-										aria-label={`Remove ${member.name}`}
-										disabled={isOwner || !canWrite}
-										onClick={() => {
-											setRemoveError(null)
-											setPendingRemoval(member)
-										}}
-									>
-										<Trash2 size={14} />
-									</Button>
-								</ViewerTooltip>
+								</div>
 							</div>
 						)
 					})}
