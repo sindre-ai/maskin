@@ -227,13 +227,12 @@ export function useDictation(
 	)
 
 	// Ends the session once the last take has stopped and every phrase has been
-	// answered.
+	// answered. A session that heard nothing ends quietly: silence is not an error.
 	const maybeComplete = useCallback((session: Session) => {
 		if (!session.finishing || !session.stopped || session.pending > 0) return
 		if (sessionRef.current === session) sessionRef.current = null
 		if (cancelledRef.current) return
 		setTranscribing(false)
-		if (session.delivered === 0 && !session.failed) toast.info('No speech detected')
 	}, [])
 
 	const submit = useCallback(
