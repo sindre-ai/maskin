@@ -30,6 +30,8 @@ import { button, headline, paragraph, renderEmail } from './email-layout'
 export const PLAN_LIMIT_EMAIL_KIND = 'plan_used_up'
 
 const MAX_REMEMBERED = 5_000
+// With no billing owner the mail goes to the workspace owners; this caps how many.
+const MAX_OWNER_RECIPIENTS = 5
 // In-memory guard in front of the database: a refused start repeats on every trigger and chat
 // message, so the common repeat must not cost a query. The row is what makes it once-only.
 const handled = new Set<string>()
@@ -149,6 +151,7 @@ async function loadRecipients(db: Database, workspaceId: string): Promise<Recipi
 				isNotNull(actors.email),
 			),
 		)
+		.limit(MAX_OWNER_RECIPIENTS)
 	return owners.flatMap((o) => (o.email ? [{ email: o.email, name: o.name }] : []))
 }
 
