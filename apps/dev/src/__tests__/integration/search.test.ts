@@ -26,6 +26,7 @@ import { jsonGet } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: searchRoutes } = await import('../../routes/search')
+const { directPairKey } = await import('../../services/direct-chat')
 const { SEARCH_SOURCES, runSearch } = await import('../../services/search')
 
 // The actor seeded in global-setup's beforeAll.
@@ -927,6 +928,108 @@ describe('GET /api/search against real Postgres', () => {
 			await seedObjects('task', 'todo', 1, () => 'Magnus Nodegard follow-up task')
 			const res = await search({ q: 'magnus' })
 			expect(res.results.map((r) => r.group)).toEqual(['people', 'objects'])
+		})
+	})
+
+	describe('launcher: a teammate first', () => {
+		let magnusId: string
+
+		beforeEach(async () => {
+			const magnus = await insertActor(db, { name: 'Magnus Nodegard', email: 'magnus@omega.test' })
+			magnusId = magnus.id
+			await ensureWorkspaceMember(db, workspaceId, magnusId)
+		})
+
+		const launcher = (q = 'magnus') => search({ q, limit: 6, per_group: 3 })
+
+		it('puts the direct message first, above chats titled with the name and past the per-group cap', async () => {
+			for (let i = 0; i < 4; i++) await seedChat(`Magnus sync ${i}`, [actorId, otherUserId])
+			const dm = await seedChat('Magnus', [actorId, magnusId], {
+				directPairKey: directPairKey(actorId, magnusId),
+			})
+			await say(dm.id, magnusId, 'See you at ten')
+			await say(dm.id, actorId, 'Booked the room')
+
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({
+				id: dm.id,
+				group: 'chats',
+				type: 'direct_message',
+				title: 'Magnus Nodegard',
+				snippet: 'You: Booked the room',
+			})
+			expect(res.results[0]?.updatedAt).not.toBeNull()
+			// The chats keep their own cap of three after it, and nobody shows twice.
+			expect(res.results.filter((r) => r.group === 'chats')).toHaveLength(4)
+			expect(res.results.filter((r) => r.id === dm.id)).toHaveLength(1)
+			expect(res.results.some((r) => r.id === magnusId)).toBe(false)
+		})
+
+		it("shows the teammate's own last message without the You prefix", async () => {
+			const dm = await seedChat('Magnus', [actorId, magnusId], {
+				directPairKey: directPairKey(actorId, magnusId),
+			})
+			await say(dm.id, magnusId, 'See you at ten')
+
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({ type: 'direct_message', snippet: 'See you at ten' })
+		})
+
+		it('offers Start a chat when there is no direct message, as one person row', async () => {
+			const res = await launcher()
+			expect(res.results).toHaveLength(1)
+			expect(res.results[0]).toMatchObject({
+				id: magnusId,
+				group: 'people',
+				type: 'start_chat',
+				title: 'Magnus Nodegard',
+			})
+		})
+
+		it('does not take a topical chat with the same two people for the direct message', async () => {
+			await seedChat('Magnus and me', [actorId, magnusId])
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({ id: magnusId, type: 'start_chat' })
+			expect(res.results[1]).toMatchObject({ group: 'chats', type: 'chat' })
+		})
+
+		it('does not take a direct message that a third person has joined', async () => {
+			const dm = await seedChat('Magnus', [actorId, magnusId, otherUserId], {
+				directPairKey: directPairKey(actorId, magnusId),
+			})
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({ id: magnusId, type: 'start_chat' })
+			expect(res.results.find((r) => r.id === dm.id)?.type).toBe('chat')
+		})
+
+		it('needs the name to match at the start of a word', async () => {
+			const res = await launcher('agnus')
+			expect(res.results.every((r) => r.type !== 'start_chat' && r.type !== 'direct_message')).toBe(
+				true,
+			)
+		})
+
+		it('leaves the caller out of their own results', async () => {
+			const res = await search({ q: 'magnus', limit: 6, per_group: 3 }, magnusId)
+			expect(res.results.some((r) => r.type === 'start_chat')).toBe(false)
+		})
+
+		it('lists CRM contacts last', async () => {
+			await seedObjects('contact', 'active', 1, () => 'Magnus Hansen')
+			await seedObjects('bet', 'active', 1, () => 'Magnus rollout')
+			await seedChat('Magnus sync', [actorId, otherUserId])
+
+			const res = await launcher()
+			const types = res.results.map((r) => r.type)
+			expect(types[types.length - 1]).toBe('contact')
+			expect(types.indexOf('bet')).toBeLessThan(types.indexOf('contact'))
+		})
+
+		it('only applies to the launcher, not to the search page or a filtered search', async () => {
+			const page = await search({ q: 'magnus' })
+			expect(page.results.map((r) => r.type)).toEqual(['person'])
+			const filtered = await search({ q: 'magnus', limit: 6, per_group: 3, types: ['person'] })
+			expect(filtered.results.map((r) => r.type)).toEqual(['person'])
 		})
 	})
 

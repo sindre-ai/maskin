@@ -59,6 +59,7 @@ export type TaxonomyEntityType =
 	| 'file'
 	| 'loop'
 	| 'conversation'
+	| 'direct_message'
 
 // `file_viewer` was added so `comment_posted.source` can attribute review
 // comments back to the viewer surface — required for the "≥40% comment-after-
