@@ -85,7 +85,8 @@ export function buildPlanLimitEmail(input: PlanLimitEmailInput): PlanLimitEmail 
 		: 'Your Maskin plan is used up for this month'
 	const body = isTrial
 		? [
-				`${input.workspaceName} has used all of its trial usage. New work is paused. Pick a plan to keep going, nothing you built is lost.`,
+				`${input.workspaceName} has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.`,
+				'To keep going, pick a plan. Work starts again as soon as you do.',
 			]
 		: [
 				`${input.workspaceName} has used 100% of its ${planName} plan. New work waits until your plan renews on ${renewalDate(input.periodEnd)}. Nothing is lost, and everything already done stays where it is.`,
