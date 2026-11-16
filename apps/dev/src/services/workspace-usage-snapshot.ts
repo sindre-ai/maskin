@@ -53,7 +53,8 @@ export interface UsageSnapshot {
 	/** Whole percent of the plan limit, 0 to 100, as the app shows it. Null when no limit is known. */
 	usage_percent: number | null
 	usd_cents_used: number
-	plan_limit_usd_cents: number
+	/** Null when the plan has no cap, as on the usage page. */
+	plan_limit_usd_cents: number | null
 	input_tokens: number
 	output_tokens: number
 	session_count: number
@@ -146,7 +147,7 @@ async function claimedWorkspaces(
  * member by the same order `resolveSourceActor` uses. A workspace with none has no entry.
  */
 async function claimActors(
-	db: Pick<Database, 'select'>,
+	db: Pick<Database, 'selectDistinctOn'>,
 	workspaceIds: string[],
 ): Promise<Map<string, string>> {
 	if (workspaceIds.length === 0) return new Map()
