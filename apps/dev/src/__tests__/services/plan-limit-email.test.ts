@@ -27,7 +27,10 @@ describe('buildPlanLimitEmail', () => {
 		const mail = buildPlanLimitEmail({ ...base, plan: 'trial' })
 
 		expect(mail.subject).toBe('Your Maskin trial usage is used up')
-		expect(mail.text).toContain('Acme has used all of its trial usage. New work is paused.')
+		expect(mail.text).toContain(
+			'Acme has used all of the usage that comes with the free trial, so new work is paused. Everything you have built is still there.',
+		)
+		expect(mail.text).toContain('To keep going, pick a plan. Work starts again as soon as you do.')
 		expect(mail.text).toContain('Choose a plan:')
 		expect(mail.text).not.toContain('renews')
 		expect(mail.text).not.toContain('100%')
