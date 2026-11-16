@@ -52,6 +52,9 @@ public struct ForYouScreen: View {
 		.shellToolbar(
 			environment: environment,
 			actions: ShellActions(
+				// iPad: the "+" that sat on the tab bar moved here; it starts the same chat with the Chief of Staff.
+				new: ShellIdiom.isPad ? { appRuntime.requestChiefChat() } : nil,
+				newLabel: "New chat with Chief of Staff",
 				live: true, displaySymbol: ShellActions.slidersSymbol,
 				displayActive: !runtime.store.options.isDefaultDisplay,
 				displayToggle: { showDisplay = true })

@@ -3,6 +3,23 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+#if os(iOS)
+	import UIKit
+#endif
+
+/// The iPad is the one device with a single navigation: a bar of destinations at the top and no
+/// sidebar, so each screen's own controls carry the avatar and the one "+". iPhone and Mac keep
+/// their layouts. Gated on the device, not the width, so Slide Over does not change what is where.
+enum ShellIdiom {
+	static var isPad: Bool {
+		#if os(iOS)
+			UIDevice.current.userInterfaceIdiom == .pad
+		#else
+			false
+		#endif
+	}
+}
+
 /// What a screen puts in the floating pill at the top right, besides its title and the profile
 /// avatar (which every root screen gets).
 ///
@@ -45,7 +62,8 @@ public struct ShellActions {
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
-	/// Hides the profile avatar on this screen (Team).
+	/// Hides the profile avatar on this screen (Team, Objects) on iPhone and Mac. The iPad shows it
+	/// on every screen: its tab sidebar, which held the profile row, is gone.
 	public var hidesAvatar: Bool
 	/// Keeps the "+" button in the bar while the content scrolls (Team).
 	public var newAlwaysVisible: Bool
@@ -107,6 +125,7 @@ private struct ShellToolbarModifier: ViewModifier {
 	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it).
 	private var showsAvatar: Bool {
 		runtime != nil && avatarAllowed && environment.auth.session != nil
+			&& (!actions.hidesAvatar || ShellIdiom.isPad)
 	}
 
 	func body(content: Content) -> some View {
@@ -158,7 +177,7 @@ private struct ShellToolbarModifier: ViewModifier {
 						}
 						.accessibilityLabel(actions.displayActive ? "Display, options changed" : "Display")
 					}
-					if showsAvatar, !actions.hidesAvatar {
+					if showsAvatar {
 						Button {
 							runtime?.showProfile = true
 						} label: {
