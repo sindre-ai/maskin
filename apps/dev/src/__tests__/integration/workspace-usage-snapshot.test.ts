@@ -14,6 +14,7 @@ import {
 	WORKSPACE_USAGE_SNAPSHOT_EVENT,
 	WorkspaceUsageSnapshotScheduler,
 	readUsageSnapshot,
+	readUsageSnapshots,
 	sendUsageSnapshot,
 } from '../../services/workspace-usage-snapshot'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
@@ -208,6 +209,61 @@ describe('workspace_usage_snapshot (Integration)', () => {
 		await sendUsageSnapshot(db, workspaceId, DAY)
 
 		expect(sentFor(workspaceId)).toHaveLength(0)
+		// Skipped on purpose, so a retry would skip again: the day stays claimed.
+		expect(await claims(workspaceId)).toHaveLength(1)
+	})
+
+	it('gives the day back when PostHog refuses the send, so the next try sends it', async () => {
+		const workspaceId = await workspace()
+		await seedSession(workspaceId)
+		fetchMock.mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+
+		expect(await sendUsageSnapshot(db, workspaceId, DAY)).toBe(false)
+		expect(await claims(workspaceId)).toHaveLength(0)
+
+		expect(await sendUsageSnapshot(db, workspaceId, DAY)).toBe(true)
+		expect(await claims(workspaceId)).toHaveLength(1)
+		expect(sentFor(workspaceId)).toHaveLength(2)
+	})
+
+	it('the daily job retries a failed send on its next tick, then stops', async () => {
+		const workspaceId = await workspace()
+		await seedSession(workspaceId)
+		const scheduler = new WorkspaceUsageSnapshotScheduler(db)
+		const now = new Date('2026-11-18T10:00:00Z')
+		fetchMock.mockRejectedValueOnce(new Error('network down'))
+
+		expect(await scheduler.tick(now)).toBe(0)
+		expect(await scheduler.tick(now)).toBe(1)
+		expect(await scheduler.tick(now)).toBe(0)
+
+		expect(sentFor(workspaceId)).toHaveLength(2)
+		expect(await claims(workspaceId)).toHaveLength(1)
+	})
+
+	it('reads many workspaces at once, each over its own period, as the usage page does', async () => {
+		const longPeriod = await workspace(billing({ period_start: PERIOD_START_SEC - 20 * 24 * 3600 }))
+		const shortPeriod = await workspace(billing({ hard_cap_usd_cents: 500 }))
+		for (const id of [longPeriod, shortPeriod]) {
+			await seedSession(id)
+			// 10 days back: inside the long period only.
+			await seedSession(id, { createdAt: new Date(Date.now() - 10 * 24 * 3600_000) })
+		}
+
+		const snapshots = await readUsageSnapshots(db, [longPeriod, shortPeriod])
+
+		for (const id of [longPeriod, shortPeriod]) {
+			const res = await makeApp(humanId).request(
+				jsonGet('/api/billing/usage', { 'x-workspace-id': id }),
+			)
+			const usage = (await res.json()) as { usd_cents_used: number; hard_cap_usd_cents: number }
+			expect(snapshots.get(id)).toMatchObject({
+				usd_cents_used: usage.usd_cents_used,
+				plan_limit_usd_cents: usage.hard_cap_usd_cents,
+			})
+		}
+		expect(snapshots.get(longPeriod)).toMatchObject({ usd_cents_used: 500, session_count: 2 })
+		expect(snapshots.get(shortPeriod)).toMatchObject({ usd_cents_used: 250, session_count: 1 })
 	})
 
 	it('sends one snapshot per workspace per day, however often it is asked', async () => {
