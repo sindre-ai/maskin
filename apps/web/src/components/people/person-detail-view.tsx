@@ -10,6 +10,7 @@ import { useActor } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { getStoredActor } from '@/lib/auth'
+import { personMessageLink } from '@/lib/person-message-link'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Navigate, useNavigate } from '@tanstack/react-router'
 
@@ -95,11 +96,13 @@ export function PersonDetailView({ actorId }: { actorId: string }) {
 				className="h-8 rounded-full px-4 text-[13px] font-semibold"
 				disabled={!canWrite}
 				onClick={() =>
-					navigate({
-						to: '/$workspaceId/chats/new',
-						params: { workspaceId },
-						search: { agentId: person.id, agentName: person.name },
-					})
+					navigate(
+						personMessageLink(
+							workspaceId,
+							{ id: person.id, name: person.name },
+							'person_message_page',
+						),
+					)
 				}
 			>
 				Message

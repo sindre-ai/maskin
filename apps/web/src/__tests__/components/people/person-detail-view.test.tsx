@@ -95,13 +95,13 @@ describe('PersonDetailView', () => {
 		expect(screen.getByText('No focus set yet')).toBeInTheDocument()
 	})
 
-	it('opens New chat with the person picked when Message is pressed', async () => {
+	it('opens New chat with the person picked, counted as the page button, when Message is pressed', async () => {
 		renderPage('anna', { id: 'ws-1' })
 		await userEvent.click(screen.getByRole('button', { name: 'Message' }))
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: '/$workspaceId/chats/new',
 			params: { workspaceId: 'ws-1' },
-			search: { agentId: 'anna', agentName: 'Anna Berg' },
+			search: { agentId: 'anna', agentName: 'Anna Berg', from: 'person_message_page' },
 		})
 	})
 
