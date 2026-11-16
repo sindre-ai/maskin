@@ -25,14 +25,9 @@ public final class UndoSendHold {
 	@ObservationIgnored private var timer: Task<Void, Never>?
 	@ObservationIgnored private var generation = 0
 	@ObservationIgnored private let window: Duration
-	@ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
 
-	public init(
-		window: Duration = UndoSendHold.window,
-		sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
-	) {
+	public init(window: Duration = UndoSendHold.window) {
 		self.window = window
-		self.sleep = sleep
 	}
 
 	/// Starts the window. A message already held goes out first.
@@ -44,10 +39,10 @@ public final class UndoSendHold {
 		isHeld = true
 		generation += 1
 		let mine = generation
-		timer = Task { [weak self, window, sleep] in
-			do { try await sleep(window) } catch { return }
-			guard let self, self.generation == mine else { return }
-			self.flush()
+		let window = window
+		timer = Task { [weak self] in
+			do { try await Task.sleep(for: window) } catch { return }
+			self?.flushIfCurrent(mine)
 		}
 	}
 
@@ -59,6 +54,12 @@ public final class UndoSendHold {
 	/// Delivers the held message now. Safe to call with nothing held.
 	public func flush() {
 		take()?.send()
+	}
+
+	/// The window's timer fires here; a timer from an earlier hold finds a newer generation and does nothing.
+	private func flushIfCurrent(_ mine: Int) {
+		guard generation == mine else { return }
+		flush()
 	}
 
 	private func take() -> Held? {
