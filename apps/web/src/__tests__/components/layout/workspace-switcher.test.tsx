@@ -2,7 +2,7 @@ import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher'
 import type { WorkspaceWithRole } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -231,10 +231,17 @@ describe('WorkspaceSwitcher', () => {
 		const { Wrapper } = makeWrapper()
 		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
 
-		fireEvent.pointerDown(screen.getByRole('button', { name: /Switch workspace/ }), {
-			button: 0,
-			pointerType: 'touch',
+		const trigger = screen.getByRole('button', { name: /Switch workspace/ })
+		// jsdom may not ship PointerEvent, in which case fireEvent drops button, ctrlKey and
+		// pointerType from the init. Radix opens on button === 0 && ctrlKey === false, so set
+		// them on the event itself.
+		const down = createEvent.pointerDown(trigger)
+		Object.defineProperties(down, {
+			button: { value: 0 },
+			ctrlKey: { value: false },
+			pointerType: { value: 'touch' },
 		})
+		fireEvent(trigger, down)
 
 		expect(await screen.findByRole('menu')).toBeInTheDocument()
 		expect(trackOpened).toHaveBeenCalledWith({ workspaceId: 'ws-a', pointerType: 'touch' })
