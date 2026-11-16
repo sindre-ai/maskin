@@ -1,0 +1,241 @@
+name: Apple iPad layout screenshots (manual)
+
+# Manually triggered. Takes the four root screens (For you, Chats, Flows, Items) on an iPad Pro
+# 13-inch simulator, in portrait and in landscape, so a layout change can be checked by eye before
+# it merges. Signed in to the fake Northwind workspace served by apps/apple/scripts/demo-server: the
+# app is built against http://localhost:3010 and the session is the demo one, so no real data can
+# end up in a shot.
+#
+# Run it from Actions > "Apple iPad layout screenshots (manual)" > Run workflow, and type the branch
+# or commit to photograph in "ref".
+#
+# What it is not:
+#   - Not a pull request, push or schedule check. It runs only when someone dispatches it.
+#   - Not the App Store set. It never pushes anything: no branch, no commit. The PNGs are an artifact
+#     (ipad-layout-shots) kept for 14 days. For the App Store shots see apple-appstore-screenshots.yml.
+#
+# The tour is Apps/MaskinUITests/IPadLayoutTourTests. It is copied in from the commit this workflow
+# runs on, so it also works on a ref that does not have it yet.
+#
+# Cost: one Mac job, one Debug build and two short test runs. The 45 minute job limit is a hang guard.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to photograph (for example the head branch of the layout PR).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-ipad-layout-screenshots
+  cancel-in-progress: false
+
+env:
+  PORT: '3010'
+
+jobs:
+  ipad:
+    name: ipad (13-inch, portrait and landscape)
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}/shots
+      LOGS: ${{ github.workspace }}/logs
+      DERIVED: ${{ github.workspace }}/maskin-ipad-dd
+      # One test may run 10 minutes at most (xcodebuild stops it and goes on to the next step).
+      TEST_CAP: -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600
+    steps:
+      - name: Check out the ref to photograph
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Check out the tour from this workflow's own commit
+        uses: actions/checkout@v6
+        with:
+          path: tooling
+          sparse-checkout: apps/apple/Apps/MaskinUITests/IPadLayoutTourTests.swift
+          sparse-checkout-cone-mode: false
+
+      - name: Put the tour in place
+        run: |
+          set -euo pipefail
+          cp tooling/apps/apple/Apps/MaskinUITests/IPadLayoutTourTests.swift apps/apple/Apps/MaskinUITests/IPadLayoutTourTests.swift
+          rm -rf tooling
+          echo "photographing: $(git rev-parse HEAD) (ref: ${{ inputs.ref }})"
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      # The demo server uses only Node built-ins, so no pnpm install.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Create the iPad simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT" "$LOGS"
+          runtime_id() {
+            xcrun simctl list -j runtimes available |
+              jq -r '[.runtimes[] | select(.platform == "iOS" or (.identifier | test("SimRuntime.iOS")))] | sort_by(.version | split(".") | map(tonumber)) | last | .identifier // empty'
+          }
+          runtime=$(runtime_id)
+          if [ -z "$runtime" ]; then
+            echo "No iOS simulator runtime on this image, downloading one."
+            xcodebuild -downloadPlatform iOS
+            runtime=$(runtime_id)
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No iOS simulator runtime available."
+            exit 1
+          fi
+          pad_type=$(xcrun simctl list -j runtimes available |
+            jq -r --arg rt "$runtime" '[.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[] | select(.name | test("^iPad Pro 13-inch"))] | last | .identifier // empty')
+          echo "runtime: $runtime"
+          echo "iPad type: ${pad_type:-none}"
+          if [ -z "$pad_type" ]; then
+            echo "::error::No iPad Pro 13-inch in this runtime. Available:"
+            xcrun simctl list -j runtimes available |
+              jq -r --arg rt "$runtime" '.runtimes[] | select(.identifier == $rt) | .supportedDeviceTypes[].name'
+            exit 1
+          fi
+          pad=$(xcrun simctl create "shots-ipad" "$pad_type" "$runtime")
+          echo "pad=$pad" >> "$GITHUB_OUTPUT"
+          {
+            echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "photographed commit: $(git rev-parse HEAD)"
+            echo "workflow commit: ${{ github.sha }}"
+            echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            xcodebuild -version | tr '\n' ' '; echo
+            echo "simulator runtime: $runtime"
+            echo "iPad: $pad_type ($pad)"
+          } | tee "$LOGS/environment.txt"
+
+      - name: Start the demo server
+        run: |
+          set -euo pipefail
+          node apps/apple/scripts/demo-server/server.mjs >"$LOGS/server.log" 2>&1 &
+          until curl -sf "localhost:$PORT/api/health" >/dev/null; do sleep 1; done
+          echo "demo server is up"
+
+      - name: Build for testing
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate >/dev/null
+          xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.pad }}" \
+            -configuration Debug -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            build-for-testing >"$LOGS/build.log" 2>&1 || { tail -40 "$LOGS/build.log"; exit 1; }
+
+      - name: Boot the simulator with a clean status bar
+        run: |
+          set -euo pipefail
+          udid="${{ steps.sim.outputs.pad }}"
+          xcrun simctl boot "$udid" 2>/dev/null || true
+          xcrun simctl bootstatus "$udid" -b >/dev/null
+          # Light mode, 9:41, full battery, full bars: no runner clock or carrier in the shots.
+          xcrun simctl ui "$udid" appearance light
+          xcrun simctl status_bar "$udid" override --time "9:41" --dataNetwork wifi --wifiMode active \
+            --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+
+      # A tour that ends red is not fatal: it is best effort and the file check below decides.
+      - name: Tour in portrait
+        working-directory: apps/apple
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/tour-portrait
+          TEST_RUNNER_SCREEN_TOUR_DIR=/tmp/tour-portrait TEST_RUNNER_SCREEN_TOUR_ORIENTATION=portrait \
+            xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.pad }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            $TEST_CAP -only-testing:MaskinUITests/IPadLayoutTourTests/testLayout \
+            test-without-building >"$LOGS/test-portrait.log" 2>&1
+          echo "portrait exit code: $?"
+          ls -l /tmp/tour-portrait
+
+      - name: Tour in landscape
+        working-directory: apps/apple
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/tour-landscape
+          TEST_RUNNER_SCREEN_TOUR_DIR=/tmp/tour-landscape TEST_RUNNER_SCREEN_TOUR_ORIENTATION=landscape \
+            xcodebuild -project Maskin.xcodeproj -scheme Maskin \
+            -destination "id=${{ steps.sim.outputs.pad }}" -configuration Debug \
+            -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO \
+            "MASKIN_API_BASE_URL=http://localhost:$PORT" \
+            $TEST_CAP -only-testing:MaskinUITests/IPadLayoutTourTests/testLayout \
+            test-without-building >"$LOGS/test-landscape.log" 2>&1
+          echo "landscape exit code: $?"
+          ls -l /tmp/tour-landscape
+
+      # Collects the PNGs and lists any of the eight expected shots that are missing. Sizes are
+      # printed, not enforced: an iPad Pro 13-inch is 2064 x 2752 in portrait and 2752 x 2064 in landscape.
+      - name: Collect
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p "$OUT" "$LOGS"
+          for o in portrait landscape; do
+            cp /tmp/tour-$o/*.png "$OUT/" 2>/dev/null || true
+            cp /tmp/tour-$o/skipped-*.txt "$LOGS/" 2>/dev/null || true
+          done
+          missing=""
+          for o in portrait landscape; do
+            for want in 01-foryou 02-chats 03-flows 04-items; do
+              [ -e "$OUT/ipad-$o-$want.png" ] || missing="$missing ipad-$o-$want"
+            done
+          done
+          {
+            echo "### iPad layout shots"
+            echo
+            echo "Photographed commit: $(git rev-parse HEAD)"
+            echo
+            for f in "$OUT"/*.png; do
+              [ -e "$f" ] || continue
+              size="$(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w "x" h}')"
+              echo "- $(basename "$f") ($size)"
+            done
+            echo
+            if [ -n "$missing" ]; then echo "**Missing expected shots:**$missing"; else echo "All eight expected shots are there."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$missing" ]; then echo "::warning::Missing expected shots:$missing"; fi
+
+      - name: Upload shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipad-layout-shots
+          path: ${{ env.OUT }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      # always(): a timeout cancel is exactly when the logs are needed.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipad-layout-logs
+          path: ${{ env.LOGS }}
+          if-no-files-found: warn
+          retention-days: 14
