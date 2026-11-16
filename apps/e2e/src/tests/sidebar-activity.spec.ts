@@ -393,7 +393,11 @@ test.describe('Sidebar Activity card', () => {
 					await page.goto(`/${account.workspaceId}`)
 					const card = page.getByRole('region', { name: "What's new" })
 					await expect(card).toBeVisible()
-					await expect(card.getByText('Filters on Chats and Items')).toBeVisible()
+					// The card announces whichever entry is newest, so assert on its structure
+					// (a non-empty title and date line) and not on one entry's title.
+					await expect(card.getByText("What's new", { exact: true })).toBeVisible()
+					await expect(card.locator('p').first()).toHaveText(/\S/)
+					await expect(card.locator('p').last()).toHaveText(/^\d{1,2} [A-Z][a-z]{2}$/)
 					await expect(card.getByRole('button', { name: 'Dismiss' })).toBeVisible()
 				})
 			}
@@ -403,8 +407,11 @@ test.describe('Sidebar Activity card', () => {
 			await page.setViewportSize({ width: 1280, height: 800 })
 			await page.goto(`/${account.workspaceId}`)
 			const card = page.getByRole('region', { name: "What's new" })
-			await card.getByRole('button', { name: 'Dismiss' }).click()
-			await expect(card).toBeHidden()
+			// Dismissing shows the next entry, so keep dismissing until none is left.
+			for (let i = 0; i < 10 && (await card.count()) > 0; i++) {
+				await card.getByRole('button', { name: 'Dismiss' }).click()
+			}
+			await expect(card).toHaveCount(0)
 			await page.reload()
 			await expect(page.getByTestId('sidebar-activity')).toBeVisible()
 			await expect(page.getByRole('region', { name: "What's new" })).toHaveCount(0)
