@@ -203,7 +203,12 @@ jobs:
           mkdir -p "$OUT" "$LOGS"
           for o in portrait landscape; do
             cp /tmp/tour-$o/*.png "$OUT/" 2>/dev/null || true
-            cp /tmp/tour-$o/skipped-*.txt "$LOGS/" 2>/dev/null || true
+            cp /tmp/tour-$o/skipped-*.txt /tmp/tour-$o/hierarchy-*.txt "$LOGS/" 2>/dev/null || true
+          done
+          # The simulator saves a landscape iPad screen as portrait pixels, turned a quarter clockwise.
+          for f in "$OUT"/ipad-landscape-*.png; do
+            [ -e "$f" ] || continue
+            sips -r 270 "$f" >/dev/null
           done
           missing=""
           for o in portrait landscape; do

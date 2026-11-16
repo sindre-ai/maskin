@@ -71,10 +71,18 @@ final class IPadLayoutTourTests: XCTestCase {
 	}
 
 	/// Saves the screen as `ipad-<orientation>-<shot>.png` only if one of `expect` is on it.
+	/// With `always`, the shot is saved even when none of `expect` is there (and the miss is logged,
+	/// with the screen's element tree in `hierarchy-<orientation>.txt`), so a layout is never lost to a
+	/// wrong guess about its text.
 	@discardableResult
-	private func capture(_ shot: String, expect: [String], wait: TimeInterval = 8) -> Bool {
+	private func capture(_ shot: String, expect: [String], wait: TimeInterval = 8, always: Bool = false) -> Bool {
 		guard appears(expect, wait: wait) else {
 			skipped.append("\(shot) (no \(expect.joined(separator: " / ")))")
+			guard always else { return false }
+			try? app.debugDescription
+				.write(toFile: "\(dir)/hierarchy-\(orientation).txt", atomically: true, encoding: .utf8)
+			let png = XCUIScreen.main.screenshot().pngRepresentation
+			try? png.write(to: URL(fileURLWithPath: "\(dir)/ipad-\(orientation)-\(shot).png"))
 			return false
 		}
 		dismissNotificationPrompt(wait: 1)
@@ -103,7 +111,7 @@ final class IPadLayoutTourTests: XCTestCase {
 		// The decision cards themselves, not the greeting: the feed loads after it.
 		capture(
 			"01-foryou",
-			expect: ["Send 7 follow-ups to Northwind?", "Approve the Q4 webinar spend?"], wait: 40)
+			expect: ["Send 7 follow-ups to Northwind?", "Approve the Q4 webinar spend?"], wait: 40, always: true)
 
 		if open("Chats") { capture("02-chats", expect: ["Chief of Staff", "Brand shoot"]) }
 
