@@ -513,13 +513,21 @@ extension LinkedCardSnapshotTests {
 			return
 		}
 		#expect(preview.originalMessage?.hasPrefix("Hi Sam, thanks for the demo") == true)
+		#expect(preview.recipients.first?.name == "Mette Holm")
 		var plain = preview
 		plain.context = nil
 		#expect(plain.originalMessage == nil)
+		let asked = ChatQuestionItem(
+			index: 0, header: "Reply", question: "Send this reply to Mette?", multiSelect: false,
+			options: [.init(label: "Approve", detail: "It answers both of Mette's questions.", recommended: true)])
 		for dark in [false, true] {
 			let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, onSkipped: {})
 				LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, skipped: true, onSkipped: {})
+				LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, skippedInChat: true, onSkipped: {})
+				LinkedDraftCard(
+					object: object, preview: preview,
+					askNote: DraftQuestionNote(questions: [asked]), onSkipped: {})
 				LinkedDraftCard(object: object, preview: plain, defaultExpanded: true, onSkipped: {})
 			}
 			.environment(\.linkedItems, store)
@@ -536,7 +544,13 @@ extension LinkedCardSnapshotTests {
 				"questions": .array([
 					.object([
 						"header": .string("Reply"), "question": .string("Send this reply to Mette?"),
-						"options": .array([.object(["label": .string("Approve")]), .object(["label": .string("Skip")])]),
+						"options": .array([
+							.object([
+								"label": .string("Approve"), "description": .string("It answers both of Mette's questions."),
+								"recommended": .bool(true),
+							]),
+							.object(["label": .string("Skip")]),
+						]),
 					])
 				])
 			])
@@ -549,6 +563,10 @@ extension LinkedCardSnapshotTests {
 			id: "m2", serverID: 2, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
 			content: "Send this reply to Mette?", createdAt: Date(timeIntervalSince1970: 1_790_000_100), metadata: question)
 		#expect(!withDraft.questions.isEmpty)
+		let note = try #require(DraftQuestionNote(questions: withDraft.questions))
+		#expect(note.question == "Send this reply to Mette?")
+		#expect(note.reason == "It answers both of Mette's questions.")
+		#expect(DraftQuestionNote(questions: []) == nil)
 		#expect(store.hasApprovableDraft(in: LinkedTarget.extract(from: withDraft.content)))
 		#expect(!store.hasApprovableDraft(in: LinkedTarget.extract(from: alone.content)))
 		for dark in [false, true] {

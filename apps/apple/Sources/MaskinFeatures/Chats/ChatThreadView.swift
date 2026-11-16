@@ -1338,8 +1338,9 @@ struct ThreadTranscript: View {
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
 				},
+				draftSkipped: message.author == .agent && message.serverID.map { store.isDraftSkipped(inMessage: $0) } == true,
 				onSkippedDraft: {
-					store.tellAgentOfSkip(linkedBy: message.actorID, author: message.author)
+					store.tellAgentOfSkip(linkedBy: message.actorID, author: message.author, cardMessageID: message.serverID)
 				},
 				cardOwners: cardOwners
 			)

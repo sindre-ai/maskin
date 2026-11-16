@@ -708,5 +708,5 @@ public enum LinkedDraftMessage {
 	}
 
 	/// The words sent to the agent when a person skips a draft instead of approving it.
-	public static let skipped = "Skip this draft, do not send it"
+	public static let skipped = "Skip: do not send this draft"
 }

@@ -177,6 +177,9 @@ struct MessageRow: View {
 	/// A person approved a draft shown as a card in this message: its title and the text approved.
 	/// The thread tells the agent.
 	var onApprovedDraft: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// A person already skipped the draft in this message (read from the chat), so its card says so
+	/// after a reload.
+	var draftSkipped = false
 	/// A person skipped a draft shown as a card in this message. The thread tells the agent. Nil
 	/// where the screen cannot send it, so the Skip button is not drawn.
 	var onSkippedDraft: (() -> Void)?
@@ -309,7 +312,7 @@ struct MessageRow: View {
 		}
 	}
 
-	private func linkedBody(_ parts: [LinkedMessagePart]) -> some View {
+	private func linkedBody(_ parts: [LinkedMessagePart], askNote: DraftQuestionNote? = nil) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			ForEach(parts.enumerated().map { (id: $1.stableID(at: $0), part: $1) }, id: \.id) { entry in
 				switch entry.part {
@@ -321,7 +324,8 @@ struct MessageRow: View {
 					.textSelection(.enabled)
 				case .card(let target):
 					LinkedTargetCard(
-						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, editable: true, chat: agentChat)
+						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, skipped: draftSkipped,
+						askNote: askNote, editable: true, chat: agentChat)
 				}
 			}
 		}
@@ -468,6 +472,8 @@ struct MessageRow: View {
 		// Read once per evaluation: finding the links costs a scan of the text.
 		let targets = linkedTargets
 		let layout = linkedLayout(for: targets)
+		// A question posted with an approvable draft is asked inside the draft's card, not a second one.
+		let askNote = draftCarriesTheYes(targets) ? DraftQuestionNote(questions: message.questions) : nil
 		// The same gap `StreamingReplyBubble` stacks its name and words with, from one constant.
 		return VStack(alignment: .leading, spacing: AgentNameLabel.gap) {
 			// v3: an agent's words are plain text; its name is shown only where more than one agent can
@@ -491,7 +497,7 @@ struct MessageRow: View {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text, onTap: onQuoteTap) }
 						if !bodyText.isEmpty {
 							if let layout {
-								linkedBody(layout.parts)
+								linkedBody(layout.parts, askNote: askNote)
 							} else {
 								MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
 									.textSelection(.enabled)
@@ -520,13 +526,13 @@ struct MessageRow: View {
 				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				ForEach(appended) { target in
 					LinkedTargetCard(
-						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, editable: target == textCard,
-						chat: agentChat)
+						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, skipped: draftSkipped,
+						askNote: askNote, editable: target == textCard, chat: agentChat)
 				}
 			}
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
-			if !message.questions.isEmpty && !draftCarriesTheYes(targets) {
+			if !message.questions.isEmpty && askNote == nil {
 				QuestionOptionsView(
 					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
 					// Not on a helper's question: iOS has no session-input path, so a chat message

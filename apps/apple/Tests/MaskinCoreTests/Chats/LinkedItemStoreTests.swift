@@ -595,10 +595,10 @@ struct LinkedSkipMessageTests {
 	func mentionsAgent() async {
 		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "Draft ready")], online: false)
 		await h.store.start()
-		let id = h.store.tellAgentOfSkip(linkedBy: "relay", author: .agent)
+		let id = h.store.tellAgentOfSkip(linkedBy: "relay", author: .agent, cardMessageID: 1)
 		#expect(id != nil)
 		let sent = h.store.messages.last
-		#expect(sent?.content == "Skip this draft, do not send it")
+		#expect(sent?.content == "Skip: do not send this draft")
 		#expect(sent?.mentionIDs == ["relay"])
 		h.network.set(online: true)
 		#expect(await h.settled())
@@ -606,11 +606,24 @@ struct LinkedSkipMessageTests {
 		#expect(meta??.mentions == ["relay"])
 	}
 
+	@Test("the skip names the message that holds the draft, so the card reads Skipped after a reload")
+	func skippedSurvivesReload() async throws {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "Draft ready")], online: false)
+		await h.store.start()
+		#expect(!h.store.isDraftSkipped(inMessage: 1))
+		h.store.tellAgentOfSkip(linkedBy: "relay", author: .agent, cardMessageID: 1)
+		#expect(h.store.isDraftSkipped(inMessage: 1))
+		#expect(!h.store.isDraftSkipped(inMessage: 2))
+		let json = try #require(ChatStore.skipMetadata(linkedBy: "relay", author: .agent, cardMessageID: 1)?.jsonValue)
+		#expect(json["card_answer"]?["message_id"]?.intValue == 1)
+		#expect(json["card_answer"]?["outcome"]?.stringValue == "declined")
+	}
+
 	@Test("a draft a person linked has nobody to tell")
 	func noMentionForPeople() async {
 		let h = ChatHarness(server: [chatMsg(1, by: "sam", "see this")], online: false)
 		await h.store.start()
-		h.store.tellAgentOfSkip(linkedBy: "sam", author: .human)
+		h.store.tellAgentOfSkip(linkedBy: "sam", author: .human, cardMessageID: nil)
 		#expect(h.store.messages.last?.mentionIDs == [])
 	}
 }
