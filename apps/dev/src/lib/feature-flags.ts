@@ -90,17 +90,6 @@ export const FLAGS = {
 	 */
 	AGENT_CHANGE_REVIEW: 'agent-change-review',
 	/**
-	 * One switch for the whole trial-card bet (bet
-	 * [A card to start a 7-day trial, usage shown as a percent of the plan, and five DKK prices where a fifth of the price is tokens](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/c7069a63-518c-415b-83df-ef350c65c5db)):
-	 * the card step at sign-up and its "Your trial has not started" banner (task T2), plus the
-	 * percent display and the stop at 100% (task T3). A new sign-up cannot be named in advance,
-	 * so the card step reads this flag per NEW sign-up from FF_SIGNUP_FEATURES
-	 * (isSignupFlagEnabled), not per tester actor; the percent screens use the normal tester
-	 * check (the layout reads it once and passes it down through PlanPercentContext). Off means sign-up works exactly as before and no workspace waits for a card.
-	 * The 100% stop itself is backend, ungated, and safe for everyone. Retire once the card step is on for everyone.
-	 */
-	TRIAL_CARD_PERCENT: 'trial-card-percent',
-	/**
 	 * Gates the Refresh button on HTML views in the file viewer (bet
 	 * [Customizable app: best-practice templates users can reshape or replace with their own views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0e9b2ed9-1246-430d-8d2a-b44bbb7a70d5)).
 	 * A view that names a list in its maskin-sources block is shown through the data

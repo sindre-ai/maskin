@@ -50,6 +50,8 @@ export function WorkspaceSwitcher() {
 	const queryClient = useQueryClient()
 	const [createOpen, setCreateOpen] = useState(false)
 	const openedAtRef = useRef<number | null>(null)
+	// Pointer type of the tap on the trigger, read when the menu opens (onOpenChange has no event).
+	const pointerTypeRef = useRef<string | null>(null)
 
 	const currentFromList = workspaces?.find((ws) => ws.id === workspaceId)
 	const displayName = currentFromList?.name ?? workspace?.name ?? workspaceId
@@ -133,9 +135,14 @@ export function WorkspaceSwitcher() {
 					onOpenChange={(open) => {
 						if (open) {
 							openedAtRef.current = performance.now()
-							trackSidebarWorkspaceSwitcherOpened({ workspaceId })
+							trackSidebarWorkspaceSwitcherOpened({
+								workspaceId,
+								pointerType: pointerTypeRef.current ?? 'unknown',
+							})
+							pointerTypeRef.current = null
 							return
 						}
+						pointerTypeRef.current = null
 						const openMs =
 							openedAtRef.current === null ? null : performance.now() - openedAtRef.current
 						openedAtRef.current = null
@@ -149,12 +156,13 @@ export function WorkspaceSwitcher() {
 				>
 					<DropdownMenuTrigger
 						asChild
-						onPointerDown={(e) =>
+						onPointerDown={(e) => {
+							pointerTypeRef.current = e.pointerType
 							trackSidebarWorkspaceSwitcherOpenAttempted({
 								workspaceId,
 								pointerType: e.pointerType,
 							})
-						}
+						}}
 					>
 						<SidebarMenuButton
 							tooltip={displayName}

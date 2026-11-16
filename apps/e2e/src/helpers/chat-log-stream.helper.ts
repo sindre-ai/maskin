@@ -146,6 +146,8 @@ export async function openLiveChat(
 	await page.goto(`/${account.workspaceId}/chats/${live.conversationId}`)
 	await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 10_000 })
 	const liveTurn = page.getByTestId('message-activity-live')
+	// The live step list is closed by default; these specs read the steps.
+	await liveTurn.getByRole('button', { name: 'Show steps' }).click()
 	return { liveTurn, activitySteps: liveTurn.getByLabel('Agent activity') }
 }
 

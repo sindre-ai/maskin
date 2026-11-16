@@ -79,7 +79,7 @@ enum AttachmentLoading {
 	}
 
 	/// A photo or a video from the picker. Pictures are downsampled; a video is sent as it is, if it
-	/// is under the size cap.
+	/// is under the size cap. One too big for the JSON route stays on disk and goes up in parts.
 	static func media(_ item: PhotosPickerItem, name: String) -> @Sendable () async throws -> PreparedChatFile {
 		guard isMovie(item) else { return photo(item, name: name) }
 		let box = ItemBox(item: item)
@@ -87,13 +87,20 @@ enum AttachmentLoading {
 			guard let picked = try await box.item.loadTransferable(type: PickedMovieFile.self) else {
 				throw ChatAttachmentError("Couldn't read that video.")
 			}
-			defer { try? FileManager.default.removeItem(at: picked.url) }
+			// The composer removes the file itself once a large one has been uploaded.
+			var handedOff = false
+			defer { if !handedOff { try? FileManager.default.removeItem(at: picked.url) } }
 			let size = (try? picked.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-			guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 10 MB limit.") }
-			let data = try Data(contentsOf: picked.url, options: .mappedIfSafe)
+			guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 1 GB limit.") }
 			let base = (name as NSString).deletingPathExtension
 			let ext = picked.url.pathExtension.isEmpty ? "mov" : picked.url.pathExtension
-			return PreparedChatFile(name: "\(base).\(ext)", mimeType: mimeType(for: picked.url), data: data)
+			let mime = mimeType(for: picked.url)
+			if FileUploadLimits.needsDirectUpload(sizeBytes: size, mimeType: mime) {
+				handedOff = true
+				return PreparedChatFile(name: "\(base).\(ext)", mimeType: mime, fileURL: picked.url, sizeBytes: size)
+			}
+			let data = try Data(contentsOf: picked.url, options: .mappedIfSafe)
+			return PreparedChatFile(name: "\(base).\(ext)", mimeType: mime, data: data)
 		}
 	}
 
@@ -114,7 +121,8 @@ enum AttachmentLoading {
 	}
 
 	/// A file from the Files picker, or one dropped on the bar (`deleteAfter` removes our temp copy).
-	/// Size is checked before a single byte is read.
+	/// Size is checked before a single byte is read. One too big for the JSON route is copied to our
+	/// own temp file (the picked one is only readable inside the security scope) and goes up in parts.
 	static func file(at url: URL, deleteAfter: Bool = false) -> @Sendable () async throws -> PreparedChatFile {
 		{
 			let scoped = url.startAccessingSecurityScopedResource()
@@ -124,11 +132,17 @@ enum AttachmentLoading {
 			}
 			let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 			guard size <= ChatLimits.maxFileBytes else {
-				throw ChatAttachmentError("Over the 10 MB limit.")
+				throw ChatAttachmentError("Over the 1 GB limit.")
+			}
+			let mime = mimeType(for: url)
+			if FileUploadLimits.needsDirectUpload(sizeBytes: size, mimeType: mime) {
+				let copy = FileManager.default.temporaryDirectory
+					.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension)
+				try FileManager.default.copyItem(at: url, to: copy)
+				return PreparedChatFile(name: url.lastPathComponent, mimeType: mime, fileURL: copy, sizeBytes: size)
 			}
 			let data = try Data(contentsOf: url, options: .mappedIfSafe)
-			return PreparedChatFile(
-				name: url.lastPathComponent, mimeType: mimeType(for: url), data: data)
+			return PreparedChatFile(name: url.lastPathComponent, mimeType: mime, data: data)
 		}
 	}
 

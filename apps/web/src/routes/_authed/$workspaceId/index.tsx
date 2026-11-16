@@ -761,6 +761,9 @@ function ForYouFeed() {
 	// The tail rule closes an *empty* column — it says why there is nothing to
 	// read. With cards on the page it is noise, so it isn't drawn at all.
 	const feedIsEmpty = orderedCards.length === 0 && onboardingItems.length === 0
+	// An empty, unfiltered feed already says so in the centred message below, so the lead
+	// line ("You are clear") would repeat it.
+	const showLead = !(feedIsEmpty && !typeFilter)
 	const tail = feedIsEmpty
 		? feedTailLabel({
 				filtered: Boolean(typeFilter),
@@ -825,12 +828,14 @@ function ForYouFeed() {
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="flex w-full flex-col">
 					{greetingInPage ? <h1 className="page-title pb-2">{greeting}</h1> : null}
-					<p
-						className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
-						data-testid="foryou-greeting"
-					>
-						{lead}
-					</p>
+					{showLead && (
+						<p
+							className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
+							data-testid="foryou-greeting"
+						>
+							{lead}
+						</p>
+					)}
 
 					{/* Outside the width-capped column below, so the cards run to the page edge instead of clipping at the column. */}
 					<BriefingRow workspaceId={workspaceId} />
@@ -913,7 +918,9 @@ function ForYouFeed() {
 							icon={<CheckCircle2 size={24} aria-hidden="true" />}
 							title={tail}
 							description={
-								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
+								typeFilter
+									? 'Nothing matches this filter.'
+									: 'New items that need your OK show up here.'
 							}
 							action={
 								typeFilter ? (

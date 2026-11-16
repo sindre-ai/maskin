@@ -10,7 +10,6 @@ import Stripe from 'stripe'
 import { evictBillingUsage } from './billing-usage-cache'
 import { isEnterpriseWorkspace } from './enterprise'
 import { recordEvent } from './events/record-event'
-import { FLAGS, isSignupFlagEnabled } from './feature-flags'
 import { logger } from './logger'
 import { type StripeEnv, getStripeClient, readStripeEnv } from './stripe'
 
@@ -29,12 +28,11 @@ export const AUTO_TOP_UP_INVOICE_KIND = 'auto_top_up'
 
 /**
  * The pricing bet has no top-up (Magnus, 9 Nov 2026): at 100% of a plan, work waits for the next
- * period. With the trial-card-percent switch on, every non-enterprise workspace is on a plan, so
- * a rule cannot be turned on and no charge fires. Off means auto top-up works as first merged.
- * A rule already saved is never touched, so switching the flag off brings it back.
+ * period. Every non-enterprise workspace is on a plan, so a rule cannot be turned on and no
+ * charge fires. A rule already saved is never touched.
  */
 export function autoTopUpClosedForPlans(): boolean {
-	return isSignupFlagEnabled(FLAGS.TRIAL_CARD_PERCENT)
+	return true
 }
 
 /** Amounts in a customer's locked Stripe currency, from the fixed reference. USD cents in, minor units out. */

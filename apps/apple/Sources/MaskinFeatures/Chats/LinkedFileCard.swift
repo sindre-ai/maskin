@@ -150,7 +150,9 @@ private struct LinkedMediaBody: View {
 		Group {
 			switch phase {
 			case .ready(let detail):
-				if detail.kind == .video {
+				if detail.contentOmitted {
+					FileTooLargeView(file: detail)
+				} else if detail.kind == .video {
 					FileVideoView(data: detail.data, name: detail.name, mimeType: detail.mimeType)
 				} else {
 					FileAudioView(data: detail.data, name: detail.name, mimeType: detail.mimeType)

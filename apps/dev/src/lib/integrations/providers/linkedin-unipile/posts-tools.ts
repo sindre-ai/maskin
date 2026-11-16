@@ -1,5 +1,5 @@
 import type { CapSpec } from './caps'
-import { LinkedInIntegrationError } from './errors'
+import { LinkedInIntegrationError, isLinkedInIntegrationError } from './errors'
 import {
 	type CompanySummary,
 	type PostAuthor,
@@ -168,8 +168,27 @@ async function resolvePerson(deps: PostsToolDeps, handle: string): Promise<PostA
 	}
 }
 
+/**
+ * LinkedIn answers 404 for a company it does not know, and the shared status mapping reads every
+ * 404 as CREDENTIAL_NOT_CONNECTED. The account is fine here, so say what is missing instead.
+ */
+async function fetchCompany(deps: PostsToolDeps, companyId: string) {
+	try {
+		return await deps.posts.getCompanyProfile({ account_id: deps.accountId, company_id: companyId })
+	} catch (err) {
+		if (isLinkedInIntegrationError(err) && err.httpStatus === 404) {
+			throw new LinkedInIntegrationError(
+				'INVALID_INPUT',
+				`LinkedIn has no company "${companyId}" (404). Check the slug or numeric id.`,
+				{ cause: err },
+			)
+		}
+		throw err
+	}
+}
+
 async function resolveCompany(deps: PostsToolDeps, slug: string): Promise<PostAuthor> {
-	const res = await deps.posts.getCompanyProfile({ account_id: deps.accountId, company_id: slug })
+	const res = await fetchCompany(deps, slug)
 	const company = toCompanySummary(res.body)
 	if (!company) throw unrecognised('company')
 	return {
@@ -190,10 +209,7 @@ export async function getCompany(
 	if (!raw) throw invalid('company is required')
 	const ref = normalizeCompanyInput(raw)
 	if (!ref) throw invalid('company must be a numeric id, a slug or a linkedin.com/company URL')
-	const res = await deps.posts.getCompanyProfile({
-		account_id: deps.accountId,
-		company_id: ref.value,
-	})
+	const res = await fetchCompany(deps, ref.value)
 	const company = toCompanySummary(res.body)
 	if (!company) throw unrecognised('company')
 	return company
