@@ -12,7 +12,6 @@ import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
@@ -72,9 +71,6 @@ function WorkspaceLayout() {
 	const onCall = useVoiceCallLive()
 	const narrowForCall = useMediaQuery('(max-width: 1099px)')
 	const railForCall = onCall && narrowForCall
-	// The percent display and the 100% screens. Read once here and passed down, so the
-	// sidebar card, the billing page, the usage views and the chat route share one boundary.
-	const planPercent = useFeatureFlag('trial-card-percent')
 
 	const settings = workspace?.settings as Record<string, unknown> | undefined
 	const privacy = settings?.privacy as
@@ -101,7 +97,7 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<PlanPercentProvider value={planPercent}>
+			<PlanPercentProvider value>
 				<NewConversationProvider>
 					<CommandPaletteProvider>
 						<PendingPromptBootstrap />
@@ -122,7 +118,7 @@ function WorkspaceLayout() {
 											<Header />
 											<TrialNotStartedBanner workspaceId={workspaceId} />
 											<TrialExpiredBanner workspaceId={workspaceId} />
-											{planPercent && <PlanLimitBanner workspaceId={workspaceId} />}
+											<PlanLimitBanner workspaceId={workspaceId} />
 											<MainScrollArea>
 												<Outlet />
 											</MainScrollArea>

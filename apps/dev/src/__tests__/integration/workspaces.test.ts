@@ -17,7 +17,6 @@ import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
 import { __resetTeamMemberForTesting, configureTeamMember } from '../../lib/analytics/team-member'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -318,17 +317,7 @@ describe('Workspaces Integration', () => {
 			return (row?.settings as { billing?: Record<string, unknown> }).billing ?? {}
 		}
 
-		function switchOn() {
-			process.env.FF_SIGNUP_FEATURES = FLAGS.TRIAL_CARD_PERCENT
-			_resetFeatureFlagConfig()
-			onTestFinished(() => {
-				Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
-				_resetFeatureFlagConfig()
-			})
-		}
-
-		it('makes a workspace that waits for its card when the sign-up switch is on', async () => {
-			switchOn()
+		it('makes a workspace that waits for its card', async () => {
 			const app = createApp()
 
 			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Second try' }))
@@ -342,7 +331,6 @@ describe('Workspaces Integration', () => {
 		})
 
 		it('makes a workspace that waits for its card after the first one was deleted', async () => {
-			switchOn()
 			const app = createApp()
 			const first = await (
 				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'First' }))
@@ -360,7 +348,6 @@ describe('Workspaces Integration', () => {
 		})
 
 		it('lets a person who already pays for a workspace make another without a card step', async () => {
-			switchOn()
 			const app = createApp()
 			const first = await (
 				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Paid' }))
@@ -368,15 +355,6 @@ describe('Workspaces Integration', () => {
 			await setWorkspacePlan(db, first.id, 'pro')
 
 			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Another' }))
-
-			expect(res.status).toBe(201)
-			expect((await billingOf((await res.json()).id)).trial_state).toBeUndefined()
-		})
-
-		it('does not ask for a card when the sign-up switch is off', async () => {
-			const app = createApp()
-
-			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'No card' }))
 
 			expect(res.status).toBe(201)
 			expect((await billingOf((await res.json()).id)).trial_state).toBeUndefined()

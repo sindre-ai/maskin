@@ -20,7 +20,7 @@ struct BillingView: View {
 	var body: some View {
 		WorkspacePage(title: "Billing") {
 			if let usage = store.usage {
-				if store.percentDisplay, let banner = Self.limitBanner(usage) {
+				if let banner = Self.limitBanner(usage) {
 					PlanLimitBanner(
 						title: banner.title, detail: banner.detail,
 						actionTitle: manageURL == nil ? nil : banner.action
@@ -34,16 +34,7 @@ struct BillingView: View {
 				}
 				PageGroupLabel(text: "Plan")
 				PageCard(rows: rows(usage))
-				if store.percentDisplay {
-					percentMeter(usage)
-				} else if let cap = usage.capCents, let fraction = usage.usedFraction {
-					UsageMeter(
-						title: "Credits this month", used: BillingUsage.dollars(usage.usedCents),
-						of: BillingUsage.dollars(cap), fraction: fraction)
-					if let manageURL {
-						Button("Buy credits") { openURL(manageURL) }.buttonStyle(.secondaryAction)
-					}
-				}
+				percentMeter(usage)
 				PageFootnote(
 					text: "Usage by model, agent and flow is not in the app yet. This is a summary of your plan and this period's usage.")
 				if let manageURL, usage.usedFraction == nil {
@@ -74,30 +65,15 @@ struct BillingView: View {
 
 	private func rows(_ usage: BillingUsage) -> [PageRowModel] {
 		let healthy = usage.status == .active
-		var rows = [
+		// Usage shows in the percent meter below, never as dollars. Invoices, auto top-up and the
+		// credit balance have no usable API field yet (the balance has no currency), so those rows
+		// stay hidden.
+		return [
 			PageRowModel(
 				id: "plan", title: "Plan",
 				subtitle: [usage.statusLabel, usage.resetsText].compactMap { $0 }.joined(separator: " · "),
 				accessory: .state(PageState(usage.planLabel, healthy ? .active : .muted)))
 		]
-		// The percent view shows usage in its own meter below, never as dollars.
-		if store.percentDisplay { return rows }
-		let spent = BillingUsage.dollars(usage.usedCents)
-		if let fraction = usage.usedFraction, let cap = usage.capCents {
-			rows.append(
-				PageRowModel(
-					id: "usage", title: "Agent usage",
-					subtitle: "\(spent) of \(BillingUsage.dollars(cap)) this period",
-					accessory: .state(PageState("\(Int(fraction * 100))%", .plain))))
-		} else {
-			rows.append(
-				PageRowModel(
-					id: "usage", title: "Agent usage", subtitle: "This period",
-					accessory: .state(PageState(spent, .plain))))
-		}
-		// Invoices, auto top-up and the credit balance have no usable API field yet (the balance has
-		// no currency), so those rows stay hidden.
-		return rows
 	}
 }
 
@@ -156,35 +132,6 @@ private struct TrialBanner: View {
 		.padding(MaskinSpace.s9)
 		.background(MaskinColor.noticeBg, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
 		.accessibilityElement(children: .combine)
-	}
-}
-
-/// A used-of-total line with a bar underneath.
-private struct UsageMeter: View {
-	let title: String
-	let used: String
-	let of: String
-	let fraction: Double
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			Text(title).maskinText(.microLabelLarge).textCase(.uppercase).foregroundStyle(MaskinColor.ink4)
-			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
-				Text(used)
-					.font(MaskinTypeface.sans(MaskinFontSize.t20, weight: MaskinFontWeight.semibold))
-					.foregroundStyle(MaskinColor.ink)
-				Text("of \(of)")
-					.font(MaskinTypeface.sans(MaskinFontSize.t14))
-					.foregroundStyle(MaskinColor.ink4)
-			}
-			ProgressView(value: fraction)
-				.tint(fraction >= 0.9 ? MaskinColor.noticeFg3 : MaskinColor.sig)
-		}
-		.padding(MaskinSpace.s9)
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.tile, style: .continuous))
-		.accessibilityElement(children: .combine)
-		.accessibilityValue("\(Int(fraction * 100)) percent used")
 	}
 }
 

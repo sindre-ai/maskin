@@ -2483,8 +2483,7 @@ export interface CreateActorInput {
 	// Agents only: the workspace the new agent is born into (the caller must be a
 	// member). Humans sign up without it.
 	workspace_id?: string
-	// Humans only: this client shows the card step after sign-up. The server honours it only
-	// while the trial-card-percent flag is on for new sign-ups.
+	// Humans only: this client shows the card step after sign-up.
 	card_step?: boolean
 }
 
