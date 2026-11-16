@@ -298,7 +298,9 @@ describe('sendProactiveMessage (integration)', () => {
 		)
 		expect(results.filter((r) => r.sent)).toHaveLength(1)
 		expect(
-			results.filter((r) => !r.sent).every((r) => !r.sent && r.reason === 'unread_backlog'),
+			results
+				.filter((r) => !r.sent)
+				.every((r) => !r.sent && r.reason === 'cap_reason_week'),
 		).toBe(true)
 		expect(await messagesIn(chatId)).toHaveLength(1)
 	})
