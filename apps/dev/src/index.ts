@@ -98,6 +98,7 @@ import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
+import { WorkspaceUsageSnapshotScheduler } from './services/workspace-usage-snapshot'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -416,6 +417,9 @@ dailyBudgetSummaryScheduler.start()
 // workspace that has set a daily target (off by default).
 const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
 dailyBudgetCardScheduler.start()
+// One workspace_usage_snapshot PostHog event per active workspace per day (percent and tokens).
+const workspaceUsageSnapshotScheduler = new WorkspaceUsageSnapshotScheduler(db)
+workspaceUsageSnapshotScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one, and settles remote pauses stuck in `snapshotting`. Ticks
@@ -672,6 +676,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	lifecyclePushScheduler.stop()
 	dailyBudgetSummaryScheduler.stop()
 	dailyBudgetCardScheduler.stop()
+	workspaceUsageSnapshotScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.

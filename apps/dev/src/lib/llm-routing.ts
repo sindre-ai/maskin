@@ -387,6 +387,38 @@ export async function getWorkspacePlanUsdCentsUsage(
 	return ceilCents(totalCents)
 }
 
+export interface PlanTokenUsage {
+	inputTokens: number
+	outputTokens: number
+	sessionCount: number
+}
+
+/**
+ * Input and output tokens and the session count of the same maskin_plan sessions
+ * `getWorkspacePlanUsdCentsUsage` sums since `periodStartMs`, so a token figure
+ * always sits next to the dollar total it belongs to. Product analytics only:
+ * it is never shown to a customer.
+ */
+export async function getWorkspacePlanTokenUsage(
+	db: Pick<Database, 'select'>,
+	workspaceId: string,
+	periodStartMs?: number,
+): Promise<PlanTokenUsage> {
+	const [row] = await db
+		.select({
+			inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+			outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+			sessionCount: sql<string>`COUNT(*)`,
+		})
+		.from(sessions)
+		.where(planUsageConds(workspaceId, periodStartMs))
+	return {
+		inputTokens: Number(row?.inputTokens ?? 0),
+		outputTokens: Number(row?.outputTokens ?? 0),
+		sessionCount: Number(row?.sessionCount ?? 0),
+	}
+}
+
 export type MaskinPlan = 'trial' | PaidPlan
 
 interface PlanCapContext {
@@ -577,6 +609,9 @@ export async function checkPlanCap(params: {
 		workspaceId: params.workspaceId,
 		plan: maskinPlan,
 		periodEnd,
+		usedCents: used,
+		capCents: cap,
+		readTokens: () => getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs),
 	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
