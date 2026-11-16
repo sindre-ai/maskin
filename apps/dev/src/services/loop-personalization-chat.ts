@@ -23,9 +23,9 @@ export function buildLoopPersonalizationPrompt(loop: {
 }): string {
 	const about = loop.description ? ` (${loop.description})` : ''
 	return [
-		`I just installed the "${loop.name}" loop${about} from the marketplace.`,
+		`I just installed the "${loop.name}" flow${about} from the marketplace.`,
 		'',
-		'Do you have recommendations for tailoring it to my workspace? Look at what it set up (its agents, skills and triggers) against what you know about me and this workspace: my knowledge, my integrations, my existing agents and loops.',
+		'Do you have recommendations for tailoring it to my workspace? Look at what it set up (its agents, skills and triggers) against what you know about me and this workspace: my knowledge, my integrations, my existing agents and flows.',
 		'',
 		'Reply with suggestions only. Do not change anything yet — no edits to agents, skills, triggers or settings. I will tell you which suggestions to go ahead with.',
 	].join('\n')

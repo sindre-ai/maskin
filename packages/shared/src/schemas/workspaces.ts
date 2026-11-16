@@ -114,7 +114,7 @@ export const workspaceSettingsSchema = z.object({
 		insight: 'Insight',
 		bet: 'Bet',
 		task: 'Task',
-		loop: 'Loop',
+		loop: 'Flow',
 	}),
 	statuses: z.record(z.array(z.string())).default({
 		insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
