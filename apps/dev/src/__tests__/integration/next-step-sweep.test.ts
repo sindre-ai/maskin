@@ -353,6 +353,15 @@ describe('NextStepSweep', () => {
 			expect(woken).toHaveLength(MAX_OBJECTS_PER_QUEUE_RUN)
 		})
 
+		it('reaches the objects past the cap on the next tick, even while the first ones are still overdue', async () => {
+			for (let i = 0; i < MAX_OBJECTS_PER_QUEUE_RUN + 2; i++) await overdue('contact', 'messaged')
+			await wakeAfterRecording()
+			await sweep().sweepWorkspace(workspaceId)
+			expect(startSessionMock).toHaveBeenCalledTimes(2)
+			const woken = (await claims()).filter((r) => r.mode === 'woken')
+			expect(woken).toHaveLength(MAX_OBJECTS_PER_QUEUE_RUN + 2)
+		})
+
 		it('frees the claims of a queued run that could not start, so the next tick retries', async () => {
 			await overdue('contact', 'messaged')
 			await overdue('contact', 'qualified')

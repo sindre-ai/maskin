@@ -328,7 +328,9 @@ export class NextStepSweep {
 		for (const [driverId, due] of queues) {
 			if ((wokenPerAgent.get(driverId) ?? 0) >= MAX_WAKES_PER_AGENT_PER_TICK) continue
 			const claims: { item: ObjectNeedingNextStep; claimId: string }[] = []
-			for (const item of due.slice(0, MAX_OBJECTS_PER_QUEUE_RUN)) {
+			// Claim until the run is full, so objects an earlier tick already holds don't use up the cap.
+			for (const item of due) {
+				if (claims.length >= MAX_OBJECTS_PER_QUEUE_RUN) break
 				const claimId = await this.claim(item, 'wake', now)
 				if (claimId) claims.push({ item, claimId })
 			}
