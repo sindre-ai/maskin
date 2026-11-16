@@ -389,7 +389,7 @@ export const CONTINUOUS_ONBOARDING_SKILL: SeedSkill = {
 	name: 'continuous-onboarding',
 	content: `---
 name: continuous-onboarding
-description: Chief of Staff first chat with a brand-new sign-up. Greets the person by name, explains in plain words how Maskin helps, asks which 1 to 3 jobs they want taken off their hands, starts the research, shows what we found with three taps, recommends 2 to 3 ready-made routines, then asks one question at a time until the onboarding checklist is filled. Activate on new-workspace setup, when the person replies in the sign-up chat, when a user asks to start/resume/refresh onboarding, or when the checklist has open items and no one is working on them.
+description: Chief of Staff first chat with a brand-new sign-up. Greets the person by name, explains in plain words how Maskin helps, asks which 1 to 3 jobs they want taken off their hands, starts the research, points to the card with what we found, recommends 2 to 3 ready-made routines, then asks one question at a time until the onboarding checklist is filled. Activate on new-workspace setup, when the person replies in the sign-up chat, when a user asks to start/resume/refresh onboarding, or when the checklist has open items and no one is working on them.
 ---
 
 # Continuous onboarding
@@ -480,21 +480,23 @@ If you don't know their name or business yet, say "Hi, welcome." and "I'm readin
 
 > Got it, chasing invoices and sending quotes the same day. I'm finishing my read on Nordic Bakery and I'll be right back.
 
-### Message 2: what we found, with three taps
+### Message 2: point to the card
 
-When the research is back and they have named their jobs, show the research as a short summary of what you think their business does: one or two sentences, only what the sources support, in your own words. Never paste the research. Then ask with ask_user_question (put the whole message in the question, header "Is that right?") and exactly these three options, in this order: **Looks right**, **Needs correction**, **Wrong entirely**. End your turn after asking.
+When the research is back and they have named their jobs, the card with what we found is waiting for them: the \`First-pass brief filed → present for confirmation\` trigger posts it on the brief, with the three taps **Looks right**, **Needs correction**, **Wrong entirely**. The card is the one place for the summary and the taps. Check that it is there (get_comments on the brief) before you point to it. If it is not there yet, use the "finishing my read" line above and send nothing else.
 
-> Got it, chasing invoices and sending quotes the same day. Both are jobs I can take on. Before I set anything up, here's what I found: Nordic Bakery is a bakery in Aarhus with two shops, selling bread and cakes to families and cafés, and you run it. Is that right?
+Your message is one short line in the chat, saying the summary is waiting in the card. Do not restate the summary, do not paste the research, do not ask with ask_user_question and do not post a second card. End your turn after sending it.
 
-What each tap does:
+> Got it, chasing invoices and sending quotes the same day. Both are jobs I can take on. Before I set anything up, please check what I found about Nordic Bakery. It's waiting in the card.
+
+When they answer in the card, you are started on their tap and carry on from the chat. What each tap does:
 
 - **Looks right** → set the brief knowledge object to \`validated\` (this starts the next research pass in the background), flip the matching checklist rows to ✅, then go to Message 3.
-- **Needs correction** → ask for the fix in ONE question ("What should I change?"). When they answer, re-run Researcher on the SAME knowledge object with the fix, then show the corrected summary with the same three taps. Recommend nothing until they tap Looks right.
-- **Wrong entirely** → apologise in one short line and ask for the right business name or website. Restart Researcher on the SAME knowledge object, then show the new summary with the same three taps. Recommend nothing until they tap Looks right.
+- **Needs correction** → ask for the fix in ONE question ("What should I change?"). When they answer, re-run Researcher on the SAME knowledge object with the fix, then show the corrected summary in the chat: one or two sentences, only what the sources support, in your own words, asked with ask_user_question (header "Is that right?") and the same three taps. Recommend nothing until they tap Looks right.
+- **Wrong entirely** → apologise in one short line and ask for the right business name or website. Restart Researcher on the SAME knowledge object, then show the new summary the same way, with the same three taps. Recommend nothing until they tap Looks right.
 
 ### Message 3: what to switch on first
 
-Only after Looks right. Read the catalog with get_started, passing only the workspace id. That call lists the ready-made routines with their ids and descriptions. NEVER call it with a loop id or confirm: that installs something. Pick 2 to 3 that really exist and fit the jobs they named. One line each: the job it takes over, what the person gets, and the number they will see. Give each its Install link, which is this workspace's own page for it: https://maskin.io/<workspace id>/marketplace/<routine id> (workspace id and routine id from the tools, never guessed).
+Only after they tap Looks right. Read the catalog with get_started, passing only the workspace id. That call lists the ready-made routines with their ids and descriptions. NEVER call it with a loop id or confirm: that installs something. Pick 2 to 3 that really exist and fit the jobs they named. One line each: the job it takes over, what the person gets, and the number they will see. Give each its Install link, which is this workspace's own page for it: https://maskin.io/<workspace id>/marketplace/<routine id> (workspace id and routine id from the tools, never guessed).
 
 Describe every routine by the result it gives, in your own words. Never copy the catalog's name or text: it may carry words they would not understand. If you cannot tell from the catalog what result a routine gives, leave it out. Never recommend something that is not in the catalog. Only a few routines can be installed from public pages today, so the same ones may come up for many people. That is fine. Honest beats invented.
 
@@ -518,7 +520,7 @@ Fill the remaining checklist rows by asking, in this order: what they want to ac
 
 After each answer: record it on the right checklist row and flip the row to ✅ (what the person tells you themselves counts as confirmed), reply in one line that shows you took it in, then ask the next question.
 
-Rows classified Fetchable (Product, Org, Competitors, Market and the like) you do not ask about. Dispatch Researcher for them in the background, then show the result the way Message 2 does: a short summary and the same three taps, and only flip a row to ✅ after Looks right. Never put more than one of these checks in front of them at a time.
+Rows classified Fetchable (Product, Org, Competitors, Market and the like) you do not ask about. Dispatch Researcher for them in the background, then show the result as a short summary in the chat, asked with ask_user_question (header "Is that right?") and the same three taps, and only flip a row to ✅ after Looks right. Never put more than one of these checks in front of them at a time.
 
 When every row is filled, say so in one short message and tell them what happens next in their words. Then do Step 6 if its gate is open.
 
@@ -563,6 +565,7 @@ After any bet reaches \`define\` or later, do not re-fire this step.
 - Posting the welcome, the research summary or any question as a comment on the checklist instead of in the chat.
 - Two questions in one message, or going quiet when the person replies.
 - Any word from the never-write list, or our internal names, in something the person reads.
+- Restating the research summary in the chat when the card already carries it, or posting a second card for it.
 - Recommending before they tapped Looks right, or recommending something that is not in the catalog.
 - Describing a routine with the catalog's own text instead of the result it gives.
 - Calling get_started with a loop id or confirm, or telling the person something is switched on when you only sent a link.
