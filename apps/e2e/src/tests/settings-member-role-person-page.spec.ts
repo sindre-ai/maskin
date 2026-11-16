@@ -3,14 +3,14 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
- * Settings → Members: changing a human teammate's role from HumanDetailDialog.
+ * Settings → Members: changing a human teammate's role from their person page.
  *
  * The members list is route-mocked. A fixture workspace is on the trial plan,
  * whose seat cap is one human (SEAT_CAPS in packages/shared/src/billing-caps.ts),
  * so POST /members refuses to add a second human and no test account can hold
  * one. The cap itself is covered against real Postgres in
  * apps/dev/src/__tests__/integration/. What is asserted here is the UI path the
- * mock can't fake: the row opens the dialog, the dialog's role Select is
+ * mock can't fake: the row opens the person page, the page's role Select is
  * reachable at touch sizes, and picking a role issues the PATCH.
  */
 
@@ -37,6 +37,24 @@ async function mockMembers(page: Page, workspaceId: string) {
 		})
 	})
 
+	// The person page reads the actor record, which does not exist for the mocked member.
+	await page.route(`**/api/actors/${TEAMMATE.actorId}`, async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				id: TEAMMATE.actorId,
+				type: 'human',
+				name: TEAMMATE.name,
+				email: 'mocked.teammate@example.com',
+				description: null,
+				system_prompt: null,
+				isSystem: false,
+			}),
+		})
+	})
+
 	const patched: string[] = []
 	await page.route(
 		`**/api/workspaces/${workspaceId}/members/${TEAMMATE.actorId}`,
@@ -55,9 +73,9 @@ async function mockMembers(page: Page, workspaceId: string) {
 	return patched
 }
 
-test.describe('Settings — HumanDetailDialog role change', () => {
+test.describe('Settings — person page role change', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`admin can change a human member's role from the dialog at ${viewport.label}`, async ({
+		test(`admin can change a human member's role from the person page at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -76,10 +94,9 @@ test.describe('Settings — HumanDetailDialog role change', () => {
 
 			await teammateRow.click()
 
-			const dialog = page.getByRole('dialog')
-			await expect(dialog).toBeVisible()
+			await expect(page.getByRole('heading', { level: 1, name: TEAMMATE.name })).toBeVisible()
 
-			const roleSelect = dialog.getByRole('combobox', {
+			const roleSelect = page.getByRole('combobox', {
 				name: new RegExp(`Role for ${TEAMMATE.name}`),
 			})
 			// `toBeVisible` also catches opacity-0 / hover-only reveals at touch sizes.

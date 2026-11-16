@@ -1,6 +1,5 @@
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import type { TagInputHandle } from '@/components/chat/tag-input'
-import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
@@ -106,7 +105,6 @@ function CommentRow({
 	const { data: attachedFiles, isPending: attachmentsPending } = useFiles(workspaceId, {
 		ids: attachmentFileIds,
 	})
-	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
 
 	const handleMentionClick = (mentioned: ActorListItem) => {
@@ -116,7 +114,10 @@ function CommentRow({
 				params: { workspaceId, agentId: mentioned.id },
 			})
 		} else {
-			setHumanDialogActorId(mentioned.id)
+			navigate({
+				to: '/$workspaceId/people/$actorId',
+				params: { workspaceId, actorId: mentioned.id },
+			})
 		}
 	}
 
@@ -320,16 +321,6 @@ function CommentRow({
 					</ViewerTooltip>
 				)}
 			</div>
-			{humanDialogActorId && (
-				<HumanDetailDialog
-					actorId={humanDialogActorId}
-					workspaceId={workspaceId}
-					open={true}
-					onOpenChange={(open) => {
-						if (!open) setHumanDialogActorId(null)
-					}}
-				/>
-			)}
 		</>
 	)
 }
