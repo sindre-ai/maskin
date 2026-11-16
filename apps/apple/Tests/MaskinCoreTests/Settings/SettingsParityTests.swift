@@ -128,20 +128,6 @@ struct BillingTests {
 		#expect(store.usage?.usedFraction == 0.25)
 	}
 
-	@Test("the percent view is off unless the flag is on, and a flags failure reads as off")
-	func percentFlag() async {
-		let off = BillingStore(api: FakeSettings())
-		await off.load()
-		#expect(off.percentDisplay == false)
-
-		let fake = FakeSettings()
-		fake.enabledFlags = [BillingStore.percentFlag]
-		let on = BillingStore(api: fake)
-		await on.load()
-		#expect(on.percentDisplay == true)
-		#expect(on.usage != nil)
-	}
-
 	@Test("percent rounds down, is 100 at the cap and never made up")
 	func percent() {
 		func usage(_ used: Int, _ cap: Int?, plan: String = "trial") -> BillingUsage {

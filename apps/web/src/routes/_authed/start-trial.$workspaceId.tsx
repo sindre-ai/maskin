@@ -21,8 +21,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 
 // The card step of sign-up (bet "A card to start a 7-day trial"). A workspace made through it
-// waits here until a card is saved with Stripe, with no charge. The server only creates such a
-// workspace while the trial-card-percent flag is on, so with the flag off nobody lands here.
+// waits here until a card is saved with Stripe, with no charge.
 export const Route = createFileRoute('/_authed/start-trial/$workspaceId')({
 	component: StartTrialPage,
 })
