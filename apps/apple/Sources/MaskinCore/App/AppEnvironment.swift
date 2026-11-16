@@ -60,6 +60,12 @@ public final class AppEnvironment {
 	/// The selected workspace id, if signed in.
 	public var workspaceId: String? { auth.session?.workspaceId }
 
+	/// What a chat attachment over 10 MB needs to reach storage (the generated client has no such call).
+	public var largeUploads: LargeFileUploadTransport {
+		LargeFileUploadTransport(
+			baseURL: baseURL, clientSource: clientSource, credentials: auth.credentialsProvider)
+	}
+
 	/// Called by the shell whenever the signed-in user or workspace changes: points the event
 	/// stream at the current workspace, or stops it when signed out.
 	public func syncEvents() {

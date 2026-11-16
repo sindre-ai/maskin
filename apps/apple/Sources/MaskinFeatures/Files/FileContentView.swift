@@ -17,6 +17,14 @@ struct FileContentView: View {
 	private var fileText: String { text ?? file.text ?? "" }
 
 	var body: some View {
+		if file.contentOmitted {
+			FileTooLargeView(file: file)
+		} else {
+			content
+		}
+	}
+
+	@ViewBuilder private var content: some View {
 		switch file.kind {
 		case .markdown:
 			if showsSource { FileSourceText(text: fileText, revision: revision) } else {
@@ -37,6 +45,25 @@ struct FileContentView: View {
 			EmptyState(
 				symbol: "doc", title: "No preview for this file",
 				message: "\(FileContentKind.label(forMime: file.mimeType)) · \(file.mimeType). Use Share to open it in another app.")
+		}
+	}
+}
+
+/// What a file over the inline cap shows instead of a preview: the server sends no bytes for it,
+/// only a link, so the person opens it in the browser or another app.
+struct FileTooLargeView: View {
+	let file: FileDetail
+	@Environment(\.openURL) private var openURL
+
+	var body: some View {
+		EmptyState(
+			symbol: "doc", title: "Too large to preview",
+			message: "\(file.name) is too big to show here.\(file.downloadURL == nil ? "" : " Open it to view or save it.")"
+		) {
+			if let url = file.downloadURL {
+				Button("Open") { openURL(url) }
+					.buttonStyle(SecondaryActionButtonStyle())
+			}
 		}
 	}
 }

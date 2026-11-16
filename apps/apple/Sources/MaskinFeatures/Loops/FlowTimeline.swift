@@ -34,7 +34,7 @@ final class FlowTimelineModel {
 		self.flowName = flowName
 		store = ObjectsServices(environment: environment).detailStore(for: flowID)
 		composer = ChatComposerModel(
-			uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? ""),
+			uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads),
 			selfActorID: environment.auth.session?.actorId ?? "")
 		events = environment.events
 	}
@@ -211,7 +211,7 @@ struct FlowOwnerThreadSheet: View {
 		.ambientBackground(showsBottom: false)
 		.task {
 			guard built == nil else { return }
-			let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+			let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 			let desk = ChiefOfStaffDesk(
 				conversations: thread.conversations, uploader: source,
 				selfActorID: environment.auth.session?.actorId ?? "")
