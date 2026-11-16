@@ -2,7 +2,7 @@ import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher'
 import type { WorkspaceWithRole } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { createEvent, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -59,7 +59,8 @@ const trackOpened = vi.fn()
 const trackOpenAttempted = vi.fn()
 const trackDismissedImmediately = vi.fn()
 vi.mock('@/lib/analytics', () => ({
-	trackSidebarWorkspaceSwitcherOpened: (p: { workspaceId: string }) => trackOpened(p),
+	trackSidebarWorkspaceSwitcherOpened: (p: { workspaceId: string; pointerType: string }) =>
+		trackOpened(p),
 	trackSidebarWorkspaceSwitcherOpenAttempted: (p: { workspaceId: string; pointerType: string }) =>
 		trackOpenAttempted(p),
 	trackSidebarWorkspaceSwitcherDismissedImmediately: (p: { workspaceId: string; openMs: number }) =>
@@ -222,7 +223,43 @@ describe('WorkspaceSwitcher', () => {
 		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
 
 		expect(trackOpened).toHaveBeenCalledTimes(1)
-		expect(trackOpened).toHaveBeenCalledWith({ workspaceId: 'ws-a' })
+		expect(trackOpened).toHaveBeenCalledWith({ workspaceId: 'ws-a', pointerType: 'mouse' })
+	})
+
+	it('tags opened with the pointer type of the tap that opened it', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		const trigger = screen.getByRole('button', { name: /Switch workspace/ })
+		// jsdom may not ship PointerEvent, in which case fireEvent drops button, ctrlKey and
+		// pointerType from the init. Radix opens on button === 0 && ctrlKey === false, so set
+		// them on the event itself.
+		const down = createEvent.pointerDown(trigger)
+		Object.defineProperties(down, {
+			button: { value: 0 },
+			ctrlKey: { value: false },
+			pointerType: { value: 'touch' },
+		})
+		fireEvent(trigger, down)
+
+		expect(await screen.findByRole('menu')).toBeInTheDocument()
+		expect(trackOpened).toHaveBeenCalledWith({ workspaceId: 'ws-a', pointerType: 'touch' })
+		expect(trackOpenAttempted).toHaveBeenCalledWith({ workspaceId: 'ws-a', pointerType: 'touch' })
+	})
+
+	it('tags opened as unknown when no pointer came first (keyboard)', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		screen.getByRole('button', { name: /Switch workspace/ }).focus()
+		await user.keyboard('{Enter}')
+
+		expect(await screen.findByRole('menu')).toBeInTheDocument()
+		expect(trackOpened).toHaveBeenCalledWith({ workspaceId: 'ws-a', pointerType: 'unknown' })
+		expect(trackOpenAttempted).not.toHaveBeenCalled()
 	})
 
 	it('does not emit sidebar.workspace_switcher.opened when the dropdown closes', async () => {

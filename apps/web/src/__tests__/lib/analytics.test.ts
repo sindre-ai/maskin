@@ -752,13 +752,14 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('sidebar.workspace_switcher.opened carries the workspaceId', () => {
+	it('sidebar.workspace_switcher.opened carries the workspaceId and pointerType', () => {
 		const capture = captureSpy()
 
-		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42' })
+		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42', pointerType: 'touch' })
 
 		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.opened', {
 			workspaceId: 'ws-42',
+			pointerType: 'touch',
 		})
 	})
 
