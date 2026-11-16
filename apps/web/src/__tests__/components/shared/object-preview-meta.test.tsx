@@ -92,6 +92,19 @@ describe('ObjectPreviewMeta', () => {
 			expect(screen.getByText('Can we meet Thursday?')).toBeInTheDocument()
 		})
 
+		it('names who wrote it when the draft goes to someone by name', () => {
+			render(
+				<ObjectPreviewMeta
+					preview={buildPreview({
+						context: 'Can we meet Thursday?',
+						recipients: [{ role: 'to', name: 'Liz Benison', address: 'liz@example.com' }],
+					})}
+				/>,
+			)
+			expect(screen.getByText('Liz Benison wrote')).toBeInTheDocument()
+			expect(screen.queryByText('In reply to')).not.toBeInTheDocument()
+		})
+
 		it('has no quote and no toggle without one', () => {
 			render(<ObjectPreviewMeta preview={buildPreview()} />)
 			expect(screen.queryByText('In reply to')).not.toBeInTheDocument()

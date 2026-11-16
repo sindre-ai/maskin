@@ -24,10 +24,17 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { useActors } from '@/hooks/use-actors'
+import {
+	flattenMessagesOldestFirst,
+	useConversationMessages,
+	useSendMessage,
+} from '@/hooks/use-conversation'
 import { useApproveDraft, useDraftEdit } from '@/hooks/use-draft-editor'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject, useUpdateObject } from '@/hooks/use-objects'
+import type { QuestionDraftNote } from '@/hooks/use-question-draft-notes'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
 import {
@@ -42,10 +49,27 @@ import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
-import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
+import {
+	type ReactNode,
+	createContext,
+	useContext,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 
 /** A tap this soon after "Read full draft to approve" opened the text is the same double tap, not a yes. */
 const REVEAL_SETTLE_MS = 500
+
+/**
+ * The person's message when they skip a draft. The card finds it again after a reload by this
+ * text and the draft's id in the message's `context_objects`, so no draft state or API is needed.
+ */
+export const SKIP_DRAFT_TEXT = 'Skip: do not send this draft'
+
+/** What an agent asked in the same message as a draft sits in that draft's card, by draft id, provided around a message that links a draft and also asks a question. */
+export const DraftNotesContext = createContext<ReadonlyMap<string, QuestionDraftNote>>(new Map())
 
 interface PreviewProps {
 	workspaceId: string
@@ -117,6 +141,22 @@ export function LinkedObjectCard({
 	const canEditText =
 		inChat && object?.preview?.delivery?.state !== 'sent' && measured && !(clamped && overflowing)
 	const editorOpen = Boolean(object?.preview) && canEditText
+	const note = useContext(DraftNotesContext).get(objectId)
+	// Skip is a message to the agent in this chat. Whether it was sent is read back from the chat's
+	// messages, so the card says Skipped again after a reload.
+	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
+	const { data: chatMessages } = useConversationMessages(conversationId ?? '', workspaceId, {
+		enabled: inChat && Boolean(object?.preview),
+	})
+	const skipped = useMemo(() => {
+		const me = getStoredActor()?.id
+		return flattenMessagesOldestFirst(chatMessages).some(
+			(m) =>
+				m.actorId === me &&
+				m.content === SKIP_DRAFT_TEXT &&
+				m.metadata?.context_objects?.some((o) => o.id === objectId),
+		)
+	}, [chatMessages, objectId])
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
 	useLayoutEffect(() => {
@@ -205,6 +245,18 @@ export function LinkedObjectCard({
 		if (Date.now() - revealedAt.current < REVEAL_SETTLE_MS) return
 		onAction?.('approve')
 		approve.mutate({ draft: { object_id: object.id, body: preview.body, preview }, chat })
+	}
+
+	// A hidden nudge, like a card's Done: the agent hears it, the chat does not draw it.
+	const skipDraft = () => {
+		if (skipped || sendMessage.isPending) return
+		sendMessage.mutate({
+			content: SKIP_DRAFT_TEXT,
+			metadata: {
+				hidden_from_chat: true,
+				context_objects: [{ id: object.id, type: object.type, title: object.title.slice(0, 500) }],
+			},
+		})
 	}
 
 	return (
@@ -319,6 +371,14 @@ export function LinkedObjectCard({
 			</div>
 			{expanded ? (
 				<>
+					{note && preview ? (
+						<div data-linked-card-note="" className="px-3 pt-2">
+							<p className="text-[12.5px] text-foreground">{note.question}</p>
+							{note.reason ? (
+								<p className="text-[12.5px] text-muted-foreground">{note.reason}</p>
+							) : null}
+						</div>
+					) : null}
 					{object.preview ? (
 						<div className="px-3 pt-2">
 							<ObjectPreviewMeta preview={object.preview} />
@@ -389,18 +449,36 @@ export function LinkedObjectCard({
 									<Check size={13} aria-hidden />
 									Approved, waiting for send
 								</span>
+							) : skipped ? (
+								<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+									<Check size={13} aria-hidden />
+									Skipped
+								</span>
 							) : (
-								<Button
-									type="button"
-									size="sm"
-									disabled={
-										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
-									}
-									onClick={approveDraft}
-								>
-									{gated ? 'Read full draft to approve' : 'Approve draft'}
-									<ArrowRight size={14} aria-hidden />
-								</Button>
+								<>
+									{inChat ? (
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={sendMessage.isPending}
+											onClick={skipDraft}
+										>
+											Skip
+										</Button>
+									) : null}
+									<Button
+										type="button"
+										size="sm"
+										disabled={
+											!canAct || approve.isPending || update.isPending || preview.missing.length > 0
+										}
+										onClick={approveDraft}
+									>
+										{gated ? 'Read full draft to approve' : 'Approve draft'}
+										<ArrowRight size={14} aria-hidden />
+									</Button>
+								</>
 							)}
 						</div>
 					) : canAct && nextStatus ? (
