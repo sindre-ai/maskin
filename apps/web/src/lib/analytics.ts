@@ -689,8 +689,17 @@ export function trackChatMentionInserted(
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
 // asked for so the events can be sliced without joining super-properties.
 
-export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }): void {
-	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
+// `pointerType` is the one from the tap that opened the menu ('touch' | 'mouse' | 'pen'), or
+// 'unknown' when no pointer came first (keyboard), so opens can be compared with
+// `open_attempted` per pointer type.
+export function trackSidebarWorkspaceSwitcherOpened(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.opened', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
 }
 
 // Mobile switcher bug (taps register, menu doesn't open): the two events below
