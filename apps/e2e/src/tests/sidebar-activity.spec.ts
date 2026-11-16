@@ -407,8 +407,11 @@ test.describe('Sidebar Activity card', () => {
 			await page.setViewportSize({ width: 1280, height: 800 })
 			await page.goto(`/${account.workspaceId}`)
 			const card = page.getByRole('region', { name: "What's new" })
-			await card.getByRole('button', { name: 'Dismiss' }).click()
-			await expect(card).toBeHidden()
+			// Dismissing shows the next entry, so keep dismissing until none is left.
+			for (let i = 0; i < 10 && (await card.count()) > 0; i++) {
+				await card.getByRole('button', { name: 'Dismiss' }).click()
+			}
+			await expect(card).toHaveCount(0)
 			await page.reload()
 			await expect(page.getByTestId('sidebar-activity')).toBeVisible()
 			await expect(page.getByRole('region', { name: "What's new" })).toHaveCount(0)
