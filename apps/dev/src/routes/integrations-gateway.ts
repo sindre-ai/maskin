@@ -232,10 +232,10 @@ export async function proxyMcp(
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
 		})
-		// Read & write lets an agent use Resend's send tools, unless its send setting for emails holds
+		// Read & write lets an agent use Resend's send tools, unless its send setting for emails from its own address holds
 		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
 		if (decision.allowed && provider === 'resend' && RESEND_SEND_TOOLS.has(toolName)) {
-			const send = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+			const send = await decideSend(db, { workspaceId, agentId: actorId, kind: 'agent_email' })
 			if (send !== 'send_now') {
 				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }
 			}

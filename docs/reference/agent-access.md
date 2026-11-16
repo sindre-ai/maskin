@@ -68,7 +68,7 @@ An MCP server a person adds by hand (a command to run, or a URL to call) is a wo
 
 `read_write` lets an agent use every tool of the integration, including the ones that send in the company's or a person's name (Slack posts, LinkedIn messages, posts and invitations, email through Gmail and Resend). Whether a send goes out at once or waits for a person is a separate, per-agent setting for each kind of send (`send_permissions`, resolved by `decideSend` in `apps/dev/src/lib/send-gate.ts`):
 
-- **Always allow** sends the call as given. A workspace with no saved setting starts here for every kind.
+- **Always allow** sends the call as given. A workspace with no saved setting starts here for every kind except `agent_email`, the email an agent sends from its own address through Resend, which starts at Ask first. It is a kind of its own, so a level set for Gmail `email` never opens it, and the other way round.
 - **Ask first** needs a draft and a person's approval of that exact text: on its card (editing the text there first if they want), or by saying yes in a chat (`approve_draft_from_chat`). See [drafts](./drafts.md).
 - **Deny** refuses the send tool, whatever the agent says.
 
@@ -88,10 +88,12 @@ Google's hosted Gmail tool can only create drafts, so Maskin serves the send its
 
 Maskin serves the Resend send as well: the `resend_send_email` MCP tool, `POST /api/integrations/resend/send` (`apps/dev/src/routes/integrations-resend.ts`). It works like the Gmail send above, with these differences:
 
+- **Its own send setting.** `resend_send_email` and Resend's own send tools follow the `agent_email` kind ("Email from own address"), not `email`. It starts at Ask first for every agent, and only a human admin can change it from the app (the same rule as every send setting; an agent or an MCP call is refused).
+
 - **Only `object_id`.** The email is the draft object (`metadata.kind = "email"`) as it reads now. A `to`, `subject`, `body` or `from` in the call is refused, not ignored.
 - **The sender is the agent's mailbox, read on the server.** It lives in `actors.metadata.mailbox`. Only a human workspace admin or owner can set it (`PATCH /api/actors/:id` with `mailbox`; an address is one plain address and one agent holds it). The `email` column is not used: any workspace member can change it. No mailbox, no send. The draft cannot name a sender either.
 - **The approval is the idempotency key** (`maskin-email-{object_id}-{approval event id}`), so Resend delivers a retry once. A draft sent without an approval (an agent set to always allow; the response says `mode: direct`) uses `maskin-email-{object_id}-direct-{content hash}` and is refused once it has a `delivered` event. A refusal or an unclear failure releases the approval (`resend_action: send_released` on the integration) and the same call can be made again; a confirmed send locks it.
-- Resend's own send tools through the gateway (`send-email`, `send-batch-emails`, `send-broadcast`, `send-inbox-draft`, `send-new-inbox-email`, `reply-to-inbox-thread-email`, `forward-inbox-thread-email`) work for a Read & write agent set to always allow, and are refused with a pointer to `resend_send_email` for one set to ask first, or with a plain refusal for one set to deny (`RESEND_SEND_TOOLS` in `mcp-gateway.ts`). `resend_send_email` itself sends the draft at once for always allow, and only an approved draft for ask first.
+- Resend's own send tools through the gateway (`send-email`, `send-batch-emails`, `send-broadcast`, `send-inbox-draft`, `send-new-inbox-email`, `reply-to-inbox-thread-email`, `forward-inbox-thread-email`) work for a Read & write agent set to always allow for `agent_email`, and are refused with a pointer to `resend_send_email` for one set to ask first, or with a plain refusal for one set to deny (`RESEND_SEND_TOOLS` in `mcp-gateway.ts`). `resend_send_email` itself sends the draft at once for always allow, and only an approved draft for ask first.
 
 ## API
 
