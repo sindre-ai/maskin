@@ -29,6 +29,9 @@ export interface ConversationListFilters {
 	scope?: 'priority' | 'recent'
 	/** The default list's listing rules: no empty agent DMs, retired agents or quiet topic chats. */
 	hide_quiet?: boolean
+	/** One of the three automatic views: a flat list of what waits on the viewer, what has an
+	 *  agent running, or what has been quiet for a week. */
+	view?: 'waiting' | 'running' | 'quiet'
 }
 
 export function useConversationsInfinite(
@@ -62,6 +65,7 @@ export function useConversationsInfinite(
 			if (filters?.archived) params.archived = 'true'
 			if (filters?.unread_only) params.unread_only = 'true'
 			if (filters?.hide_quiet) params.hide_quiet = 'true'
+			if (filters?.view) params.view = filters.view
 			return api.conversations.list(workspaceId, params)
 		},
 		initialPageParam: 0,

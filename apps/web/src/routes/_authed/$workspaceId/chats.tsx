@@ -1,11 +1,13 @@
 import { ChatListViewSwitch } from '@/components/chat/chat-list-view-switch'
 import type { ChatsFilter } from '@/components/chat/chats-filter-menu'
 import { ConversationList, ConversationListHeader } from '@/components/chat/conversation-list'
+import { SectionedChatList } from '@/components/chat/sections/sectioned-chat-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatListView } from '@/hooks/use-chat-list-view'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
@@ -25,7 +27,15 @@ interface ChatsSearch {
 	produced?: boolean
 }
 
-const FILTER_VALUES: ChatsFilter[] = ['all', 'unread', 'pinned', 'archived', 'threads']
+const FILTER_VALUES: ChatsFilter[] = [
+	'all',
+	'unread',
+	'pinned',
+	'archived',
+	'threads',
+	'running',
+	'quiet',
+]
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats')({
 	component: ChatsLayout,
@@ -75,7 +85,12 @@ function ChatsLayout() {
 	const [query, setQuery] = useState('')
 	const { view, setView } = useChatListView()
 	const matches = useMatches()
-	const { filter = 'all', wide } = Route.useSearch()
+	const { filter: searchFilter = 'all', wide } = Route.useSearch()
+	// One boundary for the sectioned list: tiles, sections and the quiet note. Off means the list is
+	// drawn exactly as before, and the views it never had fall back to the whole list.
+	const sectioned = useFeatureFlag('chat-list-sections')
+	const filter: ChatsFilter =
+		!sectioned && (searchFilter === 'running' || searchFilter === 'quiet') ? 'all' : searchFilter
 	const leafMatch = matches[matches.length - 1]
 	const hasThread = !!leafMatch && THREAD_ROUTE_IDS.has(leafMatch.routeId)
 	const isDraft = leafMatch?.routeId === '/_authed/$workspaceId/chats/new'
@@ -132,6 +147,7 @@ function ChatsLayout() {
 			<ConversationListHeader
 				workspaceId={workspaceId}
 				titled={!isMobile}
+				sectioned={sectioned}
 				pageTitle={!isDraft}
 				filter={filter}
 				onFilterChange={handleFilterChange}
@@ -146,13 +162,24 @@ function ChatsLayout() {
 					className="mb-2 ml-4 lg:ml-7 max-md:mt-0 md:-mt-1"
 				/>
 			) : null}
-			<ConversationList
-				workspaceId={workspaceId}
-				filter={filter}
-				query={query}
-				view={view}
-				hideStartLink={isDraft}
-			/>
+			{sectioned && filter !== 'threads' ? (
+				<SectionedChatList
+					workspaceId={workspaceId}
+					filter={filter}
+					query={query}
+					view={view}
+					hideStartLink={isDraft}
+					onFilterChange={handleFilterChange}
+				/>
+			) : (
+				<ConversationList
+					workspaceId={workspaceId}
+					filter={filter}
+					query={query}
+					view={view}
+					hideStartLink={isDraft}
+				/>
+			)}
 		</>
 	)
 

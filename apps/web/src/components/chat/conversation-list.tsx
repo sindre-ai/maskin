@@ -43,7 +43,10 @@ export function ConversationListHeader({
 	workspaceId,
 	titled,
 	pageTitle = true,
+	sectioned = false,
 }: {
+	/** The sectioned list's filter menu: Waiting on you takes the place of Unread. */
+	sectioned?: boolean
 	filter: ChatsFilter
 	onFilterChange: (next: ChatsFilter) => void
 	query: string
@@ -82,7 +85,7 @@ export function ConversationListHeader({
 							className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
 						/>
 					</label>
-					<ChatsFilterMenu value={filter} onChange={onFilterChange} />
+					<ChatsFilterMenu value={filter} onChange={onFilterChange} sectioned={sectioned} />
 				</div>
 			</div>
 		)
@@ -118,7 +121,7 @@ export function ConversationListHeader({
 				/>
 			</label>
 			<div className={cn('flex flex-none items-center gap-2', expanded && 'hidden')}>
-				<ChatsFilterMenu value={filter} onChange={onFilterChange} iconOnly />
+				<ChatsFilterMenu value={filter} onChange={onFilterChange} iconOnly sectioned={sectioned} />
 				<Button
 					asChild
 					size="icon"
@@ -171,6 +174,15 @@ const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = 
 	},
 	// Threads has its own list (`ReplyThreadList`); this entry only satisfies the record.
 	threads: { title: 'No threads yet', description: 'Reply to a message to start one.' },
+	// The sectioned list's views; this list never shows them (the Chats route sends them to All).
+	running: {
+		title: 'No agent is running',
+		description: 'Chats with an agent at work show up here.',
+	},
+	quiet: {
+		title: 'Nothing is quiet',
+		description: 'Chats with no message for 7 days show up here.',
+	},
 }
 
 /** How long the search box holds still before the search counts as used. */

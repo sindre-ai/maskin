@@ -1,6 +1,7 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import type { ConversationListItemResponse } from '@/lib/api'
+import { badgeCount } from '@/lib/chat-list-sections'
 import { cn } from '@/lib/cn'
 import type { ConversationListEntry } from '@/lib/conversation-agent-rows'
 import { Link } from '@tanstack/react-router'
@@ -27,7 +28,10 @@ export function ConversationAgentRow({
 	entry,
 	threadUnreadByChat,
 	onOpen,
+	sectioned = false,
 }: {
+	/** Sectioned list: the number sums mentions plus open cards, not every new message. */
+	sectioned?: boolean
 	workspaceId: string
 	entry: AgentEntry
 	/** Unread thread replies per chat, so a folded chat that is caught up still shows its threads. */
@@ -37,7 +41,8 @@ export function ConversationAgentRow({
 }) {
 	const [open, setOpen] = useState(false)
 	const [showAll, setShowAll] = useState(false)
-	const { agent, conversations, unread } = entry
+	const { agent, conversations } = entry
+	const unread = sectioned ? conversations.reduce((sum, c) => sum + badgeCount(c), 0) : entry.unread
 	const newest = conversations[0]
 	const shown = showAll ? conversations : conversations.slice(0, AGENT_FOLD_CAP)
 	const hidden = conversations.length - shown.length
@@ -113,6 +118,7 @@ export function ConversationAgentRow({
 							conversation={c}
 							threadUnread={threadUnreadByChat.get(c.id) ?? 0}
 							label={chatLabel(c)}
+							sectioned={sectioned}
 							onOpen={() => onOpen?.(c.id)}
 						/>
 					))}
