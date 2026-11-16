@@ -1017,7 +1017,7 @@ export class LoopVersionPusher {
 		await this.db.insert(notifications).values({
 			workspaceId: install.workspaceId,
 			type: NOTIFICATION_TYPE,
-			title: 'Loop update available',
+			title: 'Flow update available',
 			content: `Version ${targetVersion} is available for a forked install.`,
 			sourceActorId,
 			status: 'pending',

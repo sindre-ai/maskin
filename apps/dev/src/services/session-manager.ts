@@ -184,6 +184,7 @@ import {
 	creditBalanceCents,
 	effectivePeriodEnd,
 	getWorkspacePlanCap,
+	getWorkspacePlanTokenUsage,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
 	resolveLlmRoute,
@@ -229,6 +230,7 @@ import {
 import { applyExtensionGuards } from './extension-guard-launch'
 import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
+import { notifyPlanLimitReached } from './plan-limit-email'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
@@ -5333,13 +5335,23 @@ ${cont.continues_prompt}
 			capCents,
 			reason: stopReason,
 		})
+		const limitPeriodEnd = effectivePeriodEnd(
+			periodStartMs,
+			typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined,
+		)
 		void trackPlanLimitReached({
 			workspaceId: session.workspaceId,
 			plan,
-			periodEnd: effectivePeriodEnd(
-				periodStartMs,
-				typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined,
-			),
+			periodEnd: limitPeriodEnd,
+			usedCents: totalUsedCents,
+			capCents,
+			readTokens: () => getWorkspacePlanTokenUsage(this.db, session.workspaceId, periodStartMs),
+		})
+		void notifyPlanLimitReached({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			plan,
+			periodEnd: limitPeriodEnd,
 		})
 		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
 			logger.warn('Failed to write budget-stop system log', {

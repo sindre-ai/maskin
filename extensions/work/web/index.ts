@@ -15,7 +15,7 @@ const workWebExtension: ModuleWebDefinition = {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
-			loop: 'Loop',
+			loop: 'Flow',
 		},
 		statuses: {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],

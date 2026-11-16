@@ -214,6 +214,26 @@ describe('get_company', () => {
 		expect(paths()).toEqual(['GET /v2/acc_1/linkedin/company/analytical-engines'])
 	})
 
+	it('reports an unknown company as INVALID_INPUT, not CREDENTIAL_NOT_CONNECTED', async () => {
+		const deps = depsFor(fakeHooks())
+		deps.posts.getCompanyProfile = async () => {
+			throw new LinkedInIntegrationError('CREDENTIAL_NOT_CONNECTED', 'not found', {
+				httpStatus: 404,
+			})
+		}
+		const err = await rejection(getCompany(deps, { company: 'no-such-company' }))
+		expect(err.code).toBe('INVALID_INPUT')
+		expect(err.message).toContain('no-such-company')
+	})
+
+	it('lets other failures through unchanged', async () => {
+		const deps = depsFor(fakeHooks())
+		deps.posts.getCompanyProfile = async () => {
+			throw new LinkedInIntegrationError('CREDENTIAL_REVOKED', 'revoked', { httpStatus: 401 })
+		}
+		expect((await rejection(getCompany(deps, { company: 'acme' }))).code).toBe('CREDENTIAL_REVOKED')
+	})
+
 	it('refuses an empty company and sends nothing', async () => {
 		expect((await rejection(getCompany(depsFor(fakeHooks()), { company: '  ' }))).code).toBe(
 			'INVALID_INPUT',

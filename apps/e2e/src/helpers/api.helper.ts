@@ -634,7 +634,13 @@ export class TestAPI {
 
 	async createConversation(
 		workspaceId: string,
-		data: { title: string; participant_actor_ids: string[]; initial_message?: string },
+		data: {
+			title: string
+			participant_actor_ids: string[]
+			initial_message?: string
+			/** Open the pair's one direct message instead of a new topical chat. */
+			direct?: boolean
+		},
 	): Promise<ConversationDetailResponse> {
 		const res = await fetch(`${this.baseURL}/api/conversations`, {
 			method: 'POST',

@@ -11,10 +11,10 @@ import {
 	MEETING_LOOP_TRIGGER_IDS,
 } from '../../../lib/marketplace-loops/meeting-loop'
 
-describe('Meeting Loop definition', () => {
+describe('Meeting Flow definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(MEETING_LOOP.slug).toBe('meeting-loop')
-		expect(MEETING_LOOP.name).toBe('Meeting Loop')
+		expect(MEETING_LOOP.name).toBe('Meeting Flow')
 		expect(MEETING_LOOP.useCase).toBe('Operations')
 		expect(MEETING_LOOP.version).toBe('1.0.0')
 		expect(MEETING_LOOP.description.length).toBeGreaterThan(0)

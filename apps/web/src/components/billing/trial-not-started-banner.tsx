@@ -6,8 +6,7 @@ import { AlertTriangle } from 'lucide-react'
 /**
  * Shown to someone who signed up and left the card step before adding a card (bet "A card to
  * start a 7-day trial"). Nothing runs until the trial has started, so the banner says so and
- * reopens the card step. It renders only while the workspace is waiting for its card, a state the
- * server creates only when the trial-card-percent flag is on, so with the flag off it never shows.
+ * reopens the card step. It renders only while the workspace is waiting for its card.
  */
 export function TrialNotStartedBanner({ workspaceId }: { workspaceId: string }) {
 	const { data: usage } = useBillingUsage(workspaceId)

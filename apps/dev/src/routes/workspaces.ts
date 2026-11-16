@@ -220,7 +220,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			ownerActorId: actorId,
 			settings: body.settings,
 			// Same card step as sign-up (bet "A card to start a 7-day trial"), so a second workspace
-			// is not a way round it. Off unless the sign-up switch is on.
+			// is not a way round it.
 			awaitingCard: await newWorkspaceNeedsCard(db, actorId, c.get('actorType')),
 		})
 	} catch (err) {

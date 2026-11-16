@@ -62,7 +62,7 @@ public struct BillingUsage: Sendable, Equatable {
 		return min(1, Double(usedCents) / Double(capCents))
 	}
 
-	// MARK: Percent of the plan (flag trial-card-percent)
+	// MARK: Percent of the plan
 
 	/// How much of the plan is used, as a whole percent. The same rule as `usagePercent` in
 	/// `packages/shared/src/plan-pricing.ts` (the web's number): used over the stored cap the server

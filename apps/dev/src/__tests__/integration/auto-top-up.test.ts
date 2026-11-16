@@ -1,13 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, awaitingVies, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
+import { events, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import Stripe from 'stripe'
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { creditedAmountUsdMinor, debitCreditForSession } from '../../lib/credit-billing'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { creditedAmountUsdMinor } from '../../lib/credit-billing'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
-import { insertSession, insertWorkspace } from '../factories'
+import { insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -187,215 +186,15 @@ describe('auto top-up (Integration)', () => {
 	const eventActions = async () =>
 		(await db.select().from(events).where(eq(events.entityId, workspaceId))).map((e) => e.action)
 
-	it('charges once and credits the balance when it is under the threshold', async () => {
+	it('never charges a plan workspace, and leaves the saved rule exactly as it was', async () => {
 		await seed(400)
 		await maybeAutoTopUp({ db, workspaceId, actorId })
 
-		const settings = await readSettings()
-		expect(settings.billing.credit_balance_cents).toBe(5_400)
-		expect(settings.auto_top_up.in_flight).toBeUndefined()
-		expect(settings.auto_top_up.last_charged_at).toBeTypeOf('number')
-		// The write was a key write: nothing else in the blob moved.
-		expect(settings.an_unmodelled_future_key).toEqual({ keep: 'me' })
-
-		const rows = await topUpRows()
-		expect(rows).toHaveLength(1)
-		expect(rows[0]?.stripeCheckoutSessionId).toBe('in_test_1')
-		expect(rows[0]?.amountCents).toBe(5_000)
-		expect(await eventActions()).toContain('workspace_auto_top_up_charged')
-		expect(calls.filter((c) => c === 'invoices.pay')).toHaveLength(1)
-	})
-
-	it('does nothing while the balance is at or above the threshold', async () => {
-		await seed(1_000)
-		await maybeAutoTopUp({ db, workspaceId, actorId })
 		expect(calls).toEqual([])
-		expect((await readSettings()).billing.credit_balance_cents).toBe(1_000)
-	})
-
-	it('does nothing when the rule is off', async () => {
-		await seed(0, { ...RULE, enabled: false })
-		await maybeAutoTopUp({ db, workspaceId, actorId })
-		expect(calls).toEqual([])
-	})
-
-	describe('with the trial-card-percent switch on (plans have no top-up)', () => {
-		function switchOn() {
-			process.env.FF_SIGNUP_FEATURES = FLAGS.TRIAL_CARD_PERCENT
-			_resetFeatureFlagConfig()
-			onTestFinished(() => {
-				Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
-				_resetFeatureFlagConfig()
-			})
-		}
-
-		it('never charges, and leaves the saved rule exactly as it was', async () => {
-			await seed(400)
-			switchOn()
-			await maybeAutoTopUp({ db, workspaceId, actorId })
-
-			expect(calls).toEqual([])
-			expect(await topUpRows()).toHaveLength(0)
-			const settings = await readSettings()
-			expect(settings.billing.credit_balance_cents).toBe(400)
-			expect(settings.auto_top_up).toEqual(RULE)
-		})
-
-		it('charges as before once the switch is off again', async () => {
-			await seed(400)
-			switchOn()
-			await maybeAutoTopUp({ db, workspaceId, actorId })
-			expect(calls).toEqual([])
-
-			Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
-			_resetFeatureFlagConfig()
-			await maybeAutoTopUp({ db, workspaceId, actorId })
-			expect(calls.filter((c) => c === 'invoices.pay')).toHaveLength(1)
-			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
-		})
-	})
-
-	it('fires once when several debits cross the threshold at the same time', async () => {
-		await seed(100)
-		await Promise.all([1, 2, 3, 4].map(() => maybeAutoTopUp({ db, workspaceId, actorId })))
-		expect(calls.filter((c) => c === 'invoices.pay')).toHaveLength(1)
-		expect(await topUpRows()).toHaveLength(1)
-		expect((await readSettings()).billing.credit_balance_cents).toBe(5_100)
-	})
-
-	it('charges only after the debit has committed', async () => {
-		await seed(1_001)
-		// $10.50 of usage against a $10.00 cap: a 50 cent debit takes 1001 to 951,
-		// under the 1000 threshold.
-		const session = await insertSession(db, workspaceId, actorId, actorId, {
-			status: 'completed',
-			config: { llm_route: 'maskin_plan' },
-			totalCostUsd: '10.50',
-			inputTokens: 0,
-			outputTokens: 0,
-			createdAt: new Date(PERIOD_START_SEC * 1000 + 1000),
-		})
-		if (!session) throw new Error('session insert failed')
-
-		await debitCreditForSession({
-			db,
-			workspaceId,
-			sessionId: session.id,
-			actorId,
-			wsSettings: {
-				billing: {
-					plan: 'pro',
-					status: 'active',
-					hard_cap_usd_cents: CAP_CENTS,
-					period_start: PERIOD_START_SEC,
-					stripe_customer_id: 'cus_test',
-					credit_balance_cents: 1_001,
-				},
-			} as never,
-		})
-
-		// The card was charged when the balance already held the committed debit
-		// (1001 - 50 = 951), not before it and not inside its transaction.
-		expect(balanceAtCharge).toBe(951)
-		expect((await readSettings()).billing.credit_balance_cents).toBe(951 + 5_000)
-		const order = calls.filter((c) => c.startsWith('invoices.') || c.startsWith('invoiceItems.'))
-		expect(order).toEqual([
-			'invoices.create',
-			'invoiceItems.create:5000',
-			'invoices.finalize',
-			'invoices.pay',
-		])
-	})
-
-	it('leaves the balance alone, shows a failed state and records an event when the card is declined', async () => {
-		await seed(400)
-		stripeMode = 'decline'
-		await maybeAutoTopUp({ db, workspaceId, actorId })
-
-		const settings = await readSettings()
-		expect(settings.billing.credit_balance_cents).toBe(400)
-		expect(settings.auto_top_up.status).toBe('failed')
-		expect(settings.auto_top_up.failure_reason).toBe('card_declined')
-		expect(settings.auto_top_up.in_flight).toBeUndefined()
 		expect(await topUpRows()).toHaveLength(0)
-		expect(calls).toContain('invoices.void')
-		expect(await eventActions()).toContain('workspace_auto_top_up_failed')
-
-		// A failed rule does not try again on the next debit.
-		calls.length = 0
-		await maybeAutoTopUp({ db, workspaceId, actorId })
-		expect(calls).toEqual([])
-	})
-
-	it('fails the rule instead of charging again when the card is charged but the credit step errors', async () => {
-		await seed(400)
-		const spy = vi.spyOn(db, 'transaction').mockRejectedValueOnce(new Error('db down'))
-		const now = Date.now()
-		await maybeAutoTopUp({ db, workspaceId, actorId, now })
-		spy.mockRestore()
-
 		const settings = await readSettings()
 		expect(settings.billing.credit_balance_cents).toBe(400)
-		expect(settings.auto_top_up.status).toBe('failed')
-		expect(settings.auto_top_up.failure_reason).toBe('charge_error')
-		expect(settings.auto_top_up.in_flight).toBeUndefined()
-		expect(await topUpRows()).toHaveLength(0)
-		const failed = (await db.select().from(events).where(eq(events.entityId, workspaceId))).find(
-			(e) => e.action === 'workspace_auto_top_up_failed',
-		)
-		expect(JSON.stringify(failed?.data)).toContain('in_test_1')
-
-		// Past the 10 minute claim timeout the card is still not charged again.
-		calls.length = 0
-		await maybeAutoTopUp({ db, workspaceId, actorId, now: now + 11 * 60_000 })
-		expect(calls).toEqual([])
-	})
-
-	it('fails with no_payment_method when there is no saved card', async () => {
-		await seed(400)
-		defaultPaymentMethod = null
-		await maybeAutoTopUp({ db, workspaceId, actorId })
-		const settings = await readSettings()
-		expect(settings.auto_top_up.failure_reason).toBe('no_payment_method')
-		expect(calls.some((c) => c.startsWith('invoices.'))).toBe(false)
-	})
-
-	it('does not charge while a VAT number check is held for the workspace', async () => {
-		await seed(400)
-		await db.insert(awaitingVies).values({
-			sessionId: 'cs_held',
-			customerId: 'cus_test',
-			kind: 'topup',
-			currency: 'dkk',
-			amountTotal: 34_900,
-			workspaceId,
-		})
-		await maybeAutoTopUp({ db, workspaceId, actorId })
-
-		const settings = await readSettings()
-		expect(calls).toEqual([])
-		expect(settings.billing.credit_balance_cents).toBe(400)
-		// Skipped, not failed: the rule stays healthy and releases its claim.
-		expect(settings.auto_top_up.status).toBeUndefined()
-		expect(settings.auto_top_up.in_flight).toBeUndefined()
-	})
-
-	it('does not charge while Stripe reports a pending tax id on the customer', async () => {
-		await seed(400)
-		taxIdStatus = 'pending'
-		await maybeAutoTopUp({ db, workspaceId, actorId })
-		expect(calls.some((c) => c.startsWith('invoices.'))).toBe(false)
-		expect((await readSettings()).billing.credit_balance_cents).toBe(400)
-	})
-
-	it('treats an abandoned claim as free after the timeout but not before', async () => {
-		const now = Date.now()
-		await seed(400, { ...RULE, in_flight: { token: 'old', at: now - 60_000 } })
-		await maybeAutoTopUp({ db, workspaceId, actorId, now })
-		expect(calls).toEqual([])
-
-		await maybeAutoTopUp({ db, workspaceId, actorId, now: now + 11 * 60_000 })
-		expect(calls).toContain('invoices.pay')
+		expect(settings.auto_top_up).toEqual(RULE)
 	})
 
 	it('keeps a single charge below the $250 bonus tier', () => {
@@ -480,17 +279,6 @@ describe('auto top-up (Integration)', () => {
 			expect(await topUpRows()).toHaveLength(1)
 		})
 
-		it('does nothing when the charge path already credited the invoice', async () => {
-			await seed(400)
-			await maybeAutoTopUp({ db, workspaceId, actorId })
-			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
-
-			await deliverPaidInvoice({ claim: 'whatever', amount_cents: '5000' }, 'in_test_1')
-
-			expect((await readSettings()).billing.credit_balance_cents).toBe(5_400)
-			expect(await topUpRows()).toHaveLength(1)
-		})
-
 		it('leaves a newer claim in place when the paid invoice belongs to an older one', async () => {
 			await seed(400, { ...RULE, in_flight: { token: 'claim-2', at: Date.now() } })
 			await deliverPaidInvoice({ claim: 'claim-1', amount_cents: '5000' })
@@ -550,31 +338,6 @@ describe('auto top-up (Integration)', () => {
 		}
 		const headers = () => ({ 'X-Workspace-Id': workspaceId })
 
-		it('saves the rule with an atomic key write and reads it back with approximate kroner', async () => {
-			await seed(400, null)
-			const app = makeApp()
-			const put = await app.request(jsonRequest('PUT', '/api/billing/auto-top-up', RULE, headers()))
-			expect(put.status).toBe(200)
-
-			const got = await app.request(jsonGet('/api/billing/auto-top-up', headers()))
-			const body = (await got.json()) as {
-				auto_top_up: {
-					amount_cents: number
-					amount_dkk_approx: number
-					threshold_dkk_approx: number
-				}
-			}
-			expect(body.auto_top_up.amount_cents).toBe(5_000)
-			// $50 = 349 DKK on the fixed reference; $10 = 70 DKK, rounded.
-			expect(body.auto_top_up.amount_dkk_approx).toBe(349)
-			expect(body.auto_top_up.threshold_dkk_approx).toBe(70)
-
-			const settings = await readSettings()
-			expect(settings.an_unmodelled_future_key).toEqual({ keep: 'me' })
-			expect(settings.billing.credit_balance_cents).toBe(400)
-			expect(await eventActions()).toContain('workspace_auto_top_up_updated')
-		})
-
 		it('rejects an amount at or above the $250 bonus tier and an amount under the threshold', async () => {
 			await seed(400, null)
 			const app = makeApp()
@@ -598,55 +361,25 @@ describe('auto top-up (Integration)', () => {
 			expect(underThreshold.status).toBe(400)
 		})
 
-		it('clears a failed state when the rule is saved again, and keeps an in-flight claim', async () => {
-			await seed(400, {
-				...RULE,
-				status: 'failed',
-				failure_reason: 'card_declined',
-				failed_at: 1,
-				in_flight: { token: 't', at: Date.now() },
-			})
-			const app = makeApp()
-			const put = await app.request(jsonRequest('PUT', '/api/billing/auto-top-up', RULE, headers()))
-			expect(put.status).toBe(200)
-			const settings = await readSettings()
-			expect(settings.auto_top_up.status).toBe('ok')
-			expect(settings.auto_top_up.failure_reason).toBeNull()
-			expect(settings.auto_top_up.in_flight).toBeDefined()
+		it('refuses to turn the rule on, with a plain reason, and writes nothing', async () => {
+			await seed(400, null)
+			const res = await makeApp().request(
+				jsonRequest('PUT', '/api/billing/auto-top-up', RULE, headers()),
+			)
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as { error: { message: string } }
+			expect(body.error.message).toContain('not available on a plan')
+			expect((await readSettings()).auto_top_up).toBeUndefined()
+			expect(await eventActions()).not.toContain('workspace_auto_top_up_updated')
 		})
 
-		describe('with the trial-card-percent switch on', () => {
-			function switchOn() {
-				process.env.FF_SIGNUP_FEATURES = FLAGS.TRIAL_CARD_PERCENT
-				_resetFeatureFlagConfig()
-				onTestFinished(() => {
-					Reflect.deleteProperty(process.env, 'FF_SIGNUP_FEATURES')
-					_resetFeatureFlagConfig()
-				})
-			}
-
-			it('refuses to turn the rule on, with a plain reason, and writes nothing', async () => {
-				await seed(400, null)
-				switchOn()
-				const res = await makeApp().request(
-					jsonRequest('PUT', '/api/billing/auto-top-up', RULE, headers()),
-				)
-				expect(res.status).toBe(400)
-				const body = (await res.json()) as { error: { message: string } }
-				expect(body.error.message).toContain('not available on a plan')
-				expect((await readSettings()).auto_top_up).toBeUndefined()
-				expect(await eventActions()).not.toContain('workspace_auto_top_up_updated')
-			})
-
-			it('still lets a saved rule be turned off, and keeps it', async () => {
-				await seed(400)
-				switchOn()
-				const res = await makeApp().request(
-					jsonRequest('PUT', '/api/billing/auto-top-up', { ...RULE, enabled: false }, headers()),
-				)
-				expect(res.status).toBe(200)
-				expect((await readSettings()).auto_top_up).toMatchObject({ ...RULE, enabled: false })
-			})
+		it('still lets a saved rule be turned off, and keeps it', async () => {
+			await seed(400)
+			const res = await makeApp().request(
+				jsonRequest('PUT', '/api/billing/auto-top-up', { ...RULE, enabled: false }, headers()),
+			)
+			expect(res.status).toBe(200)
+			expect((await readSettings()).auto_top_up).toMatchObject({ ...RULE, enabled: false })
 		})
 
 		it('refuses to turn it on for a workspace with no Stripe customer', async () => {

@@ -20,6 +20,7 @@ import { createApp } from './app-factory'
 import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
+import { LumaRegistrationsSyncJob } from './jobs/luma-registrations-sync'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
@@ -97,6 +98,7 @@ import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
+import { WorkspaceUsageSnapshotScheduler } from './services/workspace-usage-snapshot'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -415,6 +417,9 @@ dailyBudgetSummaryScheduler.start()
 // workspace that has set a daily target (off by default).
 const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
 dailyBudgetCardScheduler.start()
+// One workspace_usage_snapshot PostHog event per active workspace per day (percent and tokens).
+const workspaceUsageSnapshotScheduler = new WorkspaceUsageSnapshotScheduler(db)
+workspaceUsageSnapshotScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one, and settles remote pauses stuck in `snapshotting`. Ticks
@@ -463,6 +468,22 @@ if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
 	})
 	telnyxRecordingSyncJob.start()
 	logger.info('Telnyx recording sync started')
+}
+
+// Luma registrations: every 30 minutes reads the guest list of each Luma event between planned
+// and live and writes the approved count as a luma.registrations reading. No model in the path.
+// Off unless LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID and _ACTOR_ID (the agent granted the Luma key)
+// are set. Optional: _KEY_NAME (Keychain name, default Luma). With no key it logs once and waits.
+const lumaSyncWorkspaceId = process.env.LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID
+const lumaSyncActorId = process.env.LUMA_REGISTRATIONS_SYNC_ACTOR_ID
+if (lumaSyncWorkspaceId && lumaSyncActorId) {
+	const lumaRegistrationsSyncJob = new LumaRegistrationsSyncJob(db, {
+		workspaceId: lumaSyncWorkspaceId,
+		actorId: lumaSyncActorId,
+		keyName: process.env.LUMA_REGISTRATIONS_SYNC_KEY_NAME || 'Luma',
+	})
+	lumaRegistrationsSyncJob.start()
+	logger.info('Luma registrations sync started')
 }
 
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
@@ -655,6 +676,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	lifecyclePushScheduler.stop()
 	dailyBudgetSummaryScheduler.stop()
 	dailyBudgetCardScheduler.stop()
+	workspaceUsageSnapshotScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.

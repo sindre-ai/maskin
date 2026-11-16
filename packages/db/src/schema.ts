@@ -928,6 +928,12 @@ export const sessions = pgTable(
 		index('sessions_spawned_by_message_id_idx')
 			.on(t.spawnedByMessageId)
 			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
+		// Self-reference FKs. Without these every session deleted by an agent delete scans all of
+		// sessions. Built CONCURRENTLY in migrations 0160 and 0161.
+		index('sessions_retried_session_id_idx')
+			.on(t.retriedSessionId)
+			.where(sql`${t.retriedSessionId} IS NOT NULL`),
+		index('sessions_retry_of_idx').on(t.retryOf).where(sql`${t.retryOf} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
@@ -1223,6 +1229,30 @@ export const readings = pgTable(
 		index('readings_workspace_idx').on(t.workspaceId),
 		check('readings_measure_check', sql`${t.measure} ~ '^[a-z0-9_]+(\\.[a-z0-9_]+)+$'`),
 		check('readings_value_check', sql`${t.value} <> 'NaN'::double precision`),
+	],
+)
+
+// ── Plan Limit Emails ──────────────────────────────────────────────────────
+
+// One row per workspace, billing period and kind of mail sent when a workspace uses up its plan.
+// Inserting the row is the claim: the unique constraint lets exactly one server instance (and one
+// run of the process) send the mail for a period, so a restart never sends it twice. A failed send
+// deletes its claim so the next refusal can try again. period_end is the end of the period the plan
+// was used up in. See 0163_plan_limit_emails.sql.
+export const planLimitEmails = pgTable(
+	'plan_limit_emails',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
+		kind: text('kind').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('plan_limit_emails_ws_period_kind_uniq').on(t.workspaceId, t.periodEnd, t.kind),
+		check('plan_limit_emails_kind_check', sql`${t.kind} in ('plan_used_up')`),
 	],
 )
 
@@ -2032,6 +2062,10 @@ export const notifications = pgTable(
 	(t) => [
 		index('notifications_ws_status_idx').on(t.workspaceId, t.status),
 		index('notifications_target_actor_idx').on(t.targetActorId, t.status),
+		// ON DELETE SET NULL FK to sessions. Built CONCURRENTLY in migration 0162.
+		index('notifications_session_id_idx')
+			.on(t.sessionId)
+			.where(sql`${t.sessionId} IS NOT NULL`),
 	],
 )
 

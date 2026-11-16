@@ -50,10 +50,7 @@ import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
-import {
-	isAgentMentionFreeComment,
-	isCommentFallbackDriverEligible,
-} from '../services/trigger-runner'
+import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 import { commentPromptHeadline } from '../services/workspace-briefing'
 
 type Env = {
@@ -641,15 +638,10 @@ app.openapi(createCommentRoute, (async (c) => {
 	// here so the thread-reply auto-spawn doesn't double up on the same agent
 	// for the same comment.
 	//
-	// An agent's mention-free reply is low-attention and wakes nobody here, the
-	// same rule the dispatcher applies to cases 2 and 3.
-	if (
-		parentEventId !== undefined &&
-		!isAgentMentionFreeComment({
-			actorType: c.get('actorType'),
-			mentionCount: storedMentions?.length ?? 0,
-		})
-	) {
+	// An agent's reply wakes nobody here. Agents @mention whoever they need, and the
+	// `CommentDispatcher` wakes those; waking every other participant too started sessions
+	// for replies that were addressed to someone else or only said 'noted, no ask'.
+	if (parentEventId !== undefined && c.get('actorType') !== 'agent') {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, storedMentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude

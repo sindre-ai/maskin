@@ -6,7 +6,6 @@ import type Stripe from 'stripe'
 import { capturePosthogEvent } from './analytics/posthog'
 import { evictBillingUsage } from './billing-usage-cache'
 import { isEnterpriseActor } from './enterprise'
-import { FLAGS, isSignupFlagEnabled } from './feature-flags'
 import { logger } from './logger'
 import { ownedWorkspacePlans } from './workspace-capacity'
 
@@ -54,7 +53,7 @@ export async function newWorkspaceNeedsCard(
 	actorId: string,
 	actorType: string,
 ): Promise<boolean> {
-	if (actorType !== 'human' || !isSignupFlagEnabled(FLAGS.TRIAL_CARD_PERCENT)) return false
+	if (actorType !== 'human') return false
 	if (isEnterpriseActor(actorId)) return false
 	const plans = await ownedWorkspacePlans(db, actorId)
 	return plans.every((plan) => plan === 'trial')

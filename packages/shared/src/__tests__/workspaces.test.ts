@@ -15,7 +15,7 @@ describe('workspaceSettingsSchema', () => {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
-			loop: 'Loop',
+			loop: 'Flow',
 		})
 		expect(result.statuses.insight).toEqual([
 			'new',
