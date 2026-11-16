@@ -30,7 +30,10 @@ function RootComponent() {
 			<Outlet />
 			<Toaster
 				theme={resolvedTheme}
-				position="bottom-right"
+				// Top-right keeps toasts off the chat message box, which sits at the
+				// bottom of the screen. The X lets anyone dismiss one that is in the way.
+				position="top-right"
+				closeButton
 				// Every Radix-based overlay (Sheet, Dialog, DropdownMenu, Popover,
 				// Select, Tooltip) uses Tailwind's z-50. Toasts must always be
 				// visible above whichever of those is open — e.g. the session
