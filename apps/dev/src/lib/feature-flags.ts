@@ -201,6 +201,16 @@ export const FLAGS = {
 	 * them. Retire once it is on for everyone.
 	 */
 	DECISION_DEFAULT: 'decision-default',
+	/**
+	 * Gates the mail to the billing owner when a workspace uses up its plan (task [Email when a
+	 * workspace uses up its plan](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/456ff70b-5c4a-4e2a-80c6-fded357ea84a)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in
+	 * services/plan-limit-email.ts before anything is stored or sent. Off means no mail and no
+	 * row, so a workspace that is already over its limit when this ships is not mailed; only a
+	 * refusal or stop after the flag is on counts. Turned on by a person after the wording is
+	 * approved. Retire once it is on for everyone.
+	 */
+	PLAN_LIMIT_EMAIL: 'plan-limit-email',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

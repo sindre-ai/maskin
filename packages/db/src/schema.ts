@@ -1232,6 +1232,30 @@ export const readings = pgTable(
 	],
 )
 
+// ── Plan Limit Emails ──────────────────────────────────────────────────────
+
+// One row per workspace, billing period and kind of mail sent when a workspace uses up its plan.
+// Inserting the row is the claim: the unique constraint lets exactly one server instance (and one
+// run of the process) send the mail for a period, so a restart never sends it twice. A failed send
+// deletes its claim so the next refusal can try again. period_end is the end of the period the plan
+// was used up in. See 0163_plan_limit_emails.sql.
+export const planLimitEmails = pgTable(
+	'plan_limit_emails',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
+		kind: text('kind').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('plan_limit_emails_ws_period_kind_uniq').on(t.workspaceId, t.periodEnd, t.kind),
+		check('plan_limit_emails_kind_check', sql`${t.kind} in ('plan_used_up')`),
+	],
+)
+
 // ── Next Step Sweep Claims ─────────────────────────────────────────────────
 
 // What the sweep for overdue or missing next steps decided about an object in a time bucket.

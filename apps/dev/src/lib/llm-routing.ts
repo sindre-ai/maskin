@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { sessions, workspaceAiUsage } from '@maskin/db/schema'
 import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, or, sql } from 'drizzle-orm'
+import { notifyPlanLimitReached } from '../services/plan-limit-email'
 import { trackPlanLimitReached } from './analytics/plan-limit-events'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
@@ -687,6 +688,12 @@ export async function checkPlanCap(params: {
 		usedCents: used,
 		capCents: cap,
 		readTokens: () => getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs),
+	})
+	void notifyPlanLimitReached({
+		db: params.db,
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
 	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
