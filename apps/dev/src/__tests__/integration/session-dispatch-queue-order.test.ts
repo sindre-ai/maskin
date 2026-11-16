@@ -2,10 +2,11 @@ import { sessionDispatchAttempts } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { type DispatchFn, SessionDispatchQueue } from '../../services/session-dispatch-queue'
-import { insertSession, insertWorkspace } from '../factories'
+import { insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-// Sessions waiting for a machine must start oldest first. The claim used to
+// Sessions waiting for a machine must start oldest first, except that a chat
+// reply goes ahead of background work. The claim used to
 // order by next_attempt_at, which every no_capacity result pushed back, so a
 // row's place in line reset on each try and younger rows overtook older ones.
 // Real Postgres because the order comes from the claim's SELECT FOR UPDATE
@@ -112,5 +113,25 @@ describe('SessionDispatchQueue — waiting rows start oldest first (Integration)
 		])
 		expect(await queueRow(free)).toBeUndefined()
 		for (const id of [capped1, capped2, capped3]) expect((await queueRow(id))?.attempt).toBe(0)
+	})
+
+	it('starts a chat reply ahead of older background sessions', async () => {
+		const dispatchFn = vi.fn<DispatchFn>(async () => ({ kind: 'dispatched' }))
+		const queue = new SessionDispatchQueue(db, dispatchFn, { tickMs: 1_000_000 })
+		const [older1, older2] = await enqueueWaiting(queue, 2)
+		if (!older1 || !older2) throw new Error('sessions missing')
+
+		// The chat reply arrives last, so it is the youngest row in the queue.
+		const conversation = await insertConversation(db, workspaceId, actorId)
+		const chat = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'waiting_for_machine',
+			conversationId: conversation?.id,
+		})
+		await queue.enqueue(chat.id)
+
+		await queue.tick()
+
+		expect(dispatchFn.mock.calls.map(([sessionId]) => sessionId)).toEqual([chat.id, older1, older2])
 	})
 })
