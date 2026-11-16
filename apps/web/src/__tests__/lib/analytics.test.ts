@@ -1384,7 +1384,7 @@ describe('chat list use', () => {
 
 		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
 			result_count_bucket: '2_5',
-			operators: ['from', 'is'],
+			operators: 'from,is',
 			feature_area: 'chats',
 		})
 	})

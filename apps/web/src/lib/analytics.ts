@@ -577,7 +577,9 @@ export type ChatListSection =
 	| 'needs_you'
 	| 'working'
 	| 'tag'
-	| 'type'
+	| 'type_direct'
+	| 'type_topic'
+	| 'type_group'
 export type ChatListOpenSource = 'list' | 'search'
 // What the row's preview-line marker said when it was opened. At most one, error first.
 export type ChatListMarker = 'none' | 'unread' | 'needs_you' | 'working' | 'later' | 'error'
@@ -651,7 +653,8 @@ export function trackChatListSearchUsed(p: {
 }): void {
 	trackEvent('chat_list_search_used', {
 		result_count_bucket: chatListResultCountBucket(p.result_count),
-		...(p.operators ? { operators: p.operators } : {}),
+		// One string so web and iPhone send the same value: the operators in order, joined by a comma.
+		...(p.operators ? { operators: p.operators.join(',') } : {}),
 		feature_area: 'chats',
 	})
 }

@@ -182,9 +182,9 @@ export function groupChats(
 		return buckets(
 			rows,
 			[
-				{ key: 'direct', label: 'Direct', section: 'type' },
-				{ key: 'topic', label: 'Topic', section: 'type' },
-				{ key: 'group', label: 'Group', section: 'type' },
+				{ key: 'direct', label: 'Direct', section: 'type_direct' },
+				{ key: 'topic', label: 'Topic', section: 'type_topic' },
+				{ key: 'group', label: 'Group', section: 'type_group' },
 			],
 			(c) => chatType(c, viewerId),
 		)
