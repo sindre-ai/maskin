@@ -175,7 +175,12 @@ export interface NotifyPlanLimitInput {
  */
 export async function notifyPlanLimitReached(
 	input: NotifyPlanLimitInput,
-	env: NodeJS.ProcessEnv = process.env,
+	// Injected so tests never mutate process.env or mock the email package, which the shared
+	// integration setup has already loaded by the time a test file registers its mocks.
+	{
+		env = process.env,
+		send = sendEmail,
+	}: { env?: NodeJS.ProcessEnv; send?: typeof sendEmail } = {},
 ): Promise<void> {
 	const { db, workspaceId, plan, periodEnd } = input
 	if (periodEnd === null) return
@@ -245,7 +250,7 @@ export async function notifyPlanLimitReached(
 				planUrl,
 			})
 			try {
-				if (await sendEmail({ to: person.email, ...mail })) delivered++
+				if (await send({ to: person.email, ...mail })) delivered++
 			} catch (err) {
 				logger.warn('Plan limit email send failed', { workspaceId, error: String(err) })
 			}

@@ -16,11 +16,6 @@ const { sendEmailMock } = vi.hoisted(() => ({
 	),
 }))
 
-vi.mock('@maskin/email', async (importOriginal) => ({
-	...(await importOriginal<typeof import('@maskin/email')>()),
-	sendEmail: sendEmailMock,
-}))
-
 const PERIOD_END = Date.UTC(2026, 11, 3)
 const NEXT_PERIOD_END = Date.UTC(2027, 0, 3)
 
@@ -35,9 +30,7 @@ describe('notifyPlanLimitReached', () => {
 	const notify = (over: Partial<{ plan: string; periodEnd: number | null }> = {}) =>
 		notifyPlanLimitReached(
 			{ db, workspaceId, plan: 'pro', periodEnd: PERIOD_END, ...over },
-			{
-				NODE_ENV: 'test',
-			},
+			{ env: { NODE_ENV: 'test' }, send: sendEmailMock },
 		)
 
 	function setFlag(on: boolean) {
