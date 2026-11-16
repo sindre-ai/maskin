@@ -184,6 +184,7 @@ import {
 	creditBalanceCents,
 	effectivePeriodEnd,
 	getWorkspacePlanCap,
+	getWorkspacePlanTokenUsage,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
 	resolveLlmRoute,
@@ -5340,6 +5341,9 @@ ${cont.continues_prompt}
 				periodStartMs,
 				typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined,
 			),
+			usedCents: totalUsedCents,
+			capCents,
+			readTokens: () => getWorkspacePlanTokenUsage(this.db, session.workspaceId, periodStartMs),
 		})
 		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
 			logger.warn('Failed to write budget-stop system log', {

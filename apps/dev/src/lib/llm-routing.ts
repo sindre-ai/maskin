@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessions, workspaceAiUsage } from '@maskin/db/schema'
 import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, or, sql } from 'drizzle-orm'
 import { trackPlanLimitReached } from './analytics/plan-limit-events'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
@@ -387,6 +387,113 @@ export async function getWorkspacePlanUsdCentsUsage(
 	return ceilCents(totalCents)
 }
 
+export interface PlanTokenUsage {
+	inputTokens: number
+	outputTokens: number
+	sessionCount: number
+}
+
+/**
+ * Input and output tokens and the session count of the same maskin_plan sessions
+ * `getWorkspacePlanUsdCentsUsage` sums since `periodStartMs`, so a token figure
+ * always sits next to the dollar total it belongs to. Product analytics only:
+ * it is never shown to a customer.
+ */
+export async function getWorkspacePlanTokenUsage(
+	db: Pick<Database, 'select'>,
+	workspaceId: string,
+	periodStartMs?: number,
+): Promise<PlanTokenUsage> {
+	const [row] = await db
+		.select({
+			inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+			outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+			sessionCount: sql<string>`COUNT(*)`,
+		})
+		.from(sessions)
+		.where(planUsageConds(workspaceId, periodStartMs))
+	return {
+		inputTokens: Number(row?.inputTokens ?? 0),
+		outputTokens: Number(row?.outputTokens ?? 0),
+		sessionCount: Number(row?.sessionCount ?? 0),
+	}
+}
+
+export interface PlanUsageWindow {
+	workspaceId: string
+	periodStartMs?: number
+}
+
+export interface PlanUsage extends PlanTokenUsage {
+	usdCents: number
+}
+
+// How many workspaces one grouped read covers, so the OR of period conditions stays small.
+const PLAN_USAGE_CHUNK = 200
+
+/**
+ * The plan usage of many workspaces in two grouped reads (sessions, and spend with no
+ * session) per chunk, not the eight or so per workspace `getWorkspacePlanUsdCentsUsage` and
+ * `getWorkspacePlanTokenUsage` run. Each workspace is measured over its own period with the
+ * same conditions (`planUsageConds`, `aiUsageConds`), the same per-session cost rule
+ * (`sessionUsageCents`, written out in SQL) and the same one rounding on the aggregate as
+ * `getWorkspacePlanUsdCentsUsage`, so the figures equal the usage page's. A workspace with no
+ * rows is absent from the result. Product analytics only.
+ */
+export async function getPlanUsageForWorkspaces(
+	db: Pick<Database, 'select'>,
+	windows: PlanUsageWindow[],
+): Promise<Map<string, PlanUsage>> {
+	const out = new Map<string, PlanUsage>()
+	for (let i = 0; i < windows.length; i += PLAN_USAGE_CHUNK) {
+		const chunk = windows.slice(i, i + PLAN_USAGE_CHUNK)
+		const sessionConds = or(...chunk.map((w) => planUsageConds(w.workspaceId, w.periodStartMs)))
+		const aiConds = or(...chunk.map((w) => aiUsageConds(w.workspaceId, w.periodStartMs)))
+		const [sessionRows, aiRows] = await Promise.all([
+			db
+				.select({
+					workspaceId: sessions.workspaceId,
+					// Per session: its reported cost, else the token-rate estimate (sessionUsageCents).
+					cents: sql<string>`COALESCE(SUM(CASE WHEN ${sessions.totalCostUsd} > 0 THEN ${sessions.totalCostUsd} * 100 ELSE (COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0))::numeric / ${LEGACY_TOKENS_PER_USD_CENT} END), 0)`,
+					inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+					outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+					sessionCount: sql<string>`COUNT(*)`,
+				})
+				.from(sessions)
+				.where(sessionConds)
+				.groupBy(sessions.workspaceId),
+			db
+				.select({
+					workspaceId: workspaceAiUsage.workspaceId,
+					total: sql<string>`COALESCE(SUM(${workspaceAiUsage.costUsd}), 0)`,
+				})
+				.from(workspaceAiUsage)
+				.where(aiConds)
+				.groupBy(workspaceAiUsage.workspaceId),
+		])
+		const cents = new Map<string, number>()
+		for (const row of sessionRows) {
+			cents.set(row.workspaceId, Number(row.cents))
+			out.set(row.workspaceId, {
+				usdCents: 0,
+				inputTokens: Number(row.inputTokens),
+				outputTokens: Number(row.outputTokens),
+				sessionCount: Number(row.sessionCount),
+			})
+		}
+		for (const row of aiRows) {
+			cents.set(row.workspaceId, (cents.get(row.workspaceId) ?? 0) + usdToCents(row.total))
+			if (!out.has(row.workspaceId)) {
+				out.set(row.workspaceId, { usdCents: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 })
+			}
+		}
+		for (const [workspaceId, usage] of out) {
+			if (cents.has(workspaceId)) usage.usdCents = ceilCents(cents.get(workspaceId) ?? 0)
+		}
+	}
+	return out
+}
+
 export type MaskinPlan = 'trial' | PaidPlan
 
 interface PlanCapContext {
@@ -577,6 +684,9 @@ export async function checkPlanCap(params: {
 		workspaceId: params.workspaceId,
 		plan: maskinPlan,
 		periodEnd,
+		usedCents: used,
+		capCents: cap,
+		readTokens: () => getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs),
 	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
