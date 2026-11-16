@@ -25,8 +25,20 @@ vi.mock('@/hooks/use-events', () => ({
 // The real composer pulls in uploads, drafts, the slash picker and dictation;
 // the card only cares that it renders one, wired to the right object.
 vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: ({ objectId, parentEventId }: { objectId?: string; parentEventId?: number }) => (
-		<div data-testid="comment-input" data-object-id={objectId} data-parent={parentEventId} />
+	CommentInput: ({
+		objectId,
+		parentEventId,
+		onSubmitted,
+	}: {
+		objectId?: string
+		parentEventId?: number
+		onSubmitted?: (content: string) => void
+	}) => (
+		<div data-testid="comment-input" data-object-id={objectId} data-parent={parentEventId}>
+			<button type="button" onClick={() => onSubmitted?.('Use the blue one')}>
+				mock send
+			</button>
+		</div>
 	),
 }))
 
@@ -132,9 +144,16 @@ describe('FeedCard — row state', () => {
 		expect(onToggleExpanded).toHaveBeenCalledTimes(1)
 	})
 
-	it('reads as waiting on the agent once the reader has answered', () => {
+	it('settles to a receipt of what was sent once the reader has answered', () => {
+		renderCard({ expanded: false, replied: true, repliedText: 'Use the blue one' })
+		const receipt = screen.getByTestId('reply-receipt')
+		expect(receipt).toHaveTextContent('Use the blue one')
+		expect(receipt).toHaveTextContent('Sent to Code Reviewer')
+	})
+
+	it('still says the reply went out when the words were lost to a remount', () => {
 		renderCard({ expanded: false, replied: true })
-		expect(screen.getByText('Waiting on Code Reviewer')).toBeInTheDocument()
+		expect(screen.getByTestId('reply-receipt')).toHaveTextContent('Reply sent')
 	})
 
 	it('notes how long a card has been held', () => {
@@ -336,6 +355,14 @@ ${tail}`,
 		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-parent', '42')
 	})
 
+	// Sending a typed reply used to clear the box and show nothing; the feed now settles the
+	// card to a receipt, and it needs the sent words to do it.
+	it('hands the sent text up to the feed', async () => {
+		const { props } = renderCard()
+		await userEvent.click(screen.getByRole('button', { name: 'mock send' }))
+		expect(props.onReplied).toHaveBeenCalledWith('Use the blue one')
+	})
+
 	// The option is acknowledged with a 260ms beat before `onDecide` fires, and
 	// `onDecide` posts a real reply. A bulk dismiss unmounts the card inside that
 	// window, so an uncancelled timer would comment on a thread the reader just
@@ -464,9 +491,10 @@ describe('FeedCard — mention author vs object driver', () => {
 		expect(receipt).not.toHaveTextContent('Sent to Magnus')
 	})
 
-	it('waits on the mention author once the reader has answered, not the driver', () => {
+	it('sends the reply receipt to the mention author, not the driver', () => {
 		renderCard({ expanded: false, replied: true, item: magnusDriven })
-		expect(screen.getByText('Waiting on Code Reviewer')).toBeInTheDocument()
-		expect(screen.queryByText('Waiting on Magnus')).not.toBeInTheDocument()
+		const receipt = screen.getByTestId('reply-receipt')
+		expect(receipt).toHaveTextContent('Sent to Code Reviewer')
+		expect(receipt).not.toHaveTextContent('Sent to Magnus')
 	})
 })
