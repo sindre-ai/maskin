@@ -33,9 +33,9 @@ describe('buildCapabilityNote', () => {
 		expect(shown).toBe(3)
 		expect(hidden).toBe(0)
 		expect(content).toBe(
-			'Hey Sam, quick check on what your agents can do. ' +
-				'New this week: Slack has 2 new tools (slack_react, slack_pin), and Sales Rep and Personal Assistant can use them. ' +
-				'Needs you: Gmail wants a reconnect before the new send scope works. ' +
+			'Hey Sam, here is what your agents can now do. ' +
+				'Your Sales Rep and Personal Assistant can now react and pin in Slack. ' +
+				'Needs you: Gmail needs a reconnect before your agents can use the new send access. ' +
 				'Also: Notion is connected but none of your agents can use it yet. An admin decides whether any agent gets it. ' +
 				'Reply "tell me more" and I will go through any of it. Reply "stop" and I will not send these.',
 		)
@@ -48,36 +48,60 @@ describe('buildCapabilityNote', () => {
 		expect(content.length).toBeLessThanOrEqual(NOTE_MAX_CHARS)
 	})
 
-	it('shows five items and then says and N more', () => {
+	it('shows no snake_case tool name, only what the agents can now do', () => {
+		const { content } = buildCapabilityNote({
+			firstName: 'Sam',
+			items: [
+				{
+					kind: 'new_tools',
+					integration: 'Slack',
+					tools: [
+						'slack_react',
+						'slack_pin',
+						'slack_send_message',
+						'slack_list_channels',
+						'mcp__slack__get_user',
+					],
+					agents: ['Sales Rep'],
+				},
+			],
+		})
+		expect(content).not.toMatch(/[a-z]+_[a-z]+/)
+		expect(content).toContain(
+			'Your Sales Rep can now react, pin, send message and 2 other things in Slack.',
+		)
+	})
+
+	it('shows three apps and then says and N more', () => {
 		const { content, shown, hidden } = buildCapabilityNote({
 			firstName: 'Sam',
 			items: manyItems(8),
 		})
-		expect(shown).toBe(5)
-		expect(hidden).toBe(3)
-		expect(content).toContain('And 3 more.')
-		expect(content).toContain('Source 5')
-		expect(content).not.toContain('Source 6')
+		expect(shown).toBe(3)
+		expect(hidden).toBe(5)
+		expect(content).toContain('And 5 more.')
+		expect(content).toContain('Source 3')
+		expect(content).not.toContain('Source 4')
 		expect(content.length).toBeLessThanOrEqual(NOTE_MAX_CHARS)
 	})
 
-	it('has no and N more line at five items or fewer', () => {
-		const { content } = buildCapabilityNote({ firstName: 'Sam', items: manyItems(5) })
+	it('has no and N more line at three items or fewer', () => {
+		const { content } = buildCapabilityNote({ firstName: 'Sam', items: manyItems(3) })
 		expect(content).not.toMatch(/and \d+ more\./i)
 	})
 
 	it('drops items from the end rather than pass 900 characters', () => {
 		const long = 'x'.repeat(40)
-		const items: NoteItem[] = Array.from({ length: 5 }, (_, i) => ({
+		const items: NoteItem[] = Array.from({ length: 3 }, (_, i) => ({
 			kind: 'new_tools' as const,
 			integration: `${long}${i}`,
-			tools: [`${long}a`, `${long}b`, `${long}c`, `${long}d`],
+			tools: [`a${long}`, `b${long}`, `c${long}`, `d${long}`],
 			agents: [`${long}1`, `${long}2`, `${long}3`, `${long}4`],
 		}))
 		const { content, shown, hidden } = buildCapabilityNote({ firstName: 'Sam', items })
 		expect(content.length).toBeLessThanOrEqual(NOTE_MAX_CHARS)
-		expect(shown).toBeLessThan(5)
-		expect(shown + hidden).toBe(5)
+		expect(shown).toBeLessThan(3)
+		expect(shown + hidden).toBe(3)
 		expect(content).toMatch(/and \d+ more\./i)
 	})
 
@@ -106,12 +130,12 @@ describe('buildCapabilityNote', () => {
 			],
 		})
 		expect(content).not.toMatch(/—|–|`|\n/)
-		expect(content).toContain('Sl-ack - Pro Team has 1 new tool (do-it), and A-B can use it.')
+		expect(content).toContain('Your A-B can now do it in Sl-ack - Pro Team.')
 	})
 
 	it('falls back to there when there is no first name', () => {
 		const { content } = buildCapabilityNote({ firstName: '', items: FULL })
-		expect(content.startsWith('Hey there, quick check')).toBe(true)
+		expect(content.startsWith('Hey there, here is what')).toBe(true)
 	})
 
 	it('carries no decision, approval or spend language', () => {
