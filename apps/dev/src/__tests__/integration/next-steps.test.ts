@@ -275,6 +275,10 @@ describe('one query for driven objects that are late or have no step', () => {
 		const blocked = await make({ type: 'event', status: 'planned', title: 'blocked' })
 		const task = await make({ type: 'task', status: 'in_progress', title: 'task' })
 		const draftLoop = await make({ type: 'loop', status: 'draft', title: 'draft loop' })
+		const learningLoop = await make({ type: 'loop', status: 'learning', title: 'learning loop' })
+		const contactLate = await make({ type: 'contact', status: 'messaged', title: 'late contact' })
+		const contactNoStep = await make({ type: 'contact', status: 'messaged', title: 'no step' })
+		const contactClosed = await make({ type: 'contact', status: 'converted', title: 'closed' })
 		const humanDriven = await insertObject(db, workspace.id, human, {
 			type: 'bet',
 			status: 'active',
@@ -284,6 +288,8 @@ describe('one query for driven objects that are late or have no step', () => {
 		const hourAgo = new Date(Date.now() - 3_600_000)
 		const steps = [
 			{ objectId: overdue.id, dueAt: hourAgo, status: 'open' },
+			{ objectId: contactLate.id, dueAt: hourAgo, status: 'open' },
+			{ objectId: contactClosed.id, dueAt: hourAgo, status: 'open' },
 			{ objectId: onTime.id, dueAt: new Date(Date.now() + 3_600_000), status: 'open' },
 			{
 				objectId: blocked.id,
@@ -305,7 +311,17 @@ describe('one query for driven objects that are late or have no step', () => {
 		const byId = new Map(found.map((f) => [f.objectId, f.reason]))
 		expect(byId.get(overdue.id)).toBe('overdue')
 		expect(byId.get(missing.id)).toBe('missing')
-		for (const skipped of [onTime, blocked, task, draftLoop, humanDriven]) {
+		expect(byId.get(learningLoop.id)).toBe('missing')
+		expect(byId.get(contactLate.id)).toBe('overdue')
+		for (const skipped of [
+			onTime,
+			blocked,
+			task,
+			draftLoop,
+			humanDriven,
+			contactNoStep,
+			contactClosed,
+		]) {
 			expect(byId.has(skipped.id)).toBe(false)
 		}
 	})

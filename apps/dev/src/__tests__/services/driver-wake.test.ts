@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	blockerCleared,
+	buildQueueWakePrompt,
 	buildWakePrompt,
 	childrenWakeParent,
 	isClosedStatus,
@@ -99,5 +100,28 @@ describe('buildWakePrompt', () => {
 		})
 		expect(prompt).not.toContain('Stored next step')
 		expect(prompt).toContain('(untitled)')
+	})
+})
+
+describe('buildQueueWakePrompt', () => {
+	const item = (n: number, withStep: boolean) => ({
+		object: { id: `id-${n}`, type: 'contact', title: `Contact ${n}`, status: 'messaged' },
+		nextStep: withStep
+			? { action: `Message ${n}`, status: 'open', dueAt: new Date('2026-11-16T08:00:00Z') }
+			: null,
+	})
+
+	it('lists every object with its stored step', () => {
+		const prompt = buildQueueWakePrompt({ items: [item(1, true), item(2, false)], total: 2 })
+		expect(prompt).toContain('Due now (2):')
+		expect(prompt).toContain('Contact 1 (contact, messaged), ID: id-1')
+		expect(prompt).toContain('Message 1')
+		expect(prompt).toContain('2026-11-16T08:00:00.000Z')
+		expect(prompt).toContain('Contact 2 (contact, messaged), ID: id-2')
+	})
+
+	it('says when the list was capped', () => {
+		const prompt = buildQueueWakePrompt({ items: [item(1, true)], total: 40 })
+		expect(prompt).toContain('Due now (1 of 40, the rest come with the next sweep):')
 	})
 })
