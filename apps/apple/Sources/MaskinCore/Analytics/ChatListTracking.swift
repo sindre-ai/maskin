@@ -11,7 +11,8 @@ import Foundation
 public enum ChatListTracking {
 	public enum Section: String, Sendable {
 		case pinned, unread, agent, recent, room, search
-		case today, yesterday, earlier, working, tag, type
+		case today, yesterday, earlier, working, tag
+		case typeDirect = "type_direct", typeTopic = "type_topic", typeGroup = "type_group"
 		case needsYou = "needs_you"
 	}
 
@@ -165,7 +166,7 @@ extension Analytics {
 			"chat_list_search_used",
 			[
 				"result_count_bucket": .string(ChatListTracking.resultCountBucket(resultCount)),
-				"operators": .strings(used.map(\.rawValue)),
+				"operators": .string(used.map(\.rawValue).joined(separator: ",")),
 			])
 	}
 }

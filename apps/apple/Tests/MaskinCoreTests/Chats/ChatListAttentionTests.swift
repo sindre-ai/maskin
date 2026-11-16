@@ -153,7 +153,8 @@ struct ChatListGroupTests {
 		let result = groups(rows, .type)
 		#expect(result.map(\.label) == ["Direct", "Topic", "Group"])
 		#expect(ids(result) == [["dm"], ["topic"], ["group"]])
-		#expect(result.allSatisfy { $0.section == .type })
+		#expect(result.map(\.section) == [.typeDirect, .typeTopic, .typeGroup])
+		#expect(result.map(\.section.rawValue) == ["type_direct", "type_topic", "type_group"])
 	}
 
 	@Test("by agent: the names in order of first appearance, the agentless last")
@@ -261,8 +262,8 @@ struct ChatListEventTests {
 		#expect(action.name == "chat_row_action")
 		#expect(action.properties["action"] == "retry")
 		#expect(action.properties["via"] == "swipe")
-		#expect(sink.events[2].properties["operators"] == .strings(["agent", "is"]))
-		#expect(sink.events[3].properties["operators"] == .strings(["none"]))
+		#expect(sink.events[2].properties["operators"] == .string("agent,is"))
+		#expect(sink.events[3].properties["operators"] == .string("none"))
 	}
 
 	@MainActor

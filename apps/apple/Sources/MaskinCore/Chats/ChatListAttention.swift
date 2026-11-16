@@ -174,9 +174,9 @@ public enum ChatListLayout {
 		case .type:
 			func kind(_ c: ConversationSummary) -> Int { c.isDirect ? 0 : c.isGroupChat(excluding: currentActorID) ? 2 : 1 }
 			return [
-				group("direct", "Direct", .type, shown.filter { kind($0) == 0 }),
-				group("topic", "Topic", .type, shown.filter { kind($0) == 1 }),
-				group("group", "Group", .type, shown.filter { kind($0) == 2 }),
+				group("direct", "Direct", .typeDirect, shown.filter { kind($0) == 0 }),
+				group("topic", "Topic", .typeTopic, shown.filter { kind($0) == 1 }),
+				group("group", "Group", .typeGroup, shown.filter { kind($0) == 2 }),
 			].compactMap { $0 }
 		}
 	}
