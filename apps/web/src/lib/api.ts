@@ -3048,6 +3048,8 @@ export interface ConversationListItemResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Labels for grouping chats, for example a team name. Shared by every participant. */
+	tags?: string[]
 	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
 	directPairKey?: string | null
 	lastMessageAt: string | null
@@ -3063,6 +3065,27 @@ export interface ConversationListItemResponse {
 	participants: ConversationParticipantResponse[]
 	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
 	working_actor_ids: string[]
+	/** An agent in this chat waits on the person (a session of this chat is waiting for input).
+	 *  Absent from a server that predates the new chat list. */
+	needs_you?: boolean
+	/** Agents working in this chat, each with the session to open. Absent on an older server. */
+	working?: ChatListWorking[]
+	/** The caller's own Later flag. Cleared by the server when a new message arrives. */
+	later?: boolean
+	/** The last turn failed. `message_id` is the last person message, the one Retry re-runs. */
+	error?: ChatListError | null
+}
+
+export interface ChatListWorking {
+	agent_id: string
+	session_id: string
+}
+
+export type ChatListErrorReason = 'usage_limit' | 'other' | 'connection'
+
+export interface ChatListError {
+	reason: ChatListErrorReason
+	message_id: number
 }
 
 export interface ConversationListResponse {
@@ -3477,6 +3500,8 @@ export interface UpdateConversationInput {
 export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
+	/** The caller's own Later flag: hides the chat until a new message arrives. */
+	later?: boolean
 	last_read_message_id?: number
 	mark_unread?: boolean
 }

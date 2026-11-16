@@ -211,6 +211,14 @@ export const FLAGS = {
 	 * approved. Retire once it is on for everyone.
 	 */
 	PLAN_LIMIT_EMAIL: 'plan-limit-email',
+	/**
+	 * Gates the new chat list on web (bet [Chat list: date groups, attention markers, filter
+	 * search](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/57d0ac81-c1c3-4e5f-9a70-b0bcb941945e)).
+	 * UI only, actor-scoped: the Chats route layout reads it once and swaps the list column. Off
+	 * means the list looks as it does today. The server's new list fields are additive and safe for
+	 * everyone without it. Retire once the new list is on for everyone.
+	 */
+	CHAT_LIST_V2: 'chat-list-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
