@@ -1288,7 +1288,7 @@ export const nextStepSweepClaims = pgTable(
 		index('next_step_sweep_claims_workspace_created_idx').on(t.workspaceId, t.createdAt),
 		check(
 			'next_step_sweep_claims_reason_check',
-			sql`${t.reason} in ('step_overdue', 'no_next_step')`,
+			sql`${t.reason} in ('step_overdue', 'no_next_step', 'task_ready')`,
 		),
 		check('next_step_sweep_claims_mode_check', sql`${t.mode} in ('recorded', 'woken', 'refused')`),
 	],
