@@ -22,7 +22,9 @@ describe('editBody', () => {
 	})
 
 	it('takes the replacement as plain text, not as a pattern', () => {
-		expect(editBody('price: X', { replace: { find: 'X', with: "$& $1 $'" } })).toBe("price: $& $1 $'")
+		expect(editBody('price: X', { replace: { find: 'X', with: "$& $1 $'" } })).toBe(
+			"price: $& $1 $'",
+		)
 	})
 
 	it('removes the piece when the replacement is empty', () => {

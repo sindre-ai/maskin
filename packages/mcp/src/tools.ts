@@ -496,8 +496,12 @@ export const tools = {
 								find: z
 									.string()
 									.min(1)
-									.describe('The exact piece of the stored body to change, character for character.'),
-								with: z.string().describe('What to put in its place. An empty string removes the piece.'),
+									.describe(
+										'The exact piece of the stored body to change, character for character.',
+									),
+								with: z
+									.string()
+									.describe('What to put in its place. An empty string removes the piece.'),
 								all: z
 									.boolean()
 									.optional()
