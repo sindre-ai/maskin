@@ -7,6 +7,7 @@
 //   FF_TESTER_ACTOR_IDS=<uuid>,<uuid>          actors who see tester features
 //   FF_TESTER_FEATURES=some-flag,other-flag    flag ids on for those tester actors
 //   FF_WORKSPACE_FEATURES=<uuid>:<flag>,...    workspace-scoped flag entries
+//   FF_SIGNUP_FEATURES=some-flag,other-flag    flag ids on for every NEW sign-up
 //
 // A flag has exactly two states: off, or on for the tester actors / listed
 // workspaces. There is deliberately no "on for everyone" setting — shipping a
@@ -106,6 +107,67 @@ export const FLAGS = {
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
 	/**
+	 * Gates the Next step block at the top of the object page (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 2). Frontend only: read once, in the object detail shell. Off means the page is drawn
+	 * exactly as before. The table, route and MCP tools behind it are additive and safe with the
+	 * flag off. Retire once the block is on for everyone.
+	 */
+	NEXT_STEP_BLOCK: 'next-step-block',
+	/**
+	 * Gates the "Jobs you are handed" block in chat prompts (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Link every job to its flow target](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/08e1e494-86ad-4a98-b085-c88c8a64c2b4)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace when a chat session
+	 * launches. Off means chat prompts are built exactly as before. Switch on only once the cap on
+	 * self-started work is live in production, because the block tells the agent to start follow-up
+	 * steps on its own. Retire once it is on for everyone.
+	 */
+	JOB_TARGET_IN_CHAT: 'job-target-in-chat',
+	/**
+	 * Gates what a stored go-ahead changes for people and sessions (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Store the go-ahead on the job](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1ae8438e-a1a4-43aa-8e8f-3a575f04c0b1)):
+	 * the go-ahead line on the object page (frontend, read once in the object detail shell) and the
+	 * go-ahead block in session prompts (backend, workspace-scoped or per driver actor, read when a
+	 * session launches). Off means the page and the prompts are exactly as before. The table, route
+	 * and MCP tools behind it are additive and safe with the flag off. Switch on only once the cap on
+	 * self-started work is live in production, because with a go-ahead the agent carries on alone.
+	 * Retire once it is on for everyone.
+	 */
+	GO_AHEAD: 'go-ahead',
+	/**
+	 * Gates the done-when list (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Write a done-when list before work starts](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/75cf7896-7e2f-4f28-b2bc-c7b06d621b2d)):
+	 * the done_when block on a decision card (backend, workspace-scoped: refused when off, read with
+	 * isFlagEnabledForWorkspace when the card is posted), the lines on the card and the "N of M lines
+	 * true" block on the job's Overview (frontend, read where they draw). Off means cards are
+	 * posted and drawn exactly as before and the Overview shows nothing. The tables and routes
+	 * behind it are additive and safe with the flag off. Retire once it is on for everyone.
+	 */
+	DONE_WHEN_LIST: 'done-when-list',
+	/**
+	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
+	 * else, or a decision card it posted expires. Backend only, workspace-scoped: read with
+	 * isFlagEnabledForWorkspace in services/driver-wake.ts. Off means no wake is started and
+	 * nothing is recorded. Turn on only after the self-start limits (cap, back-off and daily
+	 * budget) are live, because they are the only brake on a wake. Retire once the wake is on for
+	 * everyone.
+	 */
+	DRIVER_WAKE: 'driver-wake',
+	/**
+	 * Gates the sweep for overdue or missing next steps and the heartbeat pre-check (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4, fallback half). Backend only, workspace-scoped: read with isFlagEnabledForWorkspace
+	 * in services/next-step-sweep.ts. On means the sweep runs in RECORD-ONLY mode: it writes what
+	 * it would have woken and starts nothing, and the heartbeat pre-check logs what it would have
+	 * skipped and changes no run. Nothing here starts a run until NEXT_STEP_SWEEP_WAKE is on too.
+	 */
+	NEXT_STEP_SWEEP: 'next-step-sweep',
+	/**
+	 * Lets the sweep start runs. Needs NEXT_STEP_SWEEP on for the workspace, and the sweep must
+	 * have been recording for at least 3 days (the first-run flood guard). Turn on only after the
+	 * would-wake list was compared with what is really stuck and the self-start limits are live.
+	 */
+	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
+	/**
 	 * Gates the item card beside a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
 	 * when a view asks to open an item, the loop page shows its card in a side panel, where the
 	 * person can change its status or approve it, instead of going to the object's page. Frontend
@@ -128,6 +190,17 @@ export const FLAGS = {
 	 * everyone.
 	 */
 	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
+	/**
+	 * Gates the default on silence for decision cards (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Let decision cards carry a default on silence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/bcfed848-7a51-418e-a5d0-172999385c9c)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in routes/events.ts
+	 * (off means a card that names a default is refused, so no agent is promised a wake that
+	 * never comes) and in services/decision-default-wake.ts (off means no wake is started). The
+	 * card line on web and iOS only draws for a card that names a default. Turn on only after the
+	 * self-start limits (cap, back-off and daily budget) are live, because the wake goes through
+	 * them. Retire once it is on for everyone.
+	 */
+	DECISION_DEFAULT: 'decision-default',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
@@ -146,6 +219,12 @@ export interface FeatureFlagConfig {
 	 * this set.
 	 */
 	workspaceFeatures: Set<string>
+	/**
+	 * Flag ids on for every new sign-up, sourced from `FF_SIGNUP_FEATURES`. A person who has not
+	 * signed up yet cannot be named in `FF_TESTER_ACTOR_IDS`, so a sign-up-time feature (the card
+	 * step) needs a list that is not keyed by actor. Read only by `isSignupFlagEnabled`.
+	 */
+	signupFeatures: Set<string>
 }
 
 function parseList(raw: string | undefined): string[] {
@@ -179,6 +258,7 @@ export function parseFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): Fe
 		testerActorIds: new Set(parseList(env.FF_TESTER_ACTOR_IDS).map((id) => id.toLowerCase())),
 		testerFlags: new Set(parseList(env.FF_TESTER_FEATURES)),
 		workspaceFeatures: parseWorkspaceFeatures(env.FF_WORKSPACE_FEATURES),
+		signupFeatures: new Set(parseList(env.FF_SIGNUP_FEATURES)),
 	}
 }
 
@@ -240,6 +320,20 @@ export function isFlagEnabledForWorkspace(
 	if (flagConfig.workspaceFeatures.has(target)) return true
 	if (config?.actorId && isFlagEnabled(config.actorId, flagId, flagConfig, registry)) return true
 	return false
+}
+
+/**
+ * Whether a flag is on for the sign-up happening right now. Not tied to an actor or a workspace:
+ * the person does not exist yet when the sign-up route decides. Unknown flag ids (typos, ids not
+ * in the registry) always resolve to false.
+ */
+export function isSignupFlagEnabled(
+	flagId: string,
+	flagConfig: FeatureFlagConfig = getFeatureFlagConfig(),
+	registry: Record<string, string> = FLAGS,
+): boolean {
+	if (!Object.values(registry).includes(flagId)) return false
+	return flagConfig.signupFeatures.has(flagId)
 }
 
 let _config: FeatureFlagConfig | null = null

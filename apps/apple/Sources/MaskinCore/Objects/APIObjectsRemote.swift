@@ -433,6 +433,8 @@ private struct RelationshipDTO: Decodable {
 	var targetId: String
 	var targetTitle: String?
 	var type: String
+	var createdBy: String?
+	var createdAt: String?
 }
 
 private struct EventDTO: Decodable {
@@ -471,7 +473,14 @@ private struct GraphDTO: Decodable {
 				otherTitle: (title?.isEmpty == false ? title : nil) ?? "Untitled",
 				otherStatus: known?.status, otherDriver: known?.driver)
 		}
-		return ObjectGraph(object: object.model, links: links, events: (events ?? []).map(\.model))
+		let edges = (relationships ?? []).map {
+			OriginEdge(
+				type: $0.type, sourceType: $0.sourceType, sourceId: $0.sourceId, targetType: $0.targetType,
+				targetId: $0.targetId, createdBy: $0.createdBy, createdAt: $0.createdAt.flatMap(ISODate.parse))
+		}
+		return ObjectGraph(
+			object: object.model, links: links, events: (events ?? []).map(\.model),
+			origin: ObjectOrigin.resolve(objectId: me, edges: edges))
 	}
 }
 

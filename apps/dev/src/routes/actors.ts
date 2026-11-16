@@ -539,6 +539,9 @@ app.openapi(createActorRoute, async (c) => {
 				name: `${body.name}'s Workspace`,
 				ownerActorId: actor.id,
 				settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
+				// Only a client that shows the card step asks for it. Any other client (the iPhone
+				// app before it has the card step): sign-up works exactly as before.
+				awaitingCard: body.type === 'human' && body.card_step === true,
 			})
 			if (!created) {
 				logger.error('signup workspace provisioning returned no workspace row', {

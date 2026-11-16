@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
+import { DoneWhenCardLines } from '@/components/objects/done-when-lines'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
@@ -10,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	secondsSince,
 	trackForyouCardAction,
@@ -23,6 +25,7 @@ import type {
 	UnreadItem,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { defaultOnSilenceLine } from '@/lib/comment-decision'
 import {
 	type CardAction,
 	type CardKind,
@@ -92,6 +95,7 @@ export function FeedCard({
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
+	const doneWhenOn = useFeatureFlag('done-when-list')
 	// The ask leads, not the object. `cardHeadline` falls back through the
 	// comment's first line to the object title, so a card still reads sensibly
 	// for a mention with no decision and for an item with no mention payload.
@@ -330,6 +334,9 @@ export function FeedCard({
 							</p>
 							{objectLine}
 						</div>
+						{decision.done_when && doneWhenOn ? (
+							<DoneWhenCardLines block={decision.done_when} />
+						) : null}
 						{decision.draft ? (
 							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
 						) : null}
@@ -363,6 +370,7 @@ export function FeedCard({
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
+						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
 						onChoose={(option) => chooseOption(option)}

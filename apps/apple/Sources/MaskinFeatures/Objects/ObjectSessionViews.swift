@@ -12,6 +12,8 @@ struct ObjectSessionActions {
 	var onRetry: ((ObjectSession) -> Void)?
 	var onSeeLog: ((ObjectSession) -> Void)?
 	var onOpenChat: ((String) -> Void)?
+	/// Opens the log of the session that produced the item (the origin panel's Session row).
+	var onOpenOriginSession: ((ObjectOrigin) -> Void)?
 	var isRetrying = false
 
 	static var none: ObjectSessionActions { ObjectSessionActions() }
@@ -19,9 +21,27 @@ struct ObjectSessionActions {
 
 /// Wording and visibility rules for the session cards, pure so they test without rendering.
 enum ObjectSessionCopy {
-	/// "Developer is working"; without a resolvable agent, "An agent is working".
-	static func workingTitle(agentName: String?) -> String {
-		agentName.map { "\($0) is working" } ?? "An agent is working"
+	/// "Developer is thinking"; without a resolvable agent, "An agent is thinking". Same words as web.
+	static func thinkingTitle(agentName: String?) -> String {
+		agentName.map { "\($0) is thinking" } ?? "An agent is thinking"
+	}
+
+	/// "12s" under a minute, then "1m 5s"; nil before the session has a start time.
+	static func elapsed(since start: Date?, now: Date) -> String? {
+		guard let start else { return nil }
+		let seconds = max(0, Int(now.timeIntervalSince(start)))
+		return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+	}
+
+	/// "Forge asks:"; without a name, "Open question:" (web's words).
+	static func askLead(askedBy: String?) -> String {
+		guard let askedBy, !askedBy.isEmpty else { return "Open question:" }
+		return "\(askedBy) asks:"
+	}
+
+	/// The words before the age in "Spawned by Forge, 2h ago".
+	static func spawnedBy(agentName: String?) -> String {
+		"Spawned by \(agentName ?? "an agent")"
 	}
 
 	/// "Developer stopped: 403 from Search Console"; the server's reason or a plain fallback.
@@ -39,12 +59,6 @@ enum ObjectSessionCopy {
 		return !hasActiveSession
 	}
 
-	/// "Sebastian started this session"; nil (row hidden) when nobody resolves.
-	static func originLine(starterName: String?, agentName: String?) -> String? {
-		if let starterName { return "\(starterName) started this" }
-		if let agentName { return "\(agentName) started this" }
-		return nil
-	}
 }
 
 /// "Developer stopped: …" with the reason, Retry and See log.
@@ -85,52 +99,26 @@ struct FailedSessionBanner: View {
 	}
 }
 
-/// "ORIGIN [avatar] Sebastian started this ⌄": opens to the chat, the session and a note.
-struct ObjectOriginRow: View {
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
-	let session: ObjectSession
-	let line: String
-	let starterName: String?
+/// The origin panel under the meta line: the chat that started the session and the session
+/// itself. Nothing in it is editable.
+struct ObjectOriginPanel: View {
+	let origin: ObjectOrigin
 	let actions: ObjectSessionActions
-	@State private var open = false
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 0) {
-			Button {
-				withAnimation(reduceMotion ? nil : MaskinMotion.quick) { open.toggle() }
-			} label: {
-				HStack(spacing: MaskinSpace.s5) {
-					Text("ORIGIN")
-						.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold, relativeTo: .caption))
-						.tracking(MaskinSpace.s1).foregroundStyle(MaskinColor.ink5)
-					if let starterName {
-						ActorAvatar(name: starterName, kind: .human, size: MaskinSpace.s12, seed: session.createdByActorID ?? "")
-					}
-					Text(line).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
-						.frame(maxWidth: .infinity, alignment: .leading)
-					Image(systemName: "chevron.down").maskinSymbol(MaskinFontSize.t12, weight: .bold)
-						.foregroundStyle(MaskinColor.ink5).rotationEffect(.degrees(open ? 180 : 0))
-				}
-				.frame(minHeight: MaskinSpace.touchMin)
-				.contentShape(Rectangle())
+		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			if let chat = origin.chatId, let openChat = actions.onOpenChat {
+				row("Chat", symbol: "message") { openChat(chat) }
 			}
-			.buttonStyle(.plain)
-			.accessibilityHint(open ? "Collapses" : "Expands")
-			if open {
-				VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-					if let chat = session.chatID, let openChat = actions.onOpenChat {
-						row("Chat", symbol: "message") { openChat(chat) }
-					}
-					if let log = actions.onSeeLog {
-						row("Session", symbol: "terminal") { log(session) }
-					}
-					Text("Written by the system. Not editable.")
-						.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
-				}
-				.padding(.bottom, MaskinSpace.s5)
+			if let open = actions.onOpenOriginSession {
+				row("Session", symbol: "terminal") { open(origin) }
 			}
+			Text("Written by the system. Not editable.")
+				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 		}
 		.padding(.horizontal, MaskinSpace.s8)
+		.padding(.vertical, MaskinSpace.s3)
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.panelXl, style: .continuous))
 	}
 
@@ -162,10 +150,63 @@ enum ObjectComposerMode: Equatable {
 		return found
 	}
 
-	func placeholder(commentPlaceholder: String, agentName: String?) -> String {
+	/// The comment box's own words: "Type / for commands or @ to mention", shorter on a phone.
+	static func commentPlaceholder(compact: Bool) -> String {
+		compact ? "Type / or @" : "Type / for commands or @ to mention"
+	}
+
+	/// "Comment", "Message Forge"; on a phone in message mode just "Message".
+	static func chipTitle(_ mode: ObjectComposerMode, agentName: String, compact: Bool) -> String {
+		switch mode {
+		case .comment: "Comment"
+		case .message: compact ? "Message" : "Message \(agentName)"
+		}
+	}
+
+	/// In message mode the field reads "Message Forge" ("Message" on a phone, where the chip is as short).
+	func placeholder(commentPlaceholder: String, agentName: String?, compact: Bool = false) -> String {
 		switch (self, agentName) {
-		case (.message, let name?): return "Message \(name)"
+		case (.message, let name?): return compact ? "Message" : "Message \(name)"
 		default: return commentPlaceholder
+		}
+	}
+}
+
+/// The small chip inside the comment bar: "Comment" or "Message {agent}", opening a two-way menu.
+/// On a phone the message label drops the name, as web does ("Message"); the menu still names it.
+struct ObjectComposerModeChip: View {
+	@Binding var mode: ObjectComposerMode
+	let agentName: String
+	var compact = false
+
+	var body: some View {
+		Menu {
+			choice("Comment", .comment)
+			choice("Message \(agentName)", .message)
+		} label: {
+			HStack(spacing: MaskinSpace.s2) {
+				Text(ObjectComposerMode.chipTitle(mode, agentName: agentName, compact: compact))
+					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold, relativeTo: .footnote))
+					.lineLimit(1)
+				Image(systemName: "chevron.down").maskinSymbol(MaskinFontSize.t12, weight: .bold)
+			}
+			.foregroundStyle(MaskinColor.ink2)
+			.padding(.horizontal, MaskinSpace.s5)
+			.frame(minHeight: MaskinSpace.s14)
+			.background(MaskinSurface.fill, in: Capsule())
+			.frame(minHeight: MaskinSpace.touchMin)
+			.contentShape(Rectangle())
+		}
+		.accessibilityLabel("Switch between comment and message")
+		.accessibilityValue(ObjectComposerMode.chipTitle(mode, agentName: agentName, compact: false))
+	}
+
+	@ViewBuilder private func choice(_ title: String, _ value: ObjectComposerMode) -> some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			mode = value
+		} label: {
+			if mode == value { Label(title, systemImage: "checkmark") } else { Text(title) }
 		}
 	}
 }

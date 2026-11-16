@@ -7,10 +7,14 @@ import OpenAPIRuntime
 public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	private let client: Client
 	private let workspaceID: String
+	/// Where a file over the JSON route's cap goes (straight to storage). Without it only files up to
+	/// that cap can be attached.
+	private let largeUploads: LargeFileUploadTransport?
 
-	public init(client: Client, workspaceID: String) {
+	public init(client: Client, workspaceID: String, largeUploads: LargeFileUploadTransport? = nil) {
 		self.client = client
 		self.workspaceID = workspaceID
+		self.largeUploads = largeUploads
 	}
 
 	// MARK: - List
@@ -522,6 +526,18 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 }
 
 extension APIChatsSource: ChatFileUploading {
+	public func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws
+		-> ChatAttachmentRef
+	{
+		guard FileUploadLimits.needsDirectUpload(sizeBytes: sizeBytes, mimeType: mimeType) else {
+			return try await upload(
+				name: name, mimeType: mimeType, data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+		}
+		guard let largeUploads else { throw ChatsError("Files this large can't be attached here.") }
+		return try await LargeFileUploader(transport: largeUploads, workspaceID: workspaceID)
+			.upload(name: name, mimeType: mimeType, fileURL: fileURL, sizeBytes: sizeBytes)
+	}
+
 	public func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef {
 		let output = try await client.post_sol_api_sol_files(
 			.init(

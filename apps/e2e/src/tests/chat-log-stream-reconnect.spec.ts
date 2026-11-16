@@ -136,6 +136,11 @@ test.describe('Chats — SSE log stream reconnect recovery', () => {
 			// from the persisted cursor so the server replays the missed row.
 			await page.goto(`/${account.workspaceId}/chats/${live.conversationId}`)
 			await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 10_000 })
+			// The remount closes the live step list again; this spec reads the steps.
+			await page
+				.getByTestId('message-activity-live')
+				.getByRole('button', { name: 'Show steps' })
+				.click()
 
 			// Gap guard: the missed line arrives.
 			await expect(activitySteps.getByText('while dropped')).toBeVisible({

@@ -368,7 +368,7 @@ describe('segmentActivityByMessage', () => {
 		])
 		expect(segments).toEqual([])
 		expect(unassigned).toEqual([
-			{ id: '1-0', kind: 'tool_use', text: 'Search objects' },
+			{ id: '1-0', kind: 'tool_use', text: 'Search objects', tool: 'search_objects' },
 			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
 		])
 	})
@@ -484,12 +484,12 @@ describe('segmentActivityByMessage', () => {
 			{
 				conversationMessageId: 10,
 				containsReply: false,
-				steps: [{ id: '2-0', kind: 'tool_use', text: 'Search objects' }],
+				steps: [{ id: '2-0', kind: 'tool_use', text: 'Search objects', tool: 'search_objects' }],
 			},
 			{
 				conversationMessageId: 20,
 				containsReply: false,
-				steps: [{ id: '4-0', kind: 'tool_use', text: 'List objects' }],
+				steps: [{ id: '4-0', kind: 'tool_use', text: 'List objects', tool: 'list_objects' }],
 			},
 		])
 	})
@@ -506,7 +506,9 @@ describe('segmentActivityByMessage', () => {
 			log(1, 'stdout', tool),
 			log(2, 'stdout', taggedUserTurn(10, 'hi')),
 		])
-		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Search objects' }])
+		expect(unassigned).toEqual([
+			{ id: '1-0', kind: 'tool_use', text: 'Search objects', tool: 'search_objects' },
+		])
 		expect(segments).toEqual([{ conversationMessageId: 10, containsReply: false, steps: [] }])
 	})
 
@@ -526,7 +528,14 @@ describe('segmentActivityByMessage', () => {
 			{
 				conversationMessageId: 10,
 				containsReply: true,
-				steps: [{ id: '2-0', kind: 'tool_use', text: 'Replied to the conversation.' }],
+				steps: [
+					{
+						id: '2-0',
+						kind: 'tool_use',
+						text: 'Replied to the conversation.',
+						tool: 'post_conversation_message',
+					},
+				],
 			},
 		])
 	})
@@ -564,7 +573,12 @@ describe('segmentActivityByMessage', () => {
 				containsReply: true,
 				steps: [
 					{ id: '2-0', kind: 'thinking', text: 'Thinking…' },
-					{ id: '3-0', kind: 'tool_use', text: 'Replied to the conversation.' },
+					{
+						id: '3-0',
+						kind: 'tool_use',
+						text: 'Replied to the conversation.',
+						tool: 'mcp__maskin__post_conversation_message',
+					},
 				],
 			},
 		])
@@ -592,7 +606,7 @@ describe('segmentActivityByMessage', () => {
 				conversationMessageId: 10,
 				containsReply: false,
 				steps: [
-					{ id: '2-0', kind: 'tool_use', text: 'Search objects' },
+					{ id: '2-0', kind: 'tool_use', text: 'Search objects', tool: 'search_objects' },
 					{ id: '3-0', kind: 'text', text: 'Found 3 matches' },
 				],
 			},

@@ -3,6 +3,7 @@ import {
 	type CommentDecision,
 	type CommentDecisionOption,
 	commentDecisionSchema,
+	findDefaultOnSilenceOption,
 	findStatusActionViolations,
 	isDecisionExpired,
 	validateDecisionProse,
@@ -421,5 +422,166 @@ describe('expires_at', () => {
 		)
 		expect(isDecisionExpired(buildDecision(), now)).toBe(false)
 		expect(isDecisionExpired(null, now)).toBe(false)
+	})
+})
+
+describe('default_on_silence', () => {
+	const future = '2999-01-01T00:00:00Z'
+	const withDefault = (overrides: Partial<CommentDecision> = {}) => {
+		const [first, second] = buildDecision().options as [
+			CommentDecisionOption,
+			CommentDecisionOption,
+		]
+		return buildDecision({
+			options: [{ ...first, default_on_silence: true }, second],
+			expires_at: future,
+			...overrides,
+		})
+	}
+
+	it('accepts one reversible default with a deadline', () => {
+		expect(validateDecisionProse(withDefault(), new Date('2026-11-02T12:00:00Z'))).toEqual([])
+		expect(findDefaultOnSilenceOption(withDefault())?.label).toBe('7-day window')
+	})
+
+	it('finds no default on a card without one', () => {
+		expect(findDefaultOnSilenceOption(buildDecision())).toBeNull()
+	})
+
+	it('needs a deadline', () => {
+		expect(violate(withDefault({ expires_at: undefined }))).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('allows only one default', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		const two = { ...decision, options: [first, { ...second, default_on_silence: true }] }
+		expect(violate(two)).toEqual(['options.0.default_on_silence'])
+	})
+
+	it('is refused on a destructive default', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		expect(violate({ ...decision, options: [{ ...first, destructive: true }, second] })).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('is refused when another option is destructive', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		expect(violate({ ...decision, options: [first, { ...second, destructive: true }] })).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('is refused when another option deletes an agent', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		const deleting = {
+			...second,
+			delete_agent: { actor_id: '3f2b8f0e-8a47-4a58-9a0b-1c2d3e4f5a6b' },
+		}
+		expect(violate({ ...decision, options: [first, deleting] })).toEqual([
+			'options.0.default_on_silence',
+		])
+	})
+
+	it('is refused on a card with a draft', () => {
+		expect(
+			violate(withDefault({ draft: { object_id: '3f2b8f0e-8a47-4a58-9a0b-1c2d3e4f5a6b' } })),
+		).toEqual(['options.0.default_on_silence'])
+	})
+
+	it('is refused on an option that moves a status', () => {
+		const decision = withDefault()
+		const [first, second] = decision.options as [CommentDecisionOption, CommentDecisionOption]
+		expect(
+			violate({ ...decision, options: [{ ...first, set_status: { status: 'active' } }, second] }),
+		).toEqual(['options.0.default_on_silence'])
+	})
+})
+
+describe('done_when on a decision', () => {
+	const lines = [
+		{
+			text: 'The first 10 emails are sent and logged',
+			checked_by: 'person' as const,
+			needs_yes: true,
+		},
+		{
+			text: 'At least 3 payments came in',
+			checked_by: 'code' as const,
+			reading: 'Stripe payments in the last 7 days',
+			comparison: '>= 3',
+		},
+	]
+	const withApprove = (overrides: Partial<CommentDecision> = {}) =>
+		buildDecision({
+			done_when: { questions: ['Who is the audience?'], lines },
+			options: [
+				{
+					label: 'Approve',
+					recommended: true,
+					approve_done_when: true,
+					consequences: ['Work starts on these lines', 'Lines that send still ask you'],
+				},
+				{ label: 'Hold', consequences: ['Nothing starts', 'The list stays a draft'] },
+			],
+			...overrides,
+		})
+
+	it('accepts a list with exactly one approving option', () => {
+		const decision = withApprove()
+		expect(commentDecisionSchema.safeParse(decision).success).toBe(true)
+		expect(validateDecisionProse(decision)).toEqual([])
+	})
+
+	it('needs exactly one approve_done_when option', () => {
+		const none = withApprove({
+			options: [
+				{ label: 'Go', recommended: true, consequences: ['Starts', 'Stops asking'] },
+				{ label: 'Hold', consequences: ['Nothing starts', 'Stays a draft'] },
+			],
+		})
+		expect(violate(none)).toContain('options')
+	})
+
+	it('refuses approve_done_when without a list', () => {
+		const decision = withApprove({ done_when: undefined })
+		expect(violate(decision)).toContain('options')
+	})
+
+	it('a code line needs a reading, and a person line may not carry one', () => {
+		const decision = withApprove({
+			done_when: {
+				lines: [
+					{ text: 'Payments came in', checked_by: 'code' },
+					{ text: 'A person looked', checked_by: 'person', reading: 'something' },
+				],
+			},
+		})
+		expect(violate(decision)).toEqual(
+			expect.arrayContaining(['done_when.lines.0.reading', 'done_when.lines.1.checked_by']),
+		)
+	})
+
+	it('applies the wording rules to the questions and lines', () => {
+		const decision = withApprove({
+			done_when: { questions: ['Which — list?'], lines: [lines[0] as (typeof lines)[0]] },
+		})
+		expect(violate(decision)).toContain('done_when.questions.0')
+	})
+
+	it('rejects more than 8 lines', () => {
+		const many = Array.from({ length: 9 }, (_, i) => ({
+			text: `Line ${i}`,
+			checked_by: 'person' as const,
+		}))
+		expect(
+			commentDecisionSchema.safeParse(withApprove({ done_when: { lines: many } })).success,
+		).toBe(false)
 	})
 })

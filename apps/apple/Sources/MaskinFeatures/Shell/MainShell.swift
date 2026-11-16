@@ -24,6 +24,10 @@ public struct MainShell: View {
 	/// Settings > Advanced > Preview > Show offline banner: draws the banner without losing the connection.
 	@AppStorage(StatePreview.offlineKey) private var previewOffline = false
 	@Environment(\.scenePhase) private var scenePhase
+	@Environment(\.openURL) private var openURL
+	/// The workspace signed up through the card step and has no card yet (billing says so). The
+	/// card form is on the web: the banner sends the person there.
+	@State private var awaitingCard = false
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
 		self.environment = environment
@@ -86,6 +90,16 @@ public struct MainShell: View {
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { Task { await pictures.load(environment: environment) } }
 		}
+		// The trial's card: checked per workspace and again on return to the app, so adding the
+		// card on the web clears the banner. Straight after sign-up the card step opens once.
+		.task(id: environment.workspaceId) {
+			let fresh = environment.auth.takeJustSignedUp()
+			await refreshAwaitingCard()
+			if fresh, awaitingCard { openCardStep() }
+		}
+		.onChange(of: scenePhase) { _, phase in
+			if phase == .active { Task { await refreshAwaitingCard() } }
+		}
 		.onAppear {
 			// A call keeps running wherever you are; this returns you to its thread.
 			liveCalls.openConversation = { [runtime] id in
@@ -112,6 +126,14 @@ public struct MainShell: View {
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
 		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
+		.safeAreaInset(edge: .top, spacing: 0) {
+			OfflineBanner(
+				isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
+				actionTitle: TrialCardStep.actionTitle
+			) { openCardStep() }
+				.padding(.horizontal, MaskinSpace.s8)
+				.animation(MaskinMotion.standard, value: awaitingCard)
+		}
 		.safeAreaInset(edge: .top, spacing: 0) {
 			OfflineBanner(
 				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
@@ -169,7 +191,10 @@ public struct MainShell: View {
 			default: break
 			}
 		}
-		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
+		.sheet(item: $runtime.presentation, onDismiss: {
+			runtime.deviceCode = nil
+			runtime.settingsRoute = nil
+		}) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
 		}
@@ -181,6 +206,23 @@ public struct MainShell: View {
 
 	private var queue: OutboxQueue {
 		OutboxQueue(outboxes: [runtime.forYou.outbox, ChatsRuntime.shared(environment: environment).outbox])
+	}
+
+	private func refreshAwaitingCard() async {
+		guard let workspaceId = environment.workspaceId else {
+			awaitingCard = false
+			return
+		}
+		let store = BillingStore(api: APISettingsSource(client: environment.client, workspaceID: workspaceId))
+		await store.load()
+		// A failed read keeps what was last known: no figure is not the same as no banner.
+		if let usage = store.usage { awaitingCard = usage.awaitingCard }
+	}
+
+	private func openCardStep() {
+		if let workspaceId = environment.workspaceId, let url = TrialCardStep.url(workspaceId: workspaceId) {
+			openURL(url)
+		}
 	}
 
 	/// Writes (decisions, messages) still waiting for the connection, across For you and Chats.
@@ -313,6 +355,15 @@ private struct PresentationContent: View {
 			if let workspaceID = environment.workspaceId {
 				TriggersSheet(environment: environment, workspaceID: workspaceID, initialSelection: id)
 			}
+		case .session(let id):
+			if let workspaceID = environment.workspaceId {
+				DetailSheet {
+					SessionLogsView(
+						sessionID: id,
+						api: APISessionLogsSource(client: environment.client, workspaceID: workspaceID),
+						session: AgentSession(id: id, actorID: "", status: ""))
+				}
+			}
 		case .profile:
 			ProfileSheet(environment: environment, runtime: runtime)
 		case .files:
@@ -326,10 +377,10 @@ private struct PresentationContent: View {
 				if let code = runtime.deviceCode {
 					SettingsScreen(environment: environment, deviceCode: code)
 				} else {
-					SettingsScreen(environment: environment)
+					SettingsScreen(environment: environment, initialRoute: runtime.settingsRoute)
 				}
 			}
-			.id(runtime.deviceCode)
+			.id("\(runtime.deviceCode ?? "")|\(runtime.settingsRoute.map { "\($0)" } ?? "")")
 			.environment(runtime)
 		}
 	}

@@ -308,6 +308,59 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
+	describe('card step for a new workspace (bet "A card to start a 7-day trial")', () => {
+		async function billingOf(workspaceId: string) {
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, workspaceId))
+			return (row?.settings as { billing?: Record<string, unknown> }).billing ?? {}
+		}
+
+		it('makes a workspace that waits for its card', async () => {
+			const app = createApp()
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Second try' }))
+
+			expect(res.status).toBe(201)
+			const created = await res.json()
+			expect(await billingOf(created.id)).toMatchObject({
+				plan: 'trial',
+				trial_state: 'awaiting_card',
+			})
+		})
+
+		it('makes a workspace that waits for its card after the first one was deleted', async () => {
+			const app = createApp()
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'First' }))
+			).json()
+			// A new workspace already has audit events pointing at it, so a bare row delete is refused.
+			const removed = await app.request(
+				jsonRequest('POST', `/api/workspaces/${first.id}/delete`, { confirm_name: 'First' }),
+			)
+			expect(removed.status).toBe(200)
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Again' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBe('awaiting_card')
+		})
+
+		it('lets a person who already pays for a workspace make another without a card step', async () => {
+			const app = createApp()
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Paid' }))
+			).json()
+			await setWorkspacePlan(db, first.id, 'pro')
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Another' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBeUndefined()
+		})
+	})
+
 	describe('team flag for analytics', () => {
 		it('marks the caller as team only when they belong to the workspace named by the setting', async () => {
 			const app = createApp()

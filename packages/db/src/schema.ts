@@ -1131,6 +1131,245 @@ export const forYouWithdrawals = pgTable('for_you_withdrawals', {
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// ── Next Steps ─────────────────────────────────────────────────────────────
+
+// The next step on a driven object: action, owner, due time. At most one open or blocked step
+// per object (partial unique index); done and skipped rows stay as history. A blocked step
+// names exactly one thing it waits on (check constraint). See 0155_next_steps.sql.
+export const nextSteps = pgTable(
+	'next_steps',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		action: text('action').notNull(),
+		ownerActorId: uuid('owner_actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+		status: text('status').notNull().default('open'),
+		blockedOnObjectId: uuid('blocked_on_object_id').references(() => objects.id, {
+			onDelete: 'cascade',
+		}),
+		blockedOnActorId: uuid('blocked_on_actor_id').references(() => actors.id, {
+			onDelete: 'cascade',
+		}),
+		blockedOnDecisionCommentId: bigint('blocked_on_decision_comment_id', {
+			mode: 'number',
+		}).references(() => events.id, { onDelete: 'cascade' }),
+		blockedReason: text('blocked_reason'),
+		evidence: text('evidence'),
+		wakeTriggerId: uuid('wake_trigger_id').references(() => triggers.id, {
+			onDelete: 'set null',
+		}),
+		wakeCount: integer('wake_count').notNull().default(0),
+		lastWokenAt: timestamp('last_woken_at', { withTimezone: true }),
+		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+		closedAt: timestamp('closed_at', { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex('next_steps_one_live_per_object_idx')
+			.on(t.objectId)
+			.where(sql`${t.status} in ('open', 'blocked')`),
+		index('next_steps_open_due_idx').on(t.dueAt).where(sql`${t.status} = 'open'`),
+		check('next_steps_status_check', sql`${t.status} in ('open', 'blocked', 'done', 'skipped')`),
+		check(
+			'next_steps_blocked_on_check',
+			sql`case when ${t.status} = 'blocked'
+				then num_nonnulls(${t.blockedOnObjectId}, ${t.blockedOnActorId}, ${t.blockedOnDecisionCommentId}) = 1
+				else num_nonnulls(${t.blockedOnObjectId}, ${t.blockedOnActorId}, ${t.blockedOnDecisionCommentId}) = 0 end`,
+		),
+	],
+)
+
+// ── Readings ───────────────────────────────────────────────────────────────
+
+// Numbers only server code can write (registrations, payments), each with the time it was read
+// and where it came from. Append-only: a trigger refuses UPDATE, and the newest row per subject
+// and measure is the current reading. Written through apps/dev/src/lib/readings.ts by webhook
+// handlers and scheduled jobs; there is no REST or MCP write path. See 0156_readings.sql.
+export const readings = pgTable(
+	'readings',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The object or flow (loops are objects) the number is about.
+		subjectId: uuid('subject_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		// <namespace>.<key>, for example luma.registrations.
+		measure: text('measure').notNull(),
+		value: doublePrecision('value').notNull(),
+		// When the source was read, not when the row was written.
+		readAt: timestamp('read_at', { withTimezone: true }).notNull(),
+		// Where it came from, for example luma-api or stripe.
+		source: text('source').notNull(),
+		// The source's own id for this reading (invoice id, poll slot); dedupes repeated writes.
+		sourceRef: text('source_ref').notNull(),
+		// Small extra facts, for example counts by status.
+		detail: jsonb('detail').notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('readings_dedupe_idx').on(t.subjectId, t.measure, t.source, t.sourceRef),
+		index('readings_latest_idx').on(t.subjectId, t.measure, t.readAt.desc()),
+		index('readings_workspace_idx').on(t.workspaceId),
+		check('readings_measure_check', sql`${t.measure} ~ '^[a-z0-9_]+(\\.[a-z0-9_]+)+$'`),
+		check('readings_value_check', sql`${t.value} <> 'NaN'::double precision`),
+	],
+)
+
+// ── Next Step Sweep Claims ─────────────────────────────────────────────────
+
+// What the sweep for overdue or missing next steps decided about an object in a time bucket.
+// The unique indexes are the claim: one decision per object, reason and bucket across all server
+// instances (a day bucket for recorded rows, an hour bucket for the rest). mode: recorded (record-only period, nothing started), woken, or refused by the
+// self-start limits. No actor foreign key: it is a log. See 0157_next_step_sweep_claims.sql.
+export const nextStepSweepClaims = pgTable(
+	'next_step_sweep_claims',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		driverActorId: uuid('driver_actor_id').notNull(),
+		reason: text('reason').notNull(),
+		bucketStart: timestamp('bucket_start', { withTimezone: true }).notNull(),
+		mode: text('mode').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('next_step_sweep_claims_recorded_idx')
+			.on(t.objectId, t.reason, t.bucketStart)
+			.where(sql`${t.mode} = 'recorded'`),
+		uniqueIndex('next_step_sweep_claims_decided_idx')
+			.on(t.objectId, t.reason, t.bucketStart)
+			.where(sql`${t.mode} <> 'recorded'`),
+		index('next_step_sweep_claims_workspace_created_idx').on(t.workspaceId, t.createdAt),
+		check(
+			'next_step_sweep_claims_reason_check',
+			sql`${t.reason} in ('step_overdue', 'no_next_step')`,
+		),
+		check('next_step_sweep_claims_mode_check', sql`${t.mode} in ('recorded', 'woken', 'refused')`),
+	],
+)
+
+// One person's yes for one job: "keep going without asking me for each step". Own table, not
+// object metadata, so no writer of the object can edit it and an agent cannot grant itself the
+// yes. At most one live row per object (taken_back_at is null). It ends when the job closes; that
+// is read from the object's status, never stored. via: chat (a person's message, quoted by
+// message_id) or card (a person approved a card). No actor foreign key on taken_back_by: it is a
+// record. See 0158_job_go_aheads.sql.
+export const jobGoAheads = pgTable(
+	'job_go_aheads',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		grantedBy: uuid('granted_by')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		via: text('via').notNull(),
+		messageId: bigint('message_id', { mode: 'number' }).references(() => messages.id, {
+			onDelete: 'set null',
+		}),
+		recordedBy: uuid('recorded_by').notNull(),
+		grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+		takenBackAt: timestamp('taken_back_at', { withTimezone: true }),
+		takenBackBy: uuid('taken_back_by'),
+	},
+	(t) => [
+		uniqueIndex('job_go_aheads_one_live_per_object_idx')
+			.on(t.objectId)
+			.where(sql`${t.takenBackAt} is null`),
+		index('job_go_aheads_workspace_idx').on(t.workspaceId),
+		check('job_go_aheads_via_check', sql`${t.via} in ('chat', 'card')`),
+	],
+)
+
+// ── Done-when lines ────────────────────────────────────────────────────────
+
+// One line of a job's done-when list. draft rows are written by the agent through a decision card;
+// approved rows exist only after a person taps Approve. Not object metadata, so no writer of the
+// object can edit what defines done. See 0159_done_when_lines.sql.
+export const doneWhenLines = pgTable(
+	'done_when_lines',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		version: integer('version').notNull().default(1),
+		position: integer('position').notNull(),
+		text: text('text').notNull(),
+		checkedBy: text('checked_by').notNull(),
+		needsYes: boolean('needs_yes').notNull().default(false),
+		reading: text('reading'),
+		comparison: text('comparison'),
+		listStatus: text('list_status').notNull().default('draft'),
+		cardEventId: bigint('card_event_id', { mode: 'number' }),
+		state: text('state').notNull().default('not_checked'),
+		stateSetAt: timestamp('state_set_at', { withTimezone: true }),
+		stateSetBy: uuid('state_set_by'),
+		approvedBy: uuid('approved_by').references(() => actors.id, { onDelete: 'set null' }),
+		approvedAt: timestamp('approved_at', { withTimezone: true }),
+		createdBy: uuid('created_by').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('done_when_lines_object_idx').on(t.objectId, t.listStatus),
+		index('done_when_lines_workspace_idx').on(t.workspaceId),
+		check('done_when_lines_checked_by_check', sql`${t.checkedBy} in ('code', 'checker', 'person')`),
+		check(
+			'done_when_lines_list_status_check',
+			sql`${t.listStatus} in ('draft', 'approved', 'superseded')`,
+		),
+		check(
+			'done_when_lines_state_check',
+			sql`${t.state} in ('true', 'false', 'cannot_tell', 'not_checked')`,
+		),
+	],
+)
+
+// "List skipped, because X": the agent's reason for not writing a done-when list on a job. One per
+// job. Counted for the skip rate.
+export const doneWhenSkips = pgTable(
+	'done_when_skips',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		reason: text('reason').notNull(),
+		skippedBy: uuid('skipped_by').notNull(),
+		skippedAt: timestamp('skipped_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('done_when_skips_one_per_object_idx').on(t.objectId),
+		index('done_when_skips_workspace_idx').on(t.workspaceId),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
@@ -3110,6 +3349,48 @@ export const liveActivityFollows = pgTable(
 )
 
 export type LiveActivityToken = typeof liveActivityTokens.$inferSelect
+// ── Trial cards (bet "A card to start a 7-day trial", task T2) ──────────────
+//
+// One row per plain-entry card that has started a free trial, keyed by the Stripe card
+// fingerprint. The unique index is what refuses a second trial on the same card, even when two
+// requests race. Wallet cards (Apple Pay, Google Pay) are never stored: their fingerprint comes
+// from a device number. workspace_id is SET NULL on workspace delete so the card stays used.
+export const trialCards = pgTable(
+	'trial_cards',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fingerprint: text('fingerprint').notNull(),
+		workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_cards_fingerprint_uniq').on(t.fingerprint)],
+)
+
+export type TrialCard = typeof trialCards.$inferSelect
+
+// ── Trial promo codes (bet "A card to start a 7-day trial", task "Promo code on the start-trial page") ──
+//
+// A code starts the trial with no card, for `trial_days` days. Stored upper case. `redemptions` is raised by one
+// conditional UPDATE inside the transaction that starts the trial, so `max_redemptions` holds even
+// when two requests race. No code is created by the app; a person adds rows by hand.
+export const trialPromoCodes = pgTable(
+	'trial_promo_codes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		code: text('code').notNull(),
+		maxRedemptions: integer('max_redemptions').notNull(),
+		redemptions: integer('redemptions').notNull().default(0),
+		// How long the trial lasts for a person who starts it with this code. A code gives 14 unless set otherwise.
+		trialDays: integer('trial_days').notNull().default(14),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		active: boolean('active').notNull().default(true),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('trial_promo_codes_code_uniq').on(t.code)],
+)
+
+export type TrialPromoCode = typeof trialPromoCodes.$inferSelect
+
 export type LiveActivityFollow = typeof liveActivityFollows.$inferSelect
 export type NewLiveActivityToken = typeof liveActivityTokens.$inferInsert
 

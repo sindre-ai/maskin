@@ -264,7 +264,11 @@ describe('agent control routes', () => {
 			text: '{{keychain:Facebook.password}}',
 		})
 
-		expect(controlFn.mock.calls[0]?.[3]).toEqual({ action: 'type', text: SECRET })
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({
+			action: 'type_secret',
+			text: SECRET,
+			require: 'password_field',
+		})
 		expect(res.status).toBe(502)
 		expect(await res.text()).not.toContain(SECRET)
 		expect(inserts).toHaveLength(0)
@@ -290,7 +294,11 @@ describe('agent control routes', () => {
 			text: '{{keychain:Facebook.password}}',
 		})
 
-		expect(controlFn.mock.calls[0]?.[3]).toEqual({ action: 'type', text: SECRET })
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({
+			action: 'type_secret',
+			text: SECRET,
+			require: 'password_field',
+		})
 		expect(res.status).toBe(200)
 		expect(await res.json()).toEqual({ ok: true })
 		expect(inserts).toHaveLength(1)
@@ -298,6 +306,89 @@ describe('agent control routes', () => {
 			data: { keychain_credential: 'Facebook', keychain_field: 'password' },
 		})
 		expect(JSON.stringify(inserts[0])).not.toContain(SECRET)
+	})
+
+	it('types a saved password only through the check that a password field has focus', async () => {
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: 'fake-pass-abcdefghij',
+			credentialName: 'LinkedIn',
+			field: 'password',
+		})
+		const controlFn = vi.fn(async () => ({ status: 200, body: { ok: true } }))
+		const { app } = build({ control: controlFn })
+
+		await control(app, 'input', { action: 'type', text: '{{keychain:LinkedIn.password}}' })
+
+		// Never as a plain "type", which the computer would send to whatever has focus.
+		expect(controlFn.mock.calls[0]?.[3]).toMatchObject({ action: 'type_secret' })
+		expect(controlFn.mock.calls[0]?.[3]).not.toMatchObject({ action: 'type' })
+	})
+
+	it('tells the agent nothing was typed when the focus is not a password field', async () => {
+		const SECRET = 'fake-pass-abcdefghij'
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: SECRET,
+			credentialName: 'LinkedIn',
+			field: 'password',
+		})
+		const controlFn = vi.fn(async () => ({
+			status: 409,
+			body: { error: 'not_a_password_field' },
+		}))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'input', {
+			action: 'type',
+			text: '{{keychain:LinkedIn.password}}',
+		})
+
+		expect(res.status).toBe(409)
+		const text = await res.text()
+		expect(text).toContain('not a password field')
+		expect(text).toContain('Nothing was typed')
+		expect(text).not.toContain(SECRET)
+		// Nothing changed on the computer, so nothing is audited as typed.
+		expect(inserts).toHaveLength(0)
+	})
+
+	it('tells the agent to reopen a computer that cannot check the field', async () => {
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: 'fake-pass-abcdefghij',
+			credentialName: 'LinkedIn',
+			field: 'password',
+		})
+		// An older desktopd does not know the action and refuses it before typing anything.
+		const controlFn = vi.fn(async () => ({
+			status: 400,
+			body: { error: 'invalid_request', message: 'unknown action' },
+		}))
+		const { app } = build({ control: controlFn })
+
+		const res = await control(app, 'input', {
+			action: 'type',
+			text: '{{keychain:LinkedIn.password}}',
+		})
+
+		expect(res.status).toBe(409)
+		expect(await res.text()).toContain('older version')
+	})
+
+	it('types a saved username or email as plain text, as before', async () => {
+		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
+			kind: 'resolved',
+			text: 'person@example.com',
+			credentialName: 'LinkedIn',
+			field: 'email',
+		})
+		const controlFn = vi.fn(async () => ({ status: 200, body: { ok: true } }))
+		const { app } = build({ control: controlFn })
+
+		await control(app, 'input', { action: 'type', text: '{{keychain:LinkedIn.email}}' })
+
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({ action: 'type', text: 'person@example.com' })
 	})
 
 	it.each([

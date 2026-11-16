@@ -23,7 +23,11 @@ export const queryClient = new QueryClient({
 			// generic handler stacked a second toast carrying the raw backend string
 			// next to it. Same reasoning as the field-error case above: if a call
 			// site owns the presentation, the global fallback must stay quiet.
-			if (error instanceof ApiError && error.code === 'PLAN_CAP_EXCEEDED') return
+			if (
+				error instanceof ApiError &&
+				(error.code === 'PLAN_CAP_EXCEEDED' || error.code === 'TRIAL_NOT_STARTED')
+			)
+				return
 			const message =
 				error instanceof ApiError && error.message.trim() ? error.message : 'Something went wrong'
 			toast.error(message)

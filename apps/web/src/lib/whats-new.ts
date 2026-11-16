@@ -1,5 +1,11 @@
 // The sidebar's "What's new" card. Entries live in the repo (no backend); a person's
-// dismissals live in this browser only. Add a new entry at the top of ENTRIES.
+// dismissals live in this browser only. Add a new entry at the top of WHATS_NEW_ENTRIES.
+//
+// Every bet a person can see (a new screen, button or behaviour) adds one entry here as
+// part of its build. Bets with no visible change add none.
+//
+// Write what the person gains, never what was built. The title is what they can now do.
+// The body is one plain sentence on the result for them, with no technical words.
 
 export interface WhatsNewEntry {
 	id: string
@@ -10,6 +16,12 @@ export interface WhatsNewEntry {
 }
 
 export const WHATS_NEW_ENTRIES: WhatsNewEntry[] = [
+	{
+		id: 'loop-views-actions',
+		title: 'Approve and move things from the list',
+		body: "Open an item right from a loop's list, then approve it or move it on without leaving the page.",
+		date: '2026-11-13',
+	},
 	{
 		id: 'filters-chats-items',
 		title: 'Filters on Chats and Items',

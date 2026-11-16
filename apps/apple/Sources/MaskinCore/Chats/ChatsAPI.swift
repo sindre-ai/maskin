@@ -163,7 +163,22 @@ public struct ChatsHTTPError: Error, Equatable, Sendable {
 	}
 }
 
-/// Uploads one file to the workspace (`POST /api/files`, base64 JSON, 10 MB cap).
+/// Uploads one file to the workspace. Bytes in memory go as base64 JSON (`POST /api/files`, 10 MB cap,
+/// 50 MB for video); a file on disk of any size up to 1 GB can also go straight to storage in parts.
 public protocol ChatFileUploading: Sendable {
 	func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef
+	/// A file on disk. Conformers that can stream it override this; the default reads it whole.
+	func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws -> ChatAttachmentRef
+}
+
+extension ChatFileUploading {
+	public func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws
+		-> ChatAttachmentRef
+	{
+		guard !FileUploadLimits.needsDirectUpload(sizeBytes: sizeBytes, mimeType: mimeType) else {
+			throw ChatsError("Large files can't be attached here.")
+		}
+		return try await upload(
+			name: name, mimeType: mimeType, data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+	}
 }

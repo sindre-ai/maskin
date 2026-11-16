@@ -23,6 +23,19 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
+// The mock db answers every select with the same rows, so the next step lookup on the single
+// read would be handed the object itself. The lookup has its own integration test.
+vi.mock('../../lib/next-steps', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/next-steps')>()),
+	getLiveNextStep: vi.fn().mockResolvedValue(null),
+}))
+
+// Same for the go-ahead lookup. It has its own integration test.
+vi.mock('../../lib/go-aheads', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/go-aheads')>()),
+	getLiveGoAhead: vi.fn().mockResolvedValue(null),
+}))
+
 // Import the route module directly (not index.ts)
 const { default: objectsRoutes } = await import('../../routes/objects')
 

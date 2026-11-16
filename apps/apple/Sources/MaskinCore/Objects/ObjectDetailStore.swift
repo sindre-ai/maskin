@@ -154,6 +154,8 @@ public final class ObjectDetailStore {
 	public let objectId: String
 	public private(set) var object: WorkObject?
 	public private(set) var links: [ObjectLink] = []
+	/// The session that produced this item, when one did. Not cached: it appears after the first fetch.
+	public private(set) var origin: ObjectOrigin?
 	public private(set) var timeline: [TimelineItem] = []
 	public private(set) var phase: Phase = .loading
 	public private(set) var isOffline = false
@@ -334,6 +336,7 @@ public final class ObjectDetailStore {
 				// data; its own completion refetches.
 				if before == editCount { object = graph.object }
 				links = graph.links
+				origin = graph.origin
 				resolveFiles()
 				resolveLinkTitles()
 				mergeTimeline(graph.events)

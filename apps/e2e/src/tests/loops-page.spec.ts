@@ -112,9 +112,9 @@ test.describe('Loops list page', () => {
 			await page.goto(`/${account.workspaceId}/loops`)
 			await expect(page.getByText('Sales pipeline')).toBeVisible({ timeout: 10000 })
 
-			// Only the flow with a target carries a progress bar (the others show a decorative one
-			// of items completed), and a target nobody has met is Missed.
-			await expect(page.getByRole('progressbar')).toHaveCount(1)
+			// Only the flow with a target carries a target progress bar (the others show a decorative
+			// one of items completed), and a target nobody has met is Missed.
+			await expect(page.getByRole('progressbar', { name: /customers closed/ })).toHaveCount(1)
 			await expect(
 				page.getByRole('progressbar', { name: '0 of 10 customers closed' }),
 			).toBeVisible()

@@ -18,7 +18,15 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
+import {
+	DoneWhenError,
+	approveDraftDoneWhen,
+	hasApprovedDoneWhen,
+	resolveDoneWhenTap,
+	writeDraftDoneWhen,
+} from '../lib/done-when'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
 import { recordObjectApproval } from '../lib/object-delivery'
@@ -42,10 +50,7 @@ import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
-import {
-	isAgentMentionFreeComment,
-	isCommentFallbackDriverEligible,
-} from '../services/trigger-runner'
+import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 import { commentPromptHeadline } from '../services/workspace-briefing'
 
 type Env = {
@@ -329,6 +334,14 @@ app.openapi(createCommentRoute, (async (c) => {
 	let decision = body.decision
 	if (body.decision) {
 		const violations = validateDecisionProse(body.decision)
+		const defaultIndex = body.decision.options.findIndex((option) => option.default_on_silence)
+		if (defaultIndex >= 0 && !isFlagEnabledForWorkspace(workspaceId, FLAGS.DECISION_DEFAULT)) {
+			violations.push({
+				path: `options.${defaultIndex}.default_on_silence`,
+				message:
+					'A default on silence is not switched on in this workspace. Drop default_on_silence and wait for the answer, or schedule your own check for the deadline.',
+			})
+		}
 		// A card that asks to change a status needs a button that does it, or it outlives the
 		// change. Checked here because it needs the object's status names.
 		const statusCheck =
@@ -337,6 +350,23 @@ app.openapi(createCommentRoute, (async (c) => {
 				: undefined
 		if (statusCheck && 'decision' in statusCheck) decision = statusCheck.decision
 		violations.push(...(statusCheck && 'violations' in statusCheck ? statusCheck.violations : []))
+		// A done-when list is on behind its flag, and an approved list can no longer be rewritten
+		// by an agent: it raises a normal card with its reason instead.
+		if (body.decision.done_when) {
+			if (!isFlagEnabledForWorkspace(workspaceId, FLAGS.DONE_WHEN_LIST)) {
+				violations.push({
+					path: 'done_when',
+					message:
+						'The done-when list is not switched on in this workspace. Drop done_when and the approve_done_when option.',
+				})
+			} else if (await hasApprovedDoneWhen(db, body.entity_id)) {
+				violations.push({
+					path: 'done_when',
+					message:
+						'This job already has an approved done-when list, and only a person can change it. If a line is wrong, post a card with a decision and your reason, and no done_when block.',
+				})
+			}
+		}
 		// A delete_agent option names an agent that must exist here. Checked here for the same reason.
 		if (violations.length === 0) {
 			violations.push(
@@ -466,6 +496,18 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 		: null
 
+	// A person tapping Approve on a done-when card approves the draft as themselves, in the same
+	// transaction as their reply. Only a person's own client counts, as above.
+	const doneWhenTap = mayApprove
+		? await resolveDoneWhenTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+	const doneWhenDraft = decision?.done_when
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -482,49 +524,82 @@ app.openapi(createCommentRoute, (async (c) => {
 			approvedSendHash,
 		})
 	const delivery = routing?.delivery
-	const { comment, unresolvedMentions } =
-		replyApprovals.length === 0 && !delivery && !statusTap && !deletionTap
-			? await post(db)
-			: await db.transaction(async (tx) => {
-					if (deletionTap) {
-						await recordAgentDeletionApproval(tx, {
-							workspaceId,
-							approverId: actorId,
-							tap: deletionTap,
-						})
-					}
-					if (statusTap) {
-						statusAction = await applyStatusTap(tx, {
-							tap: statusTap,
-							workspaceId,
-							actorId,
-							sessionId: c.get('maskinSessionId'),
-						})
-					}
-					for (const approval of replyApprovals) {
-						await recordObjectApproval(tx, {
-							workspaceId,
-							actorId,
-							objectId: approval.objectId,
-							objectType: approval.objectType,
-							preview: approval.preview,
-							via: 'reply',
-							replyToEventId: approval.cardEventId,
-						})
-					}
-					const posted = await post(tx as unknown as typeof db)
-					if (delivery) {
-						await deliverRoutedComment(tx, {
-							delivery,
-							workspaceId,
-							commenterId: actorId,
-							object: { id: body.entity_id, title: object.title ?? '', type: object.type },
-							commentEventId: posted.comment.id,
-							body: body.content,
-						})
-					}
-					return posted
-				})
+	let result: Awaited<ReturnType<typeof post>>
+	try {
+		result =
+			replyApprovals.length === 0 &&
+			!delivery &&
+			!statusTap &&
+			!deletionTap &&
+			!doneWhenTap &&
+			!doneWhenDraft
+				? await post(db)
+				: await db.transaction(async (tx) => {
+						if (deletionTap) {
+							await recordAgentDeletionApproval(tx, {
+								workspaceId,
+								approverId: actorId,
+								tap: deletionTap,
+							})
+						}
+						if (doneWhenTap) {
+							await approveDraftDoneWhen(tx, {
+								objectId: doneWhenTap.objectId,
+								actorId,
+								cardEventId: doneWhenTap.cardEventId,
+							})
+						}
+						if (statusTap) {
+							statusAction = await applyStatusTap(tx, {
+								tap: statusTap,
+								workspaceId,
+								actorId,
+								sessionId: c.get('maskinSessionId'),
+							})
+						}
+						for (const approval of replyApprovals) {
+							await recordObjectApproval(tx, {
+								workspaceId,
+								actorId,
+								objectId: approval.objectId,
+								objectType: approval.objectType,
+								preview: approval.preview,
+								via: 'reply',
+								replyToEventId: approval.cardEventId,
+							})
+						}
+						const posted = await post(tx as unknown as typeof db)
+						// The draft carries the id of the card that proposes it, so it is written after the card.
+						if (doneWhenDraft) {
+							await writeDraftDoneWhen(tx, {
+								workspaceId,
+								objectId: body.entity_id,
+								actorId,
+								cardEventId: Number(posted.comment.id),
+								block: doneWhenDraft,
+							})
+						}
+						if (delivery) {
+							await deliverRoutedComment(tx, {
+								delivery,
+								workspaceId,
+								commenterId: actorId,
+								object: { id: body.entity_id, title: object.title ?? '', type: object.type },
+								commentEventId: posted.comment.id,
+								body: body.content,
+							})
+						}
+						return posted
+					})
+	} catch (err) {
+		// A tap on a card the agent has since replaced approves nothing and says so.
+		if (err instanceof DoneWhenError) {
+			const status = err.code === 'FORBIDDEN' ? 403 : err.code === 'NOT_FOUND' ? 404 : 400
+			return c.json(createApiError(err.code, err.message), status as never)
+		}
+		throw err
+	}
+	const { comment, unresolvedMentions } = result
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the
@@ -574,15 +649,10 @@ app.openapi(createCommentRoute, (async (c) => {
 	// here so the thread-reply auto-spawn doesn't double up on the same agent
 	// for the same comment.
 	//
-	// An agent's mention-free reply is low-attention and wakes nobody here, the
-	// same rule the dispatcher applies to cases 2 and 3.
-	if (
-		parentEventId !== undefined &&
-		!isAgentMentionFreeComment({
-			actorType: c.get('actorType'),
-			mentionCount: storedMentions?.length ?? 0,
-		})
-	) {
+	// An agent's reply wakes nobody here. Agents @mention whoever they need, and the
+	// `CommentDispatcher` wakes those; waking every other participant too started sessions
+	// for replies that were addressed to someone else or only said 'noted, no ask'.
+	if (parentEventId !== undefined && c.get('actorType') !== 'agent') {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, storedMentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude

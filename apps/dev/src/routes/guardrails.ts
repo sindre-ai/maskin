@@ -5,10 +5,12 @@ import {
 	type Guardrails,
 	SEND_PERMISSION_KINDS,
 	type SendPermissionKind,
-	dailyBudgetSchema,
 	guardrailsSchema,
+	storedDailyBudgetSchema,
+	toPercentBudget,
 } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { resolveWorkspaceCapCents } from '../lib/daily-budget'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { describeAgentAccess } from '../lib/integrations/agent-access-view'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -54,7 +56,11 @@ app.openapi(route, async (c) => {
 
 	const [[workspace], send] = await Promise.all([
 		db
-			.select({ settings: workspaces.settings })
+			.select({
+				settings: workspaces.settings,
+				enterpriseGranted: workspaces.enterpriseGranted,
+				billingOwnerId: workspaces.billingOwnerId,
+			})
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.limit(1),
@@ -62,9 +68,14 @@ app.openapi(route, async (c) => {
 	])
 	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 
-	const budget = dailyBudgetSchema.safeParse(
+	// The target is shown in percent of the plan like everywhere else; one saved in tokens or
+	// dollars before that is converted on read, the same way GET /api/billing/daily-budget does.
+	const stored = storedDailyBudgetSchema.safeParse(
 		(workspace.settings as { daily_budget?: unknown } | null)?.daily_budget,
 	)
+	const budget = stored.success
+		? toPercentBudget(stored.data, resolveWorkspaceCapCents(workspace)).budget
+		: null
 
 	const agents = await Promise.all(
 		send.agents.map(async (agent) => {
@@ -87,12 +98,12 @@ app.openapi(route, async (c) => {
 
 	const body: Guardrails = {
 		workspace: {
-			daily_budget: budget.success
+			daily_budget: budget
 				? {
-						unit: budget.data.unit,
-						amount: budget.data.amount,
-						stop_share: budget.data.stop_share,
-						timezone: budget.data.timezone,
+						unit: budget.unit,
+						amount: budget.amount,
+						stop_share: budget.stop_share,
+						timezone: budget.timezone,
 					}
 				: null,
 			// dailyBudgetSchema says it too: nothing reads stop_share, the target only reports.

@@ -7,8 +7,10 @@ import {
 	isSessionIdleAwaitingInput,
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
-import type { MessageResponse, SessionResponse } from '@/lib/api'
+import type { BillingUsageResponse, MessageResponse, SessionResponse } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { toastSessionBudgetStopped } from '@/lib/session-errors'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionActivityLogs } from './use-session-activity-logs'
@@ -832,6 +834,7 @@ export function useSessionBudgetStopToast(
 ): void {
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const navigate = useNavigate()
+	const queryClient = useQueryClient()
 	const seenStatusRef = useRef<Map<string, string>>(new Map())
 
 	useEffect(() => {
@@ -842,7 +845,12 @@ export function useSessionBudgetStopToast(
 			if (session.status !== 'failed' && session.status !== 'timeout') continue
 			const reason = parseFailureReason(session.result as Record<string, unknown> | null)
 			if (reason?.reason_code !== 'plan_cap_exceeded') continue
-			toastSessionBudgetStopped(navigate, workspaceId)
+			// The billing read is already cached by the sidebar and the banner; a trial reads
+			// differently from a paid plan, and a cache miss falls back to the paid wording.
+			const billing = queryClient.getQueryData<BillingUsageResponse>(
+				queryKeys.billing.usage(workspaceId),
+			)
+			toastSessionBudgetStopped(navigate, workspaceId, billing?.plan === 'trial')
 		}
-	}, [sessions, navigate, workspaceId])
+	}, [sessions, navigate, workspaceId, queryClient])
 }

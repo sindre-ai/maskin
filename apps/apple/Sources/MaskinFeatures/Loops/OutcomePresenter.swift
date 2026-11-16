@@ -36,8 +36,11 @@ struct OutcomePresenter: View {
 					}
 					if let file = store.file {
 						ToolbarItem(placement: .primaryAction) {
-							ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
-								Label("Share", systemImage: "square.and.arrow.up")
+							// A file over the inline cap has no bytes here to share.
+							if !file.contentOmitted {
+								ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
+									Label("Share", systemImage: "square.and.arrow.up")
+								}
 							}
 						}
 						ToolbarItem(placement: .primaryAction) {

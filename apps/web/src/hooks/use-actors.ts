@@ -10,6 +10,7 @@ import {
 	api,
 } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
+import { syncStoredActor } from '../lib/refresh-stored-actor'
 import { sortByName } from '../lib/sort'
 import { useWorkspace } from '../lib/workspace-context'
 
@@ -83,7 +84,9 @@ export function useUpdateActor(workspaceId?: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateActorInput }) =>
 			api.actors.update(id, data, workspaceId),
-		onSuccess: (_result, { id, data }) => {
+		onSuccess: (result, { id, data }) => {
+			// The greeting reads the name saved in the browser, so a rename of the signed-in person lands there too.
+			syncStoredActor(result)
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			// The default workspace is read back from the workspaces list (`isDefault`).

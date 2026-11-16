@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
@@ -128,6 +129,8 @@ function formatExpiry(expiresAt: number | undefined): string {
 
 function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 	const queryClient = useQueryClient()
+	// With the percent display on, no dollar figure is shown anywhere, including the free default.
+	const percentOn = usePlanPercentEnabled()
 	const [pasteSlot, setPasteSlot] = useState<ClaudeOAuthSlot | null>(null)
 
 	const invalidate = useCallback(
@@ -181,11 +184,16 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 		<div>
 			<div>
 				<Label className="mb-1 text-[15px] font-semibold text-foreground">
-					Default LLM ($5 Free Usage)
+					{percentOn ? 'Default LLM (Free Usage)' : 'Default LLM ($5 Free Usage)'}
 				</Label>
 				<p className="text-[13px] text-muted-foreground mb-6">
 					Uses Deepseek V4 Flash via OpenRouter as the default model when no API keys are
-					configured. <b>Provides up to $5 USD equivalent of free usage per day, per workspace.</b>
+					configured.{' '}
+					<b>
+						{percentOn
+							? 'Provides a free daily usage allowance, per workspace.'
+							: 'Provides up to $5 USD equivalent of free usage per day, per workspace.'}
+					</b>{' '}
 					Automatically activates for users without Claude subscriptions, API keys or custom llm.
 				</p>
 			</div>

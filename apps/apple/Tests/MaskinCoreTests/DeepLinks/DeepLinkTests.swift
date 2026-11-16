@@ -94,7 +94,7 @@ struct DeepLinkTests {
 		#expect(DeepLink(string: "maskin://\(ws)/objects") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/objects/") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/objects/\(id)/extra") == nil)
-		#expect(DeepLink(string: "maskin://\(ws)/settings/keys") == nil)
+		#expect(DeepLink(string: "maskin://\(ws)/settings/nope") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/agents/\(id)/runs") == nil)
 		#expect(DeepLink(string: "maskin://\(ws)/agents/") == .agents(workspaceId: ws))
 		#expect(DeepLink(string: "maskin://\(ws)//objects/\(id)") == nil)

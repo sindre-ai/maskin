@@ -116,6 +116,47 @@ describe('POST /api/test-grants/:id', () => {
 		expect(written.settings.custom_extensions).toEqual({ demo: 'keep-me' })
 	})
 
+	it.each(['trial', 'starter', 'pro', 'team', 'ultra'])(
+		'accepts %s as a plan tier with a valid token',
+		async (plan) => {
+			process.env.MASKIN_TEST_GRANT_TOKEN = TOKEN
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(testGrantsRoutes, '/api/test-grants')
+			mockResults.select = [ws]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/test-grants/${ws.id}`, {
+					method: 'POST',
+					headers: grant(TOKEN),
+					body: JSON.stringify({ plan }),
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const written = calls.updates[0] as { settings: { billing: Record<string, unknown> } }
+			expect(written.settings.billing).toMatchObject({ plan, status: 'active' })
+		},
+	)
+
+	it('returns 400 for a plan that is not one of the five', async () => {
+		process.env.MASKIN_TEST_GRANT_TOKEN = TOKEN
+		const ws = buildWorkspace()
+		const { app, mockResults, calls } = createTestApp(testGrantsRoutes, '/api/test-grants')
+		mockResults.select = [ws]
+
+		const res = await app.request(
+			new Request(`http://localhost/api/test-grants/${ws.id}`, {
+				method: 'POST',
+				headers: grant(TOKEN),
+				body: JSON.stringify({ plan: 'platinum' }),
+			}),
+		)
+
+		expect(res.status).toBe(400)
+		expect(calls.updates).toHaveLength(0)
+	})
+
 	it('grants enterprise_granted with a valid token', async () => {
 		process.env.MASKIN_TEST_GRANT_TOKEN = TOKEN
 		const ws = buildWorkspace()

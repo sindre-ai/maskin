@@ -46,6 +46,19 @@ struct ObjectDetailStoreTests {
 		#expect(store.timeline[1].kind == .activity("moved status from todo to in progress"))
 	}
 
+	@Test("the origin from the graph reaches the store; none when no session produced it")
+	func origin() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		#expect(store.origin == nil)
+		var graph = Fixtures.graph(for: Fixtures.objects.first { $0.id == "t1" }!)
+		graph.origin = ObjectOrigin(sessionId: "s1", actorId: "forge", chatId: "c1")
+		remote.setGraph(graph)
+		await store.refresh()
+		#expect(store.origin?.sessionId == "s1")
+		#expect(store.origin?.chatId == "c1")
+	}
+
 	@Test("an unresolvable actor reads as Someone, never an id")
 	func unknownActor() async {
 		let (store, _) = makeStore()
