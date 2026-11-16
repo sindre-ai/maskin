@@ -959,8 +959,15 @@ describe('GET /api/search against real Postgres', () => {
 				snippet: 'You: Booked the room',
 			})
 			expect(res.results[0]?.updatedAt).not.toBeNull()
-			// The chats keep their own cap of three after it, and nobody shows twice.
-			expect(res.results.filter((r) => r.group === 'chats')).toHaveLength(4)
+			// The direct message takes no chat's place: all four titled chats still follow it (the room
+			// the cap leaves is filled), and nobody shows twice.
+			expect(res.results.map((r) => r.type)).toEqual([
+				'direct_message',
+				'chat',
+				'chat',
+				'chat',
+				'chat',
+			])
 			expect(res.results.filter((r) => r.id === dm.id)).toHaveLength(1)
 			expect(res.results.some((r) => r.id === magnusId)).toBe(false)
 		})

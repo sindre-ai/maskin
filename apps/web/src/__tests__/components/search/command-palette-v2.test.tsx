@@ -727,7 +727,9 @@ describe('launcher: a teammate first', () => {
 		renderLauncher()
 		await user.type(field(), 'magnus')
 
-		const first = (await screen.findAllByRole('option'))[0] as HTMLElement
+		// The Search row is there before the answer is, so wait for the teammate's row.
+		const first = await screen.findByRole('option', { name: /Magnus Nodegard/ })
+		expect((await screen.findAllByRole('option'))[0]).toBe(first)
 		expect(first).toHaveTextContent('Magnus Nodegard')
 		expect(first).toHaveTextContent('You: Booked the room · 2h')
 		expect(first).toHaveTextContent('DIRECT MESSAGE')
@@ -752,7 +754,9 @@ describe('launcher: a teammate first', () => {
 		renderLauncher()
 		await user.type(field(), 'magnus')
 
-		const first = (await screen.findAllByRole('option'))[0] as HTMLElement
+		// The Search row is there before the answer is, so wait for the teammate's row.
+		const first = await screen.findByRole('option', { name: /Magnus Nodegard/ })
+		expect((await screen.findAllByRole('option'))[0]).toBe(first)
 		expect(first).toHaveTextContent('Magnus Nodegard')
 		expect(first).toHaveTextContent('Start a chat')
 		expect(first).toHaveTextContent('PERSON')
