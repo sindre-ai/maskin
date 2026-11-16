@@ -1510,6 +1510,11 @@ export const conversationParticipants = pgTable(
 		leftAt: timestamp('left_at', { withTimezone: true }),
 		pinned: boolean('pinned').notNull().default(false),
 		archived: boolean('archived').notNull().default(false),
+		// When this person put the chat on Later; null when they have not. The chat counts as Later
+		// only while no message has arrived since (later_at is not before conversations.last_message_at),
+		// so a new message brings it back without writing to anyone's row. Set from the database
+		// clock so it compares with last_message_at on the same clock. See migration 0164.
+		laterAt: timestamp('later_at', { withTimezone: true }),
 		// High-water mark into messages.id (bigserial, monotonic).
 		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
