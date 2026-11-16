@@ -393,7 +393,11 @@ test.describe('Sidebar Activity card', () => {
 					await page.goto(`/${account.workspaceId}`)
 					const card = page.getByRole('region', { name: "What's new" })
 					await expect(card).toBeVisible()
-					await expect(card.getByText('Filters on Chats and Items')).toBeVisible()
+					// The card announces whichever entry is newest, so assert on its structure
+					// (a non-empty title and date line) and not on one entry's title.
+					await expect(card.getByText("What's new", { exact: true })).toBeVisible()
+					await expect(card.locator('p').first()).toHaveText(/\S/)
+					await expect(card.locator('p').last()).toHaveText(/^\d{1,2} [A-Z][a-z]{2}$/)
 					await expect(card.getByRole('button', { name: 'Dismiss' })).toBeVisible()
 				})
 			}
