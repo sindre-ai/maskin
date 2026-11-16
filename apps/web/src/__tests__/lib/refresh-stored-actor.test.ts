@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', () => ({ api: { actors: { get: vi.fn() } } }))
 
 // The refresh is remembered per page load, so every test starts from a fresh copy of the module.
+// The mocked api survives a module reset, so its calls and answers are cleared here too.
 async function load() {
 	vi.resetModules()
 	const refresh = await import('@/lib/refresh-stored-actor')
 	const { api } = await import('@/lib/api')
 	const auth = await import('@/lib/auth')
-	return { ...refresh, ...auth, get: vi.mocked(api.actors.get) }
+	const get = vi.mocked(api.actors.get)
+	get.mockReset()
+	return { ...refresh, ...auth, get }
 }
 
 const stale = { id: 'actor-1', name: 'Sebk', type: 'human', email: 'seb@example.com' }
