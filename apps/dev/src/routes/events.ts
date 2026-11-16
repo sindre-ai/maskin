@@ -18,6 +18,7 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
+import { findDecisionCardAsker } from '../lib/decision-card-asker'
 import {
 	DoneWhenError,
 	approveDraftDoneWhen,
@@ -643,17 +644,26 @@ app.openapi(createCommentRoute, (async (c) => {
 	// for replies that were addressed to someone else or only said 'noted, no ask'.
 	if (parentEventId !== undefined && c.get('actorType') !== 'agent') {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, storedMentions)
+		// A person's answer to a decision card starts only the agent that asked it. The fallback
+		// ladder (the driver, the Chief of Staff) stands down for it, see CommentDispatcher.
+		const cardAskerId = await findDecisionCardAsker(db, {
+			workspaceId,
+			objectId: body.entity_id,
+			threadRootEventId: parentEventId,
+		})
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude
 		// them here as well — otherwise one reply queues two sessions for the same
 		// agent (`comment_fallback` + `thread_reply`), which is the doubling the
 		// 8515a7d8 insight measured as 9 comments → 18 sessions.
-		const fallbackDriverId = await resolveFallbackDriverId(db, {
-			commenterId: actorId,
-			mentionCount: storedMentions?.length ?? 0,
-			parentAuthorId: opActorId,
-			objectId: body.entity_id,
-		})
+		const fallbackDriverId = cardAskerId
+			? null
+			: await resolveFallbackDriverId(db, {
+					commenterId: actorId,
+					mentionCount: storedMentions?.length ?? 0,
+					parentAuthorId: opActorId,
+					objectId: body.entity_id,
+				})
 		if (fallbackDriverId) excludedAgentIds.add(fallbackDriverId)
 		spawnThreadReplySessions({
 			db,
@@ -665,6 +675,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			newCommentEventId: comment.id,
 			newCommentContent: body.content,
 			excludedAgentIds,
+			cardAskerId,
 		}).catch((err) =>
 			logger.error('Failed to spawn thread-reply sessions', {
 				objectId: body.entity_id,
@@ -847,6 +858,8 @@ async function spawnThreadReplySessions(ctx: {
 	newCommentEventId: number
 	newCommentContent: string
 	excludedAgentIds: Set<string>
+	/** The agent that asked the decision card this comment answers; it is then the only one started. */
+	cardAskerId: string | null
 }): Promise<void> {
 	const threadComments = await ctx.db
 		.select({
@@ -936,9 +949,11 @@ async function spawnThreadReplySessions(ctx: {
 	// Drop any agent already being spawned via the @mention path for this
 	// same comment — the mention session carries a notification id and takes
 	// precedence over the implicit thread-reply trigger.
-	const threadReplyAgentIds = Array.from(agentParticipantIds).filter(
-		(id) => !ctx.excludedAgentIds.has(id),
-	)
+	const threadReplyAgentIds = ctx.cardAskerId
+		? ctx.excludedAgentIds.has(ctx.cardAskerId)
+			? []
+			: [ctx.cardAskerId]
+		: Array.from(agentParticipantIds).filter((id) => !ctx.excludedAgentIds.has(id))
 
 	// Resolve the object type once for the whole thread-reply fanout — a
 	// thread-reply spawn is on a first-class object by construction (the
@@ -993,6 +1008,7 @@ async function spawnThreadReplySessions(ctx: {
 				// Who asked: launch puts the sender line above the prompt, so the stored
 				// prompt (and the session's title) starts with what the work is.
 				sent_by_actor_id: ctx.actorId,
+				...(ctx.cardAskerId ? { card_answer: { by_actor_id: ctx.actorId } } : {}),
 				thread_reply: {
 					object_id: ctx.objectId,
 					comment_event_id: ctx.newCommentEventId,

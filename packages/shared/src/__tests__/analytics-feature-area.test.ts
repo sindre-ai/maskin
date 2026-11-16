@@ -11,6 +11,7 @@ describe('featureAreaForEvent', () => {
 		['agent_chat_started_message', 'chats'],
 		['foryou_card_shown', 'for_you'],
 		['foryou_card_action', 'for_you'],
+		['foryou_card_default_applied', 'for_you'],
 		['object_updated', 'objects'],
 		['bet_status_changed', 'objects'],
 		['knowledge_page_viewed', 'objects'],

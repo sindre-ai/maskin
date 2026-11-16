@@ -162,6 +162,28 @@ export interface SessionModelProps {
 }
 
 /**
+ * Why a session started, as a category for `agent_session_started.start_reason`: `task` (a ready
+ * task started its owner), `mention` (another agent asked), `sweep` (the sweep for overdue work) or
+ * `card_answer` (a person answered a decision card). Any other start keeps the platform's own
+ * `config.start_reason` (person, trigger_event, ...), and a session with none reads null. Only
+ * categories: no ids, no text.
+ */
+export function analyticsStartReason(config: unknown): string | null {
+	const c = (config ?? {}) as {
+		start_reason?: unknown
+		card_answer?: unknown
+		driver_wake?: { source?: unknown; reasons?: unknown } | null
+	}
+	if (c.card_answer) return 'card_answer'
+	if (c.start_reason === 'sweep' || c.driver_wake?.source === 'sweep') return 'sweep'
+	if (Array.isArray(c.driver_wake?.reasons) && c.driver_wake.reasons.includes('task_ready')) {
+		return 'task'
+	}
+	if (c.start_reason === 'agent_request') return 'mention'
+	return typeof c.start_reason === 'string' ? c.start_reason : null
+}
+
+/**
  * Dev-side `agent_session_started` and, for a trigger-dispatched session,
  * `trigger_fired`, fired once when a session first launches with its model
  * resolved. A resume keeps the model it started on and does not fire again.
@@ -178,6 +200,8 @@ export async function trackSessionLaunchModel(
 		agentId: string
 		triggerId?: string | null
 		triggerType?: string | null
+		/** See analyticsStartReason(). */
+		startReason?: string | null
 	},
 ): Promise<void> {
 	try {
@@ -190,7 +214,10 @@ export async function trackSessionLaunchModel(
 			route: p.route,
 			emitted_from: 'dev_backend',
 		}
-		await capturePosthogEvent('agent_session_started', p.agentId, base)
+		await capturePosthogEvent('agent_session_started', p.agentId, {
+			...base,
+			start_reason: p.startReason ?? null,
+		})
 		if (p.triggerId) {
 			await capturePosthogEvent('trigger_fired', p.agentId, {
 				...base,

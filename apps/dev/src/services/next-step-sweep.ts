@@ -29,8 +29,8 @@
  */
 import type { Database } from '@maskin/db'
 import {
-	actors,
 	events,
+	actors,
 	forYouWithdrawals,
 	nextStepSweepClaims,
 	nextSteps,
@@ -48,8 +48,8 @@ import {
 	findObjectsNeedingNextStep,
 	getLiveNextStep,
 } from '../lib/next-steps'
-import { dueAtOf } from './push-policy'
 import { DRIVER_WOKEN_ACTION, buildWakePrompt } from './driver-wake'
+import { dueAtOf } from './push-policy'
 import { SessionNotAdmittedError } from './self-start-limits'
 import { TERMINAL_STATUSES, startSession } from './session-lifecycle'
 
@@ -122,7 +122,9 @@ export async function findBacklogTasksDueSoon(
 	db: Database,
 	opts: { workspaceId: string; now: Date; limit?: number },
 ): Promise<SweepItem[]> {
-	const horizon = new Date(opts.now.getTime() + TASK_DUE_LEAD_MS + DAY_MS).toISOString().slice(0, 10)
+	const horizon = new Date(opts.now.getTime() + TASK_DUE_LEAD_MS + DAY_MS)
+		.toISOString()
+		.slice(0, 10)
 	const rows = await db
 		.select({
 			objectId: objects.id,
@@ -383,11 +385,7 @@ export class NextStepSweep {
 	}
 
 	/** Inserting the row is the claim. Null when another instance, or an earlier tick, has it. */
-	private async claim(
-		item: SweepItem,
-		mode: 'record' | 'wake',
-		now: Date,
-	): Promise<string | null> {
+	private async claim(item: SweepItem, mode: 'record' | 'wake', now: Date): Promise<string | null> {
 		const [row] = await this.db
 			.insert(nextStepSweepClaims)
 			.values({
