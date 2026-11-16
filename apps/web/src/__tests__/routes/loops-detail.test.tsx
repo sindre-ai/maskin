@@ -30,6 +30,8 @@ vi.mock('@/hooks/use-loops', () => ({
 	},
 	useLoops: () => mockUseLoops(),
 	useLoopActivity: () => mockUseLoopActivity(),
+	useLoopMembership: () => mockUseRelationships(),
+	useObjectsByIds: () => ({ data: [] }),
 }))
 
 const mockUseActors = vi.fn()
@@ -38,6 +40,17 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 const mockUseTriggers = vi.fn()
+vi.mock('@tanstack/react-query', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-query')>()),
+	useQueryClient: () => ({
+		cancelQueries: vi.fn(),
+		getQueryData: vi.fn(),
+		setQueryData: vi.fn(),
+	}),
+}))
+vi.mock('@/hooks/use-briefings', () => ({
+	useLoopBriefingPages: () => [],
+}))
 vi.mock('@/hooks/use-notifications', () => ({
 	useNotifications: () => ({ data: [] }),
 }))
@@ -48,15 +61,11 @@ vi.mock('@/hooks/use-triggers', () => ({
 }))
 
 const mockUseRelationships = vi.fn()
-vi.mock('@/hooks/use-relationships', () => ({
-	useRelationships: () => mockUseRelationships(),
-}))
 
 const mockDeleteObject = vi.fn()
 const mockUseObject = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: () => mockUseObject(),
-	useObjects: () => ({ data: [] }),
 	useUpdateObject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	useDeleteObject: () => ({ mutate: mockDeleteObject, isPending: false }),
 }))
@@ -150,7 +159,7 @@ beforeEach(() => {
 	mockUseLoopActivity.mockReturnValue({ data: [] })
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
-	mockUseRelationships.mockReturnValue({ data: [] })
+	mockUseRelationships.mockReturnValue({ data: { itemIds: [], fileIds: [] } })
 	mockUseObject.mockReturnValue({ data: undefined })
 })
 
@@ -280,8 +289,10 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		mockUseTriggers.mockReturnValue({ data: undefined, isError: true, refetch })
 		render(<LoopDetailRoute />)
 
+		// How the flow runs is on Setup, not Overview.
+		await user.click(screen.getByRole('button', { name: 'Setup' }))
 		expect(screen.getAllByTestId('loop-block-error')).toHaveLength(1)
-		expect(screen.getByText(/Couldn't load the steps of this flow/)).toBeInTheDocument()
+		expect(screen.getByText(/Couldn't load how this flow runs/)).toBeInTheDocument()
 		expect(screen.queryByText(/recent activity/)).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Try again' }))
@@ -295,7 +306,7 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Activity' }))
 		expect(screen.getByText(/Couldn't load the flow's recent activity/)).toBeInTheDocument()
-		expect(screen.queryByText(/Couldn't load the steps/)).not.toBeInTheDocument()
+		expect(screen.queryByText(/Couldn't load how this flow runs/)).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Try again' }))
 		expect(refetch).toHaveBeenCalledTimes(1)
@@ -312,6 +323,9 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		vi.useFakeTimers()
 		mockUseActors.mockReturnValue({ data: undefined, isLoading: true, refetch })
 		render(<LoopDetailRoute />)
+		act(() => {
+			screen.getByRole('button', { name: 'Setup' }).click()
+		})
 
 		act(() => {
 			vi.advanceTimersByTime(29_000)
@@ -321,7 +335,7 @@ describe('LoopDetailRoute — slow or failing calls', () => {
 		act(() => {
 			vi.advanceTimersByTime(1_000)
 		})
-		expect(screen.getByText(/Couldn't load the steps of this flow/)).toBeInTheDocument()
+		expect(screen.getByText(/Couldn't load how this flow runs/)).toBeInTheDocument()
 		expect(screen.getByText(/The server may be busy/)).toBeInTheDocument()
 	})
 })

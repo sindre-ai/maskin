@@ -20,6 +20,7 @@ import { createApp } from './app-factory'
 import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
+import { LumaRegistrationsSyncJob } from './jobs/luma-registrations-sync'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
@@ -60,8 +61,10 @@ import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
+import { DecisionDefaultWake } from './services/decision-default-wake'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { DriverWaker } from './services/driver-wake'
 import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
@@ -70,6 +73,8 @@ import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
+import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
@@ -303,6 +308,21 @@ triggerRunner
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
 
+// Wakes the driver when its child tasks close, a blocker clears, its object is moved by someone
+// else or a decision card expires. Does nothing unless the workspace has the driver-wake flag.
+const driverWaker = new DriverWaker(db, notifyBridge)
+driverWaker.start()
+
+// Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
+// workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
+const nextStepSweep = new NextStepSweep(db)
+nextStepSweep.start()
+
+// Carries out the default on silence of a decision card whose deadline passed with no answer.
+// Does nothing unless the workspace has the decision-default flag.
+const decisionDefaultWake = new DecisionDefaultWake(db)
+decisionDefaultWake.start()
+
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
@@ -326,6 +346,10 @@ logger.info('Gmail watch renewer started')
 const gscSyncScheduler = new GscSyncScheduler(db)
 gscSyncScheduler.start()
 logger.info('GSC sync scheduler started')
+
+const microsoftSyncScheduler = new MicrosoftSyncScheduler(db)
+microsoftSyncScheduler.start()
+logger.info('Microsoft sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
@@ -382,7 +406,7 @@ briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
 // Summary email (one grouped mail a day). Own query, own claim; killswitch
-// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+// FEATURE_BRIEFING_EMAIL: in production only =1 sends, elsewhere =0 stops; the push is left alone.
 const briefingEmailScheduler = new BriefingEmailScheduler(db)
 briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.
@@ -442,6 +466,22 @@ if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
 	logger.info('Telnyx recording sync started')
 }
 
+// Luma registrations: every 30 minutes reads the guest list of each Luma event between planned
+// and live and writes the approved count as a luma.registrations reading. No model in the path.
+// Off unless LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID and _ACTOR_ID (the agent granted the Luma key)
+// are set. Optional: _KEY_NAME (Keychain name, default Luma). With no key it logs once and waits.
+const lumaSyncWorkspaceId = process.env.LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID
+const lumaSyncActorId = process.env.LUMA_REGISTRATIONS_SYNC_ACTOR_ID
+if (lumaSyncWorkspaceId && lumaSyncActorId) {
+	const lumaRegistrationsSyncJob = new LumaRegistrationsSyncJob(db, {
+		workspaceId: lumaSyncWorkspaceId,
+		actorId: lumaSyncActorId,
+		keyName: process.env.LUMA_REGISTRATIONS_SYNC_KEY_NAME || 'Luma',
+	})
+	lumaRegistrationsSyncJob.start()
+	logger.info('Luma registrations sync started')
+}
+
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
 // unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
 const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
@@ -484,7 +524,7 @@ void runDefaultHeartbeatBackfillOnBoot(db)
 // database, and never blocks or fails startup.
 void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
-const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
+const loopVersionPusher = new LoopVersionPusher(db, agentStorage, undefined, storageProvider)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 
@@ -613,6 +653,9 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	driverWaker.stop()
+	nextStepSweep.stop()
+	decisionDefaultWake.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	oauthSweeper.stop()

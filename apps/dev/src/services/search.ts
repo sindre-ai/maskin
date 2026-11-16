@@ -16,6 +16,7 @@ import {
 	NAME_WORD_PREFIX_BONUS,
 	TITLE_COVERAGE_SCALE,
 	TITLE_HIT_WEIGHT,
+	TITLE_PHRASE_PREFIX_BONUS,
 	tokenIlikePattern,
 	tokenRegexEscape,
 } from '../lib/search-rank'
@@ -327,10 +328,42 @@ function nameScore(token: string, pattern: string): SQL {
 		else 0 end)`
 }
 
+/** Match tiers, best first. The same idea as TeamLayout.searchTier on iOS, so the Chats list and search agree. */
+const TIER_WHOLE_WORD = 0
+const TIER_WORD_START = 1
+const TIER_CONTAINS = 2
+const TIER_BODY_ONLY = 3
+
+/** Regexes for a token at the start of a word, and for a whole word, in a title or a list of names. */
+function wordPatterns(token: string) {
+	const start = `(^|[^[:alnum:]])${tokenRegexEscape(token)}`
+	return { start, whole: `${start}($|[^[:alnum:]])` }
+}
+
 /**
- * Same per-word formula as /api/objects/search: title hit plus coverage, body hit worth 1. It
- * reads the candidate row `s` and runs for the matched rows only, so the second look at the
- * title and body costs next to nothing.
+ * The match tier of the candidate row `s`: for each word, 0 a whole word of the title (or of a name in
+ * the sub line of a source that ranks it), 1 the start of a word, 2 the letters inside a word, 3 a hit
+ * only in the body (or the deep text). The row takes its worst word, so every word counts.
+ */
+function tierExpression(tokens: string[], source: SearchSource): SQL {
+	if (tokens.length === 0) return sql`0`
+	const perToken = tokens.map((token) => {
+		const pattern = tokenIlikePattern(token)
+		const { start, whole } = wordPatterns(token)
+		const sub = (condition: SQL) => (source.rankSub ? sql` or ${condition}` : sql``)
+		return sql`(case
+			when s.title ~* ${whole}${sub(sql`s.sub ~* ${whole}`)} then ${TIER_WHOLE_WORD}::int
+			when s.title ~* ${start}${sub(sql`s.sub ~* ${start}`)} then ${TIER_WORD_START}::int
+			when s.title ilike ${pattern}${sub(sql`s.sub ilike ${pattern}`)} then ${TIER_CONTAINS}::int
+			else ${TIER_BODY_ONLY}::int end)`
+	})
+	return sql`greatest(${sql.join(perToken, sql`, `)})`
+}
+
+/**
+ * Same per-word formula as /api/objects/search: title hit plus coverage, body hit worth 1, and a
+ * bonus when the word starts a word of the title. It reads the candidate row `s` and runs for the
+ * matched rows only, so the second look at the title and body costs next to nothing.
  */
 function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolean): SQL {
 	if (tokens.length === 0) return sql`0`
@@ -340,7 +373,8 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
 			? sql`(s.body ilike ${pattern} or ${deepHitExpr(source, pattern)})`
 			: sql`(s.body ilike ${pattern})`
 		const name = source.rankSub ? nameScore(token, pattern) : sql`0`
-		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) else 0 end) + ${name} + (case when ${body} then 1 else 0 end))`
+		const wordStart = wordPatterns(token).start
+		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) + (case when s.title ~* ${wordStart} then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end) else 0 end) + ${name} + (case when ${body} then 1 else 0 end))`
 	})
 	return sql.join(perToken, sql` + `)
 }
@@ -351,13 +385,43 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
  */
 const SNIPPET = sql`substr(s.body, 1, 160)`
 
-function orderBy(sort: SearchQuery['sort'], source: SearchSource): SQL {
+/**
+ * Tie-break between rows of the same match tier and score: what needs you first, then what is in
+ * progress or new, then done, then archived (shown only when filtered in).
+ */
+const STATUS_GROUP_RANK: Record<StatusGroupKey, number> = {
+	needs_you: 0,
+	in_progress: 1,
+	new: 1,
+	done: 2,
+	archived: 3,
+}
+
+/** The tie-break rank of `m.status`, worked out from the (type, status) pairs the source holds. */
+function statusRankExpression(pairs: PairRow[]): SQL {
+	const byRank = new Map<number, PairRow[]>()
+	for (const pair of pairs) {
+		const rank = STATUS_GROUP_RANK[getStatusGroup(pair.type, pair.status)]
+		byRank.set(rank, [...(byRank.get(rank) ?? []), pair])
+	}
+	if (byRank.size <= 1) return sql`0::int`
+	const branches = [...byRank].map(([rank, group]) => {
+		const list = sql.join(
+			group.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
+			sql`, `,
+		)
+		return sql`when (m.type, m.status) in (${list}) then ${rank}::int`
+	})
+	return sql`(case ${sql.join(branches, sql` `)} else 0 end)`
+}
+
+function orderBy(sort: SearchQuery['sort'], source: SearchSource, statusRank: SQL): SQL {
 	if (sort === 'recent') return sql`m.updated_at desc nulls last, m.id`
 	if (sort === 'az') return sql`lower(m.title) asc, m.id`
 	if (source.unreadFirst) {
-		return sql`m.score desc, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
+		return sql`m.tier, m.score desc, ${statusRank}, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
 	}
-	return sql`m.score desc, m.updated_at desc nulls last, m.id`
+	return sql`m.tier, m.score desc, ${statusRank}, m.updated_at desc nulls last, m.id`
 }
 
 interface PairRow {
@@ -382,6 +446,8 @@ interface RawRow {
 	snippet: string | null
 	status: string
 	updated_iso: string | null
+	tier: number
+	score: number
 }
 
 /** A title-only candidate row of the typo pass. */
@@ -405,6 +471,8 @@ interface TypoDetail {
 
 interface SourceResult {
 	rows: SearchResultRow[]
+	/** The match tier and score of each row, in the same order as `rows`. */
+	ranks: Array<{ tier: number; score: number }>
 	/** Matches after every filter, before the cap. */
 	total: number
 	/** The source skipped some of its deep text because it was over its scan cap. */
@@ -537,7 +605,7 @@ async function runSource(
 		passingPairs.length === 0
 			? sql`false`
 			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
-	const ordering = orderBy(query.sort, source)
+	const ordering = orderBy(query.sort, source, statusRankExpression(passingPairs))
 	// The snippet of a returned row is the deep text that hit, when the row had its
 	// deep text checked; otherwise the body.
 	const pickedSnippet =
@@ -560,6 +628,7 @@ async function runSource(
 					s.updated_at, (${participantsOk}) AS p_ok,
 					${hasDeep ? sql`s.deep,` : sql``}
 					${scoreExpression(tokens, source, hasDeep)} AS score,
+					${tierExpression(tokens, source)} AS tier,
 					${inWindow} AS in_window
 				FROM (${candidates}) s
 				WHERE ${match}
@@ -571,6 +640,7 @@ async function runSource(
 			picked AS (
 				SELECT m.id, m.type, m.title, m.sub, ${pickedSnippet} AS snippet, m.status,
 					to_char(m.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso,
+					m.tier, m.score,
 					row_number() OVER (ORDER BY ${ordering}) AS rn
 				FROM m
 				WHERE ${topFilter}
@@ -584,6 +654,7 @@ async function runSource(
 
 	const result: SourceResult = {
 		rows: [],
+		ranks: [],
 		total: 0,
 		truncated: raw?.truncated === true,
 		typeCounts: new Map(),
@@ -596,7 +667,9 @@ async function runSource(
 
 	for (const row of jsonRows<AggregateRow>(raw?.aggregate)) tally(result, rules, row)
 
-	result.rows = jsonRows<RawRow>(raw?.top_rows).map((row) => ({
+	const topRows = jsonRows<RawRow>(raw?.top_rows)
+	result.ranks = topRows.map(({ tier, score }) => ({ tier, score }))
+	result.rows = topRows.map((row) => ({
 		id: row.id,
 		group: source.key,
 		type: row.type,
@@ -861,7 +934,7 @@ async function addTypoHits(
 
 /**
  * Keeps at most `perGroup` rows of each source group, then fills the free room (up to `limit`)
- * with the rows that were left out. `rows` come in group order and keep it.
+ * with the rows that were left out. `rows` come in their final order and keep it.
  */
 function capPerGroup(rows: SearchResultRow[], perGroup: number, limit: number): SearchResultRow[] {
 	const seen = new Map<SearchSourceGroup, number>()
@@ -932,7 +1005,9 @@ export async function runSearch(
 
 	let results: SearchResultRow[]
 	if (query.sort === 'rel') {
-		// Groups in a fixed order, then each source's own relevance order, until the cap.
+		// Best match tier first across every group, then score, then open before done before archived.
+		// Ties keep the fixed group order and each source's own order (newest first): the sort is
+		// stable over rows listed group by group.
 		const order = (key: SearchSourceGroup) => SEARCH_SOURCE_GROUPS.indexOf(key)
 		const byGroup = ok.slice().sort((a, b) => order(a.source.key) - order(b.source.key))
 		// Typo hits come after every exact hit, closest spelling first.
@@ -940,7 +1015,20 @@ export async function runSearch(
 			.flatMap(({ result }) => result.typoRows)
 			.sort((a, b) => a.distance - b.distance)
 			.map(({ row }) => row)
-		const exactRows = byGroup.flatMap(({ result }) => result.rows)
+		const exactRows = byGroup
+			.flatMap(({ result }) =>
+				result.rows.map((row, i) => ({
+					row,
+					rank: result.ranks[i] as { tier: number; score: number },
+				})),
+			)
+			.sort(
+				(a, b) =>
+					a.rank.tier - b.rank.tier ||
+					b.rank.score - a.rank.score ||
+					STATUS_GROUP_RANK[a.row.statusGroup] - STATUS_GROUP_RANK[b.row.statusGroup],
+			)
+			.map(({ row }) => row)
 		const shown = query.per_group ? capPerGroup(exactRows, query.per_group, query.limit) : exactRows
 		results = [...shown, ...typoRows].slice(0, query.limit)
 	} else {

@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /** The document-scale heading both detail surfaces run their title at
  *  (mockup 1056–1096). Exported so a host can match it on a non-editable
@@ -37,6 +37,10 @@ export function EditableTitle({
 	className?: string
 }) {
 	const [editing, setEditing] = useState(false)
+	const headingRef = useRef<HTMLHeadingElement>(null)
+	// Set by Enter and Escape only, so a click elsewhere that blurs the field
+	// does not pull focus back to the heading.
+	const refocusHeading = useRef(false)
 	const [draft, setDraft] = useState(value ?? '')
 	useEffect(() => {
 		if (!editing) setDraft(value ?? '')
@@ -52,6 +56,12 @@ export function EditableTitle({
 		setDraft(value ?? '')
 		setEditing(false)
 	}
+
+	useEffect(() => {
+		if (editing || !refocusHeading.current) return
+		refocusHeading.current = false
+		headingRef.current?.focus()
+	}, [editing])
 
 	const commit = () => {
 		setEditing(false)
@@ -82,10 +92,14 @@ export function EditableTitle({
 				onBlur={commit}
 				onKeyDown={(e) => {
 					if (e.key === 'Enter' && !e.shiftKey) {
+						// Enter that confirms an IME candidate is not a commit.
+						if (e.nativeEvent.isComposing) return
 						e.preventDefault()
+						refocusHeading.current = true
 						e.currentTarget.blur()
 					}
 					if (e.key === 'Escape') {
+						refocusHeading.current = true
 						setDraft(value ?? '')
 						setEditing(false)
 					}
@@ -101,6 +115,7 @@ export function EditableTitle({
 
 	return (
 		<h1
+			ref={headingRef}
 			className={cn(
 				EDITABLE_TITLE_CLASS,
 				onChange && 'cursor-text rounded-lg transition-colors hover:bg-muted/60',

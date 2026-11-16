@@ -17,8 +17,9 @@ import {
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { isPayingWorkspace } from '../lib/analytics/paying-workspace'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isTeamActor } from '../lib/analytics/team-member'
+import { isInternalWorkspace, isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -37,6 +38,7 @@ import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-ki
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
+import { newWorkspaceNeedsCard } from '../lib/trial-card'
 import type { WorkspaceSettings } from '../lib/types'
 import {
 	isWorkspaceHumanAdminOrOwner,
@@ -109,6 +111,11 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	// Whether the caller is on our own team, for marking browser analytics events.
 	// A fact about the caller, so every row carries the same value.
 	isTeam: z.boolean(),
+	// Whether this workspace is one of ours, and whether it has an active paid
+	// plan, for marking browser analytics events. Derived here because the billing
+	// settings are hidden from plain members.
+	internal: z.boolean(),
+	paying: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -212,6 +219,9 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			name: body.name,
 			ownerActorId: actorId,
 			settings: body.settings,
+			// Same card step as sign-up (bet "A card to start a 7-day trial"), so a second workspace
+			// is not a way round it.
+			awaitingCard: await newWorkspaceNeedsCard(db, actorId, c.get('actorType')),
 		})
 	} catch (err) {
 		// Returned here rather than thrown to `createApp`'s `onError`: this
@@ -317,6 +327,9 @@ app.openapi(listWorkspacesRoute, async (c) => {
 	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
 		...workspaceForCaller(row, callerIsHuman && (row.role === 'owner' || row.role === 'admin')),
 		enterprise: isEnterprise({ ...row, enterpriseGranted }),
+		// Read from the raw row: the billing settings are hidden from plain members.
+		internal: isInternalWorkspace(row.id),
+		paying: isPayingWorkspace(row.settings),
 	}))
 
 	// Member counts come from a second grouped query, not a correlated subquery:
@@ -506,7 +519,7 @@ const updateWorkspaceRoute = createRoute({
 		},
 		403: {
 			description:
-				'Caller is not a human workspace admin or owner (for name, llm_keys or custom_llm), or the workspace is not entitled to BYO LLM credentials',
+				'Caller is not a human workspace admin or owner (for name, llm_keys, custom_llm or agent_daily_budget), or the workspace is not entitled to BYO LLM credentials',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -541,12 +554,18 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		: { settings: undefined, changed: false }
 	let patchSettings = pickedSettings
 	const changesName = body.name !== undefined && body.name !== existing.name
+	// The per-agent daily budget caps what agents may spend, so an agent or a member must not be able
+	// to raise its own limit. Same rule as above: a value equal to the stored one is not a change.
+	const changesAgentBudget =
+		body.settings !== undefined &&
+		'agent_daily_budget' in body.settings &&
+		!isDeepStrictEqual(body.settings.agent_daily_budget, existingSettings.agent_daily_budget)
 	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
-	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
+	if ((changesName || changesLlm || changesAgentBudget) && !callerIsHumanAdminOrOwner) {
 		return c.json(
 			createApiError(
 				'FORBIDDEN',
-				'Only a workspace admin or owner can change the workspace name or LLM credentials',
+				'Only a workspace admin or owner can change the workspace name, LLM credentials or the agent daily budget',
 			),
 			403,
 		)

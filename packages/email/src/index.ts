@@ -159,3 +159,44 @@ export async function sendEmail(params: SendEmailParams): Promise<boolean> {
 	if (error) throw new EmailSendError(error.name, error.message)
 	return true
 }
+
+export interface SendPasswordResetEmailParams {
+	to: string
+	resetUrl: string
+}
+
+/**
+ * The "Forgot password" mail. The link carries the one-time token, so unlike the invite helper
+ * this never logs the message when no key is set: sendEmail's dev mode logs only the subject.
+ * Returns false when nothing was sent (no key).
+ */
+export async function sendPasswordResetEmail(
+	params: SendPasswordResetEmailParams,
+): Promise<boolean> {
+	const safeUrl = escapeHtml(params.resetUrl)
+	const text = [
+		'Hi,',
+		'',
+		'Someone asked to reset the password for your Maskin account. Choose a new one here:',
+		params.resetUrl,
+		'',
+		"This link works once and expires in 1 hour. If you didn't ask for it, you can",
+		'ignore this email — your password stays the same.',
+		'',
+		'— The Maskin team',
+	].join('\n')
+	const html = [
+		'<!doctype html>',
+		'<html>',
+		'<body style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; color: #111; max-width: 560px; margin: 0 auto; padding: 24px;">',
+		'<p>Hi,</p>',
+		'<p>Someone asked to reset the password for your Maskin account.</p>',
+		`<p><a href="${safeUrl}" style="display: inline-block; background: #111; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none;">Choose a new password</a></p>`,
+		`<p style="color: #666; font-size: 13px;">Or paste this URL into your browser:<br><a href="${safeUrl}">${safeUrl}</a></p>`,
+		'<p style="color: #666; font-size: 13px;">This link works once and expires in 1 hour. If you didn\'t ask for it, you can ignore this email — your password stays the same.</p>',
+		'<p style="color: #666; font-size: 13px;">— The Maskin team</p>',
+		'</body>',
+		'</html>',
+	].join('\n')
+	return sendEmail({ to: params.to, subject: 'Reset your Maskin password', text, html })
+}

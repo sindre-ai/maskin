@@ -544,54 +544,59 @@ function SkillRow({
 
 	return (
 		<div className="transition-colors">
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
-			<div
-				onClick={handleRowClick}
-				className="flex cursor-pointer items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60"
-			>
-				{skill.isFolder && (
-					<ChevronRight
-						size={14}
-						className={cn(
-							'shrink-0 text-muted-foreground transition-transform',
-							expanded && 'rotate-90',
-						)}
-						aria-hidden="true"
-					/>
-				)}
-				<div className="flex-1 min-w-0">
-					<div className="flex items-center gap-2 flex-wrap">
-						{!skill.isValid && (
-							<span
-								className="shrink-0 text-warning"
-								title="Invalid SKILL.md format — edit to fix"
-								aria-label="Invalid SKILL.md format"
-							>
-								<AlertTriangle size={14} />
+			<div className="flex items-center pr-2 transition-colors hover:bg-secondary/60">
+				<button
+					type="button"
+					onClick={handleRowClick}
+					aria-expanded={skill.isFolder ? expanded : undefined}
+					className="flex min-w-0 flex-1 items-center gap-3 rounded-md py-3 pl-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					{skill.isFolder && (
+						<ChevronRight
+							size={14}
+							className={cn(
+								'shrink-0 text-muted-foreground transition-transform',
+								expanded && 'rotate-90',
+							)}
+							aria-hidden="true"
+						/>
+					)}
+					<span className="block flex-1 min-w-0">
+						<span className="flex items-center gap-2 flex-wrap">
+							{!skill.isValid && (
+								<span
+									className="shrink-0 text-warning"
+									title="Invalid SKILL.md format — edit to fix"
+									aria-label="Invalid SKILL.md format"
+								>
+									<AlertTriangle size={14} />
+								</span>
+							)}
+							<span className="truncate text-[15px] font-medium text-foreground">{skill.name}</span>
+							{skill.isFolder && (
+								<span
+									className="shrink-0 inline-flex items-center gap-1 rounded-md bg-card px-1.5 py-0.5 text-xs text-muted-foreground"
+									title={`${skill.fileCount ?? 0} files in bundle`}
+								>
+									<Folder size={12} aria-hidden="true" />
+									{skill.fileCount ?? 0} files
+								</span>
+							)}
+						</span>
+						{skill.description ? (
+							<span className="block truncate text-[13px] text-muted-foreground">
+								{skill.description}
 							</span>
-						)}
-						<p className="text-[15px] font-medium text-foreground truncate">{skill.name}</p>
-						{skill.isFolder && (
-							<span
-								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-card px-1.5 py-0.5 text-xs text-muted-foreground"
-								title={`${skill.fileCount ?? 0} files in bundle`}
-							>
-								<Folder size={12} aria-hidden="true" />
-								{skill.fileCount ?? 0} files
+						) : !skill.isValid ? (
+							<span className="block truncate text-xs text-warning">
+								{skill.isFolder
+									? 'Missing SKILL.md at root — re-upload to fix'
+									: "Won't be loaded by agents until the format is fixed"}
 							</span>
-						)}
-					</div>
-					{skill.description ? (
-						<p className="text-[13px] text-muted-foreground truncate">{skill.description}</p>
-					) : !skill.isValid ? (
-						<p className="text-xs text-warning truncate">
-							{skill.isFolder
-								? 'Missing SKILL.md at root — re-upload to fix'
-								: "Won't be loaded by agents until the format is fixed"}
-						</p>
-					) : null}
-				</div>
-				<RelativeTime date={skill.updatedAt} className="text-xs text-muted-foreground shrink-0" />
+						) : null}
+					</span>
+					<RelativeTime date={skill.updatedAt} className="text-xs text-muted-foreground shrink-0" />
+				</button>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
 						<Button
@@ -766,8 +771,9 @@ function SkillDialog({
 	const canSave =
 		canWrite && !pending && !loadingExisting && name.trim().length > 0 && content.trim().length > 0
 
-	const handleSave = () => {
-		if (!canWrite) return
+	const handleSave = (e?: React.FormEvent) => {
+		e?.preventDefault()
+		if (!canSave) return
 		setError(null)
 		const trimmedName = name.trim()
 
@@ -805,57 +811,59 @@ function SkillDialog({
 	return (
 		<ResponsiveDialog open onOpenChange={(v) => !v && onClose()}>
 			<ResponsiveDialogContent className="sm:max-w-2xl">
-				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</ResponsiveDialogTitle>
-					<ResponsiveDialogDescription>
-						Skills are shared across this workspace. Agents only receive the skills attached to
-						them.
-					</ResponsiveDialogDescription>
-				</ResponsiveDialogHeader>
+				<form onSubmit={handleSave} className="contents">
+					<ResponsiveDialogHeader>
+						<ResponsiveDialogTitle>{isEdit ? 'Edit skill' : 'Create skill'}</ResponsiveDialogTitle>
+						<ResponsiveDialogDescription>
+							Skills are shared across this workspace. Agents only receive the skills attached to
+							them.
+						</ResponsiveDialogDescription>
+					</ResponsiveDialogHeader>
 
-				<div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
-					<div>
-						<Label htmlFor="skill-name">Name</Label>
-						<Input
-							id="skill-name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							placeholder="e.g. deploy, review-pr"
-							autoFocus={!isEdit}
-							readOnly={!canWrite}
-						/>
+					<div className="space-y-3 flex-1 min-h-0 overflow-y-auto">
+						<div>
+							<Label htmlFor="skill-name">Name</Label>
+							<Input
+								id="skill-name"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								placeholder="e.g. deploy, review-pr"
+								autoFocus={!isEdit}
+								readOnly={!canWrite}
+							/>
+						</div>
+						<div>
+							<Label htmlFor="skill-content">SKILL.md</Label>
+							<Textarea
+								id="skill-content"
+								value={content}
+								onChange={(e) => setContent(e.target.value)}
+								placeholder={SKILL_TEMPLATE}
+								className="min-h-[280px] font-mono text-sm"
+								disabled={loadingExisting}
+								readOnly={!canWrite}
+							/>
+							{isEdit && (
+								<p className="mt-1 text-xs text-muted-foreground">
+									Only recognised frontmatter keys (name, description, and SKILL.md options) are
+									preserved on save — custom keys are dropped.
+								</p>
+							)}
+						</div>
+						<FormError error={error ?? undefined} />
 					</div>
-					<div>
-						<Label htmlFor="skill-content">SKILL.md</Label>
-						<Textarea
-							id="skill-content"
-							value={content}
-							onChange={(e) => setContent(e.target.value)}
-							placeholder={SKILL_TEMPLATE}
-							className="min-h-[280px] font-mono text-sm"
-							disabled={loadingExisting}
-							readOnly={!canWrite}
-						/>
-						{isEdit && (
-							<p className="mt-1 text-xs text-muted-foreground">
-								Only recognised frontmatter keys (name, description, and SKILL.md options) are
-								preserved on save — custom keys are dropped.
-							</p>
-						)}
-					</div>
-					<FormError error={error ?? undefined} />
-				</div>
 
-				<ResponsiveDialogFooter>
-					<Button variant="ghost" onClick={onClose} disabled={pending}>
-						Cancel
-					</Button>
-					<ViewerTooltip>
-						<Button onClick={handleSave} disabled={!canSave}>
-							{pending ? 'Saving...' : 'Save'}
+					<ResponsiveDialogFooter>
+						<Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
+							Cancel
 						</Button>
-					</ViewerTooltip>
-				</ResponsiveDialogFooter>
+						<ViewerTooltip>
+							<Button type="submit" disabled={!canSave}>
+								{pending ? 'Saving...' : 'Save'}
+							</Button>
+						</ViewerTooltip>
+					</ResponsiveDialogFooter>
+				</form>
 			</ResponsiveDialogContent>
 		</ResponsiveDialog>
 	)

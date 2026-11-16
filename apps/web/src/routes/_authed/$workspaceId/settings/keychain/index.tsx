@@ -15,6 +15,7 @@ import { sortBy } from '@/lib/sort'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { ClipboardPaste, KeyRound, Link2, MessageSquare, Plus } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keychain/')({
 	component: KeychainPage,
@@ -38,7 +39,7 @@ function AddCredentialButton({ workspaceId, label }: { workspaceId: string; labe
 	}
 	return (
 		<Button asChild className={PILL_BUTTON}>
-			<Link to="/$workspaceId/settings/keychain/new" params={{ workspaceId }}>
+			<Link to="/$workspaceId/settings/keychain/new" params={{ workspaceId }} data-keychain-add="">
 				<Plus size={14} className="mr-1" />
 				{label}
 			</Link>
@@ -57,8 +58,34 @@ function KeychainPage() {
 		(c) => c.id,
 	)
 
+	// A removed card takes keyboard focus with it. Remember where focus should go, then move it
+	// once the list has dropped the card: the next card's first button, else the one before,
+	// else the add button (the empty state's add button when none is left).
+	const rootRef = useRef<HTMLDivElement>(null)
+	const pendingFocus = useRef<{ removedId: string; targetId: string | null } | null>(null)
+	const handleRemoved = (id: string) => {
+		const index = credentials.findIndex((c) => c.id === id)
+		const neighbour = credentials[index + 1] ?? credentials[index - 1]
+		pendingFocus.current = { removedId: id, targetId: neighbour?.id ?? null }
+	}
+	useEffect(() => {
+		const pending = pendingFocus.current
+		if (!pending || credentials.some((c) => c.id === pending.removedId)) return
+		pendingFocus.current = null
+		const root = rootRef.current
+		if (!root) return
+		const target =
+			(pending.targetId &&
+				root
+					.querySelector(`[data-credential-id="${pending.targetId}"]`)
+					?.querySelector<HTMLElement>('button:not([disabled]), a[href]')) ||
+			root.querySelector<HTMLElement>('[data-keychain-add]')
+		// After the dialog's own focus restore has finished with the unmounted button.
+		requestAnimationFrame(() => target?.focus())
+	}, [credentials])
+
 	return (
-		<div className="max-w-[760px]">
+		<div ref={rootRef} className="max-w-[760px]">
 			<SettingsPageTitle title="Keychain" subtitle={INTRO} />
 
 			{isLoading ? (
@@ -115,7 +142,9 @@ function KeychainPage() {
 					<h2 className="px-2 pb-1.5 text-[15px] font-semibold text-foreground">Secrets</h2>
 					<div className="border-t border-border-subtle">
 						{credentials.map((credential) => (
-							<CredentialCard key={credential.id} credential={credential} />
+							<div key={credential.id} data-credential-id={credential.id}>
+								<CredentialCard credential={credential} onRemoved={handleRemoved} />
+							</div>
 						))}
 					</div>
 					<div className="mt-5 flex px-2">

@@ -6,6 +6,13 @@ public protocol ConversationsAPI: Sendable {
 	/// a boolean query (even "false") as true.
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int)
 		async throws -> ConversationPage
+	/// The default list. With `hideQuiet` the server leaves out empty direct messages with agents,
+	/// chats with retired agents and topic chats quiet for about 14 days, unless pinned or unread.
+	/// Nothing is archived: they stay in search and return when a new message arrives. Sent only
+	/// when true, like the other flags.
+	func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage
 	/// `POST /api/conversations`. Returns the created conversation.
 	func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
@@ -52,6 +59,14 @@ extension ConversationsAPI {
 
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
 	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
+
+	/// Sources that cannot filter on the server (test doubles) return the whole list.
+	public func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, limit: limit, offset: offset)
+	}
 
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		try await list(archived: archived, pinnedOnly: false, unreadOnly: false, limit: limit, offset: offset)
@@ -148,7 +163,22 @@ public struct ChatsHTTPError: Error, Equatable, Sendable {
 	}
 }
 
-/// Uploads one file to the workspace (`POST /api/files`, base64 JSON, 10 MB cap).
+/// Uploads one file to the workspace. Bytes in memory go as base64 JSON (`POST /api/files`, 10 MB cap,
+/// 50 MB for video); a file on disk of any size up to 1 GB can also go straight to storage in parts.
 public protocol ChatFileUploading: Sendable {
 	func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef
+	/// A file on disk. Conformers that can stream it override this; the default reads it whole.
+	func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws -> ChatAttachmentRef
+}
+
+extension ChatFileUploading {
+	public func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws
+		-> ChatAttachmentRef
+	{
+		guard !FileUploadLimits.needsDirectUpload(sizeBytes: sizeBytes, mimeType: mimeType) else {
+			throw ChatsError("Large files can't be attached here.")
+		}
+		return try await upload(
+			name: name, mimeType: mimeType, data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+	}
 }

@@ -50,15 +50,17 @@ describe('HelperQuestionCard', () => {
 		expect(screen.getByRole('button', { name: 'Jobindex' })).toBeInTheDocument()
 	})
 
-	it("opens the helper's thread from View thread", async () => {
+	it("opens the helper's thread from View background session", async () => {
 		const onViewThread = vi.fn()
 		renderCard(onViewThread)
-		await userEvent.setup().click(screen.getByRole('button', { name: 'View thread' }))
+		await userEvent.setup().click(screen.getByRole('button', { name: 'View background session' }))
 		expect(onViewThread).toHaveBeenCalledWith(QUESTION.session_id)
 	})
 
-	it('has no View thread button when the chat has no Threads pane', () => {
+	it('has no View background session button when the chat has no Threads pane', () => {
 		renderCard()
-		expect(screen.queryByRole('button', { name: 'View thread' })).not.toBeInTheDocument()
+		expect(
+			screen.queryByRole('button', { name: 'View background session' }),
+		).not.toBeInTheDocument()
 	})
 })

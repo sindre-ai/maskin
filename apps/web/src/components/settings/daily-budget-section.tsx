@@ -6,37 +6,30 @@ import { Switch } from '@/components/ui/switch'
 import { useDailyBudget, useSetDailyBudget } from '@/hooks/use-billing'
 import { cn } from '@/lib/cn'
 import {
+	DAILY_BUDGET_MAX_PERCENT,
 	DAILY_BUDGET_STOP_SHARES,
-	DAILY_BUDGET_UNITS,
+	DEFAULT_DAILY_BUDGET_PERCENT,
 	DEFAULT_DAILY_BUDGET_STOP_SHARE,
 	type DailyBudget,
+	type DailyBudgetResponse,
 	dailyBudgetSchema,
 } from '@maskin/shared'
 import { Check } from 'lucide-react'
-import { useState } from 'react'
+import type * as React from 'react'
+import { useId, useState } from 'react'
 import { toast } from 'sonner'
 
-type Unit = (typeof DAILY_BUDGET_UNITS)[number]
 type StopShare = (typeof DAILY_BUDGET_STOP_SHARES)[number]
 
 interface Draft {
 	enabled: boolean
-	unit: Unit
 	amount: string
 	stopShare: StopShare
-}
-
-const UNIT_LABEL: Record<Unit, string> = { tokens: 'Tokens', dollars: 'Dollars' }
-
-const UNIT_HELP: Record<Unit, string> = {
-	tokens: 'Tokens match how your Claude plan counts, so this is the safer choice.',
-	dollars: 'Dollars follow what each model costs. Subscription plans may not report a cost.',
 }
 
 function draftFrom(saved: DailyBudget | null): Draft {
 	return {
 		enabled: saved !== null,
-		unit: saved?.unit ?? 'tokens',
 		amount: saved ? String(saved.amount) : '',
 		stopShare: saved?.stop_share ?? DEFAULT_DAILY_BUDGET_STOP_SHARE,
 	}
@@ -45,8 +38,7 @@ function draftFrom(saved: DailyBudget | null): Draft {
 function sameDraft(a: Draft, b: Draft): boolean {
 	return (
 		a.enabled === b.enabled &&
-		(!a.enabled ||
-			(a.unit === b.unit && a.amount.trim() === b.amount.trim() && a.stopShare === b.stopShare))
+		(!a.enabled || (a.amount.trim() === b.amount.trim() && a.stopShare === b.stopShare))
 	)
 }
 
@@ -59,20 +51,23 @@ function browserTimezone(): string {
 }
 
 /** Returns the message to show under the amount field, or null when the draft is valid. */
-export function amountError(unit: Unit, amount: string): string | null {
+export function amountError(amount: string): string | null {
 	const n = Number(amount.trim())
 	if (amount.trim() === '' || !Number.isFinite(n) || n <= 0) return 'Enter a number above 0.'
-	if (unit === 'tokens' && !Number.isInteger(n)) return 'Enter a whole number of tokens.'
-	if (unit === 'dollars' && Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) {
-		return 'Dollars can have at most two decimals.'
-	}
+	if (n > DAILY_BUDGET_MAX_PERCENT) return `Enter ${DAILY_BUDGET_MAX_PERCENT} or less.`
+	if (Math.abs(n * 10 - Math.round(n * 10)) > 1e-6) return 'Use at most one decimal.'
 	return null
 }
 
-function formatAmount(unit: Unit, amount: string): string {
-	const n = Number(amount)
-	if (unit === 'dollars') return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
-	return `${n.toLocaleString('en-US')} tokens`
+/** What became of a target saved before percent, in plain words. Null when there was none. */
+function earlierTargetNote(
+	earlier: DailyBudgetResponse['earlier_target'],
+	percent: number,
+): string | null {
+	if (!earlier) return null
+	return earlier.converted
+		? 'Your earlier daily target is shown here as a percent of your plan. Save to keep it.'
+		: `Your earlier daily target could not be turned into a percent of your plan, so ${percent}% a day is suggested. Save to use it.`
 }
 
 function PillGroup<T extends string | number>({
@@ -88,6 +83,25 @@ function PillGroup<T extends string | number>({
 	onChange: (value: T) => void
 	disabled?: boolean
 }) {
+	const groupId = useId()
+	const enabledOptions = options.filter((option) => !option.disabled)
+	// One Tab stop: the selected pill, or the first enabled one when none is.
+	const stopValue = enabledOptions.some((option) => option.value === value)
+		? value
+		: enabledOptions[0]?.value
+
+	const onKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, current: T) => {
+		const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown'
+		if (!forward && e.key !== 'ArrowLeft' && e.key !== 'ArrowUp') return
+		e.preventDefault()
+		const idx = enabledOptions.findIndex((option) => option.value === current)
+		const step = forward ? 1 : -1
+		const next = enabledOptions[(idx + step + enabledOptions.length) % enabledOptions.length]
+		if (!next) return
+		onChange(next.value)
+		document.getElementById(`${groupId}-${next.value}`)?.focus()
+	}
+
 	return (
 		<div
 			role="radiogroup"
@@ -99,12 +113,15 @@ function PillGroup<T extends string | number>({
 				return (
 					<button
 						key={option.value}
+						id={`${groupId}-${option.value}`}
 						type="button"
 						// biome-ignore lint/a11y/useSemanticElements: custom pill styling; ARIA radio semantics preserved
 						role="radio"
 						aria-checked={active}
+						tabIndex={option.value === stopValue ? 0 : -1}
 						disabled={disabled || option.disabled}
 						onClick={() => onChange(option.value)}
+						onKeyDown={(e) => onKeyDown(e, option.value)}
 						className={cn(
 							'flex flex-1 items-center justify-center rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none',
 							active
@@ -122,9 +139,9 @@ function PillGroup<T extends string | number>({
 
 /**
  * Settings, Billing: the one daily target for the workspace (slice 1a of the
- * daily token budget bet). It only reports for now: the stop-at share is stored
- * and nothing is held or stopped. Mounted by the Billing route behind the
- * daily-budget flag.
+ * daily budget bet), set as a percent of the plan. It only reports for now: the
+ * stop-at share is stored and nothing is held or stopped. Mounted by the
+ * Billing route behind the daily-budget flag.
  */
 export function DailyBudgetSection({
 	workspaceId,
@@ -161,11 +178,16 @@ export function DailyBudgetSection({
 		)
 	}
 
-	const { daily_budget: saved, dollar_unit: dollarUnit } = query.data
+	const { daily_budget: saved, earlier_target: earlier, plan_limit_known: limitKnown } = query.data
 	const savedDraft = draftFrom(saved)
 	const draft = edited ?? savedDraft
-	const dirty = !sameDraft(draft, savedDraft)
-	const error = draft.enabled ? amountError(draft.unit, draft.amount) : null
+	// A target made from an earlier token or dollar one is not saved yet, so Save stays on offer.
+	const dirty = !sameDraft(draft, savedDraft) || (earlier !== null && edited === null)
+	const earlierNote =
+		earlier && edited === null
+			? earlierTargetNote(earlier, saved?.amount ?? DEFAULT_DAILY_BUDGET_PERCENT)
+			: null
+	const error = draft.enabled ? amountError(draft.amount) : null
 	const showError = error !== null && amountTouched
 	const timezone = saved?.timezone ?? browserTimezone()
 	const disabled = !canEdit || save.isPending
@@ -180,7 +202,7 @@ export function DailyBudgetSection({
 		let next: DailyBudget | null = null
 		if (draft.enabled) {
 			const parsed = dailyBudgetSchema.safeParse({
-				unit: draft.unit,
+				unit: 'percent',
 				amount: Number(draft.amount.trim()),
 				stop_share: draft.stopShare,
 				timezone,
@@ -225,31 +247,8 @@ export function DailyBudgetSection({
 				{draft.enabled && (
 					<>
 						<div className="space-y-1.5">
-							<Label>Count the target in</Label>
-							<PillGroup
-								label="Count the target in"
-								value={draft.unit}
-								disabled={disabled}
-								options={DAILY_BUDGET_UNITS.map((unit) => ({
-									value: unit,
-									label: UNIT_LABEL[unit],
-									disabled: unit === 'dollars' && !dollarUnit.available,
-								}))}
-								onChange={(unit) => update({ unit })}
-							/>
-							<p className="text-xs text-muted-foreground">
-								{!dollarUnit.available && dollarUnit.reason
-									? dollarUnit.reason
-									: UNIT_HELP[draft.unit]}
-							</p>
-						</div>
-
-						<div className="space-y-1.5">
 							<Label htmlFor="daily-budget-amount">Target per day</Label>
 							<div className="flex items-center gap-2">
-								{draft.unit === 'dollars' && (
-									<span className="text-sm text-muted-foreground">$</span>
-								)}
 								<Input
 									id="daily-budget-amount"
 									inputMode="decimal"
@@ -268,10 +267,12 @@ export function DailyBudgetSection({
 										if (e.key === 'Enter' && dirty && !error) handleSave()
 									}}
 								/>
-								{draft.unit === 'tokens' && (
-									<span className="text-sm text-muted-foreground">tokens</span>
-								)}
+								<span className="text-sm text-muted-foreground">% of your plan</span>
 							</div>
+							<p className="text-xs text-muted-foreground">
+								How much of your monthly plan to use each day. About 3.3% spreads a 30-day month
+								evenly.
+							</p>
 							{showError && (
 								<p id="daily-budget-amount-error" className="text-xs text-error">
 									{error}
@@ -298,10 +299,18 @@ export function DailyBudgetSection({
 
 						<p className="text-xs text-muted-foreground">
 							{error === null &&
-								`Target ${formatAmount(draft.unit, draft.amount)} a day, stopping new work at ${draft.stopShare}%. `}
+								`Target ${Number(draft.amount)}% of your plan a day, stopping new work at ${draft.stopShare}%. `}
 							A day runs 00:00 to 24:00 in {timezone}.
 						</p>
 					</>
+				)}
+
+				{earlierNote && <p className="text-xs text-muted-foreground">{earlierNote}</p>}
+
+				{!limitKnown && (
+					<p className="text-xs text-muted-foreground">
+						Your plan has no usage limit to take a percent of, so no daily card is sent.
+					</p>
 				)}
 
 				{!canEdit && (

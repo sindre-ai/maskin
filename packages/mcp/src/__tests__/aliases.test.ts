@@ -336,8 +336,10 @@ describe('through the real SDK path', () => {
 	})
 
 	it('unknown keys are still stripped, not rejected', async () => {
-		const withJunk = await harness.call('get_objects', { ids: [U1], nonsense: true })
-		const clean = await harness.call('get_objects', { ids: [U1] })
+		// get_objects now rejects unknown names (reject-unknown-params.test.ts), so this
+		// check uses a tool that has not been moved to strict checking yet.
+		const withJunk = await harness.call('get_comments', { entity_id: U1, nonsense: true })
+		const clean = await harness.call('get_comments', { entity_id: U1 })
 		expect(withJunk).toEqual(clean)
 	})
 

@@ -65,7 +65,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		let env = services.environment
 		_composer = State(
 			initialValue: ChatComposerModel(
-				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? ""),
+				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? "", largeUploads: env.largeUploads),
 				selfActorID: env.auth.session?.actorId ?? ""))
 		environment = services.environment
 		self.onOpenObject = onOpenObject
@@ -104,6 +104,13 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			actions.onSeeLog = { openLog($0) }
 			actions.onStop = { stopTarget = $0 }
 			if retryPrompt != nil { actions.onRetry = { retry($0) } }
+		}
+		if hasSource {
+			actions.onOpenOriginSession = { origin in
+				// The session that produced the item; its state is not in the graph, so it opens as a finished log.
+				logSession = AgentSession(
+					id: origin.sessionId, actorID: origin.actorId ?? "", status: "completed", startedAt: origin.spawnedAt)
+			}
 		}
 		if let appRuntime {
 			actions.onOpenChat = { id in
@@ -159,8 +166,9 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		MaskinComposerConfig(
 			variant: .floating,
 			placeholder: composerMode.placeholder(
-				commentPlaceholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" } ?? "Comment — @ to tag, / to link",
-				agentName: messageTarget?.name),
+				commentPlaceholder: replyingTo.map { "Reply to \(store.authorName(for: $0))…" }
+					?? ObjectComposerMode.commentPlaceholder(compact: sizeClass == .compact),
+				agentName: messageTarget?.name, compact: sizeClass == .compact),
 			suggestions: { query in
 				CommentMentions.candidates(
 					query: query, actors: Array(store.directory.actors.values), selfID: store.currentActorId,
@@ -182,6 +190,20 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	/// Sending jumps to Activity, where the thread is.
 	private var messageTarget: ActorRef? {
 		ObjectComposerMode.target(object: store.object, actor: { store.directory.actor(for: $0) })
+	}
+
+	/// The Comment / Message chip inside the bar; hidden when no agent can be messaged.
+	private var modeChip: AnyView? {
+		guard let agent = messageTarget, appRuntime != nil else { return nil }
+		return AnyView(ObjectComposerModeChip(mode: $composerMode, agentName: agent.name, compact: sizeClass == .compact))
+	}
+
+	/// "Answer" on the question line: the question is answered in the comment bar, so open Activity
+	/// and put the cursor there.
+	private func answerAsk() {
+		withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity }
+		composerMode = .comment
+		composer.requestFocus()
 	}
 
 	private func sendComment() {
@@ -244,10 +266,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.padding(.horizontal, MaskinSpace.s5)
 					}
-					if let agent = messageTarget, appRuntime != nil {
-						ObjectComposerModeToggle(mode: $composerMode, agentName: agent.name)
-					}
-					MaskinComposer(model: composer, config: composerConfig, onSend: sendComment)
+					MaskinComposer(model: composer, config: composerConfig, topAccessory: modeChip, onSend: sendComment)
 				}
 				.frame(maxWidth: ReadingColumn.maxWidth)
 				.frame(maxWidth: .infinity)
@@ -269,12 +288,6 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		.toolbar {
 			ToolbarItemGroup(placement: .primaryAction) {
 				if let object = store.object {
-					Button {
-						MaskinHaptics.play(.selection)
-						Task { await store.toggleStar() }
-					} label: {
-						Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
-					}
 					Menu {
 						ShareLink(item: shareText(object)) { Label("Share", systemImage: "square.and.arrow.up") }
 						if let link = objectLink(object) {
@@ -436,7 +449,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
 					ObjectDetailContent(
 							store: store, part: .header, onEdit: { editing = true },
-							onMessage: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } },
+							onAnswer: answerAsk,
 							sessionActions: sessionActions
 						) { EmptyView() }
 						.padding(.horizontal, MaskinSpace.s11)
@@ -514,6 +527,10 @@ struct EditObjectSheet: View {
 	@Environment(\.dismiss) private var dismiss
 	@State private var title: String
 	@State private var content: String
+	/// Reads the text from the rich editor when it is the one on screen.
+	@State private var descriptionField = DescriptionEditorHandle()
+	@State private var saving = false
+	@State private var readFailed = false
 
 	init(object: WorkObject, save: @escaping (ObjectPatch) async -> Void) {
 		self.object = object
@@ -529,7 +546,7 @@ struct EditObjectSheet: View {
 					.lineLimit(1...3)
 					.maskinText(.title)
 				Divider()
-				MarkdownEditor(text: $content, placeholder: "Description")
+				DescriptionEditor(text: $content, handle: descriptionField)
 			}
 			.padding(.horizontal, MaskinSpace.s9)
 			.padding(.top, MaskinSpace.s5)
@@ -540,19 +557,38 @@ struct EditObjectSheet: View {
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
 				ToolbarItem(placement: .confirmationAction) {
-					Button("Save") {
-						let patch = ObjectPatch(
-							title: title.trimmingCharacters(in: .whitespacesAndNewlines) == (object.title ?? "")
-								? nil : title.trimmingCharacters(in: .whitespacesAndNewlines),
-							content: content == (object.content ?? "") ? nil : content)
-						dismiss()
-						Task { await save(patch) }
-					}
-					.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+					Button("Save") { Task { await commit() } }
+						.disabled(saving || descriptionField.isOpening || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 				}
 			}
 		}
 		.presentationDetents([.large])
+		.alert("Couldn't read the text", isPresented: $readFailed) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text("Nothing was saved. Try again.")
+		}
+	}
+
+	/// Sends the edit. With the rich editor the text is read from its page first, and nothing is
+	/// sent if the page cannot answer, so a failed read never saves the wrong text.
+	private func commit() async {
+		saving = true
+		var text = content
+		if let read = descriptionField.readMarkdown {
+			guard let markdown = await read() else {
+				saving = false
+				readFailed = true
+				return
+			}
+			text = markdown
+		}
+		let patch = ObjectPatch(
+			title: title.trimmingCharacters(in: .whitespacesAndNewlines) == (object.title ?? "")
+				? nil : title.trimmingCharacters(in: .whitespacesAndNewlines),
+			content: text == (object.content ?? "") ? nil : text)
+		dismiss()
+		await save(patch)
 	}
 }
 

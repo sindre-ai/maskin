@@ -13,9 +13,14 @@ import {
 	createComposerExtensions,
 	shapeTablesForMarkdown,
 } from '../react/composer'
+import type { EmojiMenuState, EmojiMenuView } from '../react/emoji-suggestion'
 
 // Tiptap announces a new editor on the next tick, which is when the box sets its chips.
-async function open(markdown: string, tags: ComposerTag[] = []) {
+async function open(
+	markdown: string,
+	tags: ComposerTag[] = [],
+	extra: Partial<MarkdownComposerProps> = {},
+) {
 	const changes: ComposerValue[] = []
 	const triggers: (string | null)[] = []
 	const props: MarkdownComposerProps = {
@@ -31,6 +36,7 @@ async function open(markdown: string, tags: ComposerTag[] = []) {
 		onChange: (value) => changes.push(value),
 		onTriggerChange: (t) => triggers.push(t ? t.query : null),
 		onKeyDown: vi.fn(() => false),
+		...extra,
 	}
 	const handlers: { current: Handlers } = { current: { props, editor: null } }
 	const { extensions } = createComposerExtensions(handlers)
@@ -40,7 +46,7 @@ async function open(markdown: string, tags: ComposerTag[] = []) {
 	})
 	const md = () => editor.storage.markdown.getMarkdown() as string
 	await new Promise((resolve) => setTimeout(resolve, 0))
-	return { editor, md, changes, triggers }
+	return { editor, md, changes, triggers, props }
 }
 
 describe('message box markdown', () => {
@@ -132,6 +138,78 @@ describe('message box tags', () => {
 		expect(triggers.at(-1)).toBe('sa')
 		editor.commands.insertContent('m ')
 		expect(triggers.at(-1)).toBeNull()
+		editor.destroy()
+	})
+})
+
+// Typing a character the way the browser does: the suggestion plugin awaits its item list.
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+async function typeText(editor: Editor, text: string) {
+	for (const char of text) {
+		// A text node, not a string: a bare ' ' string is parsed as HTML and the space is dropped.
+		editor.commands.insertContent({ type: 'text', text: char })
+		await settle()
+	}
+}
+
+function pressEnter(editor: Editor): boolean {
+	const event = new KeyboardEvent('keydown', { key: 'Enter' })
+	return editor.view.someProp('handleKeyDown', (f) => f(editor.view, event)) === true
+}
+
+describe('message box emoji list', () => {
+	function withEmojiView() {
+		const states: EmojiMenuState[] = []
+		const viewKeys = vi.fn(() => true)
+		const createEmojiView = (state: EmojiMenuState): EmojiMenuView => {
+			states.push(state)
+			return { update: (next) => states.push(next), onKeyDown: viewKeys, destroy: vi.fn() }
+		}
+		return { states, viewKeys, createEmojiView }
+	}
+
+	it('has no emoji list unless the host supplies one', async () => {
+		const { editor } = await open('')
+		await typeText(editor, ':smi')
+		expect(editor.storage.emojiSuggestion).toBeUndefined()
+		editor.destroy()
+	})
+
+	it('puts the picked emoji in the message as text', async () => {
+		const { states, createEmojiView } = withEmojiView()
+		const { editor, md } = await open('', [], { createEmojiView })
+		await typeText(editor, 'hi :smi')
+		const state = states.at(-1)
+		const smile = state?.items.find((i) => i.shortcode === 'smile')
+		expect(smile).toBeDefined()
+		if (!smile) return
+		state?.select(smile)
+		expect(md()).toBe(`hi ${smile.emoji}`)
+		editor.destroy()
+	})
+
+	it('gives Enter to the open list instead of sending', async () => {
+		const { states, viewKeys, createEmojiView } = withEmojiView()
+		const onKeyDown = vi.fn(() => false)
+		const { editor } = await open('', [], { createEmojiView, onKeyDown })
+		await typeText(editor, ':smi')
+		expect(states.length).toBeGreaterThan(0)
+		expect(pressEnter(editor)).toBe(true)
+		expect(viewKeys).toHaveBeenCalled()
+		expect(onKeyDown).not.toHaveBeenCalled()
+		editor.destroy()
+	})
+
+	it('sends on Enter again once the list is closed', async () => {
+		const { states, createEmojiView } = withEmojiView()
+		const onKeyDown = vi.fn(() => true)
+		const { editor } = await open('', [], { createEmojiView, onKeyDown })
+		await typeText(editor, ':smi')
+		states.at(-1)?.dismiss()
+		await settle()
+		expect(pressEnter(editor)).toBe(true)
+		expect(onKeyDown).toHaveBeenCalledTimes(1)
 		editor.destroy()
 	})
 })

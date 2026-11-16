@@ -26,8 +26,14 @@ describe('sanitizeTitle', () => {
 	it('truncates an over-long title with an ellipsis', () => {
 		const result = sanitizeTitle('word '.repeat(40))
 		expect(result).not.toBeNull()
-		expect(result?.length).toBeLessThanOrEqual(32)
+		expect(result?.length).toBeLessThanOrEqual(80)
 		expect(result?.endsWith('…')).toBe(true)
+	})
+
+	it('keeps a title that used to be cut at 32 characters', () => {
+		const title = 'Custom views clarity for product discovery'
+		expect(title.length).toBeGreaterThan(32)
+		expect(sanitizeTitle(title)).toBe(title)
 	})
 
 	it('returns null for empty, whitespace-only, and non-string input', () => {

@@ -196,6 +196,7 @@
 		"desktop_list_ports": ["agent_id", "workspace_id"],
 		"desktop_move": ["agent_id", "workspace_id", "x", "y"],
 		"desktop_run": ["agent_id", "command", "timeout_s", "workspace_id"],
+		"desktop_save_file": ["agent_id", "name", "path", "workspace_id"],
 		"desktop_screenshot": ["agent_id", "workspace_id"],
 		"desktop_scroll": ["agent_id", "amount", "direction", "workspace_id", "x", "y"],
 		"desktop_type": ["agent_id", "text", "workspace_id"],
@@ -405,8 +406,21 @@
 			"updated_after",
 			"workspace_id"
 		],
+		"set_next_step": [
+			"action",
+			"blocked_on_actor_id",
+			"blocked_on_decision_comment_id",
+			"blocked_on_object_id",
+			"blocked_reason",
+			"due_at",
+			"object_id",
+			"owner_id",
+			"replace",
+			"workspace_id"
+		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
+		"transcribe_file": ["id", "language", "workspace_id"],
 		"traverse_graph": [
 			"direction",
 			"edge_type_allow_list",
@@ -421,11 +435,13 @@
 			"detach_skill_ids",
 			"email",
 			"id",
+			"initials",
 			"llm_config",
 			"llm_config.model",
 			"llm_config.provider",
 			"name",
 			"role",
+			"starter_prompts",
 			"system_prompt",
 			"tools",
 			"workspace_id"
@@ -487,6 +503,19 @@
 			"remove_trigger_ids",
 			"status",
 			"tags",
+			"workspace_id"
+		],
+		"update_next_step": [
+			"action",
+			"blocked_on_actor_id",
+			"blocked_on_decision_comment_id",
+			"blocked_on_object_id",
+			"blocked_reason",
+			"due_at",
+			"evidence",
+			"object_id",
+			"owner_id",
+			"status",
 			"workspace_id"
 		],
 		"update_notification": [

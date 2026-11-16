@@ -40,7 +40,7 @@ public protocol APIProtocol: Sendable {
     func get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph(_ input: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Input) async throws -> Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output
     /// Bounded multi-hop graph traversal from an object
     ///
-    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.
+    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.
     ///
     /// - Remark: HTTP `GET /api/objects/{id}/graph/traverse`.
     /// - Remark: Generated from `#/paths//api/objects/{id}/graph/traverse/get`.
@@ -147,6 +147,13 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /api/auth/login`.
     /// - Remark: Generated from `#/paths//api/auth/login/post`.
     func post_sol_api_sol_auth_sol_login(_ input: Operations.post_sol_api_sol_auth_sol_login.Input) async throws -> Operations.post_sol_api_sol_auth_sol_login.Output
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    func post_sol_api_sol_auth_sol_forgot_hyphen_password(_ input: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input) async throws -> Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output
     /// List skills for an agent
     ///
     /// - Remark: HTTP `GET /api/actors/{actorId}/skills`.
@@ -814,7 +821,7 @@ extension APIProtocol {
     }
     /// Bounded multi-hop graph traversal from an object
     ///
-    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.
+    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.
     ///
     /// - Remark: HTTP `GET /api/objects/{id}/graph/traverse`.
     /// - Remark: Generated from `#/paths//api/objects/{id}/graph/traverse/get`.
@@ -1065,6 +1072,21 @@ extension APIProtocol {
         body: Operations.post_sol_api_sol_auth_sol_login.Input.Body? = nil
     ) async throws -> Operations.post_sol_api_sol_auth_sol_login.Output {
         try await post_sol_api_sol_auth_sol_login(Operations.post_sol_api_sol_auth_sol_login.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    public func post_sol_api_sol_auth_sol_forgot_hyphen_password(
+        headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers = .init(),
+        body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body? = nil
+    ) async throws -> Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output {
+        try await post_sol_api_sol_auth_sol_forgot_hyphen_password(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input(
             headers: headers,
             body: body
         ))

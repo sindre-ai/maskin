@@ -61,8 +61,7 @@ test.describe('Loop detail page', () => {
 			await expect(stats.getByText('Median cycle time')).toBeVisible()
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
-			await page.getByRole('tab', { name: 'Overview' }).click()
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(
 				page.getByPlaceholder(
@@ -119,7 +118,9 @@ test.describe('Loop detail page', () => {
 			expect(composerFollowsActivity).toBe(true)
 
 			// A step row is the only route into a loop-owned trigger now that
-			// /triggers redirects.
+			// /triggers redirects. The steps live on Setup, and the checks above
+			// left the page on Overview.
+			await page.getByRole('tab', { name: 'Setup' }).click()
 			await page.getByRole('link', { name: /Triage feedback/ }).click()
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
 				timeout: 10000,

@@ -3,6 +3,7 @@ import { conversations, messages } from '@maskin/db/schema'
 import type { MessageMetadata } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { postComment } from '../lib/comments'
+import { fileIdsInText, linkFilesToConversation } from '../lib/conversation-file-links'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { resolveCardFromAnswerMessage } from './card-resolution'
@@ -26,6 +27,17 @@ export type InsertConversationMessageArgs = {
 }
 
 export type InsertedConversationMessage = typeof messages.$inferSelect
+
+/** The file ids a message's metadata lists as attachments; anything malformed is skipped. */
+export function attachedFileIds(metadata: unknown): string[] {
+	const list = (metadata as { attachments?: unknown } | null | undefined)?.attachments
+	if (!Array.isArray(list)) return []
+	return list.flatMap((a) =>
+		typeof (a as { file_id?: unknown })?.file_id === 'string'
+			? [(a as { file_id: string }).file_id]
+			: [],
+	)
+}
 
 /**
  * The mechanics of putting a message into a conversation: insert the row, bump
@@ -84,6 +96,22 @@ export async function insertConversationMessage(
 			author_actor_id: args.actorId,
 			...(args.threadRootId ? { thread_root_id: args.threadRootId } : {}),
 		},
+	})
+
+	// Every file attached to a message belongs to the chat. An agent that shares a file by its
+	// link in the text (a render, a preview) has put that file in this chat too, but only a
+	// message from a session counts for that, so a person pasting a link links nothing. Best
+	// effort: the link write never fails the message.
+	await linkFilesToConversation(db, {
+		workspaceId: args.workspaceId,
+		conversationId: args.conversationId,
+		fileIds: args.sessionId
+			? [...attachedFileIds(args.metadata), ...fileIdsInText(args.content)]
+			: attachedFileIds(args.metadata),
+		createdBy: args.actorId,
+		metadata: args.sessionId
+			? { messageId: created.id, sessionId: args.sessionId }
+			: { messageId: created.id },
 	})
 
 	if ((args.kind ?? 'message') === 'message' && !args.skipObjectMirror) {

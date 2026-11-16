@@ -125,6 +125,62 @@ public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable, Codable {
 	}
 }
 
+/// One edge of the object's graph, as much of it as the origin needs.
+public struct OriginEdge: Sendable, Equatable {
+	public var type: String
+	public var sourceType: String
+	public var sourceId: String
+	public var targetType: String
+	public var targetId: String
+	/// Who wrote the edge: for a `produced_by` edge, the agent that ran the session.
+	public var createdBy: String?
+	public var createdAt: Date?
+
+	public init(
+		type: String, sourceType: String, sourceId: String, targetType: String, targetId: String,
+		createdBy: String? = nil, createdAt: Date? = nil
+	) {
+		self.type = type
+		self.sourceType = sourceType
+		self.sourceId = sourceId
+		self.targetType = targetType
+		self.targetId = targetId
+		self.createdBy = createdBy
+		self.createdAt = createdAt
+	}
+}
+
+/// Where an item came from: the session that produced it, who ran it, when, and the chat that
+/// started the session. Read from the item's graph, as web's `resolveLineage` does.
+public struct ObjectOrigin: Sendable, Equatable {
+	public var sessionId: String
+	/// The actor that ran the session; resolve it to a name, never show it.
+	public var actorId: String?
+	public var spawnedAt: Date?
+	public var chatId: String?
+
+	public init(sessionId: String, actorId: String? = nil, spawnedAt: Date? = nil, chatId: String? = nil) {
+		self.sessionId = sessionId
+		self.actorId = actorId
+		self.spawnedAt = spawnedAt
+		self.chatId = chatId
+	}
+
+	/// The oldest `produced_by` edge from a session into the item (origin is where it began, not
+	/// who touched it last), plus the chat that spawned that session when the graph carries it.
+	/// `nil` when no session produced the item: nothing shows then.
+	public static func resolve(objectId: String, edges: [OriginEdge]) -> ObjectOrigin? {
+		let produced = edges
+			.filter { $0.type == "produced_by" && $0.sourceType == "session" && $0.targetId == objectId }
+			.min { ($0.createdAt ?? .distantFuture) < ($1.createdAt ?? .distantFuture) }
+		guard let produced else { return nil }
+		let chat = edges.first { $0.type == "spawned" && $0.targetType == "session" && $0.targetId == produced.sourceId }
+		return ObjectOrigin(
+			sessionId: produced.sourceId, actorId: produced.createdBy, spawnedAt: produced.createdAt,
+			chatId: chat?.sourceId)
+	}
+}
+
 /// One entry of an object's activity stream, as the server records it.
 public struct ObjectEvent: Identifiable, Sendable, Equatable {
 	public var id: Int
@@ -153,11 +209,13 @@ public struct ObjectGraph: Sendable, Equatable {
 	public var object: WorkObject
 	public var links: [ObjectLink]
 	public var events: [ObjectEvent]
+	public var origin: ObjectOrigin?
 
-	public init(object: WorkObject, links: [ObjectLink], events: [ObjectEvent]) {
+	public init(object: WorkObject, links: [ObjectLink], events: [ObjectEvent], origin: ObjectOrigin? = nil) {
 		self.object = object
 		self.links = links
 		self.events = events
+		self.origin = origin
 	}
 }
 
@@ -256,6 +314,17 @@ public struct ObjectDraft: Sendable, Equatable {
 }
 
 /// A partial update; `nil` leaves the field alone.
+/// The chat and the agent a card edit was made for (`chat` on `PATCH /api/objects/{id}`).
+public struct ObjectPatchChat: Sendable, Equatable {
+	public var conversationID: String
+	public var agentID: String
+
+	public init(conversationID: String, agentID: String) {
+		self.conversationID = conversationID
+		self.agentID = agentID
+	}
+}
+
 public struct ObjectPatch: Sendable, Equatable {
 	public var title: String?
 	public var content: String?
@@ -265,16 +334,19 @@ public struct ObjectPatch: Sendable, Equatable {
 	/// Shallow-merged into `metadata` (as the server does); an empty-string value removes that
 	/// key. `nil` leaves metadata alone.
 	public var metadata: [String: String]?
+	/// The chat card the edit was made from: the server tells the agent behind it. Nil elsewhere.
+	public var chat: ObjectPatchChat?
 
 	public init(
 		title: String? = nil, content: String? = nil, status: String? = nil, driver: String? = nil,
-		metadata: [String: String]? = nil
+		metadata: [String: String]? = nil, chat: ObjectPatchChat? = nil
 	) {
 		self.title = title
 		self.content = content
 		self.status = status
 		self.driver = driver
 		self.metadata = metadata
+		self.chat = chat
 	}
 
 	public func applied(to object: WorkObject) -> WorkObject {

@@ -129,4 +129,86 @@ describe('MetadataPropertiesView', () => {
 		fireEvent.blur(input)
 		expect(onUpdateMetadata).toHaveBeenCalledWith('obj-1', { team: 'beta' })
 	})
+
+	describe('add property keyboard', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', metadata: null })
+
+		it('Esc closes the menu and returns focus to + Add property', async () => {
+			const user = userEvent.setup()
+			render(<MetadataPropertiesView {...baseProps} object={object} />)
+			await user.click(screen.getByRole('button', { name: '+ Add property' }))
+			expect(screen.getByText('+ Create new property')).toBeInTheDocument()
+
+			await user.keyboard('{Escape}')
+			const trigger = screen.getByRole('button', { name: '+ Add property' })
+			expect(screen.queryByText('+ Create new property')).not.toBeInTheDocument()
+			expect(trigger).toHaveFocus()
+		})
+
+		it('Esc cancels the create form and returns focus to + Add property', async () => {
+			const user = userEvent.setup()
+			render(<MetadataPropertiesView {...baseProps} object={object} />)
+			await user.click(screen.getByRole('button', { name: '+ Add property' }))
+			await user.click(screen.getByText('+ Create new property'))
+			await user.type(screen.getByPlaceholderText(/Property name/), 'Due')
+
+			await user.keyboard('{Escape}')
+			expect(screen.queryByPlaceholderText(/Property name/)).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: '+ Add property' })).toHaveFocus()
+		})
+
+		it('Enter in Name creates the property', async () => {
+			const user = userEvent.setup()
+			const onCreateField = vi.fn()
+			const onUpdateMetadata = vi.fn()
+			render(
+				<MetadataPropertiesView
+					{...baseProps}
+					object={object}
+					onCreateField={onCreateField}
+					onUpdateMetadata={onUpdateMetadata}
+				/>,
+			)
+			await user.click(screen.getByRole('button', { name: '+ Add property' }))
+			await user.click(screen.getByText('+ Create new property'))
+			await user.type(screen.getByPlaceholderText(/Property name/), 'Owner{Enter}')
+
+			expect(onCreateField).toHaveBeenCalledTimes(1)
+			expect(onCreateField.mock.calls[0][2]).toEqual({ name: 'Owner', type: 'text' })
+			expect(onUpdateMetadata).toHaveBeenCalledWith('obj-1', { Owner: '' })
+		})
+
+		it('Enter in Name does nothing while the name is empty', async () => {
+			const user = userEvent.setup()
+			const onCreateField = vi.fn()
+			render(
+				<MetadataPropertiesView {...baseProps} object={object} onCreateField={onCreateField} />,
+			)
+			await user.click(screen.getByRole('button', { name: '+ Add property' }))
+			await user.click(screen.getByText('+ Create new property'))
+			await user.type(screen.getByPlaceholderText(/Property name/), '{Enter}')
+
+			expect(onCreateField).not.toHaveBeenCalled()
+			expect(screen.getByPlaceholderText(/Property name/)).toBeInTheDocument()
+		})
+
+		it('Enter in Options creates an enum property', async () => {
+			const user = userEvent.setup()
+			const onCreateField = vi.fn()
+			render(
+				<MetadataPropertiesView {...baseProps} object={object} onCreateField={onCreateField} />,
+			)
+			await user.click(screen.getByRole('button', { name: '+ Add property' }))
+			await user.click(screen.getByText('+ Create new property'))
+			await user.type(screen.getByPlaceholderText(/Property name/), 'Stage')
+			await user.click(screen.getByRole('button', { name: 'enum' }))
+			await user.type(screen.getByPlaceholderText(/Options/), 'a, b{Enter}')
+
+			expect(onCreateField.mock.calls[0][2]).toEqual({
+				name: 'Stage',
+				type: 'enum',
+				values: ['a', 'b'],
+			})
+		})
+	})
 })

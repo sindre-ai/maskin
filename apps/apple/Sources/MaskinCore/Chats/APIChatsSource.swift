@@ -7,10 +7,14 @@ import OpenAPIRuntime
 public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	private let client: Client
 	private let workspaceID: String
+	/// Where a file over the JSON route's cap goes (straight to storage). Without it only files up to
+	/// that cap can be attached.
+	private let largeUploads: LargeFileUploadTransport?
 
-	public init(client: Client, workspaceID: String) {
+	public init(client: Client, workspaceID: String, largeUploads: LargeFileUploadTransport? = nil) {
 		self.client = client
 		self.workspaceID = workspaceID
+		self.largeUploads = largeUploads
 	}
 
 	// MARK: - List
@@ -18,14 +22,22 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int)
 		async throws -> ConversationPage
 	{
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: false,
+			limit: limit, offset: offset)
+	}
+
+	public func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
 		let output = try await client.get_sol_api_sol_conversations(
 			.init(
 				// The server parses `?archived=false` with `z.coerce.boolean()`, which reads the string
 				// "false" as true and returns the ARCHIVED list. Omit it for the default (active) list.
 				query: .init(
 					pinned: pinnedOnly ? true : nil, archived: archived ? true : nil,
-					unread_only: unreadOnly ? true : nil, limit: min(limit, ChatLimits.maxConversationsPage),
-					offset: offset),
+					unread_only: unreadOnly ? true : nil, hide_quiet: hideQuiet ? true : nil,
+					limit: min(limit, ChatLimits.maxConversationsPage), offset: offset),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		switch output {
 		case .ok(let ok):
@@ -514,6 +526,18 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 }
 
 extension APIChatsSource: ChatFileUploading {
+	public func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws
+		-> ChatAttachmentRef
+	{
+		guard FileUploadLimits.needsDirectUpload(sizeBytes: sizeBytes, mimeType: mimeType) else {
+			return try await upload(
+				name: name, mimeType: mimeType, data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+		}
+		guard let largeUploads else { throw ChatsError("Files this large can't be attached here.") }
+		return try await LargeFileUploader(transport: largeUploads, workspaceID: workspaceID)
+			.upload(name: name, mimeType: mimeType, fileURL: fileURL, sizeBytes: sizeBytes)
+	}
+
 	public func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef {
 		let output = try await client.post_sol_api_sol_files(
 			.init(

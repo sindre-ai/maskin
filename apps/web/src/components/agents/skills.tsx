@@ -49,7 +49,7 @@ import {
 	Trash2,
 	User,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 interface SkillsProps {
@@ -69,6 +69,24 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 	const [addingSkill, setAddingSkill] = useState(false)
 	const [editingSkill, setEditingSkill] = useState<string | null>(null)
 	const [importOpen, setImportOpen] = useState(false)
+	const rootRef = useRef<HTMLDivElement>(null)
+
+	// The control that opened the form is gone while the form is open, so after
+	// it closes, find its replacement by key and put focus back there.
+	const closeForm = useCallback((trigger: string) => {
+		setAddingSkill(false)
+		setEditingSkill(null)
+		requestAnimationFrame(() => {
+			// Match by value rather than a selector string: jsdom has no CSS.escape.
+			const triggers = rootRef.current?.querySelectorAll<HTMLElement>('[data-skill-trigger]')
+			for (const el of triggers ?? []) {
+				if (el.dataset.skillTrigger === trigger) {
+					el.focus()
+					break
+				}
+			}
+		})
+	}, [])
 
 	const handleDelete = useCallback(
 		(name: string) => {
@@ -86,7 +104,7 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 	const skillList = skills ?? []
 
 	return (
-		<div>
+		<div ref={rootRef}>
 			<WorkspaceSkillsSection
 				actorId={actorId}
 				workspaceId={workspaceId}
@@ -104,7 +122,7 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 								key={skill.name}
 								actorId={actorId}
 								editingName={skill.name}
-								onDone={() => setEditingSkill(null)}
+								onDone={() => closeForm(`edit:${skill.name}`)}
 							/>
 						) : (
 							<SkillCard
@@ -128,7 +146,7 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 			{!readOnly && (
 				<>
 					{addingSkill ? (
-						<SkillForm actorId={actorId} onDone={() => setAddingSkill(false)} />
+						<SkillForm actorId={actorId} onDone={() => closeForm('add')} />
 					) : (
 						<div className="flex flex-wrap items-center gap-2">
 							<ViewerTooltip>
@@ -136,6 +154,7 @@ export function Skills({ actorId, readOnly = false, attachedFirst = false }: Ski
 									size="sm"
 									variant="outline"
 									disabled={!canWrite}
+									data-skill-trigger="add"
 									onClick={() => setAddingSkill(true)}
 								>
 									<Plus className="h-3.5 w-3.5 mr-1" />
@@ -444,6 +463,12 @@ function SkillCard({
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const canWrite = useCanWrite()
+	const deleteTriggerRef = useRef<HTMLButtonElement>(null)
+
+	const cancelDelete = () => {
+		setConfirmDelete(false)
+		requestAnimationFrame(() => deleteTriggerRef.current?.focus())
+	}
 
 	return (
 		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
@@ -456,11 +481,20 @@ function SkillCard({
 			</div>
 			{!readOnly &&
 				(confirmDelete ? (
-					<div className="flex items-center gap-1 shrink-0">
+					<div
+						className="flex items-center gap-1 shrink-0"
+						onKeyDown={(e) => {
+							if (e.key === 'Escape') {
+								e.stopPropagation()
+								cancelDelete()
+							}
+						}}
+					>
 						<Button size="sm" variant="destructive" onClick={onDelete}>
 							Delete
 						</Button>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+						{/* Focus lands on the safe choice so Esc works at once and Enter cannot delete. */}
+						<Button size="sm" variant="ghost" onClick={cancelDelete} autoFocus>
 							Cancel
 						</Button>
 					</div>
@@ -472,6 +506,7 @@ function SkillCard({
 								variant="ghost"
 								className="text-muted-foreground"
 								disabled={!canWrite}
+								data-skill-trigger={`edit:${skill.name}`}
 								onClick={onEdit}
 								aria-label="Edit skill"
 							>
@@ -482,6 +517,7 @@ function SkillCard({
 							<Button
 								size="icon"
 								variant="ghost"
+								ref={deleteTriggerRef}
 								className="text-muted-foreground hover:text-error"
 								disabled={!canWrite}
 								onClick={() => setConfirmDelete(true)}
@@ -567,8 +603,28 @@ function SkillForm({
 		)
 	}
 
+	// Standard keys: Esc leaves the form, Enter in a single-line field saves.
+	// A popover inside the form (the Context select) claims its own Esc first.
+	const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+		if (e.defaultPrevented) return
+		if (e.key === 'Escape') {
+			e.stopPropagation()
+			onDone()
+		} else if (
+			e.key === 'Enter' &&
+			!e.nativeEvent.isComposing &&
+			e.target instanceof HTMLInputElement
+		) {
+			e.preventDefault()
+			if (!saveSkill.isPending) handleSave()
+		}
+	}
+
 	return (
-		<div className="rounded-md border border-border bg-card p-3 space-y-2">
+		<div
+			className="rounded-md border border-border bg-card p-3 space-y-2"
+			onKeyDown={handleKeyDown}
+		>
 			<div className="flex gap-2">
 				<div className="flex-1">
 					<Label>Name</Label>

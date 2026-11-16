@@ -76,7 +76,7 @@ import { type MessageAttachmentItem, MessageAttachments } from './message-attach
 import { MessageDivider } from './message-divider'
 import { ReactButton, ReactionChips } from './message-reactions'
 import { QuestionOptions } from './question-options'
-import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { type MessageSpawnInfo, SpawnChip } from './spawn-indicator'
 import { TagChip } from './tag-chip'
 import { useThreadsPane } from './threads-context'
 import { VoiceMessageMetaTag } from './voice-call-boundary'
@@ -360,15 +360,12 @@ export function MessageBubble({
 					)}
 				>
 					{fitText && liftedAttachments ? (
-						<div className={cn('w-full', spawnInfo && 'pr-2')}>{liftedAttachments}</div>
+						<div className={'w-full'}>{liftedAttachments}</div>
 					) : (
 						liftedAttachments
 					)}
 					{hasPlate ? (
 						<>
-							{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
-				    (`pr-2`) and owns the absolute placement, so the bar sits flush
-				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
 									// While fitting, the column above carries the width cap. The edit card takes the row,
@@ -383,11 +380,9 @@ export function MessageBubble({
 												: holdsCard
 													? 'relative w-[min(520px,88%)]'
 													: 'relative max-w-[min(560px,80%)]',
-									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
 							>
-								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
 								<div
 									ref={plateRef}
 									className={
@@ -559,14 +554,7 @@ export function MessageBubble({
 				size="md"
 				className="mt-0.5 size-[30px] shrink-0"
 			/>
-			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
-				{spawnInfo ? (
-					// S2 · agent-side messages can also spawn sessions (an agent that
-					// hands off work to a spawned session); render the same marker
-					// they'd see on their own bubble. Absolute-positioned in a gutter
-					// the column reserves, so it stays inside the column's box.
-					<SpawnBar className="absolute right-0 top-0 h-full" />
-				) : null}
+			<div className={'relative min-w-0 flex-1'}>
 				<div className="flex items-baseline gap-1.5">
 					{message.actorType === 'agent' && message.actorId ? (
 						<Link

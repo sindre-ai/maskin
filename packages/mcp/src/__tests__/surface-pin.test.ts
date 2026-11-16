@@ -74,6 +74,7 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'desktop_settings',
 	'query_data',
 	'list_file_tags',
 	'get_trigger',

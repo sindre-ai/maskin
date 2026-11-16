@@ -1,3 +1,9 @@
+import {
+	HEADER_CLASS,
+	ROW_CLASS,
+	isMobileViewport,
+	useKeyboardInset,
+} from '@/components/shared/floating-menu'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/cn'
 import {
@@ -18,7 +24,7 @@ import {
 	Minus,
 	Quote,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { type Root, createRoot } from 'react-dom/client'
 
 // The slash menu for the document editor (tech spec §6, v3 mockup decisions).
@@ -41,12 +47,6 @@ const ITEM_ICONS: Record<string, LucideIcon> = {
 	divider: Minus,
 }
 
-const MOBILE_QUERY = '(max-width: 640px)'
-
-function isMobileViewport(): boolean {
-	return typeof window !== 'undefined' && window.matchMedia?.(MOBILE_QUERY).matches === true
-}
-
 function IconTile({ icon: Icon }: { icon: LucideIcon }) {
 	return (
 		<span
@@ -56,36 +56,6 @@ function IconTile({ icon: Icon }: { icon: LucideIcon }) {
 			<Icon className="size-[14px]" />
 		</span>
 	)
-}
-
-// Header label: 11px semibold muted sentence case. The 8px mono eyebrow is too small on
-// touch and would render as BLOCKS.
-const HEADER_CLASS = 'px-[9px] pb-[6px] pt-[5px] text-[11px] font-semibold text-muted-foreground'
-
-const ROW_CLASS = cn(
-	'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5',
-	'data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground',
-)
-
-// Keeps a bottom sheet above the on-screen keyboard. Position: fixed follows the
-// layout viewport, which a mobile keyboard overlaps, so lift the sheet by the
-// part of the layout viewport the visual viewport no longer covers.
-function useKeyboardInset(enabled: boolean): number {
-	const [inset, setInset] = useState(0)
-	useEffect(() => {
-		const viewport = window.visualViewport
-		if (!enabled || !viewport) return
-		const update = () =>
-			setInset(Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop))
-		update()
-		viewport.addEventListener('resize', update)
-		viewport.addEventListener('scroll', update)
-		return () => {
-			viewport.removeEventListener('resize', update)
-			viewport.removeEventListener('scroll', update)
-		}
-	}, [enabled])
-	return inset
 }
 
 export interface SlashMenuPanelProps {

@@ -308,6 +308,59 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
+	describe('card step for a new workspace (bet "A card to start a 7-day trial")', () => {
+		async function billingOf(workspaceId: string) {
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, workspaceId))
+			return (row?.settings as { billing?: Record<string, unknown> }).billing ?? {}
+		}
+
+		it('makes a workspace that waits for its card', async () => {
+			const app = createApp()
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Second try' }))
+
+			expect(res.status).toBe(201)
+			const created = await res.json()
+			expect(await billingOf(created.id)).toMatchObject({
+				plan: 'trial',
+				trial_state: 'awaiting_card',
+			})
+		})
+
+		it('makes a workspace that waits for its card after the first one was deleted', async () => {
+			const app = createApp()
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'First' }))
+			).json()
+			// A new workspace already has audit events pointing at it, so a bare row delete is refused.
+			const removed = await app.request(
+				jsonRequest('POST', `/api/workspaces/${first.id}/delete`, { confirm_name: 'First' }),
+			)
+			expect(removed.status).toBe(200)
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Again' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBe('awaiting_card')
+		})
+
+		it('lets a person who already pays for a workspace make another without a card step', async () => {
+			const app = createApp()
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Paid' }))
+			).json()
+			await setWorkspacePlan(db, first.id, 'pro')
+
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Another' }))
+
+			expect(res.status).toBe(201)
+			expect((await billingOf((await res.json()).id)).trial_state).toBeUndefined()
+		})
+	})
+
 	describe('team flag for analytics', () => {
 		it('marks the caller as team only when they belong to the workspace named by the setting', async () => {
 			const app = createApp()
@@ -338,6 +391,52 @@ describe('Workspaces Integration', () => {
 			// The caller belongs to this one, so they are the team.
 			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', workspace.id)
 			expect(await flagFor(workspace.id)).toBe(true)
+		})
+	})
+
+	describe('internal and paying flags for analytics', () => {
+		it('marks our own free workspace internal and an outside paid one paying, for a plain member too', async () => {
+			const app = createApp()
+			const ours = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Ours' }))
+			).json()
+			// A trial-tier actor may only own one workspace, so raise the first to pro
+			// (no subscription, so still not paying) before creating the second.
+			await setWorkspacePlan(db, ours.id, 'pro')
+			const outside = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Outside' }))
+			).json()
+			onTestFinished(() => vi.unstubAllEnvs())
+			vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', ours.id)
+			await db
+				.update(workspacesTable)
+				.set({
+					settings: {
+						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_test' },
+					},
+				})
+				.where(eq(workspacesTable.id, outside.id))
+			// Billing settings are hidden from plain members, the flag must not be.
+			await db
+				.update(workspaceMembers)
+				.set({ role: 'member' })
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, outside.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+
+			const rows = (await (await app.request(jsonGet('/api/workspaces'))).json()) as Array<{
+				id: string
+				internal: boolean
+				paying: boolean
+			}>
+			expect(rows.find((w) => w.id === ours.id)).toMatchObject({ internal: true, paying: false })
+			expect(rows.find((w) => w.id === outside.id)).toMatchObject({
+				internal: false,
+				paying: true,
+			})
 		})
 	})
 

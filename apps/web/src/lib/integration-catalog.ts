@@ -29,6 +29,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	'google-search-console': { category: 'Analytics', domain: 'search.google.com' },
 	linear: { category: 'Code', domain: 'linear.app' },
 	'linkedin-unipile': { category: 'Chat & social', domain: 'linkedin.com' },
+	microsoft: { category: 'Chat & social', domain: 'microsoft.com' },
 	miro: { category: 'Design', domain: 'miro.com' },
 	notion: { category: 'Docs & data', domain: 'notion.so' },
 	posthog: { category: 'Analytics', domain: 'posthog.com' },

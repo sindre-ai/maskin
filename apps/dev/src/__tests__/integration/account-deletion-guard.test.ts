@@ -19,6 +19,7 @@ const ERASED = new Set([
 	'notification_preferences',
 	'notifications',
 	'oauth_grants',
+	'password_reset_tokens',
 	'read_state',
 	'slack_user_links',
 	'star_state',
@@ -45,6 +46,12 @@ const KEPT: Record<string, string> = {
 	file_comments: 'content authored by the person is kept',
 	file_proposals: 'content authored by the person is kept, attributed to the deleted user',
 	file_proposal_changes: 'decided_by on a kept proposal; the decision stays with the deleted user',
+	next_steps:
+		'owner / created_by / blocked-on actor of a step on a kept object (owner and created_by are ON DELETE SET NULL); the step stays, attributed to the deleted user',
+	job_go_aheads:
+		'granted_by is the person who said yes on a kept job; the row stays as the record of who allowed what (it ends when the job closes), attributed to the deleted user',
+	done_when_lines:
+		'approved_by is the person who approved a kept job\u2019s list (ON DELETE SET NULL); the lines stay as the record of what was agreed',
 	file_uploads:
 		'transient ledger of an in-flight upload; the reaper aborts the stored upload and settles the row when it expires, so erasing it here would strand the stored parts',
 	for_you_withdrawals:
@@ -53,6 +60,8 @@ const KEPT: Record<string, string> = {
 	saved_views:
 		'created_by on a shared workspace view (ON DELETE SET NULL); the view stays when its author leaves',
 	workspace_skills: 'created_by on workspace content',
+	workspace_ai_usage:
+		'plan-spend ledger of a kept workspace (actor_id is ON DELETE SET NULL); the cost stays billed',
 	workspaces: 'created_by / billing_owner_id; deletion is blocked until billing is handed over',
 	triggers: 'created_by / target agent on workspace automation',
 	sessions: 'agent run history; actor is the agent or the person who started it',

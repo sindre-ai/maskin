@@ -67,8 +67,13 @@ describe('statusStage', () => {
 	it.each([
 		['done', 'done'],
 		['in_review', 'review'],
+		['live', 'review'],
+		['succeeded', 'done'],
 		['In progress', 'progress'],
 		['active', 'progress'],
+		['define', 'define'],
+		['Define', 'define'],
+		['opportunity', 'todo'],
 		['todo', 'todo'],
 		['backlog', 'todo'],
 		['cancelled', 'cancelled'],

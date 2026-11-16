@@ -52,6 +52,10 @@
 		"./react/slash-command": {
 			"types": "./src/react/slash-command.ts",
 			"default": "./dist/react/slash-command.js"
+		},
+		"./react/emoji-suggestion": {
+			"types": "./src/react/emoji-suggestion.ts",
+			"default": "./dist/react/emoji-suggestion.js"
 		}
 	},
 	"scripts": {

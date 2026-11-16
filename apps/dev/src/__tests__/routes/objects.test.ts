@@ -23,6 +23,19 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
+// The mock db answers every select with the same rows, so the next step lookup on the single
+// read would be handed the object itself. The lookup has its own integration test.
+vi.mock('../../lib/next-steps', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/next-steps')>()),
+	getLiveNextStep: vi.fn().mockResolvedValue(null),
+}))
+
+// Same for the go-ahead lookup. It has its own integration test.
+vi.mock('../../lib/go-aheads', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/go-aheads')>()),
+	getLiveGoAhead: vi.fn().mockResolvedValue(null),
+}))
+
 // Import the route module directly (not index.ts)
 const { default: objectsRoutes } = await import('../../routes/objects')
 
@@ -382,6 +395,44 @@ describe('Objects Routes', () => {
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/objects/${existing.id}`, buildUpdateObjectBody()),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('answers 409 and writes nothing when expected_status no longer holds', async () => {
+			const existing = buildObject({ status: 'active' })
+			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
+			// existing, membership, then the in-transaction re-read, which finds the object already moved on.
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [existing]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New title',
+					expected_status: 'opportunity',
+				}),
+			)
+
+			expect(res.status).toBe(409)
+			expect(await res.json()).toMatchObject({ error: { code: 'CONFLICT' } })
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('applies the update when expected_status still holds', async () => {
+			const existing = buildObject({ status: 'opportunity' })
+			const updated = { ...existing, title: 'New title' }
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[existing], [buildWorkspaceMember()], [existing]]
+			mockResults.update = [updated]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/objects/${existing.id}`, {
+					title: 'New title',
+					expected_status: 'opportunity',
+				}),
 			)
 
 			expect(res.status).toBe(200)

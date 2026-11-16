@@ -4,6 +4,7 @@ import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
 import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
+import { trackTurnCheckCapHit, trackTurnSentBack } from '../lib/analytics/turn-check-events'
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import {
 	classifyBannerResult,
@@ -18,6 +19,7 @@ import {
 	extractCloudflareRayId,
 	isProviderBlockPage,
 } from '../lib/turn-error-classifier'
+import { type WorkLeftMatch, buildSendBackNudge, detectWorkLeft } from '../lib/work-left'
 import { reportChatReply } from './chat-reply-tracking'
 import { shareReplyDigest } from './chat-session-context'
 import type { StreamJsonUserMessage } from './container-manager'
@@ -149,6 +151,17 @@ const RETRY_UNANSWERED_MESSAGE =
  * the human is told in plain words instead.
  */
 const MAX_PSEUDO_TOOL_CALL_NUDGES = 1
+
+/** Switches the end-of-turn "work remains" send-back off when set to `0`. Default on. */
+export const TURN_SEND_BACK_KILLSWITCH_ENV_VAR = 'FEATURE_TURN_SEND_BACK'
+
+/**
+ * How many times one chat turn is sent back for ending with work the agent could still do. Two:
+ * a model that can act on the correction does so on the first or second, and every send-back is a
+ * full turn of tokens. After the cap the turn ends and the job carries on through its next step
+ * and the wake, not through more send-backs.
+ */
+export const MAX_TURN_SEND_BACKS = 2
 
 /**
  * The correction written back to the model's stdin as a user turn.
@@ -394,6 +407,8 @@ export type InteractiveTurnFinalizerOptions = {
 	 * Injected for the same reason as the options above.
 	 */
 	onLimitResult?: (sessionId: string, outcome: { isError: true; text: string }) => Promise<void>
+	/** Test seam: replaces process.env for the end-of-turn send-back killswitch. */
+	env?: NodeJS.ProcessEnv
 }
 
 export class InteractiveTurnFinalizer {
@@ -440,6 +455,14 @@ export class InteractiveTurnFinalizer {
 		string,
 		{ primaryModel: string; armedAfterLogId: number }
 	>()
+	/**
+	 * sessionId -> send-backs spent on the turn answering one chat message.
+	 *
+	 * Keyed by session with the originating message id beside it, like `emptyTurns`: the
+	 * correction is a NEW user turn with different content, so a payload key would restart the
+	 * budget each time. A different `origin` is a new human message and starts its own budget.
+	 */
+	private readonly turnSendBacks = new Map<string, { origin: number | null; count: number }>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly setModel?: InteractiveTurnFinalizerOptions['setModel']
 	private readonly fallbackModel: string | null
@@ -451,9 +474,11 @@ export class InteractiveTurnFinalizer {
 	private readonly onLimitResult?: InteractiveTurnFinalizerOptions['onLimitResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
+	private readonly env: NodeJS.ProcessEnv
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
+		this.env = options.env ?? process.env
 		this.retryTurn = options.retryTurn
 		this.setModel = options.setModel
 		this.fallbackModel = options.fallbackModel ?? null
@@ -526,6 +551,7 @@ export class InteractiveTurnFinalizer {
 		this.clearRetryCounts(sessionId)
 		this.pseudoToolCallNudges.delete(sessionId)
 		this.emptyTurns.delete(sessionId)
+		this.turnSendBacks.delete(sessionId)
 		this.fallbackActive.delete(sessionId)
 		// A replay was written and its turn never came back; the session going
 		// away is proof it never will. Fire the notice instead of dropping the
@@ -683,6 +709,10 @@ export class InteractiveTurnFinalizer {
 		this.pseudoToolCallNudges.delete(sessionId)
 		this.emptyTurns.delete(sessionId)
 
+		// Decided before the post, because the post puts the turn in `seen`. The reply is posted
+		// either way: the human reads what the agent did, then the correction runs as the next turn.
+		const workLeft = await this.assessWorkLeft(sessionId, text, result, logId)
+
 		await this.postTurnMessage(
 			sessionId,
 			gate,
@@ -692,6 +722,143 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+
+		if (workLeft) this.sendTurnBack(sessionId, gate, workLeft.match, workLeft.origin)
+	}
+
+	/**
+	 * Does this chat reply end with work the agent could still do? Stage 1: phrases on the closing
+	 * text, plus whether the turn ran any tool. A phrase only ever flags; it is never the reason a
+	 * turn passes. Null means leave the turn alone.
+	 *
+	 * Acts only on the newest turn that has not been posted yet, because the agent-server replays a
+	 * session's stdout when this process restarts and an old reply must not be sent back again.
+	 * Never throws: a bug in the check must not cost the human their reply.
+	 */
+	private async assessWorkLeft(
+		sessionId: string,
+		text: string,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<{ match: WorkLeftMatch; origin: number | null } | null> {
+		try {
+			if (this.env[TURN_SEND_BACK_KILLSWITCH_ENV_VAR] === '0') return null
+			const match = detectWorkLeft(text)
+			if (!match) {
+				// A clean ending closes the episode, so a later lapse gets its own two send-backs.
+				this.turnSendBacks.delete(sessionId)
+				return null
+			}
+			const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
+			if (this.seen.has(dedupeKey)) return null
+			if (
+				!(await this.isNewestTurn(sessionId, logId)) ||
+				(await this.findExistingFinalOutputMessageId(sessionId, dedupeKey)) !== null
+			) {
+				return null
+			}
+			if (match.needsToolCalls && !(await this.turnRanTools(sessionId, logId, result.raw))) {
+				return null
+			}
+			return { match, origin: await this.resolveTurnMessageId(sessionId, logId) }
+		} catch (err) {
+			logger.warn(`Turn send-back check failed for session ${sessionId}: ${describeError(err)}`)
+			return null
+		}
+	}
+
+	/**
+	 * True when the turn that closed at `logId` made at least one tool call. Walks the log
+	 * backwards to the previous turn boundary, like assessBlankTurn. A reply tool is a boundary:
+	 * what came before it was already shown to the human.
+	 */
+	private async turnRanTools(
+		sessionId: string,
+		logId: number,
+		resultRaw: string,
+	): Promise<boolean> {
+		const rows = await this.db
+			.select({ id: sessionLogs.id, content: sessionLogs.content })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					lte(sessionLogs.id, logId),
+					eq(sessionLogs.stream, 'stdout'),
+				),
+			)
+			.orderBy(desc(sessionLogs.id))
+			.limit(RECOVERY_SCAN_LIMIT)
+
+		for (const row of rows) {
+			let lines = splitRowLines(row.content)
+			if (row.id === logId) {
+				const at = lines.findIndex((line) => line.trim() === resultRaw)
+				lines = at === -1 ? [] : lines.slice(0, at)
+			}
+			for (let i = lines.length - 1; i >= 0; i--) {
+				const line = classifyTurnLine(lines[i] ?? '')
+				if (line.kind === 'work_tool') return true
+				if (line.kind === 'turn_start' || line.kind === 'reply_tool') return false
+			}
+		}
+		return false
+	}
+
+	/**
+	 * Write the correction as the next user turn on the same live session, at most
+	 * MAX_TURN_SEND_BACKS times per chat message. Past the cap the turn ends as it is and the cap
+	 * hit is counted. Not awaited by the caller, for the same reason handleFailedTurn is not: this
+	 * runs on the log-ingest path and a stdin write must not stall the live feed.
+	 */
+	private sendTurnBack(
+		sessionId: string,
+		gate: SessionGate,
+		match: WorkLeftMatch,
+		origin: number | null,
+	): void {
+		const tracked = this.turnSendBacks.get(sessionId)
+		const spent = tracked && tracked.origin === origin ? tracked.count : 0
+		const props = {
+			workspaceId: gate.workspaceId,
+			agentId: gate.actorId,
+			surface: 'chat' as const,
+			stage: 'phrase_check' as const,
+			reason: match.kind,
+		}
+
+		if (spent >= MAX_TURN_SEND_BACKS) {
+			this.turnSendBacks.delete(sessionId)
+			logger.info(
+				`Interactive session ${sessionId} still ended with work left after ${spent} send-back(s) (${match.kind}); letting the turn end`,
+			)
+			void trackTurnCheckCapHit({ ...props, sendBackNumber: spent })
+			return
+		}
+		if (!this.retryTurn) return
+
+		this.turnSendBacks.set(sessionId, { origin, count: spent + 1 })
+		void trackTurnSentBack({ ...props, sendBackNumber: spent + 1 })
+		logger.info(
+			`Interactive session ${sessionId} ended with work left (${match.kind}); sending the turn back (${spent + 1}/${MAX_TURN_SEND_BACKS})`,
+		)
+
+		const task = (async () => {
+			try {
+				await this.retryTurn?.(sessionId, {
+					type: 'user',
+					message: { role: 'user', content: buildSendBackNudge(match.kind) },
+				})
+			} catch (err) {
+				// The reply is already posted, so the human lost nothing. Refund the send-back.
+				this.turnSendBacks.set(sessionId, { origin, count: spent })
+				logger.warn(
+					`Interactive session ${sessionId} could not be sent a work-left correction: ${describeError(err)}`,
+				)
+			}
+		})()
+		this.pendingRetries.add(task)
+		void task.finally(() => this.pendingRetries.delete(task))
 	}
 
 	/**

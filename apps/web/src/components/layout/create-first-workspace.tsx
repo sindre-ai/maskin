@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { useCreateWorkspace } from '@/hooks/use-workspaces'
+import { workspaceAwaitsCard } from '@/lib/welcome-landing'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { createErrorMessage } from './new-workspace-dialog'
@@ -28,6 +29,10 @@ export function CreateFirstWorkspace() {
 			{ name: trimmed },
 			{
 				onSuccess: (workspace) => {
+					if (workspaceAwaitsCard(workspace)) {
+						navigate({ to: '/start-trial/$workspaceId', params: { workspaceId: workspace.id } })
+						return
+					}
 					navigate({ to: '/$workspaceId', params: { workspaceId: workspace.id } })
 				},
 			},

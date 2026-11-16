@@ -145,11 +145,16 @@ public struct InviteView: View {
 
 	private func signedOutActions(_ preview: InvitePreview) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s9) {
-			Button("Sign in to accept", action: onSignIn).buttonStyle(PrimaryActionButtonStyle())
-			// FE-2 HOOK POINT: `store.createAccount` is set once native sign-up exists.
-			if let createAccount = store.createAccount {
-				Button("Create an account") { createAccount(preview) }.buttonStyle(.secondaryAction)
+			if AuthConfig.current.signUpEnabled {
+				InviteSignUpForm(preview: preview, isBusy: store.phase == .accepting) { name, password in
+					Task { await store.createAccountAndJoin(name: name, password: password) }
+				}
+				Text("Already have an account?").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+				Button("Sign in to accept", action: onSignIn).buttonStyle(.secondaryAction)
+					.disabled(store.phase == .accepting)
 			} else {
+				// Builds with sign-up switched off (`MaskinEnableSignUp`) cannot create the account here.
+				Button("Sign in to accept", action: onSignIn).buttonStyle(PrimaryActionButtonStyle())
 				Text("Don't have an account yet? Create one on maskin.io with \(preview.inviteEmail), then open this invitation link again.")
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 			}

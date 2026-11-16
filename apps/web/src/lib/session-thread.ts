@@ -184,7 +184,12 @@ export function buildThreadChat(
 			if (event.kind === 'system' || event.kind === 'debug') return
 			const summary = describeEvent(event)
 			if (summary === null) return
-			steps.push({ id: `${log.id}-${index}`, kind: event.kind, text: summary })
+			steps.push({
+				id: `${log.id}-${index}`,
+				kind: event.kind,
+				text: summary,
+				tool: event.kind === 'tool_use' ? event.name : undefined,
+			})
 		})
 	}
 	return { items, liveSteps: steps }

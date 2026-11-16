@@ -14,7 +14,7 @@ import {
 } from '@maskin/db/schema'
 import { EmailSendError } from '@maskin/email'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendEmail = vi.fn()
 
@@ -308,6 +308,42 @@ describe('flow activity email: one per person per flow per hour', () => {
 			event(w, await finishedRun(w)),
 		)
 		expect(sendEmail).not.toHaveBeenCalled()
+	})
+
+	describe('in production the switch must be exactly 1', () => {
+		const PROD = { ...ENV, NODE_ENV: 'production' }
+		beforeEach(() => {
+			vi.stubEnv('EMAIL_STOP_LINK_SECRET', 'x'.repeat(32))
+		})
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it.each([
+			['unset', undefined],
+			['empty', ''],
+			['0', '0'],
+		])('sends nothing when FEATURE_BRIEFING_EMAIL is %s', async (_label, value) => {
+			const w = await world()
+			await optIn(w.ownerId)
+
+			await notifier({ ...PROD, FEATURE_BRIEFING_EMAIL: value }).handleEvent(
+				event(w, await finishedRun(w)),
+			)
+
+			expect(sendEmail).not.toHaveBeenCalled()
+		})
+
+		it('sends when FEATURE_BRIEFING_EMAIL is 1', async () => {
+			const w = await world()
+			await optIn(w.ownerId)
+
+			await notifier({ ...PROD, FEATURE_BRIEFING_EMAIL: '1' }).handleEvent(
+				event(w, await finishedRun(w)),
+			)
+
+			expect(mails(w.owner.email as string)).toHaveLength(1)
+		})
 	})
 })
 

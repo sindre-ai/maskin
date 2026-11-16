@@ -84,6 +84,8 @@ export interface TagInputProps {
 	className?: string
 	/** Padding for the text and the placeholder, so both start at the same spot. */
 	contentClassName?: string
+	/** Extra classes for the placeholder only, not for the typed text. */
+	placeholderClassName?: string
 	onChange: (value: TagValue) => void
 	/** Keys the input did not use itself (the picker, chips and Shift+Enter come first). */
 	onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void
@@ -111,6 +113,7 @@ export function TagInput({
 	autoFocus = false,
 	className,
 	contentClassName,
+	placeholderClassName,
 	onChange,
 	onKeyDown,
 	handleRef,
@@ -394,6 +397,7 @@ export function TagInput({
 						className={cn(
 							'pointer-events-none absolute inset-0 select-none text-muted-foreground',
 							contentClassName,
+							placeholderClassName,
 						)}
 					>
 						{placeholder}

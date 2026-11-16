@@ -28,6 +28,7 @@ import {
 } from '../lib/analytics/ai-generation-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
+import { unclassifiedFingerprint } from '../lib/credit-classifier'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -36,6 +37,8 @@ import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
+import { alertOwnersOncePerDay } from './run-death-alerts'
+import { admitSessionStart } from './self-start-limits'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -225,10 +228,25 @@ export async function startSession(
 
 	const createdBy = input.createdBy ?? input.actorId
 
+	// The gate on work agents start for themselves: labels why the session started and refuses a
+	// self-started one over a cap, in back-off or over the agent's daily budget (throws
+	// SessionNotAdmittedError before any row exists). A session a person started always passes.
+	const admission = await admitSessionStart(db, {
+		workspaceId: input.workspaceId,
+		actorId: input.actorId,
+		callerKind: input.callerKind,
+		config: input.config,
+		triggerType: input.triggerType,
+		retryOf: input.retryOf,
+		hasChat: belongsToChat(input),
+		createdBy,
+		initiatedFromObjectId: input.initiatedFromObjectId,
+	})
+
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: withBackgroundDefaults(input),
+		config: withStartReason(withBackgroundDefaults(input), admission.reason, belongsToChat(input)),
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
@@ -254,6 +272,8 @@ export async function startSession(
 		triggerId: input.triggerId ?? null,
 		callerKind: input.callerKind,
 		humanFacing: isHumanFacing(input),
+		startReason: admission.reason,
+		selfStarted: admission.selfStarted,
 	})
 
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
@@ -313,6 +333,24 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+function belongsToChat(input: StartSessionInput): boolean {
+	const config = input.config as { conversation?: unknown } | undefined
+	return !!input.conversationId || !!config?.conversation
+}
+
+/**
+ * Stamps why the session started. A session that belongs to a chat keeps its config as given: it is
+ * person-started by definition, and the chat responder owns that config.
+ */
+function withStartReason(
+	config: SessionConfig | undefined,
+	reason: string,
+	hasChat: boolean,
+): SessionConfig | undefined {
+	if (hasChat) return config
+	return { ...config, start_reason: reason }
 }
 
 /** Human-facing work: a chat turn, or anything that belongs to a conversation. */
@@ -1132,6 +1170,26 @@ export async function settleSession(
 			workspaceId: row.workspaceId,
 			actorId: row.actorId,
 			retryAt: outcome.retryAt,
+		})
+	}
+
+	// A death nothing recognised reaches the workspace owners: one card per cause per day, however
+	// many runs die the same way. The reason is already saved on the row, so a failed alert
+	// (swallowed inside) loses nothing but the card.
+	if (flipped && outcome.kind === 'fail' && outcome.failureReason?.reason_code === 'unclassified') {
+		const verbatim = outcome.failureReason.verbatim_output
+		logger.warn('Session ended with an unclassified exit', {
+			sessionId,
+			workspaceId: row.workspaceId,
+			exitCode: outcome.exitCode,
+			verbatim,
+		})
+		await alertOwnersOncePerDay(deps.db, {
+			workspaceId: row.workspaceId,
+			causeKey: `unclassified:${unclassifiedFingerprint(verbatim)}`,
+			headline: 'A run ended with an error nobody recognised',
+			rationale: `It was not retried. Last line it printed: ${verbatim ?? '(nothing)'}. You get one note per cause per day; later runs that end the same way today are not repeated.`,
+			sessionId,
 		})
 	}
 

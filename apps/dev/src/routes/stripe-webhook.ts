@@ -7,7 +7,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { workspaceSettingsSchema } from '@maskin/shared'
+import { PAID_PLANS, workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { AUTO_TOP_UP_INVOICE_KIND, creditPaidAutoTopUp } from '../lib/auto-top-up'
@@ -17,26 +17,29 @@ import { createApiError } from '../lib/errors'
 
 /**
  * Is this subscription the LinkedIn add-on's own, rather than the workspace
- * plan's? Two independent signals, either sufficient:
+ * plan's? Signals, in order:
  *
- *   - its price is the configured add-on price, or
- *   - its id already matches the add-on subscription id we stored.
+ *   - its metadata says so, or
+ *   - NO item carries a plan price (a plan item anywhere makes it the plan's
+ *     subscription: the add-on rides on it as an extra item, and that item can
+ *     come first), and either an item carries the configured add-on price or
+ *     its id already matches the add-on subscription id we stored.
  *
- * Two, because each covers the other's blind spot. The price check fails if
- * `STRIPE_PRICE_LINKEDIN_IDENTITY` is rotated or unset in this environment;
- * the stored-id check fails on `customer.subscription.created`, which is the
- * first time we ever see the id. Getting this wrong in the false-negative
- * direction is the dangerous one: an add-on event treated as a plan event
- * rewrites the workspace's plan, cap and period.
+ * Two add-on signals, because each covers the other's blind spot. The price
+ * check fails if `STRIPE_PRICE_LINKEDIN_IDENTITY` is rotated or unset in this
+ * environment; the stored-id check fails on `customer.subscription.created`,
+ * which is the first time we ever see the id. Getting this wrong in the
+ * false-negative direction is the dangerous one: an add-on event treated as a
+ * plan event rewrites the workspace's plan, cap and period.
  */
 function isAddonSubscription(
-	sub: { id: string; metadata?: Record<string, string> | null },
-	priceId: string | null,
+	sub: Stripe.Subscription,
 	billing: { linkedin_addon_subscription_id?: string | null },
 	env: StripeEnv,
 ): boolean {
 	if (sub.metadata?.kind === LINKEDIN_ADDON_METADATA_KIND) return true
-	if (isLinkedInAddonPrice(priceId, env)) return true
+	if (planFromSubscription(sub, env)) return false
+	if (priceIdsFromSubscription(sub).some((id) => isLinkedInAddonPrice(id, env))) return true
 	return Boolean(
 		billing.linkedin_addon_subscription_id && billing.linkedin_addon_subscription_id === sub.id,
 	)
@@ -52,12 +55,12 @@ import {
 	LINKEDIN_ADDON_METADATA_KIND,
 	assertCreditsCurrency,
 	getStripeClient,
-	hardCapForPlan,
+	hardCapForPrice,
 	isHandledStripeEvent,
 	isLinkedInAddonPrice,
 	mapSubscriptionStatus,
-	planForPriceId,
-	priceIdFromSubscription,
+	planFromSubscription,
+	priceIdsFromSubscription,
 	readStripeEnv,
 	resolveWorkspaceIdFromEvent,
 	verifyStripeWebhook,
@@ -477,6 +480,17 @@ async function applyEvent(
 					}
 					break
 				}
+				if (session.mode === 'subscription') {
+					// Success event for the pricing bet. Counts, categories and booleans
+					// only: the plan name, the currency and whether this was the trial's
+					// first purchase. `from_trial` reads the plan before this write.
+					const checkoutPlan = session.metadata?.plan
+					await capturePosthogEvent('checkout_completed', posthogDistinctId, {
+						plan: PAID_PLANS.find((p) => p === checkoutPlan) ?? 'unknown',
+						currency: session.currency ?? null,
+						from_trial: (current.plan ?? 'trial') === 'trial',
+					})
+				}
 				// Clear stale period bounds so the billing route's fallback shows a
 				// future reset time while we wait for customer.subscription.created to
 				// arrive with the real Stripe period. Only clear when period_end is
@@ -498,31 +512,50 @@ async function applyEvent(
 			case 'customer.subscription.created':
 			case 'customer.subscription.updated': {
 				const sub = event.data.object as Stripe.Subscription
-				const priceId = priceIdFromSubscription(sub)
-				if (isAddonSubscription(sub, priceId, next, stripeEnv)) {
+				if (isAddonSubscription(sub, next, stripeEnv)) {
 					// Add-on subscription, not the plan. Record its ids and stop:
 					// falling through would set `plan` from a null lookup, reset
 					// `hard_cap_usd_cents`, and overwrite the plan's period bounds
 					// with the add-on's — silently changing what the workspace is
 					// entitled to because it connected LinkedIn.
+					const addonItem =
+						sub.items?.data?.find((item) =>
+							isLinkedInAddonPrice(item.price?.id ?? null, stripeEnv),
+						) ?? sub.items?.data?.[0]
 					next = {
 						...next,
 						linkedin_addon_subscription_id: sub.id,
-						linkedin_addon_item_id: sub.items?.data?.[0]?.id ?? next.linkedin_addon_item_id,
+						linkedin_addon_item_id: addonItem?.id ?? next.linkedin_addon_item_id,
 					}
 					break
 				}
-				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
+				const matched = planFromSubscription(sub, stripeEnv)
+				if (!matched) {
+					// A price we cannot map. The workspace keeps its plan and cap (the
+					// safe direction), but this means a price was sold or moved that
+					// the environment does not know, so it must be loud.
+					logger.error('Stripe subscription has no known plan price - plan left unchanged', {
+						workspaceId,
+						subscriptionId: sub.id,
+						eventId: event.id,
+						eventType: event.type,
+						priceIds: priceIdsFromSubscription(sub),
+					})
+				}
 				planMutated = true
 				next = {
 					...next,
-					plan: plan ?? next.plan,
+					plan: matched?.plan ?? next.plan,
 					stripe_customer_id:
 						(typeof sub.customer === 'string' ? sub.customer : (sub.customer?.id ?? null)) ??
 						next.stripe_customer_id,
 					stripe_subscription_id: sub.id,
 					status: mapSubscriptionStatus(sub.status),
-					hard_cap_usd_cents: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_usd_cents,
+					// The stored cap is what both the stop and the percent divide by, so
+					// it is rewritten on every plan event, not only when the plan changes.
+					hard_cap_usd_cents: matched
+						? hardCapForPrice(matched.plan, matched.priceId, stripeEnv)
+						: next.hard_cap_usd_cents,
 					period_start: sub.current_period_start ?? next.period_start,
 					period_end: sub.current_period_end ?? next.period_end,
 				}
@@ -530,7 +563,7 @@ async function applyEvent(
 			}
 			case 'customer.subscription.deleted': {
 				const sub = event.data.object as Stripe.Subscription
-				if (isAddonSubscription(sub, priceIdFromSubscription(sub), next, stripeEnv)) {
+				if (isAddonSubscription(sub, next, stripeEnv)) {
 					// Cancelling the $49 add-on is not cancelling the plan. Without
 					// this guard `billingAfterCancel` would run and drop a paying
 					// workspace to trial (or enterprise) because it disconnected
@@ -597,6 +630,12 @@ async function applyEvent(
 				next = { ...next, status: 'past_due' }
 				break
 			}
+		}
+
+		// A paid plan ends the wait for a trial card: the person paid, so the card step has nothing
+		// left to ask, and a later fall back to trial must not send them to it.
+		if (next.plan !== 'trial' && next.trial_state === 'awaiting_card') {
+			next = { ...next, trial_state: undefined }
 		}
 
 		// BYO-LLM -> paid plan mutex: when the subscription lands in an active

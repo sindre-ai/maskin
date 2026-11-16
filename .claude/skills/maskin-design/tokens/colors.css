@@ -20,6 +20,7 @@
   --rule-2: #f0f0f2;                 /* internal dividers inside a card */
   --rule-strong: #c4c4cc;            /* focus/hover border promotion */
   --rule-input: #e4e4e7;             /* input outline */
+  --rule-control: #7e89a0;           /* field, select and outline-button edge: 3.52:1 on #fff (WCAG 1.4.11 needs 3:1); app --control-border */
 
   /* --- ink (text) --- */
   --ink: #18181b;                    /* zinc-950, primary text */
@@ -156,6 +157,7 @@
   --rule-2: #1f1f22;
   --rule-strong: #52525b;
   --rule-input: #27272a;
+  --rule-control: #5b6577;           /* 3.26:1 on #0d0f13, 3.11:1 on #12151a; app --control-border */
 
   --ink: #fafafa;
   --ink-2: #e4e4e7;

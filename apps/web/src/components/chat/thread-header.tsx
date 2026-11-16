@@ -39,7 +39,7 @@ import {
 	Pin,
 	X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -95,6 +95,16 @@ export function ThreadHeader({
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
+	const renameButtonRef = useRef<HTMLButtonElement>(null)
+	// Set by Enter and Esc only, so a blur-commit never pulls focus back.
+	const returnFocusToTitle = useRef(false)
+
+	// The title button only mounts once the input is gone, so focus moves after the render.
+	useEffect(() => {
+		if (isEditingTitle || !returnFocusToTitle.current) return
+		returnFocusToTitle.current = false
+		renameButtonRef.current?.focus()
+	}, [isEditingTitle])
 
 	const handleClose = () => {
 		navigate({ to: '/$workspaceId/chats', params: { workspaceId }, search: (prev) => prev })
@@ -230,11 +240,15 @@ export function ThreadHeader({
 						onChange={(e) => setTitleDraft(e.target.value)}
 						onBlur={commitTitle}
 						onKeyDown={(e) => {
+							// An Enter that confirms an IME candidate is not a rename.
+							if (e.nativeEvent.isComposing || e.key === 'Process') return
 							if (e.key === 'Enter') {
 								e.preventDefault()
+								returnFocusToTitle.current = true
 								commitTitle()
 							} else if (e.key === 'Escape') {
 								e.preventDefault()
+								returnFocusToTitle.current = true
 								setIsEditingTitle(false)
 							}
 						}}
@@ -244,19 +258,17 @@ export function ThreadHeader({
 					/>
 				) : (
 					<h2 className="truncate text-base font-semibold leading-tight">
-						{singleAgent ? (
-							// A chat with one agent is that agent's chat: the title opens its page.
-							<Link
-								to="/$workspaceId/agents/$agentId"
-								params={{ workspaceId, agentId: singleAgent.actorId }}
-								aria-label={`Open ${singleAgent.actorName} — ${conversation.title}`}
-								className="hover:underline"
-							>
-								{conversation.title}
-							</Link>
-						) : (
-							conversation.title
-						)}
+						{/* Click the title to rename it in place; the agent's page opens from its avatar. */}
+						<button
+							ref={renameButtonRef}
+							type="button"
+							onClick={startEditingTitle}
+							title="Click to rename"
+							aria-label={`Rename conversation: ${conversation.title}`}
+							className="max-w-full cursor-text truncate rounded-md px-1 py-0.5 -mx-1 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							{conversation.title}
+						</button>
 					</h2>
 				)}
 				<div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">

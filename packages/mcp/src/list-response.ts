@@ -63,3 +63,8 @@ export function buildListPayload(input: BuildListPayloadInput): Record<string, u
 export function listText(payload: Record<string, unknown>): string {
 	return JSON.stringify(payload)
 }
+
+/** `listText(buildListPayload(input))`: the text channel of a page, with its cursor in front of the rows. */
+export function listPageText(input: BuildListPayloadInput): string {
+	return listText(buildListPayload(input))
+}

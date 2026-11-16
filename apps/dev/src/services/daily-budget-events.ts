@@ -1,7 +1,9 @@
 /**
  * daily-budget-events.ts — the two events the daily token budget is judged from.
  * Spec: sections 5 and 7a of the "daily token budget" bet. Reporting only: nothing here gates,
- * queues or defers a session.
+ * queues or defers a session. The gate that does is services/self-start-limits.ts, which writes
+ * a `session_admission` event with decision `blocked` or `deferred` (entity: the agent) when it
+ * refuses a self-started run.
  *
  *   session_admission     One per session started through startSession(). Carries the decision
  *                         (admitted, deferred or blocked), a priority and an estimated cost. In 1a
@@ -78,6 +80,9 @@ export interface AdmissionInput {
 	triggerId: string | null
 	callerKind: string
 	humanFacing: boolean
+	/** Why the session started (config.start_reason); see self-start-limits.ts. */
+	startReason?: string
+	selfStarted?: boolean
 }
 
 /** Writes the admission event for a freshly started session. Never throws. */
@@ -104,6 +109,8 @@ export async function recordSessionAdmission(db: Database, input: AdmissionInput
 				estimated_cost_usd: estimatedCostUsd,
 				caller_kind: input.callerKind,
 				trigger_id: input.triggerId,
+				start_reason: input.startReason ?? null,
+				self_started: input.selfStarted ?? null,
 			},
 		})
 	} catch (err) {
@@ -180,21 +187,22 @@ export function localDayStart(day: string, timezone: string): Date {
 }
 
 interface DailyTarget {
-	unit: 'tokens' | 'dollars'
+	unit: 'percent' | 'tokens' | 'dollars'
 	amount: number
 	timezone: string
 }
 
 /**
  * The owner's daily target, if one is set: workspace settings key `daily_budget`, written by the
- * target setting (unit tokens or dollars, amount, stop_share, IANA timezone, UTC when absent).
+ * target setting (unit percent of the plan, or tokens or dollars on a target saved earlier; amount,
+ * stop_share, IANA timezone, UTC when absent).
  */
 export function readDailyTarget(settings: unknown): DailyTarget | null {
 	const raw = (
 		settings as { daily_budget?: { unit?: unknown; amount?: unknown; timezone?: unknown } } | null
 	)?.daily_budget
 	if (!raw) return null
-	if (raw.unit !== 'tokens' && raw.unit !== 'dollars') return null
+	if (raw.unit !== 'percent' && raw.unit !== 'tokens' && raw.unit !== 'dollars') return null
 	if (typeof raw.amount !== 'number' || !Number.isFinite(raw.amount) || raw.amount <= 0) return null
 	return { unit: raw.unit, amount: raw.amount, timezone: safeTimezone(raw.timezone) }
 }

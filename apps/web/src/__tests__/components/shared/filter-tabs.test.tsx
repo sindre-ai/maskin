@@ -61,6 +61,62 @@ describe('FilterTabs', () => {
 		expect(onChange).toHaveBeenCalledWith('archived')
 	})
 
+	describe('keyboard', () => {
+		it('makes the active chip the only tab stop', () => {
+			render(<FilterTabs tabs={tabs} value="active" onChange={() => {}} />)
+			expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('tabindex', '-1')
+			expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('tabindex', '0')
+			expect(screen.getByRole('button', { name: 'Archived' })).toHaveAttribute('tabindex', '-1')
+		})
+
+		it('falls back to the first chip when no chip is active', () => {
+			render(<FilterTabs tabs={tabs} value="missing" onChange={() => {}} />)
+			expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('tabindex', '0')
+			expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('tabindex', '-1')
+		})
+
+		it('moves focus with the arrow keys, Home and End without selecting', async () => {
+			const user = userEvent.setup()
+			const onChange = vi.fn()
+			render(<FilterTabs tabs={tabs} value={undefined} onChange={onChange} />)
+			await user.tab()
+			expect(screen.getByRole('button', { name: 'All' })).toHaveFocus()
+			await user.keyboard('{ArrowRight}')
+			expect(screen.getByRole('button', { name: 'Active' })).toHaveFocus()
+			await user.keyboard('{End}')
+			expect(screen.getByRole('button', { name: 'Archived' })).toHaveFocus()
+			await user.keyboard('{ArrowRight}')
+			expect(screen.getByRole('button', { name: 'All' })).toHaveFocus()
+			await user.keyboard('{ArrowLeft}')
+			expect(screen.getByRole('button', { name: 'Archived' })).toHaveFocus()
+			await user.keyboard('{Home}')
+			expect(screen.getByRole('button', { name: 'All' })).toHaveFocus()
+			expect(onChange).not.toHaveBeenCalled()
+		})
+
+		it('selects the focused chip with Space', async () => {
+			const user = userEvent.setup()
+			const onChange = vi.fn()
+			render(<FilterTabs tabs={tabs} value={undefined} onChange={onChange} />)
+			await user.tab()
+			await user.keyboard('{ArrowRight}{ }')
+			expect(onChange).toHaveBeenCalledWith('active')
+		})
+
+		it('leaves the group on the next Tab', async () => {
+			const user = userEvent.setup()
+			render(
+				<>
+					<FilterTabs tabs={tabs} value={undefined} onChange={() => {}} />
+					<button type="button">After</button>
+				</>,
+			)
+			await user.tab()
+			await user.tab()
+			expect(screen.getByRole('button', { name: 'After' })).toHaveFocus()
+		})
+	})
+
 	it('renders count in parentheses when provided', () => {
 		const withCounts = [
 			{ label: 'All', value: undefined, count: 5 },

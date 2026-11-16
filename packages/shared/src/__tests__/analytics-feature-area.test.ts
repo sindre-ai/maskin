@@ -4,7 +4,10 @@ import { FEATURE_AREAS, featureAreaForEvent } from '../analytics-feature-area'
 describe('featureAreaForEvent', () => {
 	it.each([
 		['chat_session_started', 'chats'],
+		['chat_session_seeded', 'chats'],
 		['chat_reply_posted', 'chats'],
+		['turn_sent_back', 'chats'],
+		['turn_check_cap_hit', 'chats'],
 		['agent_chat_started_message', 'chats'],
 		['foryou_card_shown', 'for_you'],
 		['foryou_card_action', 'for_you'],
@@ -17,6 +20,7 @@ describe('featureAreaForEvent', () => {
 		['agent_session_started', 'agents'],
 		['workspace_skill_uploaded', 'agents'],
 		['file_saved', 'files_briefings'],
+		['desktop_file_moved', 'files_briefings'],
 		['file_viewer_page_navigated', 'files_briefings'],
 		['integration_connected', 'integrations'],
 		['keychain_credential_created', 'integrations'],
@@ -25,6 +29,8 @@ describe('featureAreaForEvent', () => {
 		['command_palette_opened', 'search'],
 		['voice_session_started', 'voice'],
 		['checkout_session_completed', 'billing'],
+		['trial_started', 'billing'],
+		['trial_card_rejected_duplicate', 'billing'],
 		['workspace_member_joined', 'settings'],
 	])('puts %s in %s', (event, area) => {
 		expect(featureAreaForEvent(event)).toBe(area)

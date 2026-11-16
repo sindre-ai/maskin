@@ -22,6 +22,8 @@ export interface PushMessage {
 	body?: string | null
 	workspaceId: string
 	notificationId: string
+	/** The notification's type (needs_input, mention, ...): sent on to the device so an open can be counted by type. */
+	notificationType?: string | null
 	objectId?: string | null
 	conversationId?: string | null
 	/** With conversationId: the thread to open inside the chat (the root message id). */

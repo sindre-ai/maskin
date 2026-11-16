@@ -102,4 +102,17 @@ describe('MarkdownEditor', () => {
 			}),
 		)
 	})
+
+	it('binds Ctrl+Shift+K only in the document variant and leaves it to the browser elsewhere', async () => {
+		const press = (pm: HTMLElement) =>
+			// fireEvent returns false when a handler called preventDefault.
+			fireEvent.keyDown(pm, { key: 'K', code: 'KeyK', keyCode: 75, ctrlKey: true, shiftKey: true })
+
+		const doc = await mount({ variant: 'document' })
+		expect(press(doc.pm)).toBe(false)
+		doc.unmount()
+
+		const comment = await mount({ variant: 'comment' })
+		expect(press(comment.pm)).toBe(true)
+	})
 })

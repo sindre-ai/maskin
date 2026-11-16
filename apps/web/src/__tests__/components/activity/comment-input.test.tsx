@@ -569,4 +569,22 @@ describe('CommentInput', () => {
 			expect(mockMutate).not.toHaveBeenCalled()
 		})
 	})
+	describe('Esc and autofocus', () => {
+		it('calls onCancel on Esc', () => {
+			const onCancel = vi.fn()
+			renderInput({ onCancel })
+			fireEvent.keyDown(box(), { key: 'Escape' })
+			expect(onCancel).toHaveBeenCalledTimes(1)
+		})
+
+		it('does nothing on Esc when no onCancel is given', () => {
+			renderInput()
+			expect(() => fireEvent.keyDown(box(), { key: 'Escape' })).not.toThrow()
+		})
+
+		it('focuses the box on mount with autoFocus', () => {
+			renderInput({ autoFocus: true })
+			expect(box()).toHaveFocus()
+		})
+	})
 })

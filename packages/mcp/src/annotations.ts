@@ -67,6 +67,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'desktop_settings',
 	'list_file_tags',
 ])
 
@@ -99,6 +100,12 @@ const ROWS: Record<string, Row> = {
 	get_objects: row('Get objects'),
 	update_objects: row('Update objects', { idempotent: true }),
 	delete_object: row('Delete object', { destructive: true, idempotent: true }),
+	set_next_step: row('Set next step'),
+	schedule_next_step: row('Schedule next step'),
+	update_next_step: row('Update next step', { idempotent: true }),
+	record_go_ahead: row('Record go-ahead'),
+	take_back_go_ahead: row('Take back go-ahead'),
+	skip_done_when: row('Skip done-when list'),
 	list_objects: row('List objects'),
 	search_objects: row('Search objects'),
 	create_relationship: row('Create relationship'),
@@ -132,6 +139,9 @@ const ROWS: Record<string, Row> = {
 	rename_file_tag: row('Rename file tag'),
 	merge_file_tags: row('Merge file tags'),
 	get_file: row('Get file'),
+	// Not openWorld: that set is pinned (surface-pin.test.ts) to tools that start an agent, reach an
+	// integration or send mail. This one spends plan usage on Maskin's own speech provider.
+	transcribe_file: row('Transcribe file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),
 	delete_file: row('Delete file', { destructive: true, idempotent: true }),
@@ -219,6 +229,9 @@ const ROWS: Record<string, Row> = {
 	desktop_key: row('Desktop key'),
 	desktop_run: row('Desktop run command', { destructive: true }),
 	desktop_put_file: row('Desktop put file'),
+	desktop_apply_settings: row('Desktop apply settings'),
+	desktop_settings: row('Desktop settings'),
+	desktop_save_file: row('Desktop save file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),

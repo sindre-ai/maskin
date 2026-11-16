@@ -256,11 +256,12 @@ public struct APILoopsSource: LoopsAPI {
 		var target: Double
 		var ownerActorId: String?
 		var pace_policy: String?
+		var manual: Bool?
 
 		var model: LoopTarget {
 			LoopTarget(
 				label: label, source: source, actual: actual, target: target, ownerID: ownerActorId,
-				isStrict: pace_policy == "strict")
+				isStrict: pace_policy == "strict", isManual: manual)
 		}
 	}
 

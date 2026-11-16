@@ -46,3 +46,38 @@ export async function trackCreateNotificationCalled(
 		})
 	}
 }
+
+interface NotificationSentProps {
+	workspaceId: string
+	/** The person the push is for. */
+	actorId: string
+	notificationId: string
+	notificationType: string
+	category: string
+	/** True when the push is the "N things need you" rollup, not the notification's own text. */
+	rollup: boolean
+}
+
+/**
+ * Fires `notification_sent` once for each notification the push fan-out sends to a person's
+ * devices (tracking plan row 8). The opens come back as `notification_opened` from the web
+ * and `push_notification_opened` from the iPhone app, with the same `notification_id` and
+ * `type`. Ids and categories only: never the title or the text. Best-effort, never throws.
+ */
+export async function trackNotificationSent(p: NotificationSentProps): Promise<void> {
+	try {
+		await capturePosthogEvent('notification_sent', p.actorId, {
+			workspace_id: p.workspaceId,
+			actor_id: p.actorId,
+			notification_id: p.notificationId,
+			type: p.notificationType,
+			category: p.category,
+			rollup: p.rollup,
+		})
+	} catch (err) {
+		logger.warn('Failed to emit notification_sent', {
+			notificationId: p.notificationId,
+			error: String(err),
+		})
+	}
+}

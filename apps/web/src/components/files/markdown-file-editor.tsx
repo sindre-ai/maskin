@@ -158,6 +158,7 @@ export function MarkdownFileEditor({
 					onSave={(body) => {
 						textComments.onCompose({ anchor: compose.anchor, position: compose.position, body })
 						setCompose(null)
+						editorRef.current?.focus()
 					}}
 					onDiscard={() => {
 						setCompose(null)

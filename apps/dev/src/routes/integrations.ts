@@ -78,6 +78,7 @@ import {
 } from '../lib/integrations/providers/google-drive/watch'
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
 	isSubdomainName,
@@ -1517,7 +1518,24 @@ app.openapi(connectRoute, (async (c) => {
 		}
 	} else if (resolved.config.auth.type === 'oauth2') {
 		const handler = new OAuth2Handler(resolved.config.auth.config)
-		installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
+		try {
+			installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
+		} catch (err) {
+			// The app's client id is missing from the server settings. Say so instead of the
+			// generic unexpected-error 500, so the person knows it is not something they did.
+			logger.error(`Failed to build install URL for provider ${providerName}`, {
+				workspaceId,
+				actorId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					`Could not start the ${resolved.config.displayName} connection — this is a server misconfiguration, not a transient failure`,
+				),
+				500,
+			)
+		}
 	} else {
 		return c.json(
 			createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),
@@ -1788,6 +1806,22 @@ app.openapi(callbackRoute, (async (c) => {
 			provider: providerName,
 			origin: stateData.origin,
 		})
+	}
+
+	// Microsoft stops at an approval screen when the company has not let people approve apps
+	// themselves and calls back with an error and no code. Say so in plain words instead of
+	// the bare 400 below. Native sessions keep the generic `denied` ending above.
+	if (
+		!native &&
+		providerName === MICROSOFT_PROVIDER &&
+		!query.code &&
+		/AADSTS(90094|65001|90095)|administrator/i.test(`${query.error_description ?? ''}`)
+	) {
+		clearOAuthNonceCookie(c, providerName)
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		return c.redirect(
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=admin_approval_needed`,
+		)
 	}
 
 	// Handle provider-specific callback

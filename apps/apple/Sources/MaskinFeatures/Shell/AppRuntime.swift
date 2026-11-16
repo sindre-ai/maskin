@@ -63,7 +63,9 @@ public final class AppRuntime {
 		case object(String)
 		case agent(String)
 		case file(String)
-		case triggers(String)
+		/// The triggers sheet, on one trigger, or on the list when nil.
+		case triggers(String?)
+		case session(String)
 		case profile
 		case files
 		case agents
@@ -75,7 +77,8 @@ public final class AppRuntime {
 			case .object(let id): "object:\(id)"
 			case .agent(let id): "agent:\(id)"
 			case .file(let id): "file:\(id)"
-			case .triggers(let id): "triggers:\(id)"
+			case .triggers(let id): "triggers:\(id ?? "")"
+			case .session(let id): "session:\(id)"
 			case .profile: "profile"
 			case .files: "files"
 			case .agents: "agents"
@@ -118,12 +121,12 @@ public final class AppRuntime {
 		set { presentation = newValue ? .profile : clearing(.profile) }
 	}
 
-	private enum Kind { case object, agent, file, triggers, files, agents, settings, profile }
+	private enum Kind { case object, agent, file, triggers, session, files, agents, settings, profile }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
-		case (.object, .object), (.agent, .agent), (.file, .file), (.triggers, .triggers), (.settings, .settings),
+		case (.object, .object), (.agent, .agent), (.file, .file), (.triggers, .triggers), (.session, .session), (.settings, .settings),
 			(.profile, .profile), (.files, .files), (.agents, .agents):
 			return nil
 		default:
@@ -322,7 +325,7 @@ public final class AppRuntime {
 		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
 		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
 			switch presentation {
-			case .object, .agent, .file, .triggers, .profile: presentation = nil
+			case .object, .agent, .file, .triggers, .session, .profile: presentation = nil
 			default: break
 			}
 			requestedConversationId = nil
@@ -518,8 +521,30 @@ public final class AppRuntime {
 			openLoop(id)
 		case .trigger(_, let id):
 			openTrigger(id)
+		case .session(_, let id):
+			presentation = .session(id)
+		case .settings(_, let page):
+			settingsRoute = page.map(SettingsRoute.init)
+			presentation = .settings
+		case .list(_, let kind):
+			switch kind {
+			case .triggers:
+				presentation = .triggers(nil)
+			case .loops:
+				presentation = nil
+				selectedTab = .loops
+				requestedLoopId = nil
+			case .chats:
+				presentation = nil
+				selectedTab = .chats
+				requestedConversationId = nil
+				requestedThreadRoot = nil
+			}
 		}
 	}
+
+	/// The Settings page a link named, while Settings is open on it; nil opens the Settings hub.
+	var settingsRoute: SettingsRoute?
 
 	/// The code from `maskin://connect?code=`, while Settings is open on the approve page for it.
 	public var deviceCode: String?

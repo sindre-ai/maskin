@@ -93,13 +93,9 @@ describe('LoopUtteranceInput', () => {
 		expect(navigateMock).not.toHaveBeenCalled()
 	})
 
-	it('offers suggestion chips only when there is no change history yet', () => {
-		const { rerender } = render(
-			<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} showSuggestions />,
-		)
-		expect(screen.getByRole('button', { name: 'Close cycles faster' })).toBeInTheDocument()
-
-		rerender(<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} />)
+	it('shows no quick messages above the composer', () => {
+		render(<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} />)
 		expect(screen.queryByRole('button', { name: 'Close cycles faster' })).not.toBeInTheDocument()
+		expect(screen.queryByLabelText('Suggested changes')).not.toBeInTheDocument()
 	})
 })

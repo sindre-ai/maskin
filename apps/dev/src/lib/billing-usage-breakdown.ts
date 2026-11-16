@@ -1,7 +1,13 @@
 import type { Database } from '@maskin/db'
-import { actors, sessions } from '@maskin/db/schema'
+import { actors, sessions, workspaceAiUsage } from '@maskin/db/schema'
 import { inArray } from 'drizzle-orm'
-import { ceilCents, planUsageConds, sessionUsageCents } from './llm-routing'
+import {
+	aiUsageConds,
+	ceilCents,
+	planUsageConds,
+	sessionUsageCents,
+	usdToCents,
+} from './llm-routing'
 import { loadFlowLookup } from './session-flow'
 
 /** Most named rows per split; everything past it is folded into the other bucket. */
@@ -104,20 +110,39 @@ export async function readUsageBreakdown(
 		.from(sessions)
 		.where(planUsageConds(workspaceId, periodStartMs))
 
+	// Spend with no session (transcribe_file). Read as rows, not a sum, because
+	// the splits need each one's model and actor; it counts toward the total
+	// exactly as getWorkspacePlanUsdCentsUsage counts it.
+	const aiRows = await db
+		.select({
+			actorId: workspaceAiUsage.actorId,
+			model: workspaceAiUsage.model,
+			costUsd: workspaceAiUsage.costUsd,
+		})
+		.from(workspaceAiUsage)
+		.where(aiUsageConds(workspaceId, periodStartMs))
+
 	let totalCents = 0
 	for (const row of rows) totalCents += sessionUsageCents(row)
+	for (const row of aiRows) totalCents += usdToCents(row.costUsd)
 	const total = ceilCents(totalCents)
 
-	if (rows.length === 0) {
+	if (rows.length === 0 && aiRows.length === 0) {
 		const empty = { rows: [], other_usd_cents: 0 }
 		return { usd_cents_used: total, by_model: empty, by_agent: empty, by_flow: empty }
 	}
 
-	const actorIds = [...new Set(rows.map((r) => r.actorId))]
-	const agentRows = await db
-		.select({ id: actors.id, name: actors.name })
-		.from(actors)
-		.where(inArray(actors.id, actorIds))
+	const actorIds = new Set(rows.map((r) => r.actorId))
+	for (const row of aiRows) if (row.actorId) actorIds.add(row.actorId)
+	// A transcription whose agent was since deleted has no actor; with nothing
+	// else in the period there is no one to name, and an empty inArray is not a query.
+	const agentRows =
+		actorIds.size > 0
+			? await db
+					.select({ id: actors.id, name: actors.name })
+					.from(actors)
+					.where(inArray(actors.id, [...actorIds]))
+			: []
 	const agentNames = new Map(agentRows.map((a) => [a.id, a.name]))
 
 	const flows = await loadFlowLookup(db, workspaceId, rows)
@@ -137,6 +162,19 @@ export async function readUsageBreakdown(
 			loopId ? (flows.titles.get(loopId) ?? 'Flow') : 'No flow',
 			cents,
 		)
+	}
+	// Session-less spend carries its model and actor, and belongs to no flow.
+	for (const row of aiRows) {
+		const cents = usdToCents(row.costUsd)
+		addTo(byModel, row.model, row.model, row.model, cents)
+		addTo(
+			byAgent,
+			row.actorId ?? '',
+			row.actorId,
+			(row.actorId ? agentNames.get(row.actorId) : undefined) ?? 'Unknown agent',
+			cents,
+		)
+		addTo(byFlow, '', null, 'No flow', cents)
 	}
 
 	return {

@@ -78,6 +78,8 @@ describe('capturePosthogEvent', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'integrations',
 			$process_person_profile: false,
 		})
@@ -162,6 +164,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'agents',
 			$process_person_profile: false,
 		})
@@ -183,6 +187,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'agents',
 			$process_person_profile: false,
 		})
@@ -545,5 +551,73 @@ describe('warnIfPosthogKeyUnset', () => {
 		vi.stubEnv('POSTHOG_API_KEY', '')
 		warnIfPosthogKeyUnset()
 		expect(warn).not.toHaveBeenCalled()
+	})
+})
+
+describe('capturePosthogEvent internal and paying', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+	const TEAM_WORKSPACE = '33333333-3333-4333-8333-333333333333'
+	const OUTSIDE_WORKSPACE = '44444444-4444-4444-8444-444444444444'
+	const PAID = {
+		billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_123' },
+	}
+
+	// The privacy read and the paid-plan read come from the same workspace row.
+	async function send(settings: unknown, props: Record<string, unknown>) {
+		configurePosthogPrivacy(fakeDb(settings).db)
+		await capturePosthogEvent('workspace_member_joined', 'ws-key', props as never)
+		const call = fetchMock.mock.calls.at(-1) as [string, RequestInit]
+		return JSON.parse(call[1].body as string).properties as Record<string, unknown>
+	}
+
+	beforeEach(() => {
+		__resetPosthogEventBudgetForTesting()
+		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', TEAM_WORKSPACE)
+	})
+
+	afterEach(() => {
+		__resetPosthogPrivacyForTesting()
+		vi.unstubAllGlobals()
+		vi.unstubAllEnvs()
+	})
+
+	it('marks our own free workspace internal and not paying', async () => {
+		expect(await send({}, { workspace_id: TEAM_WORKSPACE })).toMatchObject({
+			internal: true,
+			paying: false,
+		})
+	})
+
+	it('marks an outside paying workspace paying and not internal', async () => {
+		expect(await send(PAID, { workspace_id: OUTSIDE_WORKSPACE })).toMatchObject({
+			internal: false,
+			paying: true,
+		})
+	})
+
+	it('marks our own paying workspace both internal and paying', async () => {
+		expect(await send(PAID, { workspace_id: TEAM_WORKSPACE })).toMatchObject({
+			internal: true,
+			paying: true,
+		})
+	})
+
+	it('sends both false for an event with no workspace', async () => {
+		expect(await send(PAID, {})).toMatchObject({ internal: false, paying: false })
+	})
+
+	it('sends both false when the team workspace setting is unset', async () => {
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', '')
+		expect(await send({}, { workspace_id: TEAM_WORKSPACE })).toMatchObject({ internal: false })
+	})
+
+	it('sends no names, emails or text with the two flags', async () => {
+		const props = await send(PAID, { workspace_id: OUTSIDE_WORKSPACE })
+		expect(typeof props.internal).toBe('boolean')
+		expect(typeof props.paying).toBe('boolean')
+		expect(JSON.stringify(props)).not.toContain('sub_123')
 	})
 })

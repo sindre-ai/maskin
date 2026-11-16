@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
-import type { SessionResultFailureReason } from '@maskin/shared'
+import { sessions, workspaceAiUsage } from '@maskin/db/schema'
+import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { trackPlanLimitReached } from './analytics/plan-limit-events'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
 	checkApiKeyCreditMark,
@@ -64,7 +65,7 @@ export type LlmRoute =
  * Trial is included so BYO-LLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
-const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
+const MASKIN_PLAN_ROUTED_PLANS = new Set<string>(['trial', ...PAID_PLANS])
 
 /**
  * True when Maskin funds this workspace's LLM usage. Every route that reaches
@@ -307,6 +308,26 @@ export function planUsageConds(workspaceId: string, periodStartMs?: number) {
 	return and(...conds)
 }
 
+/**
+ * The rows of `workspace_ai_usage` that count toward plan usage: spend on the
+ * Maskin-funded account that is not part of a session (transcribe_file). Same
+ * period rule as `planUsageConds`. Every row there is plan spend by definition,
+ * so no route filter is needed.
+ */
+export function aiUsageConds(workspaceId: string, periodStartMs?: number) {
+	const conds = [eq(workspaceAiUsage.workspaceId, workspaceId)]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(workspaceAiUsage.createdAt, new Date(periodStartMs)))
+	}
+	return and(...conds)
+}
+
+/** `numeric` comes back from postgres.js as a string; a bad read must never become NaN cents. */
+export function usdToCents(usd: string | number | null | undefined): number {
+	const cents = Number(usd ?? 0) * 100
+	return Number.isFinite(cents) && cents > 0 ? cents : 0
+}
+
 /** One session's cost in (fractional) USD cents: its reported cost, else the token-rate estimate. */
 export function sessionUsageCents(row: {
 	totalCostUsd: string | null
@@ -352,12 +373,21 @@ export async function getWorkspacePlanUsdCentsUsage(
 
 	let totalCents = 0
 	for (const row of rows) totalCents += sessionUsageCents(row)
+
+	// Spend that has no session (transcribe_file) is summed in the database: a
+	// long-lived workspace can hold many small rows and only the total is needed.
+	const [aiUsage] = await db
+		.select({ total: sql<string>`COALESCE(SUM(${workspaceAiUsage.costUsd}), 0)` })
+		.from(workspaceAiUsage)
+		.where(aiUsageConds(workspaceId, periodStartMs))
+	totalCents += usdToCents(aiUsage?.total)
+
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
 	return ceilCents(totalCents)
 }
 
-export type MaskinPlan = 'trial' | 'pro' | 'team'
+export type MaskinPlan = 'trial' | PaidPlan
 
 interface PlanCapContext {
 	plan: MaskinPlan
@@ -388,14 +418,33 @@ export class PlanCapExceededError extends Error {
 	readonly periodEnd: number | null
 
 	constructor(ctx: PlanCapContext) {
-		super(
-			`${ctx.plan} plan cap exceeded: $${(ctx.used / 100).toFixed(2)} of $${(ctx.cap / 100).toFixed(2)} used this period.`,
-		)
+		super(`The ${ctx.plan} plan is used up for this period.`)
 		this.name = 'PlanCapExceededError'
 		this.plan = ctx.plan
 		this.used = ctx.used
 		this.cap = ctx.cap
 		this.periodEnd = ctx.periodEnd
+	}
+}
+
+/** How long a paused automation waits before it asks again while a workspace has no card yet. */
+const TRIAL_NOT_STARTED_RETRY_MS = 5 * 60_000
+
+/**
+ * A workspace that signed up through the card step has not put a card down, so nothing runs
+ * (bet "A card to start a 7-day trial", task T2). Surfaces as HTTP 402 with
+ * `{ code: 'TRIAL_NOT_STARTED' }`, and the client offers "Add card".
+ *
+ * It extends PlanCapExceededError on purpose: every place that already treats a plan cap as the
+ * workspace working as designed (not a Sentry error, automations paused rather than failed)
+ * treats this the same way. `used` and `cap` are 0, and `periodEnd` is a few minutes out so a
+ * paused automation asks again soon after the card is down instead of waiting out an hour.
+ */
+export class TrialNotStartedError extends PlanCapExceededError {
+	constructor() {
+		super({ plan: 'trial', used: 0, cap: 0, periodEnd: Date.now() + TRIAL_NOT_STARTED_RETRY_MS })
+		this.name = 'TrialNotStartedError'
+		this.message = 'Your trial has not started. Add a card to begin your 7 days.'
 	}
 }
 
@@ -423,7 +472,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
-function effectivePeriodEnd(
+export function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
 ): number | null {
@@ -502,6 +551,11 @@ export async function checkPlanCap(params: {
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 	if (params.enterprise) return
 
+	// Signed up through the card step and no card yet: nothing runs until the trial has started.
+	if (plan === 'trial' && billing?.trial_state === 'awaiting_card') {
+		throw new TrialNotStartedError()
+	}
+
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 	if (cap === null) return
@@ -518,11 +572,17 @@ export async function checkPlanCap(params: {
 	if (used < cap) return
 	if (canUseCreditBalance(maskinPlan, billing)) return
 
+	const periodEnd = effectivePeriodEnd(periodStartMs, periodEndMs)
+	void trackPlanLimitReached({
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
+	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
+		periodEnd,
 	})
 }
 

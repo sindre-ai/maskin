@@ -95,9 +95,22 @@ public protocol ObjectDraftsRemote: Sendable {
 	/// to the object's subject field. Nil leaves that part alone. A remote that cannot edit keeps
 	/// the default, which refuses.
 	func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws
+	/// `PATCH /api/objects/{id}` for a card that edits an object's text or status (the patch carries
+	/// the chat context when the card sits in a chat). A remote that cannot edit keeps the default, which refuses.
+	func update(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject
+	/// The status order each object type has in this workspace's own settings, by type. Empty when it
+	/// cannot be read, and never the app's built-in defaults: a card offers a next status only from
+	/// what the workspace itself lists.
+	func workspaceStatuses(workspaceId: String) async -> [String: [String]]
 }
 
 extension ObjectDraftsRemote {
+	public func update(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject {
+		throw ObjectsError("Editing isn't available here.")
+	}
+
+	public func workspaceStatuses(workspaceId: String) async -> [String: [String]] { [:] }
+
 	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {
 		throw ObjectsError("Editing isn't available here.")
 	}

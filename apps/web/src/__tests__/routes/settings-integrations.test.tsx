@@ -1057,6 +1057,22 @@ describe('IntegrationsPage tabs, search and categories', () => {
 		expect(screen.queryByText('Gmail')).not.toBeInTheDocument()
 	})
 
+	it('clears the search text on Esc, then leaves the field on a second Esc', async () => {
+		render(<IntegrationsPage />)
+		await openDiscover()
+		const field = screen.getByRole('searchbox', { name: /Search integrations/ })
+		await userEvent.type(field, 'git')
+		expect(field).toHaveValue('git')
+
+		await userEvent.keyboard('{Escape}')
+		expect(field).toHaveValue('')
+		expect(field).toHaveFocus()
+		expect(screen.getByText('Gmail')).toBeInTheDocument()
+
+		await userEvent.keyboard('{Escape}')
+		expect(field).not.toHaveFocus()
+	})
+
 	it('filters Discover by category chip', async () => {
 		render(<IntegrationsPage />)
 		await openDiscover()

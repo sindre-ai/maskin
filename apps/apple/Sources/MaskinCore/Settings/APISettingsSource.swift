@@ -173,7 +173,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 				ConnectedIntegration(
 					id: $0.id, provider: $0.provider, status: $0.status, externalId: $0.externalId,
 					missingScopes: $0.missingScopes?.count ?? 0, needsReconnect: $0.needsReconnect ?? false,
-					displayName: $0.displayName)
+					displayName: $0.displayName,
+					note: $0.config?.additionalProperties["status_note"]?.value as? String)
 			}
 		default:
 			throw SettingsError("Couldn't load integrations.")
@@ -388,7 +389,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 			return BillingUsage(
 				plan: row.plan.rawValue, status: BillingUsage.Status(rawValue: row.status.rawValue) ?? .active,
 				usedCents: row.usd_cents_used, capCents: row.hard_cap_usd_cents,
-				creditBalanceCents: row.credit_balance_cents, resetsInMs: row.period_resets_in_ms)
+				creditBalanceCents: row.credit_balance_cents, resetsInMs: row.period_resets_in_ms,
+				trialState: row.trial_state.flatMap { BillingUsage.TrialState(rawValue: $0.rawValue) })
 		default:
 			throw SettingsError("Couldn't load your plan.")
 		}

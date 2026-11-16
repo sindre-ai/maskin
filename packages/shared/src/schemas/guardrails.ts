@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { dailyBudgetUnitSchema } from './daily-budget'
 
 /**
  * Autonomy and guardrails, first slice: a read of the limits that already exist, gathered in one
@@ -16,10 +17,10 @@ export const guardrailSendSettingSchema = z.object({
 
 export const guardrailsSchema = z.object({
 	workspace: z.object({
-		/** The daily target as stored, or null when none is set. */
+		/** The daily target in percent of the plan (an older token or dollar target is converted), or null when none is set. */
 		daily_budget: z
 			.object({
-				unit: z.enum(['tokens', 'dollars']),
+				unit: dailyBudgetUnitSchema,
 				amount: z.number(),
 				stop_share: z.number().int(),
 				timezone: z.string(),

@@ -37,7 +37,7 @@ import {
 	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
-	showsTaskCard,
+	showsTextCard,
 } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -60,6 +60,12 @@ interface PreviewProps {
 	agentId?: string
 	/** A draft edited since an earlier message showed it: the header says Updated. */
 	updated?: boolean
+	/** The card sits beside a loop view, in no chat: status changes and Approve work as the
+	 *  person, no agent is told, a status change is refused if the object has moved on since the
+	 *  card showed it, and an object with no text still draws its header, title and status. */
+	standalone?: boolean
+	/** Called when the person presses a button that changes something, before it is sent. */
+	onAction?: (action: 'status_change' | 'approve') => void
 }
 
 /** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
@@ -71,6 +77,8 @@ export function LinkedObjectCard({
 	updated = false,
 	defaultExpanded = false,
 	className,
+	standalone = false,
+	onAction,
 }: PreviewProps) {
 	const { data: object } = useObject(objectId)
 	const { workspace } = useWorkspace()
@@ -105,11 +113,10 @@ export function LinkedObjectCard({
 	)
 	const measured = verdict !== null && verdict.hash === draftHash
 	const overflowing = measured && verdict.overflowing
+	// Editing the text needs a chat; a standalone card changes the status and approves only.
+	const inChat = Boolean(conversationId && agentId)
 	const canEditText =
-		Boolean(conversationId && agentId) &&
-		object?.preview?.delivery?.state !== 'sent' &&
-		measured &&
-		!(clamped && overflowing)
+		inChat && object?.preview?.delivery?.state !== 'sent' && measured && !(clamped && overflowing)
 	const editorOpen = Boolean(object?.preview) && canEditText
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
@@ -128,14 +135,14 @@ export function LinkedObjectCard({
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
 	const body = object?.content?.trim()
-	if (!object || object.workspaceId !== workspaceId || !body) return null
+	if (!object || object.workspaceId !== workspaceId || (!body && !standalone)) return null
 
 	// The workspace's own statuses for this object's type, never a fixed list.
 	const statuses =
 		(workspace.settings as { statuses?: Record<string, string[]> } | undefined)?.statuses?.[
 			object.type
 		] ?? []
-	const canAct = Boolean(conversationId && agentId)
+	const canAct = inChat || standalone
 	// Sent with an approval or a status change so the server tells the agent behind the card.
 	// Nothing is posted in the chat: the person did not write a message.
 	const chat =
@@ -161,7 +168,7 @@ export function LinkedObjectCard({
 	// What would go out. For most drafts that is the whole text; for one that carries a header
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
 	// what the card shows. Such a text is edited on the object page, where the header is.
-	const shown = preview ? preview.body : body
+	const shown = preview ? preview.body : (body ?? '')
 	// A draft is edited in the shared draft editor (the For You card uses it too); any other
 	// object with text keeps click-to-edit, saved when you click away.
 	const copied = edit ?? shown
@@ -178,7 +185,11 @@ export function LinkedObjectCard({
 	// with what the task holds now before it sends anything.
 	const moveTo = (status: string) => {
 		if (status === object.status) return
-		update.mutate({ id: object.id, data: { status, chat } })
+		onAction?.('status_change')
+		update.mutate({
+			id: object.id,
+			data: { status, chat, ...(standalone ? { expected_status: object.status } : {}) },
+		})
 	}
 
 	// The person's yes to this exact text. The server tells the agent to send it, with the text,
@@ -193,6 +204,7 @@ export function LinkedObjectCard({
 			return
 		}
 		if (Date.now() - revealedAt.current < REVEAL_SETTLE_MS) return
+		onAction?.('approve')
 		approve.mutate({ draft: { object_id: object.id, body: preview.body, preview }, chat })
 	}
 
@@ -332,17 +344,17 @@ export function LinkedObjectCard({
 								canEdit={canEditText}
 								readOnly={(text) => <MarkdownContent content={edit ?? text} size="sm" />}
 							/>
-						) : (
+						) : shown ? (
 							<MarkdownContent
 								content={shown}
 								size="sm"
-								editable={canAct}
+								editable={inChat}
 								editorLabel="Edit the text"
 								onChange={async (value) => {
 									await update.mutateAsync({ id: object.id, data: { content: value } })
 								}}
 							/>
-						)}
+						) : null}
 					</div>
 					{gated || (overflowing && !clamped) ? (
 						<div className="px-3 pt-1">
@@ -398,7 +410,7 @@ export function LinkedObjectCard({
 						</div>
 					) : canAct && nextStatus ? (
 						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
-							<CopyButton text={shown} label ariaLabel="Copy the text" />
+							{shown ? <CopyButton text={shown} label ariaLabel="Copy the text" /> : null}
 							<Button
 								type="button"
 								size="sm"
@@ -411,7 +423,7 @@ export function LinkedObjectCard({
 						</div>
 					) : (
 						<div className="flex items-center justify-end px-3 pb-3 pt-1">
-							<CopyButton text={shown} label ariaLabel="Copy the text" />
+							{shown ? <CopyButton text={shown} label ariaLabel="Copy the text" /> : null}
 						</div>
 					)}
 				</>
@@ -448,6 +460,7 @@ export function LinkedCardOrLink({
 	inList = false,
 	after = false,
 	updated = false,
+	first = false,
 	draftsAndFiles = true,
 }: {
 	workspaceId: string
@@ -463,6 +476,8 @@ export function LinkedCardOrLink({
 	after?: boolean
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
+	/** The first card under a message: an object with text is drawn though its link sits in a sentence. */
+	first?: boolean
 	/** False outside chat: a draft keeps its plain link, with no approval card. */
 	draftsAndFiles?: boolean
 }) {
@@ -517,6 +532,7 @@ export function LinkedCardOrLink({
 			inList={inList}
 			after={after}
 			updated={updated}
+			first={first}
 			draftsAndFiles={draftsAndFiles}
 		/>
 	) : (
@@ -569,6 +585,7 @@ export function renderLinkedCard(
 		inList?: boolean
 		after?: boolean
 		updated?: boolean
+		first?: boolean
 		draftsAndFiles?: boolean
 	},
 ): ReactNode {
@@ -675,6 +692,7 @@ function ObjectCardOrLink({
 	inList,
 	after,
 	updated,
+	first,
 	draftsAndFiles,
 }: {
 	workspaceId: string
@@ -686,6 +704,7 @@ function ObjectCardOrLink({
 	inList: boolean
 	after: boolean
 	updated: boolean
+	first: boolean
 	draftsAndFiles: boolean
 }) {
 	const { data: object } = useObject(objectId)
@@ -704,8 +723,9 @@ function ObjectCardOrLink({
 			/>,
 		)
 	}
-	// A task with text, alone on its own line in chat, is its text; see `showsTaskCard`.
-	if (draftsAndFiles && !after && !inList && showsTaskCard(object, workspaceId)) {
+	// An object with text, alone on its own line in chat, is its text; so is the first one a
+	// sentence links, drawn under the message. See `showsTextCard`.
+	if (draftsAndFiles && !inList && (after ? first : true) && showsTextCard(object, workspaceId)) {
 		return withLabel(
 			label,
 			<LinkedObjectCard

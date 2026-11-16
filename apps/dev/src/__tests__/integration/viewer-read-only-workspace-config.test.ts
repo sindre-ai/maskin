@@ -18,6 +18,7 @@ const { default: slackMcpRoutes } = await import('../../routes/integrations-slac
 const { default: gatewayRoutes } = await import('../../routes/integrations-gateway')
 const { default: googleMeetMcpRoutes } = await import('../../routes/integrations-google-meet-mcp')
 const { default: deepdotsMcpRoutes } = await import('../../routes/integrations-deepdots-mcp')
+const { default: microsoftMcpRoutes } = await import('../../routes/integrations-microsoft-mcp')
 const { default: googleSearchConsoleMcpRoutes } = await import(
 	'../../routes/integrations-google-search-console-mcp'
 )
@@ -59,6 +60,7 @@ function createApp() {
 	app.route('/api/integrations/linkedin-unipile', linkedinRoutes as never)
 	app.route('/api/integrations/google-meet/mcp', googleMeetMcpRoutes as never)
 	app.route('/api/integrations/deepdots/mcp', deepdotsMcpRoutes as never)
+	app.route('/api/integrations/microsoft/mcp', microsoftMcpRoutes as never)
 	app.route('/api/integrations/google-search-console/mcp', googleSearchConsoleMcpRoutes as never)
 	app.route('/api/integrations', integrationsRoutes as never)
 	app.route('/api/integrations/slack/mcp', slackMcpRoutes as never)
@@ -162,6 +164,7 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 			['slack mcp', 'POST', `${ig}/slack/mcp`, mcp],
 			['google meet mcp', 'POST', `${ig}/google-meet/mcp`, mcp],
 			['deepdots mcp', 'POST', `${ig}/deepdots/mcp`, mcp],
+			['microsoft mcp', 'POST', `${ig}/microsoft/mcp`, mcp],
 			['google search console mcp', 'POST', `${ig}/google-search-console/mcp`, mcp],
 			['mcp gateway', 'POST', `${ig}/linear/gateway`, mcp],
 			['mcp gateway end', 'DELETE', `${ig}/linear/gateway`, undefined],

@@ -93,6 +93,14 @@ describe('formatEventDescription', () => {
 		expect(formatEventDescription(event)).toBe('verified knowledge')
 	})
 
+	it.each([
+		['next_step_set', 'set the next step on this bet'],
+		['next_step_updated', 'changed the next step on this bet'],
+		['next_step_closed', 'closed the next step on this bet'],
+	])('reads %s as "%s"', (action, expected) => {
+		expect(formatEventDescription(buildEvent({ action, entityType: 'bet' }))).toBe(expected)
+	})
+
 	it('returns "unverified {type}" for a verification reversal', () => {
 		const event = buildEvent({ action: 'unverified', entityType: 'knowledge' })
 		expect(formatEventDescription(event)).toBe('unverified knowledge')

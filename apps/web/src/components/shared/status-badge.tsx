@@ -38,12 +38,13 @@ export function StatusBadge({
 	const label = status.replace(/_/g, ' ')
 
 	// The v3 row and group-header status: a small ring that fills as the work
-	// moves on (dashed, a third, three quarters, solid with a tick), a cross for
+	// moves on (dashed, a quarter, half, three quarters, solid with a tick), a cross for
 	// work that was dropped and a pause mark in the warning colour for work that is
 	// held up. The word stays available to assistive tech and as the hover title.
 	if (variant === 'ring') {
 		const stage = statusStage(status)
-		const filled = stage === 'progress' || stage === 'review' || stage === 'done'
+		const filled =
+			stage === 'define' || stage === 'progress' || stage === 'review' || stage === 'done'
 		return (
 			<svg
 				width={size}
@@ -72,14 +73,16 @@ export function StatusBadge({
 					strokeDasharray={stage === 'todo' ? '2.2 2.2' : undefined}
 					fill={stage === 'done' ? 'currentColor' : 'none'}
 				/>
-				{(stage === 'progress' || stage === 'review') && (
+				{(stage === 'define' || stage === 'progress' || stage === 'review') && (
 					<circle
 						cx="9"
 						cy="9"
 						r="3"
 						stroke="currentColor"
 						strokeWidth="6"
-						strokeDasharray={stage === 'progress' ? '9.42 18.85' : '14.1 18.85'}
+						strokeDasharray={
+							stage === 'define' ? '4.71 18.85' : stage === 'progress' ? '9.42 18.85' : '14.1 18.85'
+						}
 						transform="rotate(-90 9 9)"
 					/>
 				)}

@@ -3,7 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 const removeMutate = vi.fn()
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }))
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => vi.fn(),
+	Link: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+		<button type="button" onClick={onClick}>
+			{children}
+		</button>
+	),
+}))
 
 vi.mock('@/components/ui/responsive-popover', () => ({
 	ResponsivePopover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,

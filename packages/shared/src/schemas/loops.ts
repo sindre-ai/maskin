@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LOOP_STATUSES, loopTargetSchema } from './objects'
+import { LOOP_STATUSES, loopTargetViewSchema } from './objects'
 
 /**
  * Response schema for `GET /api/loops` — the list-view read shape T3 renders
@@ -79,7 +79,7 @@ export const loopSummarySchema = z.object({
 	 * wire: it derives on render from `actual` / `target` (+ optional
 	 * `pace_policy` per target).
 	 */
-	targets: z.array(loopTargetSchema).nullable(),
+	targets: z.array(loopTargetViewSchema).nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

@@ -93,6 +93,21 @@ describe('McpDialog', () => {
 		expect(mocks.probe).not.toHaveBeenCalled()
 	})
 
+	it('runs Verify & save when Enter is pressed in the URL or key field', async () => {
+		mocks.probe.mockResolvedValue({ ok: true, tools: probeTools(2) })
+		renderAdd()
+		const url = screen.getByLabelText('Server URL')
+		fireEvent.change(url, { target: { value: 'https://api.fireflies.ai/mcp' } })
+		fireEvent.keyDown(url, { key: 'Enter' })
+		// Key is still missing, so validation stops it before any request.
+		expect(mocks.probe).not.toHaveBeenCalled()
+		const key = screen.getByLabelText('API key')
+		fireEvent.change(key, { target: { value: 'sk-123' } })
+		fireEvent.keyDown(key, { key: 'Enter' })
+		await waitFor(() => expect(mocks.probe).toHaveBeenCalledTimes(1))
+		expect(await screen.findByText(/2 tools found/)).toBeInTheDocument()
+	})
+
 	it('shows the error band and saves nothing when the probe fails', async () => {
 		mocks.probe.mockResolvedValue({
 			ok: false,

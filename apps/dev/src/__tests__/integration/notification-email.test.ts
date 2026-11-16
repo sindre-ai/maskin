@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events'
 import { notificationPreferences, notifications } from '@maskin/db/schema'
 import { FOR_YOU_KIND } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendEmail = vi.fn()
 
@@ -174,6 +174,40 @@ describe('notification email: who gets it', () => {
 		await fanout({ ...ENV, FEATURE_BRIEFING_EMAIL: '0' }).handleEvent(event(w, n.id))
 
 		expect(sendEmail).not.toHaveBeenCalled()
+	})
+
+	describe('in production the switch must be exactly 1', () => {
+		const PROD = { ...ENV, NODE_ENV: 'production' }
+		beforeEach(() => {
+			vi.stubEnv('EMAIL_STOP_LINK_SECRET', 'x'.repeat(32))
+		})
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it.each([
+			['unset', undefined],
+			['empty', ''],
+			['0', '0'],
+		])('sends nothing when FEATURE_BRIEFING_EMAIL is %s', async (_label, value) => {
+			const w = await world()
+			await optIn(w, { needs_you: true })
+			const n = await notify(w)
+
+			await fanout({ ...PROD, FEATURE_BRIEFING_EMAIL: value }).handleEvent(event(w, n.id))
+
+			expect(sendEmail).not.toHaveBeenCalled()
+		})
+
+		it('sends when FEATURE_BRIEFING_EMAIL is 1', async () => {
+			const w = await world()
+			await optIn(w, { needs_you: true })
+			const n = await notify(w)
+
+			await fanout({ ...PROD, FEATURE_BRIEFING_EMAIL: '1' }).handleEvent(event(w, n.id))
+
+			expect(mails(w)).toHaveLength(1)
+		})
 	})
 })
 

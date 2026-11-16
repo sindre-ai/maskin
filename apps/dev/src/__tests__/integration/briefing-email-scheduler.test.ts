@@ -8,7 +8,7 @@ import { events, notificationPreferences, workspaceMembers } from '@maskin/db/sc
 import { EmailSendError } from '@maskin/email'
 import { FOR_YOU_KIND } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendEmail = vi.fn()
 const capturePosthogEvent = vi.fn(async (..._args: unknown[]) => {})
@@ -410,6 +410,42 @@ describe('summary email: claim and skips', () => {
 			await new BriefingEmailScheduler(db, { ...ENV, FEATURE_BRIEFING_EMAIL: '0' }).tick(NOW),
 		).toBe(0)
 		expect(sendEmail).not.toHaveBeenCalled()
+	})
+
+	describe('in production the switch must be exactly 1', () => {
+		const PROD = { ...ENV, NODE_ENV: 'production' }
+		beforeEach(() => {
+			vi.stubEnv('EMAIL_STOP_LINK_SECRET', 'x'.repeat(32))
+		})
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it.each([
+			['unset', undefined],
+			['empty', ''],
+			['0', '0'],
+		])('sends nothing when FEATURE_BRIEFING_EMAIL is %s', async (_label, value) => {
+			const p = await person({ daysOld: 2 })
+			await db
+				.insert(notificationPreferences)
+				.values({ actorId: p.actorId, emailDigestEnabled: true })
+			const env = { ...PROD, FEATURE_BRIEFING_EMAIL: value }
+
+			expect(await new BriefingEmailScheduler(db, env).tick(NOW)).toBe(0)
+			expect(sendEmail).not.toHaveBeenCalled()
+		})
+
+		it('sends when FEATURE_BRIEFING_EMAIL is 1', async () => {
+			const p = await person({ daysOld: 2 })
+			await db
+				.insert(notificationPreferences)
+				.values({ actorId: p.actorId, emailDigestEnabled: true })
+
+			await new BriefingEmailScheduler(db, { ...PROD, FEATURE_BRIEFING_EMAIL: '1' }).tick(NOW)
+
+			expect(sentTo(p.email)).toHaveLength(1)
+		})
 	})
 })
 

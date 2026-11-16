@@ -1,5 +1,5 @@
 import { ObjectCreateForm } from '@/components/objects/object-create-form'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 const mockGetTabs = vi.fn()
 
@@ -88,5 +88,35 @@ describe('ObjectCreateForm', () => {
 		render(<ObjectCreateForm objectId="new-1" onAutoCreate={vi.fn()} />)
 		expect(screen.getByRole('button', { name: 'Bet' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Task' })).toBeInTheDocument()
+	})
+
+	describe('title keys', () => {
+		const renderTitle = () => {
+			mockGetTabs.mockReturnValue([{ label: 'Bet', value: 'bet' }])
+			render(<ObjectCreateForm objectId="new-1" onAutoCreate={vi.fn()} />)
+			const title = screen.getByPlaceholderText('Untitled') as HTMLTextAreaElement
+			title.focus()
+			fireEvent.change(title, { target: { value: 'My title' } })
+			return title
+		}
+
+		it('Esc leaves the field and keeps the typed title', () => {
+			const title = renderTitle()
+			fireEvent.keyDown(title, { key: 'Escape' })
+			expect(title).not.toHaveFocus()
+			expect(title.value).toBe('My title')
+		})
+
+		it('Enter leaves the field', () => {
+			const title = renderTitle()
+			fireEvent.keyDown(title, { key: 'Enter' })
+			expect(title).not.toHaveFocus()
+		})
+
+		it('Enter that confirms an IME candidate does not leave the field', () => {
+			const title = renderTitle()
+			fireEvent.keyDown(title, { key: 'Enter', isComposing: true })
+			expect(title).toHaveFocus()
+		})
 	})
 })

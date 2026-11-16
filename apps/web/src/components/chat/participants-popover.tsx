@@ -16,7 +16,7 @@ import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ConversationParticipantResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
 import { Link2, Search } from 'lucide-react'
 import { type ReactNode, useMemo, useState } from 'react'
@@ -161,20 +161,46 @@ export function ParticipantsPopover({
 												key={p.actorId}
 												className="flex items-center gap-2.5 rounded-lg px-2 py-1.5"
 											>
-												<ActorAvatar
-													id={p.actorId}
-													name={p.actorName}
-													type={p.actorType}
-													size="md"
-												/>
-												<span className="min-w-0 flex-1">
-													<span className="block truncate text-[13px] font-semibold">
-														{p.actorName}
-													</span>
-													<span className="block truncate text-[11px] text-muted-foreground">
-														{subLineFor(p.actorId, p.actorType)}
-													</span>
-												</span>
+												{p.actorType === 'agent' ? (
+													<Link
+														to="/$workspaceId/agents/$agentId"
+														params={{ workspaceId, agentId: p.actorId }}
+														onClick={() => setOpen(false)}
+														className="-m-1 flex min-w-0 flex-1 items-center gap-2.5 rounded-md p-1 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+													>
+														<ActorAvatar
+															id={p.actorId}
+															name={p.actorName}
+															type={p.actorType}
+															size="md"
+														/>
+														<span className="min-w-0 flex-1">
+															<span className="block truncate text-[13px] font-semibold">
+																{p.actorName}
+															</span>
+															<span className="block truncate text-[11px] text-muted-foreground">
+																{subLineFor(p.actorId, p.actorType)}
+															</span>
+														</span>
+													</Link>
+												) : (
+													<>
+														<ActorAvatar
+															id={p.actorId}
+															name={p.actorName}
+															type={p.actorType}
+															size="md"
+														/>
+														<span className="min-w-0 flex-1">
+															<span className="block truncate text-[13px] font-semibold">
+																{p.actorName}
+															</span>
+															<span className="block truncate text-[11px] text-muted-foreground">
+																{subLineFor(p.actorId, p.actorType)}
+															</span>
+														</span>
+													</>
+												)}
 												{canRemove ? (
 													<ViewerTooltip>
 														<button

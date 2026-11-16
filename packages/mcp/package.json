@@ -28,6 +28,7 @@
 		"@maskin/ext-crm": "workspace:*",
 		"@maskin/ext-knowledge": "workspace:*",
 		"@maskin/ext-notetaker": "workspace:*",
+		"@maskin/ext-targets": "workspace:*",
 		"@maskin/ext-work": "workspace:*",
 		"@maskin/module-sdk": "workspace:*",
 		"@maskin/shared": "workspace:*",

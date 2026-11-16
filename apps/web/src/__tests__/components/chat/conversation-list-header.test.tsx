@@ -10,7 +10,7 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
-function Harness({ pageTitle = true }: { pageTitle?: boolean }) {
+function Harness({ pageTitle = true, titled = true }: { pageTitle?: boolean; titled?: boolean }) {
 	const [query, setQuery] = useState('')
 	return (
 		<ConversationListHeader
@@ -19,7 +19,7 @@ function Harness({ pageTitle = true }: { pageTitle?: boolean }) {
 			query={query}
 			onQueryChange={setQuery}
 			workspaceId="ws-1"
-			titled
+			titled={titled}
 			pageTitle={pageTitle}
 		/>
 	)
@@ -50,5 +50,22 @@ describe('ConversationListHeader', () => {
 		render(<Harness pageTitle={false} />, { wrapper: TestWrapper })
 		expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
 		expect(screen.getByRole('heading', { level: 2, name: 'Chats' })).toBeInTheDocument()
+	})
+
+	it.each([
+		['titled pill', true],
+		['plain field', false],
+	])('Esc clears the text and leaves the search field (%s)', async (_name, titled) => {
+		const user = userEvent.setup()
+		render(<Harness titled={titled} />, { wrapper: TestWrapper })
+		const box = screen.getByRole('searchbox', { name: 'Search chats' })
+
+		await user.type(box, 'billing')
+		expect(box).toHaveValue('billing')
+		expect(box).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+		expect(box).toHaveValue('')
+		expect(box).not.toHaveFocus()
 	})
 })

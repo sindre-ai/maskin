@@ -312,6 +312,8 @@ export const SOURCES_SLOT_ID = 'maskin-sources'
 export const BRIDGE_QUERY_MESSAGE = 'maskin:bridge:query'
 /** Frame -> host: { type, id: string }. Asks the host to go to that object's page; nothing comes back. */
 export const BRIDGE_OPEN_MESSAGE = 'maskin:bridge:open'
+/** Frame -> host: { type, id: string, field: string, value: string }. Proposes a change; the host asks the person and nothing is saved without their yes. */
+export const BRIDGE_PROPOSE_MESSAGE = 'maskin:bridge:propose'
 /** Host -> frame: { type, id, data } or { type, id, error }. */
 export const BRIDGE_RESULT_MESSAGE = 'maskin:bridge:result'
 /** Host -> frame: fired every refresh tick; the frame re-emits it as a window "maskin:refresh" event. */
@@ -322,7 +324,7 @@ export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
 // The frame lives one frame deeper than the host (see the isolation frame below), so
 // the host is `parent.parent`; the frame only accepts results from it. Unlike VIEWER_REPORTER this
 // does not swallow wheel events: an inline view must let the page scroll.
-const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})},open:function(id){parent.parent.postMessage({type:'${BRIDGE_OPEN_MESSAGE}',id:String(id)},'*')}};window.addEventListener('message',function(e){if(e.source!==parent.parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
+const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})},open:function(id){parent.parent.postMessage({type:'${BRIDGE_OPEN_MESSAGE}',id:String(id)},'*')},propose:function(id,field,value){parent.parent.postMessage({type:'${BRIDGE_PROPOSE_MESSAGE}',id:String(id),field:String(field),value:String(value)},'*')}};window.addEventListener('message',function(e){if(e.source!==parent.parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
 
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,

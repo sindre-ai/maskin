@@ -66,6 +66,9 @@ struct CommentDecisionCard: View {
 					HStack(spacing: MaskinSpace.s3) { optionButtons }
 					VStack(spacing: MaskinSpace.s3) { optionButtons }
 				}
+				if let line = decision.silenceLine {
+					Text(line).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+				}
 			}
 		}
 		.padding(MaskinSpace.s8)

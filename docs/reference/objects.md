@@ -339,4 +339,4 @@ Response: `{ "deleted": true }` on success, `404` if the object doesn't exist or
 - [bets.md](./bets.md) — the `bet` object type: shaped, time-boxed outcomes and their lifecycle statuses.
 - [tasks.md](./tasks.md) — the `task` object type: units of work under a bet, driver handoff, and review flow.
 - [relationships.md](./relationships.md) — the edge types (`breaks_into`, `informs`, `blocks`, `relates_to`, `duplicates`) referenced in `create_objects.edges` and `update_objects.edges`.
-- [mcp-tools.md](./mcp-tools.md) — the full Maskin MCP tool catalog, including `list_objects`, `search_objects`, `get_workspace_schema`, and the file / comment / relationship tools referenced from this page.
+- [mcp-tools.md](./mcp-tools.md) — the full Maskin MCP tool catalog, including `list_objects` (which also searches, with `q`), `get_workspace_schema`, and the file / comment / relationship tools referenced from this page.

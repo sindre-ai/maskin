@@ -12,8 +12,10 @@ describe('seatCapForPlan / ownershipCapForTier', () => {
 	// numbers is a deliberate, visible change rather than a silent drift.
 	it.each([
 		['trial', 1],
+		['starter', 5],
 		['pro', 5],
 		['team', 25],
+		['ultra', 25],
 		['enterprise', null],
 	] as const)('seatCapForPlan(%s) === %s', (plan, expected) => {
 		expect(seatCapForPlan(plan)).toBe(expected)
@@ -21,8 +23,10 @@ describe('seatCapForPlan / ownershipCapForTier', () => {
 
 	it.each([
 		['trial', 1],
+		['starter', 5],
 		['pro', 5],
 		['team', 25],
+		['ultra', 25],
 		['enterprise', null],
 	] as const)('ownershipCapForTier(%s) === %s', (tier, expected) => {
 		expect(ownershipCapForTier(tier)).toBe(expected)
@@ -39,6 +43,8 @@ describe('resolvePlanTier', () => {
 	it('reads the plan from settings.billing.plan', () => {
 		expect(resolvePlanTier({ billing: { plan: 'pro' } })).toBe('pro')
 		expect(resolvePlanTier({ billing: { plan: 'team' } })).toBe('team')
+		expect(resolvePlanTier({ billing: { plan: 'starter' } })).toBe('starter')
+		expect(resolvePlanTier({ billing: { plan: 'ultra' } })).toBe('ultra')
 		expect(resolvePlanTier({ billing: { plan: 'enterprise' } })).toBe('enterprise')
 	})
 

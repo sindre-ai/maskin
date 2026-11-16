@@ -6,6 +6,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	DEFAULT_DAILY_BUDGET_PERCENT,
 	type Guardrails,
 	SEND_PERMISSION_KINDS,
 	STARTING_SEND_MODES,
@@ -120,8 +121,8 @@ describe('GET /api/guardrails — real Postgres', () => {
 			.set({
 				settings: {
 					daily_budget: {
-						unit: 'tokens',
-						amount: 5_000_000,
+						unit: 'percent',
+						amount: 12.5,
 						stop_share: 90,
 						timezone: 'Europe/Copenhagen',
 					},
@@ -139,13 +140,38 @@ describe('GET /api/guardrails — real Postgres', () => {
 
 		const body = await read(ws.id)
 		expect(body.workspace.daily_budget).toEqual({
-			unit: 'tokens',
-			amount: 5_000_000,
+			unit: 'percent',
+			amount: 12.5,
 			stop_share: 90,
 			timezone: 'Europe/Copenhagen',
 		})
 		expect(body.workspace.daily_budget_enforced).toBe(false)
 		expect(body.agents[0]?.access).toEqual({ read_write: 1, read: 1, none: 1, credentials: 0 })
+	})
+
+	it('shows a target saved in tokens as a percent instead of dropping it', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		await db
+			.update(workspaces)
+			.set({
+				settings: {
+					daily_budget: {
+						unit: 'tokens',
+						amount: 5_000_000,
+						stop_share: 90,
+						timezone: 'Europe/Copenhagen',
+					},
+				},
+			})
+			.where(eq(workspaces.id, ws.id))
+
+		const body = await read(ws.id)
+		expect(body.workspace.daily_budget).toEqual({
+			unit: 'percent',
+			amount: DEFAULT_DAILY_BUDGET_PERCENT,
+			stop_share: 90,
+			timezone: 'Europe/Copenhagen',
+		})
 	})
 
 	it('lists only the agents of the workspace asked about', async () => {

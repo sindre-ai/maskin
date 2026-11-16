@@ -4,6 +4,8 @@ import Foundation
 /// Strategist/Researcher onboarding has who-and-where to start from. Mirrors
 /// `buildSignupCaptureKnowledge` in `packages/shared/src/schemas/signup-capture.ts`; the server
 /// reads `metadata.source == "signup_capture"` to find it, so the wire layout must not drift.
+/// `welcome_in_chat` is the one key the web adds at the call site rather than in the shared
+/// builder; it is part of this layout so a new person gets the Chief of Staff welcome in Chats.
 public struct SignupCapture: Sendable, Equatable {
 	public static let source = "signup_capture"
 	public static let status = "validated"
@@ -49,6 +51,9 @@ public struct SignupCapture: Sendable, Equatable {
 			"summary": summary,
 			"confidence": "high",
 			"tags": Self.tags,
+			// Tells the server the welcome is the Chief of Staff's message in a chat, as on the web, so
+			// it opens that chat and does not also put the welcome on For You.
+			"welcome_in_chat": true,
 			"last_validated_at": validatedAt.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: true).timeZone(separator: .omitted)),
 		]
 	}

@@ -920,6 +920,33 @@ describe('tool handlers', () => {
 			expect(attachments.every((a: { skipped?: boolean }) => !a.skipped)).toBe(true)
 		})
 
+		it('reports a refused write to what defines done as a failed update, with the card to raise', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				return {
+					ok: false,
+					status: 403,
+					text: () =>
+						Promise.resolve(
+							JSON.stringify({
+								error: {
+									code: 'FORBIDDEN',
+									message:
+										'Agents cannot change status on a target. Ask a person with a decision card.',
+								},
+							}),
+						),
+				} as Response
+			})
+
+			const result = (await getHandler('update_objects')({
+				updates: [{ id: '11111111-1111-1111-1111-111111111111', status: 'hit' }],
+			})) as { content: Array<{ text: string }> }
+
+			const [entry] = JSON.parse(result.content[0].text).results
+			expect(entry.success).toBe(false)
+			expect(entry.error).toContain('decision card')
+		})
+
 		it('skips a duplicate attach as a success+skipped no-op without POSTing', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				const method = (init as RequestInit | undefined)?.method ?? 'GET'
@@ -2415,6 +2442,34 @@ describe('tool handlers', () => {
 				expect(JSON.parse(result.content[0].text).loop.driver).toBe('agent-2')
 			})
 
+			it('passes on the refusal when an agent changes what defines done', async () => {
+				const refusal =
+					'Agents cannot change close_condition on a loop. Ask a person with a decision card (create_comment with a decision and the person in mentions), and let them make the change.'
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { close_condition: 'Shipped' },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH')
+						return {
+							ok: false,
+							status: 403,
+							text: () =>
+								Promise.resolve(JSON.stringify({ error: { code: 'FORBIDDEN', message: refusal } })),
+						} as Response
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				await expect(
+					getHandler('update_loop')({ id: 'loop-1', close_condition: 'Never' }),
+				).rejects.toThrow(/API error 403: .*decision card/)
+			})
+
 			it('rejects a human driver and leaves the loop untouched', async () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 					const u = String(url)
@@ -3487,8 +3542,11 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(JSON.parse(res.content[0].text)).toEqual(res.structuredContent.events)
+			const text = JSON.parse(res.content[0].text)
+			expect(text.events).toEqual(res.structuredContent.events)
 			expect(res.structuredContent.events).toHaveLength(10)
+			expect(text.next_cursor).toEqual(res.structuredContent.next_cursor)
+			expect(text.next_cursor).toBeTruthy()
 		})
 
 		it('a workspace-wide walk at limit 99 returns 297 distinct ids over three pages', async () => {
@@ -6468,6 +6526,23 @@ describe('tool handlers', () => {
 			expect(parsed.llm_config).toEqual({ provider: 'openai' })
 		})
 
+		it('sends starter_prompts on the PATCH body', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({ id: actorId, starter_prompts: ['What needs me today?'] }),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			await handler({ id: actorId, starter_prompts: ['What needs me today?'] })
+
+			expect(patchedBody).toMatchObject({ starter_prompts: ['What needs me today?'] })
+		})
+
 		it('adds the actor to a workspace when workspace_id is provided', async () => {
 			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
 			// A fresh object per test — the handler mutates the actor in place to
@@ -7527,7 +7602,7 @@ describe('url field injection', () => {
 		const handler = noUrlHandlers.get('list_objects')
 		if (!handler) throw new Error('list_objects handler not registered')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
-		const parsed = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>
+		const parsed = JSON.parse(result.content[0].text).objects as Array<Record<string, unknown>>
 		expect(parsed[0].url).toBeUndefined()
 	})
 
@@ -7551,7 +7626,7 @@ describe('url field injection', () => {
 		const handler = trailingHandlers.get('list_objects')
 		if (!handler) throw new Error('list_objects handler not registered')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
-		const parsed = JSON.parse(result.content[0].text) as Array<{ url: string }>
+		const parsed = JSON.parse(result.content[0].text).objects as Array<{ url: string }>
 		expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
 	})
 
@@ -7569,7 +7644,10 @@ describe('url field injection', () => {
 				structuredContent: { objects: Array<{ id: string; url?: string }> }
 			}
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
+			const parsed = JSON.parse(result.content[0].text).objects as Array<{
+				id: string
+				url: string
+			}>
 			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/objects/obj-1')
 			expect(result.structuredContent.objects[0].url).toBe(
 				'https://maskin.example.com/ws-default-123/objects/obj-1',

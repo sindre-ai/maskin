@@ -343,7 +343,9 @@ app.openapi(getMarketplaceLoopRoute, (async (c) => {
 
 	const response: z.infer<typeof marketplaceLoopDetailResponseSchema> = {
 		loop: toMarketplaceLoopSummary(row, itemTypes),
-		items: itemRows.map(toMarketplaceLoopItem),
+		// Custom views are part of the install but not an item a person can pick on
+		// its own, and the clients only know the four item types.
+		items: itemRows.filter((item) => isItemType(item.itemType)).map(toMarketplaceLoopItem),
 	}
 
 	logger.info('marketplace loop detail fetched', {

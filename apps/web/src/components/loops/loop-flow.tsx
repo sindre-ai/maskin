@@ -149,11 +149,11 @@ export function LoopFlow({
 		<section
 			id="loop-flow"
 			data-loop-flow-root
-			aria-label="Pipeline"
+			aria-label="How it runs"
 			className="flex flex-col gap-3.5"
 		>
 			<div className="flex items-baseline gap-3 px-1">
-				<h2 className="flex-1 text-[13px] font-semibold text-muted-foreground">Pipeline</h2>
+				<h2 className="flex-1 text-[13px] font-semibold text-muted-foreground">How it runs</h2>
 				{onAddTrigger && (
 					<button
 						type="button"

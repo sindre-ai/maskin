@@ -15,8 +15,8 @@
  * louder channel, so muting wins).
  *
  * Exactly once: every replica sees every event, so a mail is claimed with one conditional UPDATE
- * on the notification's own metadata. A failed send releases the claim. FEATURE_BRIEFING_EMAIL=0
- * stops these emails too.
+ * on the notification's own metadata. A failed send releases the claim. In production these emails go
+ * out only when FEATURE_BRIEFING_EMAIL=1; elsewhere FEATURE_BRIEFING_EMAIL=0 stops them.
  */
 import type { Database } from '@maskin/db'
 import { actors, notificationPreferences, notifications } from '@maskin/db/schema'
@@ -27,7 +27,7 @@ import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildEmailStopUrl } from '../lib/email-stop-link'
 import { isEmailStopConfigured } from '../lib/email-stop-token'
 import { logger } from '../lib/logger'
-import { EMAIL_KILLSWITCH_ENV_VAR } from './briefing-email-scheduler'
+import { emailSwitchedOff } from './briefing-email-scheduler'
 import { buildNotificationEmail } from './notification-email-text'
 import { hasReadThrough } from './notification-push'
 import {
@@ -97,7 +97,7 @@ export class NotificationEmailFanout {
 	}
 
 	private sendingAllowed(): boolean {
-		if (this.env[EMAIL_KILLSWITCH_ENV_VAR] === '0') return false
+		if (emailSwitchedOff(this.env)) return false
 		if (this.env.NODE_ENV === 'production') {
 			return (
 				isEmailConfigured(this.env) && Boolean(this.env.APP_URL?.trim()) && isEmailStopConfigured()

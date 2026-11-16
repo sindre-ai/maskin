@@ -74,6 +74,7 @@ import {
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
+import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
@@ -92,6 +93,7 @@ import {
 	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	classifySessionExit,
+	classifyUnclassifiedExit,
 	endsInClaudeAuthDeath,
 	isClaudeAuthDeathText,
 	isCreditBalanceLowText,
@@ -99,6 +101,7 @@ import {
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -171,6 +174,7 @@ import {
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
 	type LlmRoute,
+	type MaskinPlan,
 	type ModelSource,
 	type PinnedModel,
 	PlanCapExceededError,
@@ -178,6 +182,7 @@ import {
 	ceilCents,
 	checkPlanCap,
 	creditBalanceCents,
+	effectivePeriodEnd,
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	preflightLlmCredentials,
@@ -212,8 +217,17 @@ import {
 	AgentServerHttpError,
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
-import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
+import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
+import {
+	ContainerManager,
+	type LogChunk,
+	type StreamJsonUserMessage,
+	type TurnImage,
+	userTurnWithImages,
+} from './container-manager'
 import { applyExtensionGuards } from './extension-guard-launch'
+import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { buildRunGoalBlock, saveRunGoal } from './run-goal'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
@@ -573,7 +587,7 @@ function classifyExit(args: {
 }): TerminalClassification {
 	if (args.userStopped) return 'human_stop'
 	if (args.status === 'completed') return 'agent_completed'
-	if (!args.failureReason) return 'unknown'
+	if (!args.failureReason || args.failureReason.reason_code === 'unclassified') return 'unknown'
 	return args.failureReason.reason_code === 'plan_cap_exceeded' ? 'plan_cap' : 'credit_exhaustion'
 }
 
@@ -1454,6 +1468,8 @@ export class SessionManager extends EventEmitter {
 		 * it apart from the human sending the same thing again.
 		 */
 		logTags?: Record<string, unknown>,
+		/** Images the agent sees with this turn. Not kept in the session log: only the text is. */
+		images?: TurnImage[],
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1471,9 +1487,12 @@ export class SessionManager extends EventEmitter {
 				throw new Error(`Agent server ${session.agentServerId} not found`)
 			}
 			const client = new AgentServerClient({ server: serverRow })
-			await client.sendInput(sessionId, payload)
+			await client.sendInput(sessionId, payload, images)
 		} else {
-			await this.containers.write(sessionId, payload)
+			await this.containers.write(
+				sessionId,
+				images && images.length > 0 ? userTurnWithImages(payload, images) : payload,
+			)
 		}
 
 		// The CLI does not echo the user turn back to stdout — only the
@@ -2621,6 +2640,111 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * The "What you drive" block for a chat session: the loops and open objects
+	 * the agent drives, with targets. Built on the first launch and saved on
+	 * `sessions.config.chat_drives`, so the saved text is what the agent was shown
+	 * and a resume reuses it. An agent that drives nothing gets '' and nothing is
+	 * saved. A failure here only costs the block, never the launch.
+	 */
+	private async resolveChatDrivesBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		// Only a chat (a conversation) gets it; other interactive sessions are not chats.
+		const { conversationId } = session
+		if (!conversationId) return ''
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.chat_drives === 'string') return config.chat_drives
+		try {
+			const block = await buildChatDrivesBlock(
+				this.db,
+				{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId },
+				frontendBaseUrl(),
+			)
+			if (!block) return ''
+			await saveChatDrives(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = { ...config, chat_drives: block }
+			return block
+		} catch (err) {
+			logger.warn('Failed to build chat drives block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
+	 * The "Go-ahead on the job" block, the one place a session is shown a person's stored go-ahead:
+	 * built at every launch for an unattended run (next to its goal) and for a chat (next to what it
+	 * drives). Behind the go-ahead flag (workspace-scoped, or per driver actor), so with the flag off
+	 * nothing is read or added. Never saved on the session: a go-ahead taken back between two
+	 * launches must not be shown again from a saved copy. A failure here only costs the block, never
+	 * the launch.
+	 */
+	private async resolveGoAheadBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		if (
+			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.GO_AHEAD, { actorId: session.actorId })
+		) {
+			return ''
+		}
+		try {
+			return await buildGoAheadBlock(
+				this.db,
+				{
+					workspaceId: session.workspaceId,
+					actorId: session.actorId,
+					initiatedFromObjectId: session.initiatedFromObjectId,
+					conversationId: session.conversationId,
+				},
+				frontendBaseUrl(),
+			)
+		} catch (err) {
+			logger.warn('Failed to build go-ahead block', { sessionId: session.id, error: String(err) })
+			return ''
+		}
+	}
+
+	/**
+	 * The "Jobs you are handed" block for a chat session: how to treat a job a person hands the
+	 * agent, and the flow and company targets it can serve. Behind the job-target-in-chat flag
+	 * (workspace-scoped), so with the flag off nothing is built or saved. Built on the first launch
+	 * and saved on `sessions.config.chat_job_target`; a resume reuses the saved text. A failure here
+	 * only costs the block, never the launch.
+	 */
+	private async resolveChatJobTargetBlock(session: typeof sessions.$inferSelect): Promise<string> {
+		const { conversationId } = session
+		if (!conversationId) return ''
+		if (
+			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.JOB_TARGET_IN_CHAT, {
+				actorId: session.actorId,
+			})
+		) {
+			return ''
+		}
+		const config = (session.config as Record<string, unknown>) ?? {}
+		if (typeof config.chat_job_target === 'string') return config.chat_job_target
+		try {
+			const block = await buildChatJobTargetBlock(
+				this.db,
+				{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId },
+				frontendBaseUrl(),
+			)
+			await saveChatJobTarget(this.db, session.id, block)
+			// Later launch steps spread `session.config` into their own write.
+			;(session as { config: Record<string, unknown> }).config = {
+				...config,
+				chat_job_target: block,
+			}
+			return block
+		} catch (err) {
+			logger.warn('Failed to build chat job target block', {
+				sessionId: session.id,
+				error: String(err),
+			})
+			return ''
+		}
+	}
+
+	/**
 	 * Build the launch spec for a session — env vars (including integration
 	 * credentials), image, and resource limits. The shape mirrors
 	 * `StartSessionRequest` on `AgentServerClient` so the SessionDispatcher (T6)
@@ -2859,12 +2983,16 @@ ${cont.continues_prompt}
 								: ''
 						}The full log of each earlier session of this conversation is available with get_session_logs, oldest first: ${(Array.isArray(cont.continues_chain) ? cont.continues_chain : [cont.continues_session_id]).join(', ')}.`
 					: ''
-			envVars.SYSTEM_PROMPT = `${startupBlock}${resolvedSystemPrompt}${continuation}`
+			const drivesBlock = await this.resolveChatDrivesBlock(session)
+			const jobTargetBlock = await this.resolveChatJobTargetBlock(session)
+			const goAheadBlock = await this.resolveGoAheadBlock(session)
+			envVars.SYSTEM_PROMPT = `${startupBlock}${drivesBlock}${goAheadBlock}${jobTargetBlock}${resolvedSystemPrompt}${continuation}`
 		} else {
 			const goalBlock = await this.resolveRunGoalBlock(session)
 			const sentBy = (session.config as Record<string, unknown> | null)?.sent_by_actor_id
 			const senderLine = typeof sentBy === 'string' ? await loadSenderLine(this.db, sentBy) : ''
-			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
+			const goAheadBlock = await this.resolveGoAheadBlock(session)
+			envVars.ACTION_PROMPT = `${startupBlock}${goalBlock}${goAheadBlock}${senderLine ? `${senderLine}\n\n` : ''}${session.actionPrompt}`
 		}
 
 		// Resolve LLM credentials in priority order:
@@ -4645,7 +4773,11 @@ ${cont.continues_prompt}
 						reset_at: null,
 						verbatim_output: null,
 					}
-				: null)
+				: // A non-zero exit that nothing recognised is never saved bare: it gets an explicit
+					// reason, and settleSession tells the owner. A stop someone asked for is not a death.
+					exitCode !== null && exitCode !== 0 && !this.stopRequested.has(sessionId)
+					? classifyUnclassifiedExit(stdoutTail)
+					: null)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 		// A stop the user asked for ends as user_stopped, not failed. A budget stop
 		// also goes through stopSession (so it sits in stopRequested too) but it is
@@ -5151,8 +5283,9 @@ ${cont.continues_prompt}
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const billing = wsSettings.billing
-		const plan = billing?.plan
-		if (plan !== 'pro' && plan !== 'team') return
+		// Every plan the Maskin-funded route serves has a cap: trial, Starter, Pro, Team and
+		// Ultra. A workspace with no billing block is on the trial. Enterprise has none.
+		const plan = (billing?.plan ?? 'trial') as MaskinPlan
 
 		const capCents = getWorkspacePlanCap(wsSettings)
 		if (capCents === null) return
@@ -5185,20 +5318,13 @@ ${cont.continues_prompt}
 		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
 		if (totalUsedCents < capCents) return
 
-		let stopReason: string | null = null
-		if (!canUseCreditBalance(plan, billing)) {
-			// Mirrors checkPlanCap's block condition exactly — a new session
-			// dispatched for this workspace right now would already be
-			// rejected, so this one shouldn't be allowed to keep running either.
-			stopReason = 'usage exceeded the plan cap and no usage credits are available'
-		} else {
+		// Same rule as checkPlanCap: at 100% the session stops unless the workspace still holds
+		// a credit balance that covers the overage. The wording is the same either way.
+		const stopReason = 'your plan is used up'
+		if (canUseCreditBalance(plan, billing)) {
 			const costCentsNeeded = totalUsedCents - capCents
-			const balance = creditBalanceCents(billing)
-			if (costCentsNeeded > balance) {
-				stopReason = 'usage exceeded the plan cap and your remaining usage credits'
-			}
+			if (costCentsNeeded <= creditBalanceCents(billing)) return
 		}
-		if (!stopReason) return
 
 		logger.warn('Stopping running session over budget', {
 			sessionId: session.id,
@@ -5206,6 +5332,14 @@ ${cont.continues_prompt}
 			totalUsedCents,
 			capCents,
 			reason: stopReason,
+		})
+		void trackPlanLimitReached({
+			workspaceId: session.workspaceId,
+			plan,
+			periodEnd: effectivePeriodEnd(
+				periodStartMs,
+				typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined,
+			),
 		})
 		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
 			logger.warn('Failed to write budget-stop system log', {
@@ -6772,7 +6906,14 @@ ${cont.continues_prompt}
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
-			!stoppedByUser && exitCode !== null ? classifySessionExit(stdoutTail, exitCode) : null
+			!stoppedByUser && exitCode !== null
+				? (classifySessionExit(stdoutTail, exitCode) ??
+					// Same rule as handleCompletion: a non-zero exit nothing recognised gets an explicit
+					// reason, unless a person asked for the stop.
+					(exitCode !== 0 && !this.stopRequested.has(sessionId)
+						? classifyUnclassifiedExit(stdoutTail)
+						: null))
+				: null
 		if (failureReason) {
 			logger.info('Remote session credit-exhaustion classified', {
 				sessionId,

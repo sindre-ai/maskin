@@ -150,6 +150,9 @@ export function McpDialog({
 						hasStoredKey={ext.hasMcpKey}
 						disabled={busy}
 						set={set}
+						onEnter={() => {
+							if (form.serverUrl.trim()) handleVerify()
+						}}
 					/>
 				)}
 
@@ -281,6 +284,7 @@ function McpFields({
 	hasStoredKey,
 	disabled,
 	set,
+	onEnter,
 }: {
 	form: McpFormState
 	errors: ReturnType<typeof validateMcpForm>
@@ -288,9 +292,18 @@ function McpFields({
 	hasStoredKey: boolean
 	disabled: boolean
 	set: <K extends keyof McpFormState>(key: K, value: McpFormState[K]) => void
+	onEnter: () => void
 }) {
 	return (
-		<div className="grid gap-4">
+		<div
+			className="grid gap-4"
+			onKeyDown={(e) => {
+				if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+				if (!(e.target instanceof HTMLInputElement)) return
+				e.preventDefault()
+				onEnter()
+			}}
+		>
 			<div className="grid gap-1.5">
 				<Label htmlFor="mcp-url">Server URL</Label>
 				<Input

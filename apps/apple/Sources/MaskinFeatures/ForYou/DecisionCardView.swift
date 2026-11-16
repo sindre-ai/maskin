@@ -410,6 +410,13 @@ struct DecisionCardView: View {
 					}
 				}
 			}
+			if let line = decision.silenceLine {
+				Text(line)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			}
 			if let note = unsentEditNote {
 				Text(note)
 					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))

@@ -601,6 +601,25 @@ describe('launcher with words and pills', () => {
 		await user.keyboard('{Escape}')
 		expect(setOpenMock).toHaveBeenCalledWith(false)
 	})
+
+	it('Esc still closes after a click on a part of the panel that cannot take focus', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.click(screen.getByText('esc closes'))
+		expect(field()).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+		expect(setOpenMock).toHaveBeenCalledWith(false)
+	})
+
+	it('keeps focus in the field when the Clear search button goes away', async () => {
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'hans')
+		await user.click(screen.getByRole('button', { name: 'Clear search' }))
+		expect(field()).toHaveValue('')
+		expect(field()).toHaveFocus()
+	})
 })
 
 describe('launcher states', () => {

@@ -28,6 +28,7 @@ import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
 import { fetchLastRunAt, triggerSearchCondition } from '../lib/trigger-queries'
 import { assertWorkspaceWriterRole, isWorkspaceWriter } from '../lib/workspace-auth'
 import { assertInWorkspace } from '../lib/workspace-scope'
+import { assertScheduledWorkWithinCap } from '../services/self-start-limits'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
@@ -37,6 +38,8 @@ type Env = {
 		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
 		workspaceRole?: string
 		actorType: string
+		/** Set by app-factory when the request carried a well-formed `X-Maskin-Session-Id` header. */
+		maskinSessionId?: string
 	}
 }
 
@@ -191,6 +194,16 @@ app.openapi(createTriggerRoute, async (c) => {
 	// member of this workspace.
 	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
 
+	// A run an agent started for itself may leave only a few new triggers waiting.
+	const { createdFromStartReason } =
+		c.get('actorType') === 'human'
+			? { createdFromStartReason: null }
+			: await assertScheduledWorkWithinCap(db, {
+					workspaceId,
+					actorId,
+					sessionId: c.get('maskinSessionId'),
+				})
+
 	const created = await db.transaction(async (tx) => {
 		const [row] = await tx
 			.insert(triggers)
@@ -215,7 +228,11 @@ app.openapi(createTriggerRoute, async (c) => {
 			action: 'created',
 			entityType: 'trigger',
 			entityId: row.id,
-			data: { trigger_name: row.name, type: row.type },
+			data: {
+				trigger_name: row.name,
+				type: row.type,
+				...(createdFromStartReason ? { created_from_start_reason: createdFromStartReason } : {}),
+			},
 		})
 
 		return row

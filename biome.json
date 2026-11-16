@@ -38,6 +38,8 @@
 			"apps/apple/openapi.json",
 			"apps/apple/Sources/MaskinAPI/openapi.json",
 			"apps/apple/Sources/MaskinFeatures/Computer/Resources/novnc-bridge.js",
+			"apps/apple/Sources/MaskinFeatures/Objects/EditorPage/editor-bridge.js",
+			"apps/apple/Sources/MaskinFeatures/Objects/EditorPage/editor-bridge.css",
 			"**/*.xcassets",
 			"**/*.xcassets/**"
 		]

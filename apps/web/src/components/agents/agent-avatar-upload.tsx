@@ -83,6 +83,7 @@ export function AgentAvatarUpload({
 					size="md"
 					id={agent.id}
 					imageUrl={avatarUrl}
+					initials={agent.initials}
 				/>
 			</div>
 		)
@@ -114,6 +115,7 @@ export function AgentAvatarUpload({
 					size="md"
 					id={agent.id}
 					imageUrl={avatarUrl}
+					initials={agent.initials}
 				/>
 				{isUploading && (
 					<div className="absolute inset-0 flex items-center justify-center rounded-full bg-background/70">

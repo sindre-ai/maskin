@@ -99,4 +99,22 @@ describe('NewMenu — D4 behaviour', () => {
 		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
 		expect(await screen.findByRole('menuitem', { name: /new chat/i })).toBeInTheDocument()
 	})
+
+	it('opens the menu from the chevron with the keyboard and reveals it on focus-visible', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		render(<NewMenu onNewChat={vi.fn()} primaryKind="object" hideObjectSection />, {
+			wrapper: makeWrapper(),
+		})
+		const chevron = screen.getByRole('button', { name: 'More ways to start' })
+		// Hidden at rest, visible once keyboard focus lands on it.
+		expect(chevron.className).toMatch(/opacity-0/)
+		expect(chevron.className).toMatch(/focus-visible:opacity-100/)
+		expect(chevron.className).toMatch(/focus-visible:h-8/)
+		expect(chevron.className).toMatch(/focus-visible:w-7/)
+		await user.tab()
+		await user.tab()
+		expect(chevron).toHaveFocus()
+		await user.keyboard('{Enter}')
+		expect(await screen.findByRole('menuitem', { name: /new chat/i })).toBeInTheDocument()
+	})
 })

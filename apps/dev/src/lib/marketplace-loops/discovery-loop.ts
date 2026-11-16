@@ -1,9 +1,15 @@
 // Shared constants for the Product Discovery Loop marketplace bundle.
 //
 // The bundle contains the Product Discovery Agent, the CPO and the Strategist,
-// plus every trigger they drive: triage of new insights, a clustering sweep, a
-// backlog drain, a weekly digest, rolling revalidation of opportunity bets, and
-// shaping once a person moves a bet to define.
+// plus every trigger they drive: triage of new insights, an insight synthesis
+// sweep, a backlog drain, a weekly briefing, weekly and daily upkeep of the
+// Discovery understanding and Bet intelligence pages, the evidence base and
+// strategy check pages, the CPO's critique and grading pass, review of
+// opportunity bets, and shaping once a person moves a bet to define.
+//
+// The workspace's coordinator (the Chief of Staff every workspace is seeded
+// with) is deliberately not in the bundle. Its attention trigger and the loop
+// owner heartbeat are left out; the agents here find the coordinator by role.
 //
 // The prompts, trigger prompts and skills in data/discovery-*.json are the real
 // ones from a working workspace, with everything specific to that company, its
@@ -14,7 +20,9 @@
 // Exported so the seed config and its tests can share the exact same shape.
 // Snapshot helpers live in ./loop-snapshot; snapshot data in ./loop-data.
 
+import discoveryViewsData from './data/discovery-views.json'
 import { skillIdsForActor, triggerIdsForActor } from './loop-data'
+import type { LoopSettings } from './loop-settings'
 
 export { actorSnapshot, skillSnapshot, triggerSnapshot } from './loop-snapshot'
 
@@ -22,13 +30,37 @@ export const DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT = '508ecfdc-c0fa-4103-ae54-
 export const DISCOVERY_ACTOR_CPO = 'f5bfd2f0-bdce-496b-9ab7-d181496b3101'
 export const DISCOVERY_ACTOR_STRATEGIST = '02f60f27-615a-4cdd-9af0-23f402f067e4'
 
+// What the loop page shows beside the tabs. The conditions are the live loop's, with the
+// workspace-specific parts removed. Only one target ships: the CPO's weekly grading trigger
+// updates the row with this exact label, so it stays current without anyone editing it.
+// The live loop's other targets (customer evidence share, tests completed, buyer-sourced bets)
+// are left out: their goals are the publisher's own numbers and nothing in this bundle keeps
+// their actuals up to date.
+const DISCOVERY_SETTINGS: LoopSettings = {
+	entryCondition:
+		'An in-scope insight is created or arrives (a product, market or customer signal, excluding workspace improvements and agent, loop or trigger operational chatter), or a person files an opportunity directly.',
+	closeCondition:
+		'An insight has a home. It is attached to a bet, handed to an owner who acted on it, or parked with a wake condition that names a specific event. In progress = insights still waiting for a decision (new or processing). Bets are what the loop produces, not what it measures.',
+	tags: ['Product'],
+	targets: [
+		{
+			label: 'Understanding acceptance (items passed of 15)',
+			source:
+				'The CPO grades both discovery pages against the Discovery acceptance test each week. The goal is all 15 items. Not graded yet.',
+			actual: 0,
+			target: 15,
+		},
+	],
+}
+
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Loop',
-	version: '1.1.0',
+	version: '1.4.0',
 	useCase: 'Discovery',
+	settings: DISCOVERY_SETTINGS,
 	description:
-		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, a plain-words weekly digest says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
+		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, two living pages (what we understand about customers, and what it means for each bet) are kept current and graded each week, a plain-words weekly briefing says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
 } as const
 
 export const DISCOVERY_ACTOR_IDS = [
@@ -46,3 +78,10 @@ export const DISCOVERY_TRIGGER_IDS: readonly string[] =
 export const DISCOVERY_SKILL_IDS: readonly string[] = [
 	...new Set(DISCOVERY_ACTOR_IDS.flatMap(skillIdsForActor)),
 ]
+
+// The loop page's tabs, in order. Radar, Learning, Briefing and Opportunities
+// ship as empty starter pages for the agents to fill in; Pipeline reads live
+// counts and works in any workspace. See data/discovery-views.json.
+export const DISCOVERY_VIEW_IDS: readonly string[] = Object.values(discoveryViewsData)
+	.sort((a, b) => a.position - b.position)
+	.map((view) => view.id)

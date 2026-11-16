@@ -36,6 +36,32 @@ describe('WorkspaceDesktopService', () => {
 		expect(found?.password).toBe('pw')
 	})
 
+	it('locate passes on what the host says about snapshots and its image, and copes with a host that says nothing', async () => {
+		const answer = (host: unknown) =>
+			new WorkspaceDesktopService({
+				listServers: async () => [server('a')],
+				fetchImpl: vi.fn(async () => res(200, { password: 'pw', host })) as unknown as typeof fetch,
+			}).locate(WS, AGENT)
+
+		expect(
+			(
+				await answer({
+					snapshots: { enabled: true, idle_minutes: 10 },
+					new_computer_image: 'org/desktop:latest',
+				})
+			)?.host,
+		).toEqual({
+			snapshots: { enabled: true, idleMinutes: 10 },
+			newComputerImage: 'org/desktop:latest',
+		})
+		expect((await answer({ snapshots: { enabled: false, idle_minutes: null } }))?.host).toEqual({
+			snapshots: { enabled: false, idleMinutes: null },
+		})
+		// A host from before it reported anything, or one that sent junk.
+		expect((await answer(undefined))?.host).toBeUndefined()
+		expect((await answer({ snapshots: { enabled: 'yes' } }))?.host).toEqual({})
+	})
+
 	it('locate sends the bearer secret and skips disabled servers', async () => {
 		const fetchImpl = vi.fn(async () => res(404))
 		const svc = new WorkspaceDesktopService({

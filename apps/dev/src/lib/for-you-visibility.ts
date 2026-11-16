@@ -13,7 +13,7 @@ import {
 	parseCommentDecision,
 	parseForYouMetadata,
 } from '@maskin/shared'
-import { and, eq, gte, inArray, max, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 
 /**
@@ -175,6 +175,36 @@ export async function findWithdrawnSourceIds(
 	return new Set(rows.map((r) => Number(r.id)))
 }
 
+/**
+ * Newest event id per entity, for the entities that have any. One index probe per entity
+ * (`events_ws_entity_id_idx` is ordered by id), instead of `max(id) GROUP BY entity_id`, which
+ * reads every entity's whole event history.
+ */
+export async function findNewestEventIds(
+	db: Database,
+	workspaceId: string,
+	entityIds: string[],
+): Promise<Map<string, number>> {
+	const newest = new Map<string, number>()
+	const ids = [...new Set(entityIds)]
+	if (ids.length === 0) return newest
+	const rows = await db.execute<{ entity_id: string; id: string | number }>(sql`
+		SELECT x.entity_id, e.id
+		FROM unnest(${sql.raw('ARRAY[')}${sql.join(
+			ids.map((id) => sql`${id}::uuid`),
+			sql`, `,
+		)}${sql.raw(']')}) AS x(entity_id)
+		JOIN LATERAL (
+			SELECT id FROM events
+			WHERE workspace_id = ${workspaceId} AND entity_id = x.entity_id
+			ORDER BY id DESC
+			LIMIT 1
+		) e ON true
+	`)
+	for (const r of rows) newest.set(r.entity_id, Number(r.id ?? 0))
+	return newest
+}
+
 /** Whether a comment asks the person for a call: a decision block, which is also where drafts live. */
 function carriesDecision(comment: typeof events.$inferSelect | undefined): boolean {
 	const data = (comment?.data ?? {}) as Record<string, unknown>
@@ -271,9 +301,13 @@ export async function loadVisibleForYou(
 				.where(and(eq(events.workspaceId, workspaceId), inArray(events.id, sourceIds)))
 		: []
 	const sourceById = new Map(sourceRows.map((e) => [e.id, e]))
-	const finishedDraftCards = await findFinishedDraftCards(db, workspaceId, sourceRows)
+	const noSource = candidates.filter(
+		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
+	)
 
-	const [viewerReplies, dismissedIds, withdrawnIds] = await Promise.all([
+	// Four independent reads, at most four in flight: the pool is small and shared.
+	const [finishedDraftCards, viewerReplies, dismissedIds, withdrawnIds] = await Promise.all([
+		findFinishedDraftCards(db, workspaceId, sourceRows),
 		findViewerReplies(
 			db,
 			workspaceId,
@@ -288,26 +322,14 @@ export async function loadVisibleForYou(
 	// What reading a source-less curated item moves the position to: the newest activity on its
 	// object. Reading does not retire the item; only Dismiss, a closed object or a moved-on
 	// status does.
-	const noSource = candidates.filter(
-		({ row, meta }) => row.objectId && meta.source_comment_id === undefined,
+	// What reading a source-less curated item moves the position to: the newest activity on its
+	// object. Reading does not retire the item; only Dismiss, a closed object or a moved-on
+	// status does.
+	const newestEventByEntity = await findNewestEventIds(
+		db,
+		workspaceId,
+		noSource.map(({ row }) => row.objectId as string),
 	)
-	const newestEventByEntity = new Map<string, number>()
-	if (noSource.length > 0) {
-		const newest = await db
-			.select({ entityId: events.entityId, id: max(events.id) })
-			.from(events)
-			.where(
-				and(
-					eq(events.workspaceId, workspaceId),
-					inArray(
-						events.entityId,
-						noSource.map(({ row }) => row.objectId as string),
-					),
-				),
-			)
-			.groupBy(events.entityId)
-		for (const r of newest) newestEventByEntity.set(r.entityId, Number(r.id ?? 0))
-	}
 
 	const cards = candidates
 		.filter(({ row, meta }) => {

@@ -57,3 +57,34 @@ describe('SearchableMultiSelect', () => {
 		expect(onChange).toHaveBeenCalledWith([])
 	})
 })
+
+describe('SearchableMultiSelect keyboard', () => {
+	it('ArrowDown from the search box moves through rows and Enter toggles', async () => {
+		const onChange = vi.fn()
+		const user = userEvent.setup()
+		render(<SearchableMultiSelect items={items} selectedIds={[]} onChange={onChange} />)
+		await user.click(screen.getByRole('button', { name: /Add/i }))
+		await screen.findByRole('dialog')
+		await user.keyboard('{ArrowDown}{Enter}')
+		expect(onChange).toHaveBeenLastCalledWith(['two'])
+	})
+
+	it('Enter on the first row toggles it off when already selected', async () => {
+		const onChange = vi.fn()
+		const user = userEvent.setup()
+		render(<SearchableMultiSelect items={items} selectedIds={['one']} onChange={onChange} />)
+		await user.click(screen.getByRole('button', { name: /Add/i }))
+		await screen.findByRole('dialog')
+		await user.keyboard('{Enter}')
+		expect(onChange).toHaveBeenLastCalledWith([])
+	})
+
+	it('Esc closes the popover', async () => {
+		const user = userEvent.setup()
+		render(<SearchableMultiSelect items={items} selectedIds={[]} onChange={() => {}} />)
+		await user.click(screen.getByRole('button', { name: /Add/i }))
+		await screen.findByRole('dialog')
+		await user.keyboard('{Escape}')
+		expect(screen.queryByRole('dialog')).toBeNull()
+	})
+})

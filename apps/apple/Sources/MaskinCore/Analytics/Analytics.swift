@@ -265,6 +265,21 @@ public final class Analytics {
 			])
 	}
 
+	/// A tap on a delivered push. Says which notification it was and what kind (`notification_id`
+	/// and `notification_type` from the push payload), so opens can be set against the server's
+	/// `notification_sent`. Only an id and a plain category go out; a value of any other shape is dropped.
+	public func pushNotificationOpened(notificationId: String?, type: String?) {
+		var props: AnalyticsProperties = [:]
+		if let notificationId, Self.isPlainId(notificationId) { props["notification_id"] = .string(notificationId) }
+		if let type, Self.isPlainId(type) { props["type"] = .string(type) }
+		track("push_notification_opened", props)
+	}
+
+	private static func isPlainId(_ value: String) -> Bool {
+		!value.isEmpty && value.count <= 64
+			&& value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+	}
+
 	/// Sends one event if the person has agreed and is signed in.
 	public func track(_ event: String, _ properties: AnalyticsProperties = [:]) {
 		guard isActive, let sink, let actorId else { return }

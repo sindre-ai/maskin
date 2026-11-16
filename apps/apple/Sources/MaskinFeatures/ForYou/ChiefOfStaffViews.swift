@@ -64,7 +64,7 @@ struct ChiefOfStaffSheet: View {
 	private func make() -> (chat: ChatStore, composer: ChatComposerModel) {
 		let session = environment.auth.session
 		let chat = Self.makeChat(environment: environment, desk: desk, conversationID: presented.conversationID)
-		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 		return (chat, ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? ""))
 	}
 

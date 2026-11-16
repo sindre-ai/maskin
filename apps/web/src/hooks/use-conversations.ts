@@ -27,6 +27,8 @@ export interface ConversationListFilters {
 	unread_only?: boolean
 	/** `priority`: direct messages, pinned and unread chats. `recent`: all other chats. */
 	scope?: 'priority' | 'recent'
+	/** The default list's listing rules: no empty agent DMs, retired agents or quiet topic chats. */
+	hide_quiet?: boolean
 }
 
 export function useConversationsInfinite(
@@ -59,6 +61,7 @@ export function useConversationsInfinite(
 			if (filters?.pinned) params.pinned = 'true'
 			if (filters?.archived) params.archived = 'true'
 			if (filters?.unread_only) params.unread_only = 'true'
+			if (filters?.hide_quiet) params.hide_quiet = 'true'
 			return api.conversations.list(workspaceId, params)
 		},
 		initialPageParam: 0,

@@ -171,6 +171,8 @@ interface ToolbarButtonProps {
 	isActive?: boolean
 	/** Visible text next to the icon; the button is icon-only without it. */
 	text?: string
+	/** Roving tabindex: 0 on the one button Tab reaches, -1 on the rest. */
+	tabIndex: 0 | -1
 	onClick: () => void
 }
 
@@ -180,6 +182,7 @@ function ToolbarButton({
 	shortcut,
 	isActive,
 	text,
+	tabIndex,
 	onClick,
 }: ToolbarButtonProps) {
 	const title = shortcut ? `${label} (${shortcut})` : label
@@ -189,6 +192,7 @@ function ToolbarButton({
 			aria-label={label}
 			aria-pressed={isActive ? true : undefined}
 			title={title}
+			tabIndex={tabIndex}
 			className={
 				text
 					? 'inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1'
@@ -309,7 +313,7 @@ function LinkPopover({ editor, open, initialUrl, onCommit, onRemove, onClose }: 
 						onClose()
 					}
 				}}
-				className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				className="h-8 w-full rounded-md border border-control bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			/>
 			<button
 				type="button"
@@ -397,6 +401,9 @@ export function EditorToolbar({
 	// bubble menu's shouldShow, the state re-renders the mobile bar.
 	const [toolbarFocused, setToolbarFocused] = useState(false)
 	const toolbarFocusedRef = useRef(false)
+	// The button Tab lands on. The toolbar is one tab stop: the arrow keys move
+	// this, and it follows focus.
+	const [activeIndex, setActiveIndex] = useState(0)
 	// The selection Comment was chosen on. While it is still the selection the
 	// menu stays hidden: the bubble menu skips the first blur after a press on
 	// it, so it would otherwise stay up over the compose box and come back when
@@ -546,11 +553,17 @@ export function EditorToolbar({
 		onComment(request)
 	}
 
+	const buttonCount = canComment ? 6 : 5
+	// The mobile bar adds the slash button after these.
+	const rovingIndex = activeIndex < buttonCount + (isMobile ? 1 : 0) ? activeIndex : 0
+	const tabIndexFor = (index: number): 0 | -1 => (index === rovingIndex ? 0 : -1)
+
 	const buttons = (
 		<>
 			<ToolbarButton
 				icon={BoldIcon}
 				label="Bold"
+				tabIndex={tabIndexFor(0)}
 				shortcut="Mod+B"
 				isActive={editor.isActive('bold')}
 				onClick={() => run('bold', () => editor.chain().focus().toggleBold().run())}
@@ -558,6 +571,7 @@ export function EditorToolbar({
 			<ToolbarButton
 				icon={ItalicIcon}
 				label="Italic"
+				tabIndex={tabIndexFor(1)}
 				shortcut="Mod+I"
 				isActive={editor.isActive('italic')}
 				onClick={() => run('italic', () => editor.chain().focus().toggleItalic().run())}
@@ -565,6 +579,7 @@ export function EditorToolbar({
 			<ToolbarButton
 				icon={Strikethrough}
 				label="Strikethrough"
+				tabIndex={tabIndexFor(2)}
 				shortcut="Mod+Shift+X"
 				isActive={editor.isActive('strike')}
 				onClick={() => run('strike', () => editor.chain().focus().toggleStrike().run())}
@@ -572,6 +587,7 @@ export function EditorToolbar({
 			<ToolbarButton
 				icon={CodeIcon}
 				label="Inline code"
+				tabIndex={tabIndexFor(3)}
 				shortcut="Mod+E"
 				isActive={editor.isActive('code')}
 				onClick={() => run('code', () => editor.chain().focus().toggleCode().run())}
@@ -579,6 +595,7 @@ export function EditorToolbar({
 			<ToolbarButton
 				icon={LinkIcon}
 				label="Link"
+				tabIndex={tabIndexFor(4)}
 				shortcut="Mod+Shift+K"
 				isActive={editor.isActive('link')}
 				onClick={() => {
@@ -593,6 +610,7 @@ export function EditorToolbar({
 						icon={MessageSquare}
 						label="Comment"
 						text="Comment"
+						tabIndex={tabIndexFor(5)}
 						onClick={startComment}
 					/>
 				</>
@@ -617,26 +635,44 @@ export function EditorToolbar({
 		setLinkOpen(false)
 	}
 
-	// Left/Right move between buttons, Escape hands focus back to the editor
-	// (selection intact). Tab and Shift+Tab work natively.
+	// Esc in the link box: close it and hand the caret back to the editor with
+	// the selection kept, so the input unmounting does not drop focus to the page.
+	const closeLink = () => {
+		setLinkOpen(false)
+		editor.commands.focus()
+	}
+
+	// Left/Right move between the toolbar's own buttons (not the link box's),
+	// Escape hands focus back to the editor (selection intact). The buttons are
+	// one tab stop: Tab leaves the toolbar from wherever focus is.
+	const toolbarItems = (toolbar: HTMLElement) =>
+		Array.from(toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-items] > button'))
+
 	const handleToolbarKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.target instanceof HTMLInputElement) return
 		if (event.key === 'Escape') {
 			event.preventDefault()
-			editor.commands.focus()
+			closeLink()
 			return
 		}
 		if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
-		const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
+		const items = toolbarItems(event.currentTarget)
 		const current = items.indexOf(document.activeElement as HTMLButtonElement)
 		if (current === -1) return
 		event.preventDefault()
 		const step = event.key === 'ArrowRight' ? 1 : -1
-		items[(current + step + items.length) % items.length]?.focus()
+		const next = (current + step + items.length) % items.length
+		setActiveIndex(next)
+		items[next]?.focus()
 	}
 
 	const toolbarFocusHandlers = {
-		onFocus: () => setToolbarFocus(true),
+		onFocus: (event: ReactFocusEvent<HTMLDivElement>) => {
+			setToolbarFocus(true)
+			const items: Element[] = toolbarItems(event.currentTarget)
+			const index = items.indexOf(event.target as Element)
+			if (index !== -1) setActiveIndex(index)
+		},
 		onBlur: (event: ReactFocusEvent<HTMLDivElement>) => {
 			if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
 				setToolbarFocus(false)
@@ -687,14 +723,16 @@ export function EditorToolbar({
 							aria-label="Editor formatting"
 							{...toolbarFocusHandlers}
 						>
-							<div className="flex items-center gap-0.5 p-1">{buttons}</div>
+							<div data-toolbar-items className="flex items-center gap-0.5 p-1">
+								{buttons}
+							</div>
 							<LinkPopover
 								editor={editor}
 								open={linkOpen}
 								initialUrl={linkInitialUrl}
 								onCommit={commitLink}
 								onRemove={removeLink}
-								onClose={() => setLinkOpen(false)}
+								onClose={closeLink}
 							/>
 						</div>
 					)}
@@ -712,12 +750,13 @@ export function EditorToolbar({
 					aria-label="Editor formatting"
 					{...toolbarFocusHandlers}
 				>
-					<div className="flex items-center gap-0.5 overflow-x-auto p-1.5">
+					<div data-toolbar-items className="flex items-center gap-0.5 overflow-x-auto p-1.5">
 						{buttons}
 						<ToolbarButton
 							icon={SlashIcon}
 							label="Insert block"
 							shortcut="/"
+							tabIndex={tabIndexFor(buttonCount)}
 							onClick={() =>
 								run('slash', () => editor.chain().focus().insertContent(slashTrigger(editor)).run())
 							}
@@ -729,7 +768,7 @@ export function EditorToolbar({
 						initialUrl={linkInitialUrl}
 						onCommit={commitLink}
 						onRemove={removeLink}
-						onClose={() => setLinkOpen(false)}
+						onClose={closeLink}
 					/>
 				</div>
 			)}

@@ -4,6 +4,7 @@ import {
 	events,
 	conversationPendingTurns,
 	conversations,
+	files,
 	messages,
 	sessions,
 	workspaceMembers,
@@ -21,7 +22,13 @@ import { conversationParticipantResponseSchema } from '../../lib/openapi-schemas
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
-import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertConversation,
+	insertSession,
+	insertSessionLog,
+	insertWorkspace,
+} from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -3384,6 +3391,170 @@ describe('Conversations Integration', () => {
 			})
 
 			expect((await previewOf(chatId))?.snippet).toBe('Allow this credential?')
+		})
+	})
+	describe('chat files', () => {
+		async function chatWith(otherId: string) {
+			await addMember(workspaceId, otherId)
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Video chat', participant_actor_ids: [otherId], initial_message: 'hi' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(created.status).toBe(201)
+			const { id } = (await created.json()) as { id: string }
+			return { app, id }
+		}
+
+		async function addFile(name: string, mimeType: string, sizeBytes = 10) {
+			const [row] = await db
+				.insert(files)
+				.values({
+					workspaceId,
+					name,
+					mimeType,
+					sizeBytes,
+					storageKey: `test/${crypto.randomUUID()}`,
+					createdBy: ownerId,
+				})
+				.returning()
+			return row as NonNullable<typeof row>
+		}
+
+		async function attach(
+			conversationId: string,
+			actorId: string,
+			file: { id: string; name: string },
+			createdAt = new Date(),
+			extra: Partial<typeof messages.$inferInsert> = {},
+		) {
+			const [row] = await db
+				.insert(messages)
+				.values({
+					conversationId,
+					actorId,
+					content: '',
+					metadata: { attachments: [{ file_id: file.id, name: file.name }] },
+					createdAt,
+					...extra,
+				})
+				.returning()
+			return row as NonNullable<typeof row>
+		}
+
+		type ChatFiles = {
+			files: Array<{
+				id: string
+				name: string
+				mime_type: string
+				size_bytes: number
+				uploaded_by: string
+				uploaded_by_name: string
+				message_id: number
+				uploaded_at: string
+			}>
+			total: number
+			omitted: number
+		}
+
+		const getFiles = async (
+			app: ReturnType<typeof createConversationsApp>['app'],
+			id: string,
+			qs = '',
+		) =>
+			app.request(jsonGet(`/api/conversations/${id}/files${qs}`, { 'x-workspace-id': workspaceId }))
+
+		it('lists uploads that are months old, with name, type, size, who and when', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const { app, id } = await chatWith(other.id)
+			const video = await addFile('regnskab.mp4', 'video/mp4', 4_000_000)
+			const old = new Date('2026-07-01T10:00:00.000Z')
+			const message = await attach(id, ownerId, video, old)
+			// Hundreds of later messages and the same file again must not hide or repeat it.
+			await attach(id, other.id, video, new Date('2026-11-01T10:00:00.000Z'))
+
+			const res = await getFiles(app, id)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as ChatFiles
+			expect(body.total).toBe(1)
+			expect(body.omitted).toBe(0)
+			expect(body.files).toEqual([
+				expect.objectContaining({
+					id: video.id,
+					name: 'regnskab.mp4',
+					mime_type: 'video/mp4',
+					size_bytes: 4_000_000,
+					uploaded_by: ownerId,
+					message_id: message.id,
+					uploaded_at: old.toISOString(),
+				}),
+			])
+			expect(body.files[0]?.uploaded_by_name).toEqual(expect.any(String))
+		})
+
+		it('leaves out deleted messages, missing files and files from other chats', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const { app, id } = await chatWith(other.id)
+			const kept = await addFile('kept.pdf', 'application/pdf')
+			const removed = await addFile('removed.pdf', 'application/pdf')
+			const elsewhere = await addFile('elsewhere.pdf', 'application/pdf')
+			await attach(id, ownerId, kept)
+			await attach(id, ownerId, removed, new Date(), { deletedAt: new Date() })
+			await attach(id, ownerId, { id: crypto.randomUUID(), name: 'gone.pdf' })
+			const [otherChat] = [await insertConversation(db, workspaceId, ownerId)]
+			await attach((otherChat as { id: string }).id, ownerId, elsewhere)
+
+			const body = (await (await getFiles(app, id)).json()) as ChatFiles
+			expect(body.files.map((f) => f.name)).toEqual(['kept.pdf'])
+		})
+
+		it('narrows by type and by who attached it', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const { app, id } = await chatWith(other.id)
+			const video = await addFile('clip.mp4', 'video/mp4')
+			const pdf = await addFile('report.pdf', 'application/pdf')
+			await attach(id, ownerId, video)
+			await attach(id, other.id, pdf)
+
+			const videos = (await (await getFiles(app, id, '?type=video')).json()) as ChatFiles
+			expect(videos.files.map((f) => f.name)).toEqual(['clip.mp4'])
+			const exact = (await (await getFiles(app, id, '?type=application%2Fpdf')).json()) as ChatFiles
+			expect(exact.files.map((f) => f.name)).toEqual(['report.pdf'])
+			const byOther = (await (
+				await getFiles(app, id, `?uploaded_by=${other.id}`)
+			).json()) as ChatFiles
+			expect(byOther.files.map((f) => f.name)).toEqual(['report.pdf'])
+		})
+
+		it('returns the 50 newest and counts the rest', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const { app, id } = await chatWith(other.id)
+			for (let i = 0; i < 53; i++) {
+				const file = await addFile(`file-${i}.txt`, 'text/plain')
+				await attach(id, ownerId, file, new Date(Date.UTC(2026, 0, 1, 0, i)))
+			}
+
+			const body = (await (await getFiles(app, id)).json()) as ChatFiles
+			expect(body.files).toHaveLength(50)
+			expect(body.total).toBe(53)
+			expect(body.omitted).toBe(3)
+			expect(body.files[0]?.name).toBe('file-52.txt')
+			expect(body.files.at(-1)?.name).toBe('file-3.txt')
+		})
+
+		it('hides the list from someone who is not in the chat', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			const { id } = await chatWith(other.id)
+			const outsider = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, outsider.id)
+			const { app } = createConversationsApp(outsider.id)
+
+			const res = await getFiles(app, id)
+			expect(res.status).toBe(404)
 		})
 	})
 })

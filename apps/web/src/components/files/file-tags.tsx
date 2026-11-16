@@ -8,6 +8,7 @@ import {
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useFileTags, useUpdateFile } from '@/hooks/use-files'
 import type { FileDetail } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import {
 	MAX_TAGS_PER_FILE,
 	MAX_TAG_LENGTH,
@@ -15,7 +16,7 @@ import {
 	sortTagsAlphabetically,
 } from '@/lib/file-tags'
 import { Tag, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 
 /**
  * The file's tags as a band under the top bar. A file with no tags renders nothing, so it looks
@@ -57,6 +58,8 @@ export function FileTagChips({ file }: { file: FileDetail }) {
 	)
 }
 
+const tagOptionId = (listId: string, index: number) => `${listId}-${index}`
+
 /**
  * Top bar button that adds tags. Existing tags in the workspace are offered A to Z with their file
  * counts, so a person picks one instead of typing a near copy; typing a new one also works.
@@ -66,6 +69,8 @@ export function FileTagEditorButton({ file }: { file: FileDetail }) {
 	const { data: counts } = useFileTags(file.workspaceId)
 	const update = useUpdateFile(file.workspaceId)
 	const [text, setText] = useState('')
+	const [highlight, setHighlight] = useState(-1)
+	const listId = useId()
 	const normalized = normalizeFileTag(text)
 	const atLimit = file.tags.length >= MAX_TAGS_PER_FILE
 
@@ -76,10 +81,26 @@ export function FileTagEditorButton({ file }: { file: FileDetail }) {
 		)
 	}, [counts, file.tags, text])
 
+	const highlighted = suggestions[highlight]?.tag
+
+	useEffect(() => {
+		if (highlight < 0) return
+		document.getElementById(tagOptionId(listId, highlight))?.scrollIntoView?.({ block: 'nearest' })
+	}, [highlight, listId])
+
+	const move = (step: 1 | -1) => {
+		const count = suggestions.length
+		if (count === 0) return
+		setHighlight((current) =>
+			current < 0 ? (step === 1 ? 0 : count - 1) : (current + step + count) % count,
+		)
+	}
+
 	const add = (tag: string) => {
 		if (file.tags.includes(tag) || atLimit) return
 		update.mutate({ id: file.id, data: { tags: [...file.tags, tag] } })
 		setText('')
+		setHighlight(-1)
 	}
 
 	return (
@@ -105,12 +126,23 @@ export function FileTagEditorButton({ file }: { file: FileDetail }) {
 					className="flex gap-2"
 					onSubmit={(event) => {
 						event.preventDefault()
-						if (normalized) add(normalized)
+						const tag = highlighted ?? normalized
+						if (tag) add(tag)
 					}}
 				>
 					<Input
 						value={text}
-						onChange={(event) => setText(event.target.value)}
+						onChange={(event) => {
+							setText(event.target.value)
+							setHighlight(-1)
+						}}
+						onKeyDown={(event) => {
+							if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+							event.preventDefault()
+							move(event.key === 'ArrowDown' ? 1 : -1)
+						}}
+						aria-controls={suggestions.length > 0 ? listId : undefined}
+						aria-activedescendant={highlight >= 0 ? tagOptionId(listId, highlight) : undefined}
 						placeholder="Add a tag"
 						aria-label="Tag name"
 						maxLength={MAX_TAG_LENGTH}
@@ -126,14 +158,22 @@ export function FileTagEditorButton({ file }: { file: FileDetail }) {
 					</p>
 				)}
 				{suggestions.length > 0 && (
-					<ul className="flex max-h-56 flex-col overflow-y-auto" aria-label="Existing tags">
-						{suggestions.map(({ tag, count }) => (
+					<ul
+						id={listId}
+						className="flex max-h-56 flex-col overflow-y-auto"
+						aria-label="Existing tags"
+					>
+						{suggestions.map(({ tag, count }, index) => (
 							<li key={tag}>
 								<button
 									type="button"
+									id={tagOptionId(listId, index)}
 									disabled={atLimit}
 									onClick={() => add(tag)}
-									className="flex min-h-9 w-full items-center gap-2 rounded px-1 text-left text-sm hover:bg-muted/50 max-md:min-h-11"
+									className={cn(
+										'flex min-h-9 w-full items-center gap-2 rounded px-1 text-left text-sm hover:bg-muted/50 max-md:min-h-11',
+										index === highlight && 'bg-muted',
+									)}
 								>
 									<span className="min-w-0 flex-1 truncate">{tag}</span>
 									<span className="text-xs text-muted-foreground tabular-nums">{count}</span>

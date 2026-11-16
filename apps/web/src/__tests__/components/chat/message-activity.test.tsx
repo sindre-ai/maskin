@@ -34,40 +34,82 @@ describe('MessageActivity', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('names the agent, says what it is doing, and lists its steps while in progress', () => {
-		render(
-			<MessageActivity
-				workspaceId="ws-1"
-				turn={buildTurn({
-					inProgress: true,
-					steps: [{ id: '1', kind: 'tool_use', text: 'Using search_objects' }],
-				})}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		expect(screen.getByText('Workspace Coach')).toBeInTheDocument()
-		// Still mid-tool-call, so it is not claiming to be writing yet.
-		expect(screen.getByText('is working on it')).toBeInTheDocument()
-		expect(screen.getByText('Using search_objects')).toBeInTheDocument()
-		// A live turn is drawn open — there is no disclosure control to click.
-		expect(screen.queryByRole('button', { name: /toggle/i })).not.toBeInTheDocument()
-	})
-
-	it('switches the verb to writing once the agent has stopped calling tools', () => {
+	it('names the agent and says in plain words what it is doing while in progress', () => {
 		render(
 			<MessageActivity
 				workspaceId="ws-1"
 				turn={buildTurn({
 					inProgress: true,
 					steps: [
-						{ id: '1', kind: 'tool_use', text: 'Using search_objects' },
+						{ id: '1', kind: 'tool_use', text: 'Get comments', tool: 'mcp__maskin__get_comments' },
+					],
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('Workspace Coach')).toBeInTheDocument()
+		expect(screen.getByText('Reading comments')).toBeInTheDocument()
+		// The raw tool name stays out of sight until the steps are opened.
+		expect(screen.queryByText('Get comments')).not.toBeInTheDocument()
+	})
+
+	it('keeps the live step list closed until "Show steps" is clicked', () => {
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn({
+					inProgress: true,
+					steps: [
+						{ id: '1', kind: 'thinking', text: 'Thinking…' },
+						{ id: '2', kind: 'tool_use', text: 'Get comments', tool: 'mcp__maskin__get_comments' },
+					],
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.queryByLabelText('Agent activity')).not.toBeInTheDocument()
+		expect(screen.queryByText('THOUGHT')).not.toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Show steps' }))
+		expect(screen.getByLabelText('Agent activity')).toBeInTheDocument()
+		expect(screen.getByText('Get comments')).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Hide steps' }))
+		expect(screen.queryByLabelText('Agent activity')).not.toBeInTheDocument()
+	})
+
+	it('never shows Bash or a thought as the plain line', () => {
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn({
+					inProgress: true,
+					steps: [
+						{ id: '1', kind: 'tool_use', text: 'Get comments', tool: 'mcp__maskin__get_comments' },
+						{ id: '2', kind: 'tool_use', text: 'Bash', tool: 'Bash' },
+						{ id: '3', kind: 'thinking', text: 'Thinking…' },
+					],
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('Reading comments')).toBeInTheDocument()
+		expect(screen.queryByText('Bash')).not.toBeInTheDocument()
+	})
+
+	it('says it is writing a reply once the agent is writing text', () => {
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn({
+					inProgress: true,
+					steps: [
+						{ id: '1', kind: 'tool_use', text: 'Get comments', tool: 'mcp__maskin__get_comments' },
 						{ id: '2', kind: 'text', text: 'Drafting the reply' },
 					],
 				})}
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('is writing a reply')).toBeInTheDocument()
+		expect(screen.getByText('Writing a reply')).toBeInTheDocument()
 	})
 
 	it('shows a "Starting…" placeholder when in progress with no steps yet', () => {
@@ -103,7 +145,7 @@ describe('MessageActivity', () => {
 		expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
 	})
 
-	it('collapses a finished turn to what it last did, expandable to the full trace', () => {
+	it('collapses a finished turn to "Show work", expandable to the full trace', () => {
 		render(
 			<MessageActivity
 				workspaceId="ws-1"
@@ -116,9 +158,9 @@ describe('MessageActivity', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		// The trigger reads as what the agent did, not as its name — the message
-		// beside it already carries the name.
-		expect(screen.getByText('Checked the funnel by channel')).toBeInTheDocument()
+		// The trigger never repeats the last step's tool name.
+		expect(screen.getByText('Show work')).toBeInTheDocument()
+		expect(screen.queryByText('Checked the funnel by channel')).not.toBeInTheDocument()
 		expect(screen.queryByText('Using search_objects')).not.toBeInTheDocument()
 		fireEvent.click(screen.getByRole('button', { name: /toggle workspace coach activity/i }))
 		expect(screen.getByText('Using search_objects')).toBeInTheDocument()

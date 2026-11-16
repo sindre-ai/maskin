@@ -311,6 +311,26 @@ describe('ActivityComment', () => {
 		expect(screen.getAllByRole('textbox', { name: 'Comment' }).length).toBeGreaterThanOrEqual(1)
 	})
 
+	it('puts the caret in the reply box when Reply is clicked', async () => {
+		const user = userEvent.setup()
+		const event = buildEventResponse({ action: 'commented', data: { content: 'Test' } })
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
+		expect(screen.getByRole('textbox', { name: 'Comment' })).toHaveFocus()
+	})
+
+	it('closes the reply box on Esc and returns focus to the Reply button', async () => {
+		const user = userEvent.setup()
+		const event = buildEventResponse({ action: 'commented', data: { content: 'Test' } })
+		render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
+		await user.keyboard('{Escape}')
+		expect(screen.queryByRole('textbox', { name: 'Comment' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Reply' })).toHaveFocus()
+	})
+
 	it('renders markdown formatting in comment bodies', () => {
 		const event = buildEventResponse({
 			action: 'commented',

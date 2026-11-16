@@ -18,7 +18,7 @@ import {
 	settingsTargetOf,
 	shortName,
 	showsObjectCard,
-	showsTaskCard,
+	showsTextCard,
 	splitOwnLinks,
 	targetOfHref,
 	unavailableCopy,
@@ -91,18 +91,24 @@ describe('showsObjectCard', () => {
 	})
 })
 
-describe('showsTaskCard', () => {
+describe('showsTextCard', () => {
 	const task = { workspaceId: 'ws', content: 'Hej', type: 'task' }
 
 	it('is true for a task with text in this workspace', () => {
-		expect(showsTaskCard(task, 'ws')).toBe(true)
+		expect(showsTextCard(task, 'ws')).toBe(true)
 	})
 
-	it('is false for another type, another workspace, no text, or no object', () => {
-		expect(showsTaskCard({ ...task, type: 'insight' }, 'ws')).toBe(false)
-		expect(showsTaskCard(task, 'other')).toBe(false)
-		expect(showsTaskCard({ ...task, content: '  ' }, 'ws')).toBe(false)
-		expect(showsTaskCard(undefined, 'ws')).toBe(false)
+	it('is true for an event, a bet or an insight with text', () => {
+		for (const type of ['event', 'bet', 'insight']) {
+			expect(showsTextCard({ ...task, type }, 'ws')).toBe(true)
+		}
+	})
+
+	it('is false for a contact, another workspace, no text, or no object', () => {
+		expect(showsTextCard({ ...task, type: 'contact' }, 'ws')).toBe(false)
+		expect(showsTextCard(task, 'other')).toBe(false)
+		expect(showsTextCard({ ...task, content: '  ' }, 'ws')).toBe(false)
+		expect(showsTextCard(undefined, 'ws')).toBe(false)
 	})
 })
 

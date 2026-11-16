@@ -1,4 +1,7 @@
 import { LiveCallComposerSlot } from '@/components/agents/live-call-surface'
+import { PlanLimitComposerGate } from '@/components/billing/plan-limit-banner'
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
+import { ArchivedBar } from '@/components/chat/archived-bar'
 import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
@@ -79,6 +82,7 @@ function ConversationThreadPage() {
 	const { conversationId } = Route.useParams()
 	const { msg: deepLinkMessageId, thread: openThreadRootId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
+	const planPercent = usePlanPercentEnabled()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
@@ -372,6 +376,7 @@ function ConversationThreadPage() {
 								overviewHasNew={overviewHasNew}
 								onToggleOverview={toggleOverview}
 							/>
+							<ArchivedBar workspaceId={workspaceId} conversationId={conversationId} />
 						</div>
 						<ThreadMessages
 							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[max(0px,calc(var(--thread-header-h,4.5rem)-54px))] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"
@@ -396,12 +401,14 @@ function ConversationThreadPage() {
 						<div ref={composerBarRef} className={cn(FLOATING_EDGE, 'bottom-0 pt-4')}>
 							<LiveCallComposerSlot />
 							<div className="px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-								<ThreadComposer
-									workspaceId={workspaceId}
-									conversationId={conversationId}
-									fillRequest={fillRequest}
-									onEditLast={requestEditLast}
-								/>
+								<PlanLimitComposerGate workspaceId={workspaceId} enabled={planPercent}>
+									<ThreadComposer
+										workspaceId={workspaceId}
+										conversationId={conversationId}
+										fillRequest={fillRequest}
+										onEditLast={requestEditLast}
+									/>
+								</PlanLimitComposerGate>
 							</div>
 						</div>
 					</div>

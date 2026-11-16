@@ -1,6 +1,5 @@
 import { AgentCreateForm } from '@/components/agents/agent-create-form'
 import { AgentDetailView } from '@/components/agents/agent-detail-view'
-import { AgentDocument } from '@/components/agents/agent-document'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'

@@ -133,7 +133,7 @@ export function InlineScopePicker({
 							) : null}
 						</>
 					) : (
-						<div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+						<div className="flex h-10 items-center rounded-md border border-control bg-muted px-3 text-sm text-muted-foreground">
 							{service}
 						</div>
 					)}

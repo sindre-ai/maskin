@@ -1,6 +1,7 @@
 import { type BridgeHost, handleBridgeMessage } from '@/lib/loop-view-bridge'
 import {
 	BRIDGE_OPEN_MESSAGE,
+	BRIDGE_PROPOSE_MESSAGE,
 	BRIDGE_QUERY_MESSAGE,
 	BRIDGE_RESULT_MESSAGE,
 	VIEWER_DOC_SIZE_MESSAGE,
@@ -275,7 +276,45 @@ describe('handleBridgeMessage: list sources', () => {
 		})
 	})
 
-	it('refuses every list when the host does not allow lists (the loop page)', async () => {
+	it('waits for a host that fetches, then posts the rows', async () => {
+		const host = makeListHost({
+			listAnswer: vi.fn().mockResolvedValue({ rows, fetchedAt: 9 }),
+		})
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 8) })
+
+		expect(host.post).toHaveBeenCalledWith({
+			type: BRIDGE_RESULT_MESSAGE,
+			id: 8,
+			data: { rows, fetchedAt: 9 },
+		})
+	})
+
+	it('posts the error, and reports it, when the host cannot fetch the rows', async () => {
+		const host = makeListHost({ listAnswer: vi.fn().mockRejectedValue(new Error('boom')) })
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 9) })
+
+		expect(host.post).toHaveBeenCalledWith({ type: BRIDGE_RESULT_MESSAGE, id: 9, error: 'boom' })
+		expect(host.onQueryError).toHaveBeenCalledWith('boom')
+	})
+
+	it('posts nothing when the frame navigated away while the rows were coming', async () => {
+		let blocked = false
+		const host = makeListHost({
+			isBlocked: () => blocked,
+			listAnswer: vi.fn().mockImplementation(async () => {
+				blocked = true
+				return { rows, fetchedAt: 9 }
+			}),
+		})
+
+		await handleBridgeMessage(host, { source: frame, data: query('opps', 10) })
+
+		expect(host.post).not.toHaveBeenCalled()
+	})
+
+	it('refuses every list when the host does not allow lists', async () => {
 		const host = makeListHost({ allowLists: false })
 
 		await handleBridgeMessage(host, { source: frame, data: query('opps', 5) })
@@ -327,5 +366,110 @@ describe('handleBridgeMessage: list sources', () => {
 
 		expect(host.listAnswer).not.toHaveBeenCalled()
 		expect(host.post).not.toHaveBeenCalled()
+	})
+})
+
+describe('handleBridgeMessage: propose', () => {
+	const objectId = '6215098e-4739-418c-80a3-fc844ea0e23b'
+	const propose = (id: unknown, field: unknown, value: unknown) => ({
+		type: BRIDGE_PROPOSE_MESSAGE,
+		id,
+		field,
+		value,
+	})
+	let onPropose: ReturnType<typeof vi.fn>
+	let host: ReturnType<typeof makeHost>
+
+	beforeEach(() => {
+		onPropose = vi.fn()
+		host = makeHost({
+			onPropose,
+			proposableFields: () => new Set(['scheduled_date', 'post_time']),
+			hasItem: (id) => id === objectId,
+		})
+	})
+
+	it('passes on a proposal for a given item, a declared field and a value of the right shape', async () => {
+		await handleBridgeMessage(host, {
+			source: frame,
+			data: propose(objectId, 'scheduled_date', '2026-11-14'),
+		})
+		await handleBridgeMessage(host, {
+			source: frame,
+			data: propose(objectId, 'post_time', '09:30'),
+		})
+
+		expect(onPropose).toHaveBeenCalledTimes(2)
+		expect(onPropose).toHaveBeenNthCalledWith(1, {
+			id: objectId,
+			field: 'scheduled_date',
+			value: '2026-11-14',
+		})
+		expect(host.run).not.toHaveBeenCalled()
+		expect(host.post).not.toHaveBeenCalled()
+	})
+
+	it('ignores a field the view did not declare or the app does not allow', async () => {
+		for (const field of ['status', 'title', 'content', 'account', 'driver', '', 5]) {
+			await handleBridgeMessage(host, { source: frame, data: propose(objectId, field, 'done') })
+		}
+		const onlyDate = makeHost({
+			onPropose,
+			proposableFields: () => new Set(['scheduled_date']),
+			hasItem: () => true,
+		})
+		await handleBridgeMessage(onlyDate, {
+			source: frame,
+			data: propose(objectId, 'post_time', '09:30'),
+		})
+
+		expect(onPropose).not.toHaveBeenCalled()
+	})
+
+	it('ignores a value that is not a real day or time', async () => {
+		for (const [field, value] of [
+			['scheduled_date', '2026-02-31'],
+			['scheduled_date', '14 Nov'],
+			['scheduled_date', '2026-11-14T10:00:00Z'],
+			['scheduled_date', 20261114],
+			['post_time', '25:00'],
+			['post_time', '9:30'],
+			['post_time', 'soon'],
+		] as const) {
+			await handleBridgeMessage(host, { source: frame, data: propose(objectId, field, value) })
+		}
+
+		expect(onPropose).not.toHaveBeenCalled()
+	})
+
+	it('ignores an id that is not a UUID or not an item the view was given', async () => {
+		const other = '11111111-1111-4111-8111-111111111111'
+		for (const id of ['https://example.com', '', `x${objectId}`, 7, other]) {
+			await handleBridgeMessage(host, { source: frame, data: propose(id, 'post_time', '09:30') })
+		}
+
+		expect(onPropose).not.toHaveBeenCalled()
+	})
+
+	it('ignores a proposal from another window, or from a frame that navigated away', async () => {
+		const data = propose(objectId, 'post_time', '09:30')
+		await handleBridgeMessage(host, { source: otherWindow, data })
+		await handleBridgeMessage({ ...host, isBlocked: () => true }, { source: frame, data })
+
+		expect(onPropose).not.toHaveBeenCalled()
+	})
+
+	it('ignores every proposal when the host has no confirm step', async () => {
+		const noConfirm = makeHost({
+			proposableFields: () => new Set(['post_time']),
+			hasItem: () => true,
+		})
+		await handleBridgeMessage(noConfirm, {
+			source: frame,
+			data: propose(objectId, 'post_time', '09:30'),
+		})
+
+		expect(noConfirm.post).not.toHaveBeenCalled()
+		expect(noConfirm.run).not.toHaveBeenCalled()
 	})
 })

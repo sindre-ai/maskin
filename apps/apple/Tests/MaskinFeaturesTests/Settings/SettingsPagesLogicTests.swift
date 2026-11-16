@@ -18,6 +18,31 @@ struct SettingsPagesLogicTests {
 		#expect(BillingView.trialBanner(pro) == nil)
 	}
 
+	@Test("the 100% banner shows only when the plan is used up and nothing lets work start")
+	func limitBanner() {
+		var usage = BillingUsage(
+			plan: "pro", status: .active, usedCents: 714, capCents: 714, creditBalanceCents: 0,
+			resetsInMs: 5 * 86_400_000)
+		let banner = BillingView.limitBanner(usage)
+		#expect(banner?.action == "Change plan")
+		#expect(banner?.detail.hasPrefix("Your agents are paused.") == true)
+		usage.usedCents = 713
+		#expect(BillingView.limitBanner(usage) == nil)
+	}
+
+	@Test("under the meter: the 80% warning, else when it resets")
+	func percentCaption() {
+		var usage = BillingUsage(
+			plan: "trial", status: .active, usedCents: 10, capCents: 100, creditBalanceCents: 0,
+			resetsInMs: 3 * 86_400_000)
+		#expect(BillingView.percentCaption(usage) == "Resets when your trial ends.")
+		usage.usedCents = 86
+		#expect(BillingView.percentCaption(usage) == "Work will wait at 100%. Choose a plan to keep going.")
+		usage.plan = "pro"
+		usage.usedCents = 10
+		#expect(BillingView.percentCaption(usage)?.hasPrefix("Resets ") == true)
+	}
+
 	@Test("scopes parse the account name and what is still requested")
 	func scopesParse() {
 		let json: [[String: Any]] = [

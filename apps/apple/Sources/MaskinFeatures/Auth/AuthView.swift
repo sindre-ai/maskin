@@ -13,6 +13,7 @@ public struct AuthView: View {
 	private let auth: AuthSession
 	@State private var model: AuthScreenModel
 	@State private var showPassword = false
+	@State private var forgotPassword: ForgotPasswordModel?
 	@FocusState private var focus: AuthScreenModel.Field?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.openURL) private var openURL
@@ -50,6 +51,7 @@ public struct AuthView: View {
 			}
 		}
 		.ambientBackground()
+		.sheet(item: $forgotPassword) { ForgotPasswordView(model: $0) }
 		.onAppear { focus = model.fields.first }
 		.onChange(of: auth.lastError) { _, new in if new != nil { MaskinHaptics.play(.error) } }
 		.onChange(of: auth.lastSignUpError) { _, new in if new != nil { MaskinHaptics.play(.error) } }
@@ -88,6 +90,20 @@ public struct AuthView: View {
 				.fontWeight(.semibold)
 				.foregroundStyle(MaskinColor.ink)
 				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+			}
+
+			if model.mode == .signIn {
+				Button("Forgot password?") {
+					forgotPassword = ForgotPasswordModel(email: model.signIn.trimmedEmail) { email in
+						try await auth.requestPasswordReset(email: email)
+					}
+				}
+				.buttonStyle(.maskinPressed)
+				.maskinText(.subhead)
+				.fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+				.disabled(model.isBusy(auth))
 			}
 
 			VStack(alignment: .leading, spacing: MaskinSpace.s9) {

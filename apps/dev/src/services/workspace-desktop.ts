@@ -30,6 +30,17 @@ export type LocatedDesktop = {
 	status?: 'running' | 'suspended'
 	// True only when this call provisioned a new desktop (vs. found one running).
 	created?: boolean
+	// What the hosting agent-server says about itself. Absent from a server that has not been
+	// updated to report it, which is why every field is optional.
+	host?: DesktopHostInfo
+}
+
+export type DesktopHostInfo = {
+	// Whether an idle computer is suspended to a snapshot (DESKTOP_SNAPSHOTS), and after how
+	// many minutes (DESKTOP_IDLE_MINUTES; 0 never suspends by itself).
+	snapshots?: { enabled: boolean; idleMinutes: number | null }
+	// The image a NEW computer on this server is created from, not what this one runs.
+	newComputerImage?: string
 }
 
 export type AgentDesktopSummary = { agentId: string; status: 'running' | 'suspended' }
@@ -46,6 +57,25 @@ const ENSURE_TIMEOUT_MS = 200_000
 const CONTROL_TIMEOUT_MS = 150_000
 // Opening a tunnel starts two processes and waits for both to listen.
 const PORTS_TIMEOUT_MS = 40_000
+
+function parseHostInfo(raw: unknown): DesktopHostInfo | undefined {
+	if (typeof raw !== 'object' || raw === null) return undefined
+	const { snapshots, new_computer_image: image } = raw as {
+		snapshots?: { enabled?: unknown; idle_minutes?: unknown }
+		new_computer_image?: unknown
+	}
+	return {
+		...(snapshots && typeof snapshots.enabled === 'boolean'
+			? {
+					snapshots: {
+						enabled: snapshots.enabled,
+						idleMinutes: typeof snapshots.idle_minutes === 'number' ? snapshots.idle_minutes : null,
+					},
+				}
+			: {}),
+		...(typeof image === 'string' ? { newComputerImage: image } : {}),
+	}
+}
 
 function joinUrl(base: string, path: string): string {
 	return `${base.replace(/\/+$/, '')}${path}`
@@ -95,7 +125,11 @@ export class WorkspaceDesktopService {
 						})
 						return 'unknown'
 					}
-					const body = (await res.json()) as { password?: unknown; status?: unknown }
+					const body = (await res.json()) as {
+						password?: unknown
+						status?: unknown
+						host?: unknown
+					}
 					if (typeof body.password !== 'string') {
 						logger.warn('desktop lookup answer had no password', { serverId: server.id })
 						return 'unknown'
@@ -104,6 +138,7 @@ export class WorkspaceDesktopService {
 						server,
 						password: body.password,
 						status: body.status === 'suspended' ? 'suspended' : 'running',
+						host: parseHostInfo(body.host),
 					}
 				} catch (err) {
 					logger.warn('desktop lookup failed on agent-server', {

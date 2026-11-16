@@ -159,8 +159,10 @@ RUN useradd -m -s /bin/bash user \
 
 # Chromium flags, set here (not on one command line) so the dock and menu
 # launchers get them too. No --no-sandbox: the sandbox is on.
+# The debugging port is on this machine only (nothing publishes it). desktopd reads it to
+# confirm a password field has focus before a saved password is typed.
 RUN printf '%s\n' \
-    'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check"' \
+    'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1"' \
     > /etc/chromium.d/desktop-flags
 
 # Pages open at 67 percent zoom so more of each page fits on the 1920x1080 screen. The
@@ -204,6 +206,12 @@ COPY dock/keyfile /home/user/.config/glib-2.0/settings/keyfile
 
 # Everything above was written as root; hand the user its home.
 RUN chown -R user:user /home/user
+
+# Which build this is. A computer keeps the image it was created from, so the settings read
+# (GET /api/desktop/settings) reports this to tell an old computer from a current one. Set by
+# .github/workflows/desktop-docker.yml; "unknown" for a build by hand.
+ARG IMAGE_TAG=unknown
+RUN echo "$IMAGE_TAG" > /etc/maskin-desktop-image
 
 COPY entrypoint.sh /entrypoint.sh
 COPY desktopd.py /usr/local/bin/desktopd.py

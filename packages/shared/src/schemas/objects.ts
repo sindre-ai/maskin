@@ -27,6 +27,24 @@ export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
 
 /**
+ * Terminal statuses per object type: an object in one of these values has
+ * stopped moving, so a loop counts it as closed and an agent's list of open
+ * driven work leaves it out. `bet` is `TERMINAL_BET_STATUSES` *plus*
+ * `archived`, a deliberate superset: archiving a bet must not fan out a retro
+ * or unread-feed row (so it is not in the list above), but an archived bet is
+ * no longer active work. `task` mirrors the done-set the validation flow treats
+ * as complete. `insight`'s only closed state is `discarded`.
+ *
+ * A fallback only: a loop can override a type with its own
+ * `metadata.closed_statuses`.
+ */
+export const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
+	bet: [...TERMINAL_BET_STATUSES, 'archived'],
+	task: ['done', 'validated', 'discarded'],
+	insight: ['discarded'],
+}
+
+/**
  * Loop statuses used by the pipeline concept: an iterative
  * multi-agent process wrapping triggers + agents + a pipeline of object
  * states. This is a graduated-trust ladder, not an on/off toggle — a loop
@@ -49,10 +67,14 @@ export const LOOP_STATUSES = [
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
 
 export {
+	loopTargetReadingSchema,
 	loopTargetSchema,
 	loopTargetSourceSchema,
+	loopTargetViewSchema,
 	type LoopTarget,
+	type LoopTargetReading,
 	type LoopTargetSource,
+	type LoopTargetView,
 } from './loop-targets'
 
 export const createObjectSchema = z.object({

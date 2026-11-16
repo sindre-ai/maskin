@@ -198,6 +198,10 @@ export const createFileSchema = z
 		mime_type: mimeTypeSchema,
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
+		/** A chat to link the file to. Left out, a session links the file to the chat it runs in. */
+		conversation_id: z.string().uuid().optional(),
+		/** A work item to attach the file to. */
+		object_id: z.string().uuid().optional(),
 	})
 	.superRefine((data, ctx) =>
 		validateContent(data.content, data.encoding, ctx, maxFileSizeBytesFor(data.mime_type)),

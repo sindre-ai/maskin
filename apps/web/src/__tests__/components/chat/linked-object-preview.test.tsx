@@ -269,6 +269,67 @@ describe('LinkedObjectCard', () => {
 		})
 	})
 
+	describe('standalone, beside a loop view', () => {
+		const renderStandalone = (onAction = vi.fn()) => {
+			render(
+				<LinkedObjectCard
+					workspaceId={WS}
+					objectId={ID}
+					standalone
+					defaultExpanded
+					onAction={onAction}
+				/>,
+			)
+			return onAction
+		}
+
+		it('moves the status as the person, with no chat, and only if the object is still in the status shown', async () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			const onAction = renderStandalone()
+			await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
+			expect(updateMutate).toHaveBeenCalledWith({
+				id: ID,
+				data: { status: 'done', chat: undefined, expected_status: 'in_review' },
+			})
+			expect(onAction).toHaveBeenCalledWith('status_change')
+		})
+
+		it('approves a draft with no chat, so no agent is told', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			const onAction = renderStandalone()
+			await userEvent.click(screen.getByRole('button', { name: /Approve draft/ }))
+			expect(approveMutate).toHaveBeenCalledWith({
+				draft: expect.objectContaining({ object_id: ID }),
+				chat: undefined,
+			})
+			expect(onAction).toHaveBeenCalledWith('approve')
+		})
+
+		it('still draws the header, title and status for an object with no text', () => {
+			useObject.mockReturnValue({ data: objectRow({ content: '' }) })
+			renderStandalone()
+			expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+			expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('in_review')
+		})
+
+		it('does not offer to edit the text', () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			renderStandalone()
+			expect(screen.queryByRole('button', { name: 'Edit the text' })).not.toBeInTheDocument()
+		})
+
+		it('sends no expected status from a chat card, and still draws nothing for an object with no text', async () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
+			expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
+			useObject.mockReturnValue({ data: objectRow({ content: '' }) })
+			const { container } = render(<LinkedObjectCard workspaceId={WS} objectId={ID} />)
+			expect(container).toBeEmptyDOMElement()
+		})
+	})
+
 	it('shows nothing for an object from another workspace', () => {
 		useObject.mockReturnValue({ data: objectRow({ workspaceId: 'other' }) })
 		const { container } = renderCard()
@@ -707,10 +768,10 @@ describe('LinkedCardOrLink', () => {
 		}
 	})
 
-	it('draws any other object as a reference card: type, status, title, text and owner', () => {
+	it('draws a contact as a reference card: type, status, title, text and owner', () => {
 		useObject.mockReturnValue({
 			data: objectRow({
-				type: 'insight',
+				type: 'contact',
 				title: 'Ship the card',
 				status: 'in_review',
 				content: '## Plan\n\nDo **the thing** with [a link](https://x.test).',
@@ -727,6 +788,13 @@ describe('LinkedCardOrLink', () => {
 		expect(card).toHaveTextContent('Developer')
 		expect(card).toHaveTextContent('Working now')
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+	})
+
+	it('draws an event with text alone on its own line as a card with its text, with no Approve', () => {
+		useObject.mockReturnValue({ data: objectRow({ type: 'event' }), isLoading: false })
+		renderObject()
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
 	})
 
 	it('draws a task with text alone on its own line as a card with its text, with no Approve', () => {

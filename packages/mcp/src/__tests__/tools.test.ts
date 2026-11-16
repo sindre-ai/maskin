@@ -27,6 +27,12 @@ const ALL_TOOL_NAMES = [
 	'get_objects',
 	'update_objects',
 	'delete_object',
+	'set_next_step',
+	'schedule_next_step',
+	'update_next_step',
+	'record_go_ahead',
+	'take_back_go_ahead',
+	'skip_done_when',
 	'list_objects',
 	'search_objects',
 	'create_relationship',
@@ -56,6 +62,7 @@ const ALL_TOOL_NAMES = [
 	'rename_file_tag',
 	'merge_file_tags',
 	'get_file',
+	'transcribe_file',
 	'update_file',
 	'propose_file_changes',
 	'delete_file',
@@ -131,6 +138,9 @@ const ALL_TOOL_NAMES = [
 	'desktop_key',
 	'desktop_run',
 	'desktop_put_file',
+	'desktop_apply_settings',
+	'desktop_settings',
+	'desktop_save_file',
 	'desktop_expose_port',
 	'desktop_list_ports',
 	'desktop_close_port',
@@ -428,6 +438,14 @@ describe('traverse_graph schema', () => {
 		expect(result.edge_type_allow_list).toEqual(['supersedes', 'contradicts'])
 	})
 
+	it('accepts the edge types the platform writes itself', () => {
+		const result = schema.parse({
+			object_id: uuid,
+			edge_type_allow_list: ['attached', 'in_loop', 'produced_by', 'spawned'],
+		})
+		expect(result.edge_type_allow_list).toEqual(['attached', 'in_loop', 'produced_by', 'spawned'])
+	})
+
 	it('rejects an unknown edge type', () => {
 		expect(() => schema.parse({ object_id: uuid, edge_type_allow_list: ['not_a_type'] })).toThrow()
 	})
@@ -677,6 +695,34 @@ describe('update_actor schema', () => {
 	it('leaves workspace_id undefined when omitted', () => {
 		const result = schema.parse({ id: uuid })
 		expect(result.workspace_id).toBeUndefined()
+	})
+
+	describe('starter_prompts', () => {
+		it('accepts up to 4 trimmed entries and [] to clear', () => {
+			expect(
+				schema.parse({ id: uuid, starter_prompts: [' What needs me today? '] }).starter_prompts,
+			).toEqual(['What needs me today?'])
+			expect(
+				schema.parse({ id: uuid, starter_prompts: ['a', 'b', 'c', 'd'] }).starter_prompts,
+			).toHaveLength(4)
+			expect(schema.parse({ id: uuid, starter_prompts: [] }).starter_prompts).toEqual([])
+		})
+
+		it('leaves starter_prompts undefined when omitted', () => {
+			expect(schema.parse({ id: uuid }).starter_prompts).toBeUndefined()
+		})
+
+		it('rejects a fifth entry, an empty one, an over-long one, a line break and a repeat', () => {
+			for (const starter_prompts of [
+				['a', 'b', 'c', 'd', 'e'],
+				['   '],
+				['x'.repeat(61)],
+				['two\nlines'],
+				['Keep going', 'keep going'],
+			]) {
+				expect(() => schema.parse({ id: uuid, starter_prompts })).toThrow()
+			}
+		})
 	})
 })
 

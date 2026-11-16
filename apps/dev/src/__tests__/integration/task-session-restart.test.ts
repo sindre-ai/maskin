@@ -1,6 +1,7 @@
 // A Developer session that completes while its task is still in progress gets restarted (twice at
 // most); a task that moved on, has a live session, or was run by another agent is left alone.
 
+import { randomUUID } from 'node:crypto'
 import { events, objects, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +17,7 @@ import {
 	insertActor,
 	insertObject,
 	insertSession,
+	insertTrigger,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -26,6 +28,7 @@ const { startSessionMock } = vi.hoisted(() => ({
 			config?: Record<string, unknown>
 			initiatedFromObjectId: string | null
 			parentSessionId?: string
+			triggerId?: string
 		}) => ({ sessionId: '', state: 'queued', createdAt: new Date() }),
 	),
 }))
@@ -46,6 +49,7 @@ describe('TaskSessionRestarter', () => {
 	let actorId: string
 	let developerId: string
 	let ctoId: string
+	let triggerId: string
 	let now: Date
 
 	beforeEach(async () => {
@@ -57,12 +61,15 @@ describe('TaskSessionRestarter', () => {
 		const cto = await insertActor(db, { type: 'agent', name: 'CTO' })
 		await ensureWorkspaceMember(db, workspaceId, cto.id)
 		ctoId = cto.id
+		triggerId = (await insertTrigger(db, workspaceId, actorId, developerId)).id
 		now = new Date()
-		// Stand-in for the real startSession: inserts the live row the new session would have.
+		// Stand-in for the real startSession: inserts the live row the new session would have,
+		// including the trigger id the real one stores, so a restart is itself a trigger session.
 		startSessionMock.mockImplementation(async (input) => {
 			const started = await insertSession(db, workspaceId, developerId, actorId, {
 				status: 'running',
 				config: input.config ?? {},
+				triggerId: input.triggerId ?? null,
 				initiatedFromObjectId: input.initiatedFromObjectId,
 			})
 			return { sessionId: started.id, state: 'queued', createdAt: new Date() }
@@ -77,7 +84,8 @@ describe('TaskSessionRestarter', () => {
 			...overrides,
 		})
 
-	// A session that ended `endedMinutesAgo` minutes ago on the task.
+	// A session that ended `endedMinutesAgo` minutes ago on the task, as the platform creates a
+	// trigger-started one: interactive true, with the trigger that started it.
 	const endedSession = (
 		taskId: string,
 		endedMinutesAgo = 10,
@@ -86,7 +94,8 @@ describe('TaskSessionRestarter', () => {
 	) =>
 		insertSession(db, workspaceId, sessionActorId, actorId, {
 			status: 'completed',
-			interactive: false,
+			interactive: true,
+			triggerId,
 			initiatedFromObjectId: taskId,
 			createdAt: new Date(now.getTime() - (endedMinutesAgo + 20) * MINUTE),
 			completedAt: new Date(now.getTime() - endedMinutesAgo * MINUTE),
@@ -156,7 +165,7 @@ describe('TaskSessionRestarter', () => {
 		const stopped = await makeTask('in_progress')
 		await endedSession(stopped.id, 10, { status: 'user_stopped' })
 		const chat = await makeTask('in_progress')
-		await endedSession(chat.id, 10, { interactive: true })
+		await endedSession(chat.id, 10, { triggerId: null, config: { conversation: randomUUID() } })
 
 		await sweep()
 
