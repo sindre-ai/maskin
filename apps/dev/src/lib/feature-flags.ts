@@ -214,9 +214,10 @@ export const FLAGS = {
 	DECISION_DEFAULT: 'decision-default',
 	/**
 	 * Gates undo send in chat: a sent message is held in the client for a few seconds
-	 * behind an Undo bar, and nothing is posted until the window ends. Frontend only,
-	 * web for now (iOS follows in its own task): read once, in `useUndoSend`. Off means a send posts at once, as before. The API is
-	 * untouched. Retire once undo send is on for everyone.
+	 * behind an Undo bar, and nothing is posted until the window ends. Frontend only: web reads
+	 * it once, in `useUndoSend`, and iOS reads it from `GET /api/feature-flags` (`FeatureFlagID`).
+	 * Off means a send posts at once, as before. The API is untouched. Retire once undo send is
+	 * on for everyone.
 	 */
 	CHAT_UNDO_SEND: 'chat-undo-send',
 } as const
