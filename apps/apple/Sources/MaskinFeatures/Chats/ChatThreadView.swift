@@ -1338,6 +1338,9 @@ struct ThreadTranscript: View {
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
 				},
+				onSkippedDraft: {
+					store.tellAgentOfSkip(linkedBy: message.actorID, author: message.author)
+				},
 				cardOwners: cardOwners
 			)
 			.overlay {

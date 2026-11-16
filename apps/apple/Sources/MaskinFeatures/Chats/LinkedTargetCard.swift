@@ -9,6 +9,8 @@ struct LinkedTargetCard: View {
 	let target: LinkedTarget
 	var defaultExpanded = false
 	var onApproved: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// A draft's Skip: tells the agent not to send it. Nil draws no Skip button.
+	var onSkipped: (() -> Void)?
 	/// An object with text is a card that edits it and moves its status: alone on its line, and the
 	/// first one under a message. `chat` is the agent behind the message, told of an edit.
 	var editable = false
@@ -18,7 +20,9 @@ struct LinkedTargetCard: View {
 	var body: some View {
 		switch store?.item(for: target) {
 		case .draft(let object, let preview)?:
-			LinkedDraftCard(object: object, preview: preview, defaultExpanded: defaultExpanded, onApproved: onApproved)
+			LinkedDraftCard(
+				object: object, preview: preview, defaultExpanded: defaultExpanded, onApproved: onApproved,
+				onSkipped: onSkipped)
 		case .file(let file)?:
 			LinkedFileCard(file: file, defaultExpanded: defaultExpanded)
 		case .object(let object)?:

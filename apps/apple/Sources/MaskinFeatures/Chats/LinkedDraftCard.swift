@@ -11,19 +11,28 @@ struct LinkedDraftCard: View {
 	let preview: ObjectPreview
 	/// Tells the agent after a successful approval: the draft's title and the text that was approved.
 	var onApproved: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// Tells the agent the person skipped the draft. Nil where nobody can be told (the Linked
+	/// sheet), so the Skip button is not drawn at all.
+	var onSkipped: (() -> Void)?
 
 	@Environment(\.linkedItems) private var store
 	@State private var expanded: Bool
 	/// What the reader has typed over the draft; nil while the draft reads as the agent wrote it.
 	@State private var edit: DraftEdit?
+	/// Skip was pressed on this device; the button then reads Skipped.
+	@State private var skipped: Bool
 
 	init(
 		object: WorkObject, preview: ObjectPreview, defaultExpanded: Bool = false, edited: DraftEdit? = nil,
-		onApproved: @escaping (_ title: String?, _ body: String) -> Void = { _, _ in }
+		skipped: Bool = false,
+		onApproved: @escaping (_ title: String?, _ body: String) -> Void = { _, _ in },
+		onSkipped: (() -> Void)? = nil
 	) {
 		self.object = object
 		self.preview = preview
 		self.onApproved = onApproved
+		self.onSkipped = onSkipped
+		_skipped = State(initialValue: skipped)
 		_expanded = State(initialValue: defaultExpanded)
 		_edit = State(initialValue: edited)
 	}
@@ -108,6 +117,7 @@ struct LinkedDraftCard: View {
 	private var details: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			ObjectPreviewMetaView(preview: metaPreview)
+			if let original = preview.originalMessage { originalMessage(original) }
 			if canEdit && isEmail { subjectField }
 			if canEdit {
 				bodyEditor
@@ -124,6 +134,28 @@ struct LinkedDraftCard: View {
 		}
 		.padding(.horizontal, MaskinSpace.s6)
 		.padding(.vertical, MaskinSpace.s5)
+	}
+
+	/// The message this draft answers, above the draft text. Read only, and not part of what Approve
+	/// is bound to.
+	private func originalMessage(_ text: String) -> some View {
+		HStack(alignment: .top, spacing: MaskinSpace.s4) {
+			RoundedRectangle(cornerRadius: MaskinRadius.tag, style: .continuous)
+				.fill(MaskinColor.sigHi).frame(width: MaskinSpace.s1 + 1)
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				Text("In reply to")
+					.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .bold))
+					.foregroundStyle(MaskinColor.ink4)
+				Text(text)
+					.font(MaskinTypeface.sans(MaskinFontSize.t14))
+					.foregroundStyle(MaskinColor.ink3)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			}
+		}
+		.fixedSize(horizontal: false, vertical: true)
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel("In reply to: \(text)")
 	}
 
 	private var subjectField: some View {
@@ -196,7 +228,11 @@ struct LinkedDraftCard: View {
 			switch preview.delivery {
 			case .sent: receipt("Sent")
 			case .approved: receipt("Approved")
-			case .draft, nil: approveButton
+			case .draft, nil:
+				HStack(spacing: MaskinSpace.s4) {
+					if onSkipped != nil { skipButton }
+					approveButton
+				}
 			}
 			if let reason = blockedReason {
 				Text(reason)
@@ -229,6 +265,26 @@ struct LinkedDraftCard: View {
 			.maskinText(.caption).fontWeight(.semibold)
 			.foregroundStyle(MaskinColor.ink4)
 			.frame(minHeight: MaskinSpace.touchMin)
+	}
+
+	private var skipButton: some View {
+		Button {
+			MaskinHaptics.play(.light)
+			skipped = true
+			onSkipped?()
+		} label: {
+			Text(skipped ? "Skipped" : "Skip")
+				.maskinText(.subhead).fontWeight(.semibold)
+				.foregroundStyle(MaskinColor.ink)
+				.padding(.horizontal, MaskinSpace.s8)
+				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s3)
+				.background(MaskinSurface.fill, in: Capsule())
+				.opacity(isApproving || skipped ? 0.4 : 1)
+		}
+		.buttonStyle(.maskinPressed(.shrink))
+		.disabled(isApproving || skipped)
+		.accessibilityLabel(skipped ? "Skipped \(title)" : "Skip \(title)")
+		.accessibilityHint("Tells the agent not to send this draft")
 	}
 
 	private var approveButton: some View {

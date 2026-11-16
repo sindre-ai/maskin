@@ -107,6 +107,25 @@ struct LinkedItemStoreTests {
 		#expect(store.isCard(target))
 	}
 
+	@Test("a draft that can still be approved carries the yes; an approved or sent one, a task and a loose link do not")
+	func approvableDraft() async {
+		let (store, objects, _, _) = make()
+		let three = "44444444-2222-3333-4444-555555555555"
+		objects.set(.success(draft(one, preview: preview())), for: one)
+		objects.set(.success(draft(two, preview: preview(delivery: .sent))), for: two)
+		objects.set(.success(task(three)), for: three)
+		let open = LinkedTarget(kind: .object, uuid: one)
+		let sent = LinkedTarget(kind: .object, uuid: two)
+		let other = LinkedTarget(kind: .object, uuid: three)
+		let file = LinkedTarget(kind: .file, uuid: fileID)
+		await store.resolve([open, sent, other])
+		#expect(store.hasApprovableDraft(in: [open]))
+		#expect(store.hasApprovableDraft(in: [other, open]))
+		#expect(!store.hasApprovableDraft(in: [sent]))
+		#expect(!store.hasApprovableDraft(in: [other, file]))
+		#expect(!store.hasApprovableDraft(in: []))
+	}
+
 	private func task(_ id: String, metadata: [String: String] = [:], driver: String? = nil, content: String? = "Fix the login.") -> ObjectDetail {
 		ObjectDetail(
 			object: WorkObject(
@@ -508,6 +527,21 @@ struct ObjectApprovalResponseTests {
 		#expect(preview.delivery == .approved)
 	}
 
+	@Test("the message a draft answers comes through as context, and is absent when there is none")
+	func context() throws {
+		func read(_ extra: String) throws -> ObjectPreview {
+			let json = """
+				{"approval_id": 7, "preview": {"kind": "linkedin_message", "label": "LinkedIn message", "recipients": [],
+				"details": [], \(extra) "body": "Thanks!", "missing": [], "warnings": [], "content_hash": "abc"}}
+				"""
+			return try APIObjectsRemote.approvalResult(status: 200, body: body(json))
+		}
+		#expect(try read(#""context": "  Can we meet on Friday?\n",""#).originalMessage == "Can we meet on Friday?")
+		#expect(try read(#""context": null,"#).originalMessage == nil)
+		#expect(try read(#""context": "  ","#).originalMessage == nil)
+		#expect(try read("").originalMessage == nil)
+	}
+
 	@Test("409, 400, 403 and 404 mean what the card says")
 	func failures() {
 		func error(_ status: Int, _ json: String = "{}") -> ObjectApprovalError? {
@@ -550,6 +584,33 @@ struct LinkedApprovalMessageTests {
 		let h = ChatHarness(server: [chatMsg(1, by: "sam", "see this")], online: false)
 		await h.store.start()
 		h.store.tellAgentOfApproval(title: nil, body: "x", linkedBy: "sam", author: .human)
+		#expect(h.store.messages.last?.mentionIDs == [])
+	}
+}
+
+@MainActor
+@Suite("Telling the agent a draft was skipped")
+struct LinkedSkipMessageTests {
+	@Test("the agent that wrote the draft is mentioned and told not to send it")
+	func mentionsAgent() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "Draft ready")], online: false)
+		await h.store.start()
+		let id = h.store.tellAgentOfSkip(linkedBy: "relay", author: .agent)
+		#expect(id != nil)
+		let sent = h.store.messages.last
+		#expect(sent?.content == "Skip this draft, do not send it")
+		#expect(sent?.mentionIDs == ["relay"])
+		h.network.set(online: true)
+		#expect(await h.settled())
+		let meta = await h.api.sentMetadata.first
+		#expect(meta??.mentions == ["relay"])
+	}
+
+	@Test("a draft a person linked has nobody to tell")
+	func noMentionForPeople() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "sam", "see this")], online: false)
+		await h.store.start()
+		h.store.tellAgentOfSkip(linkedBy: "sam", author: .human)
 		#expect(h.store.messages.last?.mentionIDs == [])
 	}
 }

@@ -12,4 +12,14 @@ extension ChatStore {
 			LinkedDraftMessage.approved(title: title, body: body),
 			metadata: author == .agent ? ChatSendMetadata(mentions: [actorID]) : nil)
 	}
+
+	/// A person skipped a draft an agent linked in this chat: tell that agent not to send it,
+	/// mentioning it so it answers. A draft linked by a person has nobody to tell. Returns the
+	/// local row id.
+	@discardableResult
+	public func tellAgentOfSkip(linkedBy actorID: String, author: ChatParticipant.Kind) -> String? {
+		send(
+			LinkedDraftMessage.skipped,
+			metadata: author == .agent ? ChatSendMetadata(mentions: [actorID]) : nil)
+	}
 }

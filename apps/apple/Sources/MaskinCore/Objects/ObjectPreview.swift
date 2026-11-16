@@ -52,6 +52,9 @@ public struct ObjectPreview: Sendable, Equatable, Hashable, Codable {
 	public var recipients: [Recipient]
 	public var subject: String?
 	public var details: [Detail]
+	/// The message this draft answers, shown above the draft so it is read in context. Not sent and
+	/// not part of the approval (the server leaves it out of the content hash).
+	public var context: String?
 	/// The exact text that would go out.
 	public var body: String
 	/// Required fields that are empty. While any is missing the draft cannot be approved.
@@ -65,7 +68,7 @@ public struct ObjectPreview: Sendable, Equatable, Hashable, Codable {
 
 	public init(
 		kind: String, label: String, recipients: [Recipient] = [], subject: String? = nil,
-		details: [Detail] = [], body: String, missing: [String] = [], warnings: [String] = [],
+		details: [Detail] = [], context: String? = nil, body: String, missing: [String] = [], warnings: [String] = [],
 		contentHash: String, delivery: Delivery? = nil
 	) {
 		self.kind = kind
@@ -73,11 +76,18 @@ public struct ObjectPreview: Sendable, Equatable, Hashable, Codable {
 		self.recipients = recipients
 		self.subject = subject
 		self.details = details
+		self.context = context
 		self.body = body
 		self.missing = missing
 		self.warnings = warnings
 		self.contentHash = contentHash
 		self.delivery = delivery
+	}
+
+	/// The original message, trimmed; nil when the draft answers nothing.
+	public var originalMessage: String? {
+		let trimmed = context?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return trimmed.isEmpty ? nil : trimmed
 	}
 
 	/// A draft with nothing missing can be approved.

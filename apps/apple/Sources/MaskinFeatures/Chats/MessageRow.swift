@@ -177,6 +177,9 @@ struct MessageRow: View {
 	/// A person approved a draft shown as a card in this message: its title and the text approved.
 	/// The thread tells the agent.
 	var onApprovedDraft: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// A person skipped a draft shown as a card in this message. The thread tells the agent. Nil
+	/// where the screen cannot send it, so the Skip button is not drawn.
+	var onSkippedDraft: (() -> Void)?
 	/// For each target the conversation links to, the message that links it first
 	/// (`LinkedConversationItems.firstMentions`): an object is a card there and a link in later
 	/// messages. Empty where the conversation is not known (previews, a thread of replies).
@@ -317,7 +320,8 @@ struct MessageRow: View {
 					)
 					.textSelection(.enabled)
 				case .card(let target):
-					LinkedTargetCard(target: target, onApproved: onApprovedDraft, editable: true, chat: agentChat)
+					LinkedTargetCard(
+						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, editable: true, chat: agentChat)
 				}
 			}
 		}
@@ -516,12 +520,13 @@ struct MessageRow: View {
 				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				ForEach(appended) { target in
 					LinkedTargetCard(
-						target: target, onApproved: onApprovedDraft, editable: target == textCard, chat: agentChat)
+						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, editable: target == textCard,
+						chat: agentChat)
 				}
 			}
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
-			if !message.questions.isEmpty {
+			if !message.questions.isEmpty && !draftCarriesTheYes(targets) {
 				QuestionOptionsView(
 					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
 					// Not on a helper's question: iOS has no session-input path, so a chat message
@@ -584,6 +589,14 @@ struct MessageRow: View {
 			guard let linked, !targets.isEmpty else { return }
 			await linked.resolveWithRetries(targets)
 		}
+	}
+
+	/// One decision, one card: an open question posted with a draft that can still be approved asks
+	/// the same yes as the draft's Approve, so the draft card is the only one drawn. A helper's
+	/// question is always drawn: it is answered by a pick and nothing else.
+	private func draftCarriesTheYes(_ targets: [LinkedTarget]) -> Bool {
+		guard questionAnswers == nil, !message.isHelperQuestion, let linked else { return false }
+		return linked.hasApprovableDraft(in: targets)
 	}
 
 	/// The chat's agents, with the one that asked always among them.
