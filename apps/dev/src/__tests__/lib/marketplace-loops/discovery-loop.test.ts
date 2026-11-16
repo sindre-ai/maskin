@@ -17,10 +17,10 @@ import {
 } from '../../../lib/marketplace-loops/loop-data'
 import { LOOP_ID_TOKEN } from '../../../lib/marketplace-loops/view-snapshot'
 
-describe('Product Discovery Loop definition', () => {
+describe('Product Discovery Flow definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
-		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Loop')
+		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Flow')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
 		expect(DISCOVERY_LOOP.version).toBe('1.4.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)

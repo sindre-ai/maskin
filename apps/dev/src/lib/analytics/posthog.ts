@@ -219,6 +219,15 @@ export function warnIfPosthogKeyUnset(): void {
 	logger.warn('POSTHOG_API_KEY is unset in production — all backend analytics events are dropped')
 }
 
+/**
+ * What happened to a capture. `sent`: PostHog accepted it. `skipped`: nothing was
+ * meant to leave (no API key, volume cap, share usage off), so a retry would skip
+ * again. `failed`: it should have gone and did not (PostHog refused or was
+ * unreachable, or the workspace privacy setting could not be read), so a retry may
+ * work. Callers that need to know whether to try again read it; the rest ignore it.
+ */
+export type CaptureResult = 'sent' | 'skipped' | 'failed'
+
 export interface CaptureOptions {
 	/** Where the action happened, for events the server sends on a client's behalf. Default 'backend'. */
 	surface?: 'backend' | 'iphone'
@@ -258,18 +267,19 @@ export interface CaptureOptions {
  * Contract: never throws, never blocks the caller. If `POSTHOG_API_KEY` is
  * unset (local dev, CI without analytics), we log once at debug and return.
  * If the request fails, we log at warn — the agent's Slack post still
- * succeeded, the analytics gap is a follow-up.
+ * succeeded, the analytics gap is a follow-up. It returns what happened
+ * (`CaptureResult`); almost every caller ignores that.
  */
 export async function capturePosthogEvent(
 	event: string,
 	distinctId: string,
 	properties: PosthogEventProps,
 	options: CaptureOptions = {},
-): Promise<void> {
+): Promise<CaptureResult> {
 	const apiKey = process.env.POSTHOG_API_KEY?.trim()
 	if (!apiKey) {
 		logger.debug('PostHog capture skipped — POSTHOG_API_KEY unset', { event, distinctId })
-		return
+		return 'skipped'
 	}
 	// PostHog silently DROPS events with an empty distinct id — the ingestion
 	// endpoint still answers 2xx, so the request looks successful and nothing is
@@ -279,10 +289,10 @@ export async function capturePosthogEvent(
 	// no-op and say so.
 	if (!distinctId.trim()) {
 		logger.debug('PostHog capture skipped — empty distinct id', { event })
-		return
+		return 'skipped'
 	}
 	const admission = admitPosthogEvent(event)
-	if (!admission.send) return
+	if (!admission.send) return 'skipped'
 	const host = process.env.POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST
 
 	let outId = distinctId
@@ -296,7 +306,7 @@ export async function capturePosthogEvent(
 			const privacy = await cachedPrivacy(workspaceId)
 			if (!privacy.shareUsage) {
 				logger.debug('PostHog capture skipped — workspace share-usage is off', { event })
-				return
+				return 'skipped'
 			}
 			paying = privacy.paying
 			if (privacy.anonymize) {
@@ -309,7 +319,7 @@ export async function capturePosthogEvent(
 			event,
 			error: String(err),
 		})
-		return
+		return 'failed'
 	}
 
 	// Every event says where it came from and who acted. Only people get a
@@ -345,8 +355,11 @@ export async function capturePosthogEvent(
 		})
 		if (!res.ok) {
 			logger.warn('PostHog capture non-2xx', { event, distinctId, status: res.status })
+			return 'failed'
 		}
+		return 'sent'
 	} catch (err) {
 		logger.warn('PostHog capture failed', { event, distinctId, error: String(err) })
+		return 'failed'
 	}
 }

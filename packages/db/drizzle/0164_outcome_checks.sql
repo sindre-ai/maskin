@@ -16,7 +16,7 @@
 -- New, empty tables, additive, not on the hot-tables list (see MIGRATIONS.md), so plain DDL is fine
 -- and there is nothing to backfill. Row-level security is switched on because
 -- 0111_enable_rls_public_tables ran before these tables existed.
--- Down: drizzle/down/0160_outcome_checks_down.sql.
+-- Down: drizzle/down/0164_outcome_checks_down.sql.
 
 CREATE TABLE IF NOT EXISTS "outcome_checks" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

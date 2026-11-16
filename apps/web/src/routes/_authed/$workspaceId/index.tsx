@@ -115,7 +115,12 @@ function ForYouFeed() {
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
 	const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set())
-	const [repliedKeys, setRepliedKeys] = useState<Set<string>>(() => new Set())
+	// Each reply keeps its card and the words sent, so the card can stay in the column as a
+	// receipt after the unread query drops it. `answeredEventId` is the thread's last event at
+	// the time of the reply: a later one is the agent answering, and the card opens again.
+	const [replied, setReplied] = useState<
+		Map<string, { item: UnreadItem; text: string; answeredEventId: number }>
+	>(() => new Map())
 	// A taken option marks the thread read, so the server drops it from the
 	// unread feed on the next fetch. The card is kept here with the option that
 	// was taken so its green receipt stays in place for the sitting, the way the
@@ -235,12 +240,13 @@ function ForYouFeed() {
 		(item: UnreadItem): FeedBucket => {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
-			if (repliedKeys.has(key)) return 'waiting'
+			const reply = replied.get(key)
+			if (reply && (item.latest_event_id ?? 0) <= reply.answeredEventId) return 'waiting'
 			// A mention that may be a question stays under the decisions; only a card that
 			// asks nothing of the person is an update.
 			return isInformational(item) ? 'fyi' : 'needs'
 		},
-		[decided, repliedKeys],
+		[decided, replied],
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
@@ -255,13 +261,17 @@ function ForYouFeed() {
 			.map((entry) => entry.item)
 			.filter((item) => !seen.has(feedItemKey(item)))
 			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
-		return [...live, ...handled]
+		const answered = [...replied.values()]
+			.map((entry) => entry.item)
+			.filter((item) => !seen.has(feedItemKey(item)) && !decided.has(feedItemKey(item)))
+			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
+		return [...live, ...handled, ...answered]
 			.map((item, index) => ({ item, index }))
 			.sort(
 				(a, b) => bucketRank(bucketOf(a.item)) - bucketRank(bucketOf(b.item)) || a.index - b.index,
 			)
 			.map((entry) => entry.item)
-	}, [filteredRegular, decided, typeFilter, bucketOf])
+	}, [filteredRegular, decided, replied, typeFilter, bucketOf])
 
 	// The ordered column cut into its buckets, so each non-empty one can be headed.
 	const sections = useMemo(() => {
@@ -512,9 +522,11 @@ function ForYouFeed() {
 	// one answered (`answeredAt`), so the agent's answer to this reply still
 	// shows up live.
 	const handleReplied = useCallback(
-		(item: UnreadItem) => {
+		(item: UnreadItem, text: string) => {
 			const key = feedItemKey(item)
-			setRepliedKeys((prev) => new Set(prev).add(key))
+			setReplied((prev) =>
+				new Map(prev).set(key, { item, text, answeredEventId: item.latest_event_id ?? 0 }),
+			)
 			// A typed reply implies a read — emit here, next to the gesture, so
 			// the funnel counts it even if the mark-read call fails.
 			trackForyouCardMarkedRead({
@@ -522,8 +534,8 @@ function ForYouFeed() {
 				card_id: item.entity_id,
 			})
 			const forget = () => {
-				setRepliedKeys((prev) => {
-					const next = new Set(prev)
+				setReplied((prev) => {
+					const next = new Map(prev)
 					next.delete(key)
 					return next
 				})
@@ -596,9 +608,15 @@ function ForYouFeed() {
 			// included — a decided card restored as undecided would re-offer its
 			// options and let the reader post the same reply twice.
 			const restoredDecisions = [...decided].filter(([key]) => keys.has(key))
-			const restoredReplied = [...keys].filter((key) => repliedKeys.has(key))
+			const restoredReplied = [...replied].filter(([key]) => keys.has(key))
 			setDecided((prev) => {
 				if (restoredDecisions.length === 0) return prev
+				const next = new Map(prev)
+				for (const key of keys) next.delete(key)
+				return next
+			})
+			setReplied((prev) => {
+				if (restoredReplied.length === 0) return prev
 				const next = new Map(prev)
 				for (const key of keys) next.delete(key)
 				return next
@@ -619,13 +637,13 @@ function ForYouFeed() {
 							setDecided((prev) => new Map([...prev, ...restoredDecisions]))
 						}
 						if (restoredReplied.length > 0) {
-							setRepliedKeys((prev) => new Set([...prev, ...restoredReplied]))
+							setReplied((prev) => new Map([...prev, ...restoredReplied]))
 						}
 					},
 				},
 			})
 		},
-		[decided, repliedKeys, dismissItem, undismissItem],
+		[decided, replied, dismissItem, undismissItem],
 	)
 
 	// "Take every suggested option" — the recommended answer on every card that
@@ -902,8 +920,9 @@ function ForYouFeed() {
 												onDecide={(option) => handleDecide(item, option)}
 												onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
 												onDraftsDone={() => handleDraftsDone(item)}
-												replied={repliedKeys.has(key)}
-												onReplied={() => handleReplied(item)}
+												replied={replied.has(key) && bucketOf(item) === 'waiting'}
+												repliedText={replied.get(key)?.text}
+												onReplied={(text) => handleReplied(item, text)}
 												onMarkRead={() => dismissAll([item], 'Marked as read')}
 											/>
 										)

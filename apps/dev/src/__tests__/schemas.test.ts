@@ -8,7 +8,7 @@ describe('Workspace settings', () => {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
-			loop: 'Loop',
+			loop: 'Flow',
 		})
 		expect(settings.statuses.insight).toContain('new')
 		expect(settings.statuses.bet).toContain('opportunity')

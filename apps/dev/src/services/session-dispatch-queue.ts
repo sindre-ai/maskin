@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, lte, notInArray } from 'drizzle-orm'
+import { and, asc, eq, lte, notInArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
@@ -327,9 +327,11 @@ export class SessionDispatchQueue {
 	}
 
 	/**
-	 * Claim one ready row. Atomically selects the oldest-created `pending` row
-	 * whose `next_attempt_at` is in the past (that column says when a row is
-	 * ready, never where it stands in line) and that is not in `exclude`, pushes its `next_attempt_at` forward
+	 * Claim one ready row. Atomically selects the `pending` row whose
+	 * `next_attempt_at` is in the past (that column says when a row is ready,
+	 * never where it stands in line) and that is not in `exclude`: a chat reply
+	 * first, then oldest-created. A burst of background wake-ups therefore
+	 * never makes a person waiting on a reply queue behind it. Pushes its `next_attempt_at` forward
 	 * by the lease, spends one attempt on it, and returns it. Returns `null`
 	 * when no row is ready.
 	 *
@@ -355,7 +357,15 @@ export class SessionDispatchQueue {
 						exclude.length > 0 ? notInArray(sessionDispatchAttempts.sessionId, exclude) : undefined,
 					),
 				)
-				.orderBy(asc(sessionDispatchAttempts.createdAt))
+				.orderBy(
+					// 0 for a session that answers a chat message, 1 for everything else.
+					sql`CASE WHEN EXISTS (
+						SELECT 1 FROM ${sessions}
+						WHERE ${sessions.id} = ${sessionDispatchAttempts.sessionId}
+							AND ${sessions.conversationId} IS NOT NULL
+					) THEN 0 ELSE 1 END`,
+					asc(sessionDispatchAttempts.createdAt),
+				)
 				.limit(1)
 				.for('update', { skipLocked: true })
 

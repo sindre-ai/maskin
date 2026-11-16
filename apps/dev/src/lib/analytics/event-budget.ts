@@ -15,6 +15,7 @@ const DEFAULT_DAILY_CAP = 2_500
 const TIER1_EXACT = new Set([
 	'agent_session_started',
 	'plan_limit_reached',
+	'workspace_usage_snapshot',
 	'chat_session_started',
 	'chat_session_seeded',
 	'integration_connect_started',

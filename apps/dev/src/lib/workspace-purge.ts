@@ -140,6 +140,7 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'oauth_grants',
 	'oauth_tokens',
 	'outcome_checks',
+	'plan_limit_emails',
 	'readings',
 	'saved_views',
 	'send_permissions',

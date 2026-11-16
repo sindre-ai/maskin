@@ -1,4 +1,5 @@
 import {
+	DraftNotesContext,
 	renderLinkedCard,
 	renderLinkedChip,
 	renderLinkedGithubChip,
@@ -25,6 +26,7 @@ import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useToggleReaction } from '@/hooks/use-message-reactions'
 import { useObject } from '@/hooks/use-objects'
+import { useQuestionDraftNote } from '@/hooks/use-question-draft-notes'
 import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -228,6 +230,17 @@ export function MessageBubble({
 	const question = message.metadata?.question
 	const isQuestionTwin =
 		question !== undefined && message.content === formatQuestionsAsMarkdown(question.questions)
+	// A question asked together with a draft that can still be approved goes into the draft's card.
+	const draftQuestion = useQuestionDraftNote(
+		workspaceId,
+		message.content,
+		question,
+		shownLinkedObjectIds,
+	)
+	const draftNotes = useMemo(
+		() => new Map(draftQuestion ? [[draftQuestion.draftId, draftQuestion.note]] : []),
+		[draftQuestion],
+	)
 	const shownContent =
 		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
 			? answers
@@ -588,29 +601,33 @@ export function MessageBubble({
 						    line as a card where it stands (a draft can be approved without leaving
 						    the chat) and a link in a sentence as a chip; an id another message holds
 						    the card for is a chip here, and a revised draft's card is tagged Updated. */}
-						<MarkdownContent
-							content={message.content}
-							size="sm"
-							renderVisuals
-							linkedCards={{
-								workspaceId,
-								enterprise,
-								conversationId: message.conversationId,
-								agentId: message.actorId,
-								skipIds: shownLinkedObjectIds,
-								updatedIds: updatedLinkedObjectIds,
-								renderCard: renderLinkedCard,
-								renderChip: renderLinkedChip,
-								renderGithubChip: renderLinkedGithubChip,
-								renderSettingsChip: renderLinkedSettingsChip,
-							}}
-						/>
+						<DraftNotesContext.Provider value={draftNotes}>
+							<MarkdownContent
+								content={message.content}
+								size="sm"
+								renderVisuals
+								linkedCards={{
+									workspaceId,
+									enterprise,
+									conversationId: message.conversationId,
+									agentId: message.actorId,
+									skipIds: shownLinkedObjectIds,
+									updatedIds: updatedLinkedObjectIds,
+									renderCard: renderLinkedCard,
+									renderChip: renderLinkedChip,
+									renderGithubChip: renderLinkedGithubChip,
+									renderSettingsChip: renderLinkedSettingsChip,
+								}}
+							/>
+						</DraftNotesContext.Provider>
 					</div>
 				) : null}
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
 				    the questions and each option's description; the message's markdown twin
-				    (`isQuestionTwin`) is only for readers that have no card. */}
-				{message.metadata?.question ? (
+				    (`isQuestionTwin`) is only for readers that have no card. When the message also
+				    links a draft that can still be approved, the question is a note in the draft's
+				    card instead (`draftQuestion`), so the person is asked once. */}
+				{message.metadata?.question && !draftQuestion ? (
 					<QuestionOptions
 						conversationId={message.conversationId}
 						workspaceId={workspaceId}

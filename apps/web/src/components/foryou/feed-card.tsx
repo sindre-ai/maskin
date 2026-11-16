@@ -61,9 +61,12 @@ interface FeedCardProps {
 	onDraftAction?: (draft: LatestMentionDecisionDraft, action: DraftAction) => Promise<unknown>
 	/** Every stacked message has been dealt with, so the card settles. */
 	onDraftsDone?: () => void
-	/** The reader answered in this sitting — the card flips to "Waiting on …". */
+	/** The reader answered in this sitting — the card flips to a receipt of what they sent. */
 	replied: boolean
-	onReplied: () => void
+	/** What the reader sent, for the receipt. Empty if the card was rebuilt after the reply. */
+	repliedText?: string | null
+	/** Called once the reply is on the server, with the text that was sent. */
+	onReplied: (text: string) => void
 	onMarkRead: () => void
 }
 
@@ -84,6 +87,7 @@ export function FeedCard({
 	decided,
 	onDecide,
 	replied,
+	repliedText,
 	onReplied,
 	onMarkRead,
 	onDraftAction,
@@ -121,7 +125,6 @@ export function FeedCard({
 		() => (senderId ? actors?.find((actor) => actor.id === senderId) : undefined),
 		[actors, senderId],
 	)
-	const who = sender?.name ?? 'the agent'
 
 	// A card counts as shown once it is at least half on screen, not when it renders:
 	// the feed mounts every card, including the ones far below the fold. Dedup lives
@@ -214,7 +217,21 @@ export function FeedCard({
 	if (decided) {
 		return (
 			<CardShell expanded={false} shellRef={shellRef}>
-				<DecisionReceipt decided={decided} who={sender?.name} />
+				<Receipt testId="decision-receipt" label={decided.label} who={sender?.name} />
+			</CardShell>
+		)
+	}
+
+	// A typed reply settles the card the same way: the strip says who got it and shows the words.
+	if (waiting) {
+		return (
+			<CardShell expanded={false} shellRef={shellRef}>
+				<Receipt
+					testId="reply-receipt"
+					label={repliedText || 'Reply sent'}
+					who={sender?.name}
+					multiline
+				/>
 			</CardShell>
 		)
 	}
@@ -233,13 +250,7 @@ export function FeedCard({
 							{title}
 						</span>
 						<span className="mt-[3px] flex w-full items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
-							{waiting ? (
-								<span className="shrink-0 font-medium text-status-clustered-text">
-									Waiting on {who}
-								</span>
-							) : (
-								status && <StatusBadge status={status} variant="word" />
-							)}
+							{status && <StatusBadge status={status} variant="word" />}
 							<span className="min-w-0 truncate">{bylineName(sender?.name)}</span>
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
@@ -272,13 +283,7 @@ export function FeedCard({
 					{!objectless && (
 						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
 					)}
-					{waiting ? (
-						<span className="shrink-0 text-[11px] font-medium text-status-clustered-text">
-							Waiting on {who}
-						</span>
-					) : (
-						status && <StatusBadge status={status} variant="word" className="text-[11px]" />
-					)}
+					{status && <StatusBadge status={status} variant="word" className="text-[11px]" />}
 					<RelativeTime
 						date={item.latest_activity_at}
 						compact
@@ -419,21 +424,34 @@ function CardShell({
 	)
 }
 
-// The green strip a decided card collapses to (mockup's `isDone`), minus the
-// mockup's Undo — the reply is posted the moment the option is taken and the
-// comment API has no delete, so there is nothing honest to take back.
-function DecisionReceipt({ decided, who }: { decided: DecidedOption; who?: string }) {
+// The green strip a settled card collapses to (mockup's `isDone`), minus the
+// mockup's Undo — the reply is posted the moment the option is taken or the text
+// is sent and the comment API has no delete, so there is nothing honest to take
+// back. `label` is the option taken, or the words the reader typed (`multiline`).
+function Receipt({
+	testId,
+	label,
+	who,
+	multiline = false,
+}: {
+	testId: string
+	label: string
+	who?: string
+	multiline?: boolean
+}) {
 	return (
-		<div
-			data-testid="decision-receipt"
-			className="flex items-center gap-2.5 bg-status-done-bg px-4 py-3"
-		>
+		<div data-testid={testId} className="flex items-center gap-2.5 bg-status-done-bg px-4 py-3">
 			<span className="grid size-[19px] shrink-0 place-items-center rounded-full bg-success text-background">
 				<Check size={11} aria-hidden />
 			</span>
 			<div className="min-w-0 flex-1">
-				<div className="truncate text-[12.5px] font-bold leading-[1.35] text-status-done-text">
-					{decided.label}
+				<div
+					className={cn(
+						'text-[12.5px] font-bold leading-[1.35] text-status-done-text',
+						multiline ? 'line-clamp-3 whitespace-pre-wrap break-words' : 'truncate',
+					)}
+				>
+					{label}
 				</div>
 				<div className="mt-px truncate text-[10.5px] text-status-done-text/70">
 					{who ? `Sent to ${who}` : 'Reply sent'}
