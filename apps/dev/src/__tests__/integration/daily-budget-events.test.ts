@@ -74,7 +74,7 @@ describe('daily budget events (Integration)', () => {
 			})
 		}
 
-		it('writes one admitted event per start, normal priority, estimate unknown without history', async () => {
+		it('writes one admitted event per start, urgent for a platform-made start, estimate unknown without history', async () => {
 			configureLifecycle()
 			const handle = await startSession({
 				workspaceId,
@@ -86,7 +86,7 @@ describe('daily budget events (Integration)', () => {
 			expect(rows).toHaveLength(1)
 			expect(rows[0]?.data).toMatchObject({
 				decision: 'admitted',
-				priority: 'normal',
+				priority: 'urgent',
 				estimated_cost_usd: null,
 				caller_kind: 'internal',
 			})
