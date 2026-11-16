@@ -131,6 +131,8 @@ test.describe('Chats — live transcript over the SSE log stream', () => {
 
 			const liveTurn = page.getByTestId('message-activity-live')
 			const activitySteps = liveTurn.getByLabel('Agent activity')
+			// The live step list is closed by default; this spec reads the steps.
+			await liveTurn.getByRole('button', { name: 'Show steps' }).click()
 
 			// Warm-up: opening the segment and proving the stream is live before
 			// the timed assertion, so the 500ms budget measures the ingest →
