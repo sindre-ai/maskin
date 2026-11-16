@@ -377,9 +377,6 @@ struct MaskinComposer: View {
 		if CameraPicker.isAvailable { actions.append(.camera) }
 		#endif
 		actions += [.file, .object, .person]
-		#if os(iOS)
-		if UIPasteboard.general.hasImages { actions.append(.paste) }
-		#endif
 		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
 		return actions
 	}
@@ -422,10 +419,6 @@ struct MaskinComposer: View {
 		case .showFormatting, .hideFormatting:
 			showsFormatting = action == .showFormatting
 			ComposerFormatting.setShown(showsFormatting, actorID: model.selfActorID)
-		case .paste:
-			#if os(iOS)
-			pasteImage()
-			#endif
 		}
 	}
 
@@ -493,29 +486,9 @@ struct MaskinComposer: View {
 
 	// MARK: Files
 
-	fileprivate func addFiles(_ drops: [ComposerDrop]) {
-		for drop in drops {
-			switch drop {
-			case .image(let data):
-				let name = "Pasted image.jpg"
-				model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
-			case .file(let url):
-				model.attach(
-					name: url.lastPathComponent, mimeType: AttachmentLoading.mimeType(for: url),
-					prepare: AttachmentLoading.file(at: url, deleteAfter: true))
-			}
-		}
-	}
+	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
 	#if os(iOS)
-	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
-			model.notice = "Couldn't read an image from the clipboard."
-			return
-		}
-		addFiles([.image(data)])
-	}
-
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
@@ -602,8 +575,8 @@ struct MaskinComposer: View {
 					}
 					composer.photoItems = []
 				}
-			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone an image is pasted
-			// through the `+` menu's "Paste image" row, which appears while the clipboard holds one.
+			// Drop and paste both land in `addFiles`. On iPhone the field only takes text, so an image
+			// from the keyboard's "Paste from Screenshots" or the edit menu's Paste reaches the bar here.
 			#if os(macOS)
 			base
 				.dropDestination(for: ComposerDrop.self) { items, _ in
@@ -617,6 +590,7 @@ struct MaskinComposer: View {
 					composer.addFiles(items)
 					return !items.isEmpty
 				} isTargeted: { composer.dropTargeted = $0 }
+				.pasteDestination(for: ComposerDrop.self) { composer.addFiles($0) }
 			#else
 			base
 			#endif
