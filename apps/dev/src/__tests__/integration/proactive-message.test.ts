@@ -216,13 +216,31 @@ describe('sendProactiveMessage (integration)', () => {
 		expect(await messagesIn(chatId)).toHaveLength(1)
 	})
 
-	it('has no daily limit: once the last note is read, the same agent can send again at once', async () => {
+	it('one note per reason in 7 days: a second send is refused even once the first is read', async () => {
 		const first = await sendProactiveMessage(db, args({ reason: 'one' }))
 		expect(first.sent).toBe(true)
 		if (first.sent) await markRead(chatId, first.messageId)
-		const second = await sendProactiveMessage(db, args({ reason: 'one' }))
-		expect(second.sent).toBe(true)
-		expect(await messagesIn(chatId)).toHaveLength(2)
+		expect(await sendProactiveMessage(db, args({ reason: 'one' }))).toEqual({
+			sent: false,
+			reason: 'cap_reason_week',
+		})
+		expect(await messagesIn(chatId)).toHaveLength(1)
+	})
+
+	it('a second finding two days after a note produces no second note', async () => {
+		const earlier = await seedProactive({ conversationId: chatId, agentId: cosId, hoursAgo: 48 })
+		await markRead(chatId, earlier.id)
+		expect(await sendProactiveMessage(db, args())).toEqual({
+			sent: false,
+			reason: 'cap_reason_week',
+		})
+		expect(await messagesIn(chatId)).toHaveLength(1)
+	})
+
+	it('a different reason is not held back by the week limit on another', async () => {
+		const first = await sendProactiveMessage(db, args({ reason: 'one' }))
+		if (first.sent) await markRead(chatId, first.messageId)
+		expect((await sendProactiveMessage(db, args({ reason: 'two' }))).sent).toBe(true)
 	})
 
 	it('notes from other agents, however many, never use up what Chief of Staff can send', async () => {
@@ -235,8 +253,12 @@ describe('sendProactiveMessage (integration)', () => {
 		expect((await sendProactiveMessage(db, args())).sent).toBe(true)
 	})
 
-	it('a recent note on the same reason does not block a send once it is read', async () => {
-		const earlier = await seedProactive({ conversationId: chatId, agentId: cosId, hoursAgo: 1 })
+	it('a read note older than 7 days does not block a send', async () => {
+		const earlier = await seedProactive({
+			conversationId: chatId,
+			agentId: cosId,
+			hoursAgo: 24 * 8,
+		})
 		await markRead(chatId, earlier.id)
 		expect((await sendProactiveMessage(db, args())).sent).toBe(true)
 	})
@@ -276,7 +298,7 @@ describe('sendProactiveMessage (integration)', () => {
 		)
 		expect(results.filter((r) => r.sent)).toHaveLength(1)
 		expect(
-			results.filter((r) => !r.sent).every((r) => !r.sent && r.reason === 'unread_backlog'),
+			results.filter((r) => !r.sent).every((r) => !r.sent && r.reason === 'cap_reason_week'),
 		).toBe(true)
 		expect(await messagesIn(chatId)).toHaveLength(1)
 	})

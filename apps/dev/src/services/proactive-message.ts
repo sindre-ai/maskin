@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { actors, conversationParticipants, messages, workspaceMembers } from '@maskin/db/schema'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import {
 	trackAgentChatMessageRefused,
 	trackAgentChatStartedMessage,
@@ -13,13 +13,15 @@ import { findDirectChat, postToDirectChat } from './direct-chat'
 /**
  * The only way an agent-authored message reaches a human it was not replying
  * to. Every rule is enforced here, in code, not in a prompt. In v1 nothing but
- * the capability digest calls it and only Chief of Staff may send. There is no
- * limit on how many messages an agent may send.
+ * the capability digest calls it and only Chief of Staff may send. One message
+ * per reason per person per 7 days: findings that arrive in between wait and go
+ * out together in the next note.
  */
 
 export const PROACTIVE_CONTENT_MAX = 1500
 export const PROACTIVE_DELIVERY_KIND = 'proactive'
 export const PROACTIVE_DELIVERY_VERSION = 1
+export const PROACTIVE_REASON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * A person's reply that switches proactive notes off or back on. Exact word,
@@ -35,6 +37,7 @@ export type ProactiveRefusal =
 	| 'opted_out'
 	| 'duplicate'
 	| 'unread_backlog'
+	| 'cap_reason_week'
 	| 'invalid_content'
 
 export interface SendProactiveMessageArgs {
@@ -189,7 +192,23 @@ async function runChecksAndSend(
 		.limit(1)
 	if (dup) return refuse('duplicate')
 
-	// 7. The sender's last proactive message to this person must have been read.
+	// 7. At most one message per reason in this 1-1 in 7 days, read or not.
+	const [recentSameReason] = await tx
+		.select({ id: messages.id })
+		.from(messages)
+		.where(
+			and(
+				eq(messages.conversationId, chat.id),
+				eq(messages.actorId, senderAgentId),
+				isProactive,
+				sql`${messages.metadata}->'delivery'->>'reason' = ${reason}`,
+				gt(messages.createdAt, new Date(now - PROACTIVE_REASON_WINDOW_MS)),
+			),
+		)
+		.limit(1)
+	if (recentSameReason) return refuse('cap_reason_week')
+
+	// 8. The sender's last proactive message to this person must have been read.
 	const [lastProactive] = await tx
 		.select({ id: messages.id })
 		.from(messages)
@@ -212,12 +231,12 @@ async function runChecksAndSend(
 		if ((state?.lastRead ?? 0) < lastProactive.id) return refuse('unread_backlog')
 	}
 
-	// 8. 1 to 1,500 characters. No mentions metadata is ever attached below.
+	// 9. 1 to 1,500 characters. No mentions metadata is ever attached below.
 	if (content.length < 1 || content.length > PROACTIVE_CONTENT_MAX) {
 		return refuse('invalid_content')
 	}
 
-	// 9. Store it through the shared chat port. evaluateAndRespond is never called.
+	// 10. Store it through the shared chat port. evaluateAndRespond is never called.
 	const [latest] = await tx
 		.select({ createdAt: messages.createdAt })
 		.from(messages)
