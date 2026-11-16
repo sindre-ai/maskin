@@ -1055,6 +1055,8 @@ struct ChatThreadView: View {
 /// swaps the lazy stack for a plain one there.
 struct ThreadTranscript: View {
 	let store: ChatStore
+	/// Opens a working agent's session from the thread's working line.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	var lazy = true
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
