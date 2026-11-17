@@ -45,6 +45,8 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+vi.mock('@/components/objects/items-more-menu', () => ({ ItemsMoreMenu: () => null }))
+
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({
 		workspaceId: 'ws-1',
