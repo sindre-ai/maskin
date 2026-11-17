@@ -422,6 +422,11 @@ describe('firstTouchFromPosthog', () => {
 })
 
 describe('withSharedProperties', () => {
+	const siteAreaOf = (properties: Record<string, unknown>) => {
+		const out = withSharedProperties({ event: 'x', properties })
+		return (out?.properties as { site_area?: unknown } | undefined)?.site_area
+	}
+
 	it('adds surface web and defaults actor_type to human, internal and paying to false', () => {
 		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
 			event: 'x',
@@ -437,8 +442,7 @@ describe('withSharedProperties', () => {
 	})
 
 	it('tags the area from the path posthog-js stamped on the event', () => {
-		const area = (path: string) =>
-			withSharedProperties({ event: 'x', properties: { $pathname: path } })?.properties?.site_area
+		const area = (path: string) => siteAreaOf({ $pathname: path })
 		expect(area('/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/chats')).toBe('app')
 		expect(area('/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e')).toBe('app')
 		expect(area('/workspaces')).toBe('app')
@@ -449,7 +453,7 @@ describe('withSharedProperties', () => {
 
 	it('falls back to the page path when the event carries none', () => {
 		window.history.pushState({}, '', '/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/loops')
-		expect(withSharedProperties({ event: 'x', properties: {} })?.properties?.site_area).toBe('app')
+		expect(siteAreaOf({})).toBe('app')
 		window.history.pushState({}, '', '/')
 	})
 
