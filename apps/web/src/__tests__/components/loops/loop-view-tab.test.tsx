@@ -1,5 +1,6 @@
 import { LoopViewTab } from '@/components/loops/loop-view-tab'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { EXPORT_FAILED_MESSAGE } from '@/lib/view-export'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,6 +10,17 @@ const mobile = vi.hoisted(() => ({ on: false }))
 vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => flag.on }))
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mobile.on }))
 const files = vi.hoisted(() => ({ byId: {} as Record<string, unknown> }))
+const exporter = vi.hoisted(() => ({
+	pages: [{ xhtml: '<body><p>Hi</p></body>', w: 100, h: 50, bg: '#fff' }],
+	save: vi.fn(),
+	fromDocument: vi.fn(),
+	fromFrame: vi.fn(),
+}))
+vi.mock('@/lib/view-export', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/lib/view-export')>()),
+	exportPages: exporter.save,
+	exportPagesOfDocument: exporter.fromDocument,
+}))
 vi.mock('@/hooks/use-files', () => ({
 	useFile: (_w: string, id: string) => ({ data: files.byId[id] }),
 }))
@@ -33,7 +45,9 @@ vi.mock('@/components/loops/loop-custom-view', () => ({
 		onProposeChange,
 		reloadToken,
 		onRefreshingChange,
+		exportRef,
 	}: {
+		exportRef?: { current: (() => Promise<unknown>) | null }
 		fileId: string
 		onFailure: (reason: string) => void
 		onOpenItem?: (id: string) => void
@@ -44,6 +58,9 @@ vi.mock('@/components/loops/loop-custom-view', () => ({
 		useEffect(() => {
 			if (fileId === 'bad') onFailure('The view file is not an HTML file.')
 		}, [fileId, onFailure])
+		useEffect(() => {
+			if (exportRef) exportRef.current = exporter.fromFrame
+		}, [exportRef])
 		return (
 			<div
 				data-testid="view"
@@ -112,6 +129,9 @@ describe('LoopViewTab', () => {
 		flag.on = false
 		mobile.on = false
 		files.byId = {}
+		exporter.save.mockReset().mockResolvedValue(undefined)
+		exporter.fromDocument.mockReset().mockResolvedValue(exporter.pages)
+		exporter.fromFrame.mockReset().mockResolvedValue(exporter.pages)
 	})
 
 	it('shows a deck in the tall viewer, under the view name, not in the frame', () => {
@@ -316,5 +336,90 @@ describe('LoopViewTab', () => {
 		await user.click(screen.getByRole('button', { name: 'View actions' }))
 		await user.click(await screen.findByRole('menuitem', { name: /Refresh/ }))
 		expect(screen.getByTestId('stage')).toHaveAttribute('data-reload', '1')
+	})
+	describe('Export', () => {
+		const list = {
+			id: 'good',
+			name: 'Open deals.html',
+			mimeType: 'text/html',
+			kind: null,
+			encoding: 'utf8',
+			content: '<html><body><p>Results</p></body></html>',
+		}
+		async function openExportChoices() {
+			const user = userEvent.setup()
+			await user.click(screen.getByRole('button', { name: 'View actions' }))
+			await user.click(await screen.findByText('Export'))
+			return user
+		}
+
+		it('has no Export, only Refresh, for a view that cannot be renamed or removed when the flag is off', async () => {
+			files.byId = { good: list }
+			render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Deals" />)
+			await userEvent.setup().click(screen.getByRole('button', { name: 'View actions' }))
+			expect(await screen.findByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument()
+			expect(screen.queryByText('Export')).toBeNull()
+		})
+
+		it('offers Markdown, PDF and PNG when the flag is on', async () => {
+			flag.on = true
+			files.byId = { good: list }
+			render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Deals" />)
+			await openExportChoices()
+			expect(screen.getByRole('menuitem', { name: 'Markdown' })).toBeInTheDocument()
+			expect(screen.getByRole('menuitem', { name: 'PDF' })).toBeInTheDocument()
+			expect(screen.getByRole('menuitem', { name: 'PNG' })).toBeInTheDocument()
+		})
+
+		it.each([
+			['Markdown', 'markdown'],
+			['PDF', 'pdf'],
+			['PNG', 'png'],
+		])('%s asks the view once and saves once', async (label, format) => {
+			flag.on = true
+			files.byId = { good: list }
+			render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Deals" />)
+			const user = await openExportChoices()
+			await user.click(screen.getByRole('menuitem', { name: label }))
+			await waitFor(() => expect(exporter.save).toHaveBeenCalledTimes(1))
+			expect(exporter.fromFrame).toHaveBeenCalledTimes(1)
+			expect(exporter.fromDocument).not.toHaveBeenCalled()
+			expect(exporter.save).toHaveBeenCalledWith(format, exporter.pages, 'Deals', 0)
+			expect(screen.queryByRole('alert')).toBeNull()
+		})
+
+		it('exports a deck from its own document, not the live frame', async () => {
+			flag.on = true
+			files.byId = {
+				deck: {
+					id: 'deck',
+					name: 'Briefing.html',
+					mimeType: 'text/html',
+					kind: 'briefing',
+					encoding: 'utf8',
+					content: '<html><body><section class="slide">One</section></body></html>',
+				},
+			}
+			render(<LoopViewTab workspaceId="w" loopId="l" fileId="deck" name="Briefing" />)
+			const user = await openExportChoices()
+			await user.click(screen.getByRole('menuitem', { name: 'PDF' }))
+			await waitFor(() => expect(exporter.save).toHaveBeenCalledTimes(1))
+			expect(exporter.fromDocument).toHaveBeenCalledWith(
+				'<html><body><section class="slide">One</section></body></html>',
+			)
+			expect(exporter.fromFrame).not.toHaveBeenCalled()
+		})
+
+		it('says the export failed in plain words and saves nothing', async () => {
+			flag.on = true
+			files.byId = { good: list }
+			exporter.fromFrame.mockRejectedValue(new Error('boom'))
+			vi.spyOn(console, 'error').mockImplementation(() => {})
+			render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Deals" />)
+			const user = await openExportChoices()
+			await user.click(screen.getByRole('menuitem', { name: 'PNG' }))
+			expect(await screen.findByRole('alert')).toHaveTextContent(EXPORT_FAILED_MESSAGE)
+			expect(exporter.save).not.toHaveBeenCalled()
+		})
 	})
 })

@@ -192,6 +192,14 @@ export const FLAGS = {
 	 */
 	LOOP_VIEW_DATE_CHANGE: 'loop-view-date-change',
 	/**
+	 * Gates Export in the three-dot menu of a custom view: Markdown, PDF or PNG of what the view
+	 * shows now, built in the browser and saved by the person's click (task [Export a view as
+	 * Markdown, PDF or PNG](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5494586-905b-4845-80d8-33314a419635)).
+	 * Frontend only: read once, in `LoopViewTab`. Off means the menu has no Export. Retire once it
+	 * is on for everyone.
+	 */
+	LOOP_VIEW_EXPORT: 'loop-view-export',
+	/**
 	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
 	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
 	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for

@@ -322,6 +322,10 @@ export const BRIDGE_OPEN_MESSAGE = 'maskin:bridge:open'
 export const BRIDGE_PROPOSE_MESSAGE = 'maskin:bridge:propose'
 /** Host -> frame: { type, id, data } or { type, id, error }. */
 export const BRIDGE_RESULT_MESSAGE = 'maskin:bridge:result'
+/** Host -> frame: { type, id: number }. Sent only on the person's Export click; the frame answers with BRIDGE_EXPORT_RESULT_MESSAGE. */
+export const BRIDGE_EXPORT_MESSAGE = 'maskin:bridge:export'
+/** Frame -> host: { type, id, pages: [{ xhtml, w, h, bg }] } or { type, id, error }. The rendered document, scripts removed, styles written onto each element. */
+export const BRIDGE_EXPORT_RESULT_MESSAGE = 'maskin:bridge:export-result'
 /** Host -> frame: fired every refresh tick; the frame re-emits it as a window "maskin:refresh" event. */
 export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
 
@@ -331,6 +335,14 @@ export const BRIDGE_REFRESH_MESSAGE = 'maskin:bridge:refresh'
 // the host is `parent.parent`; the frame only accepts results from it. Unlike VIEWER_REPORTER this
 // does not swallow wheel events: an inline view must let the page scroll.
 const BRIDGE_SCRIPT = `<script>(function(){var n=0,p={};window.maskin={query:function(name){return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};parent.parent.postMessage({type:'${BRIDGE_QUERY_MESSAGE}',id:id,name:String(name)},'*')})},open:function(id){parent.parent.postMessage({type:'${BRIDGE_OPEN_MESSAGE}',id:String(id)},'*')},propose:function(id,field,value){parent.parent.postMessage({type:'${BRIDGE_PROPOSE_MESSAGE}',id:String(id),field:String(field),value:String(value)},'*')}};window.addEventListener('message',function(e){if(e.source!==parent.parent)return;var d=e.data;if(!d)return;if(d.type==='${BRIDGE_RESULT_MESSAGE}'){var h=p[d.id];if(!h)return;delete p[d.id];if(d.error)h.rej(new Error(d.error));else h.res(d.data)}else if(d.type==='${BRIDGE_REFRESH_MESSAGE}'){window.dispatchEvent(new Event('maskin:refresh'))}})})();</script>`
+
+// Answers an export request with what the frame has drawn. It runs only when the host asks, and
+// the host asks only after the person's Export click; it reads the frame's own document and posts
+// the result to the host, nothing else. The copy has no scripts, style sheets, links, frames or
+// event handlers, and every element carries its computed style, so the host can draw it as an
+// image without running anything. A document with slides answers one page per slide (the others
+// hidden while it is copied), anything else one page.
+const EXPORT_RESPONDER = `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var DROP='script,style,link,meta,noscript,iframe,frame,object,embed,base,template';function copy(o,c){var cs=getComputedStyle(o),t='';for(var i=0;i<cs.length;i++)t+=cs[i]+':'+cs.getPropertyValue(cs[i])+';';c.setAttribute('style',t)}function bg(){var a=[document.body,document.documentElement];for(var i=0;i<a.length;i++){var c=getComputedStyle(a[i]).backgroundColor;if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c}return '#ffffff'}function snap(keep,slides){var body=document.body,all=body.querySelectorAll('*'),clone=body.cloneNode(true),cl=clone.querySelectorAll('*'),i;copy(body,clone);for(i=0;i<all.length;i++)if(cl[i])copy(all[i],cl[i]);var cs=slides?clone.querySelectorAll(SEL):[];for(i=0;i<cs.length;i++)if(i!==keep&&cs[i].parentNode)cs[i].parentNode.removeChild(cs[i]);var cv=body.querySelectorAll('canvas'),cc=clone.querySelectorAll('canvas');for(i=0;i<cc.length;i++){try{var im=document.createElement('img');im.setAttribute('src',cv[i].toDataURL('image/png'));im.setAttribute('style',cc[i].getAttribute('style')||'');cc[i].parentNode.replaceChild(im,cc[i])}catch(e){cc[i].parentNode.removeChild(cc[i])}}var d=clone.querySelectorAll(DROP);for(i=0;i<d.length;i++)if(d[i].parentNode)d[i].parentNode.removeChild(d[i]);var e=[clone].concat(Array.prototype.slice.call(clone.querySelectorAll('*')));for(i=0;i<e.length;i++){var at=Array.prototype.slice.call(e[i].attributes);for(var j=0;j<at.length;j++){var n=at[j].name.toLowerCase();if(n.indexOf('on')===0||((n==='href'||n==='src'||n==='xlink:href')&&/^\\s*javascript:/i.test(at[j].value)))e[i].removeAttribute(at[j].name)}}return new XMLSerializer().serializeToString(clone)}function pages(){var s=Array.prototype.slice.call(document.querySelectorAll(SEL)),out=[],d=document.documentElement,b=document.body;if(!s.length){var r=b.getBoundingClientRect();out.push({xhtml:snap(0,false),w:Math.ceil(Math.max(d.scrollWidth,r.width)),h:Math.ceil(Math.max(d.scrollHeight,r.height)),bg:bg()});return out}var was=s.map(function(x){return x.style.display});try{for(var k=0;k<s.length;k++){for(var m=0;m<s.length;m++)s[m].style.display=m===k?was[m]:'none';var q=s[k].getBoundingClientRect();out.push({xhtml:snap(k,true),w:Math.ceil(q.width||s[k].scrollWidth),h:Math.ceil(q.height||s[k].scrollHeight),bg:bg()})}}finally{for(var z=0;z<s.length;z++)s[z].style.display=was[z]}return out}window.addEventListener('message',function(ev){if(ev.source!==parent.parent)return;var d=ev.data;if(!d||d.type!=='${BRIDGE_EXPORT_MESSAGE}')return;var id=d.id;try{parent.parent.postMessage({type:'${BRIDGE_EXPORT_RESULT_MESSAGE}',id:id,pages:pages()},'*')}catch(err){parent.parent.postMessage({type:'${BRIDGE_EXPORT_RESULT_MESSAGE}',id:id,error:'The view could not be read.'},'*')}})})();</script>`
 
 // Reports the document's content height (not scrollHeight, which can never
 // shrink below the frame's own height) on load, resize and every layout change,
@@ -358,6 +370,7 @@ export function prepareBridgedViewHtml(html: string, options?: { forwardWheel?: 
 			DATA_SLOT_BOOTSTRAP +
 			VIEW_SIZE_REPORTER +
 			BRIDGE_SCRIPT +
+			EXPORT_RESPONDER +
 			wheel,
 	)
 }

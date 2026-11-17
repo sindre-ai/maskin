@@ -12,6 +12,7 @@ import {
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
 import { useTheme } from '@/lib/theme'
+import { type ExportPage, requestExportPages } from '@/lib/view-export'
 import {
 	type ListAnswer,
 	type ListSource,
@@ -23,7 +24,7 @@ import { applyAppTheme } from '@/lib/view-theme'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 /** Quiet time after a relevant event before the sources are re-checked, so a burst of writes is one check. */
 const SETTLE_MS = 2_000
@@ -55,6 +56,8 @@ interface LoopCustomViewProps {
 	reloadToken?: number
 	/** Told whenever a reload starts or ends, so the page can disable its Refresh item while one runs. */
 	onRefreshingChange?: (refreshing: boolean) => void
+	/** Filled with a function that asks the frame on screen for its pages, for Export. Only called on the person's click. */
+	exportRef?: MutableRefObject<(() => Promise<ExportPage[]>) | null>
 }
 
 export function LoopCustomView({
@@ -65,6 +68,7 @@ export function LoopCustomView({
 	onProposeChange,
 	reloadToken,
 	onRefreshingChange,
+	exportRef,
 }: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
@@ -94,6 +98,7 @@ export function LoopCustomView({
 			onProposeChange={onProposeChange}
 			reloadToken={reloadToken}
 			onRefreshingChange={onRefreshingChange}
+			exportRef={exportRef}
 		/>
 	)
 }
@@ -108,6 +113,7 @@ function ViewFrame({
 	onProposeChange,
 	reloadToken,
 	onRefreshingChange,
+	exportRef,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
@@ -118,6 +124,7 @@ function ViewFrame({
 	onProposeChange?: (change: ProposedChange) => void
 	reloadToken?: number
 	onRefreshingChange?: (refreshing: boolean) => void
+	exportRef?: MutableRefObject<(() => Promise<ExportPage[]>) | null>
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const navigate = useNavigate()
@@ -282,6 +289,23 @@ function ViewFrame({
 		handledReloadRef.current = reloadToken
 		void refreshAll()
 	}, [reloadToken, refreshAll])
+
+	// Export reads the frame on screen, and only when asked. The frame is the isolation frame's
+	// first child; a frame that navigated away (blocked) is not asked.
+	useEffect(() => {
+		if (!exportRef) return
+		const ask = () => {
+			const frame = () => iframeRef.current?.contentWindow?.frames[0] ?? null
+			if (blockedRef.current || !frame()) {
+				return Promise.reject(new Error('The view is not ready.'))
+			}
+			return requestExportPages(frame, (message) => frame()?.postMessage(message, '*'))
+		}
+		exportRef.current = ask
+		return () => {
+			if (exportRef.current === ask) exportRef.current = null
+		}
+	}, [exportRef])
 
 	useEffect(() => {
 		// The view runs one frame inside the iframe we render (see prepareIsolatedViewHtml), so

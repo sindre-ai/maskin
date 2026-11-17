@@ -51,7 +51,15 @@ import {
 	Minus,
 	Plus,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+	type MutableRefObject,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-stage'
 import {
 	MediaPlayer,
@@ -109,6 +117,8 @@ interface ViewerStageProps {
 	annotateMode?: boolean
 	pins?: StagePin[]
 	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
+	// Kept at the slide on screen (zero-based) so a host outside the stage can export it.
+	pageRef?: MutableRefObject<number>
 }
 
 export function ViewerStage({
@@ -118,6 +128,7 @@ export function ViewerStage({
 	annotateMode = false,
 	pins,
 	onPinPlace,
+	pageRef,
 }: ViewerStageProps) {
 	const editableMarkdown = useEditableMarkdown(file)
 	// Large files arrive without bytes: only media with a storage URL can be shown.
@@ -134,6 +145,7 @@ export function ViewerStage({
 				annotateMode={annotateMode}
 				pins={pins}
 				onPinPlace={onPinPlace}
+				pageRef={pageRef}
 			/>
 		)
 	if (editableMarkdown)
@@ -251,6 +263,7 @@ function HtmlViewerStage({
 	annotateMode = false,
 	pins,
 	onPinPlace,
+	pageRef,
 }: {
 	file: FileDetail
 	variantOverride: ViewerVariantOverride
@@ -258,6 +271,7 @@ function HtmlViewerStage({
 	annotateMode?: boolean
 	pins?: StagePin[]
 	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
+	pageRef?: MutableRefObject<number>
 }) {
 	const navigate = useNavigate()
 	const html = useMemo(() => fileText(file), [file])
@@ -309,6 +323,7 @@ function HtmlViewerStage({
 	// and that is what fit k is derived from. `null` for non-paged docs.
 	const [page, setPage] = useState<{ index: number; total: number } | null>(null)
 	const [pageSize, setPageSize] = useState<Size | null>(null)
+	if (pageRef) pageRef.current = page?.index ?? 0
 	const [viewportSize, setViewportSize] = useState<Size | null>(null)
 	const [zoom, setZoom] = useState<number>(ZOOM_MIN)
 	// Whether the current `zoom` was chosen automatically (fit) or by the user.
