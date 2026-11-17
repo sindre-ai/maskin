@@ -170,7 +170,7 @@ struct RemoteCallerIDContactSourceTests {
 		}
 	}
 
-	@Test("CallerIDPages through every contact in pages of 100 and keeps only the ones with a phone")
+	@Test("Pages through every contact in pages of 100 and keeps only the ones with a phone")
 	func pages() async throws {
 		// 250 contacts: every second one has a phone.
 		let rows = (0..<250).map {
