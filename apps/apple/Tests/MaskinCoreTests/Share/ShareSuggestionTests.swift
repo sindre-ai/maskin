@@ -68,3 +68,55 @@ struct ShareSheetModelSuggestionTests {
 		#expect(model.destination == .newChat(agentID: "agent-chief"))
 	}
 }
+
+@Suite("ShareSuggestionRecents")
+struct ShareSuggestionRecentsTests {
+	private func recents() -> ShareSuggestionRecents {
+		ShareSuggestionRecents(defaults: UserDefaults(suiteName: "share-suggestions-\(UUID().uuidString)")!)
+	}
+
+	private func entry(_ n: Int) -> ShareSuggestionRecents.Entry { .init(id: "a-\(n)", name: "Agent \(n)") }
+
+	@Test("the newest agent is first and a repeat moves up instead of doubling")
+	func order() {
+		let store = recents()
+		store.promote(entry(1), workspaceId: "ws-1")
+		store.promote(entry(2), workspaceId: "ws-1")
+		store.promote(entry(1), workspaceId: "ws-1")
+		#expect(store.entries(workspaceId: "ws-1").map(\.id) == ["a-1", "a-2"])
+	}
+
+	@Test("only the latest seven stay, and the one that fell off is handed back to be withdrawn")
+	func capped() {
+		let store = recents()
+		for n in 1...7 { #expect(store.promote(entry(n), workspaceId: "ws-1").isEmpty) }
+		let dropped = store.promote(entry(8), workspaceId: "ws-1")
+		#expect(dropped.map(\.id) == ["a-1"])
+		#expect(store.entries(workspaceId: "ws-1").map(\.id) == ["a-8", "a-7", "a-6", "a-5", "a-4", "a-3", "a-2"])
+	}
+
+	@Test("each workspace has its own list")
+	func perWorkspace() {
+		let store = recents()
+		store.promote(entry(1), workspaceId: "ws-1")
+		#expect(store.entries(workspaceId: "ws-2").isEmpty)
+	}
+
+	@Test("a renamed agent takes its new name and a deleted one is removed and handed back")
+	func reconcile() {
+		let store = recents()
+		store.promote(entry(1), workspaceId: "ws-1")
+		store.promote(entry(2), workspaceId: "ws-1")
+		let removed = store.reconcile(with: [.init(id: "a-2", name: "Renamed")], workspaceId: "ws-1")
+		#expect(removed.map(\.id) == ["a-1"])
+		#expect(store.entries(workspaceId: "ws-1") == [.init(id: "a-2", name: "Renamed")])
+	}
+
+	@Test("removeAll forgets everyone")
+	func forget() {
+		let store = recents()
+		store.promote(entry(1), workspaceId: "ws-1")
+		store.removeAll()
+		#expect(store.entries(workspaceId: "ws-1").isEmpty)
+	}
+}

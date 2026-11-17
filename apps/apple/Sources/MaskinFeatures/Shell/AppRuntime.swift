@@ -520,7 +520,7 @@ public final class AppRuntime {
 		else { return }
 		let others = participants.filter { $0.id != selfID }
 		guard others.count == 1, let agent = others.first, agent.kind == .agent else { return }
-		ShareSuggestions.donate(agentID: agent.id, name: agent.name, workspaceId: workspaceId)
+		ShareSuggestions.chatted(agentID: agent.id, name: agent.name, workspaceId: workspaceId)
 	}
 
 	/// The person opened a chat: its pushes are read.
@@ -685,6 +685,8 @@ public final class AppRuntime {
 		ChatsRuntime.signOut(actorId: actorId)
 		// Shares parked by the share extension live in the App Group container; same rule.
 		ShareQueue.shared()?.removeAll()
+		// The agents offered in the system share sheet are this account's too.
+		ShareSuggestions.clear()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
