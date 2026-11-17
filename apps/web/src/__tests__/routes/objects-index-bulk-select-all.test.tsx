@@ -239,6 +239,7 @@ vi.mock('@/lib/back-nav-tracker', () => ({
 }))
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
+		files: { all: (workspaceId: string) => ['files', workspaceId] },
 		objects: {
 			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
