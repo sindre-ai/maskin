@@ -107,6 +107,9 @@ function CommentRow({
 	})
 	const navigate = useNavigate()
 
+	const openPerson = (actorId: string) =>
+		navigate({ to: '/$workspaceId/people/$actorId', params: { workspaceId, actorId } })
+
 	const handleMentionClick = (mentioned: ActorListItem) => {
 		if (mentioned.type === 'agent') {
 			navigate({
@@ -114,10 +117,7 @@ function CommentRow({
 				params: { workspaceId, agentId: mentioned.id },
 			})
 		} else {
-			navigate({
-				to: '/$workspaceId/people/$actorId',
-				params: { workspaceId, actorId: mentioned.id },
-			})
+			openPerson(mentioned.id)
 		}
 	}
 
@@ -144,14 +144,13 @@ function CommentRow({
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className={avatarClass} />
 			</Link>
 		) : (
-			<Link
-				to="/$workspaceId/people/$actorId"
-				params={{ workspaceId, actorId: actor.id }}
-				aria-hidden="true"
-				tabIndex={-1}
-			>
-				<ActorAvatar name={actor.name} type={actor.type} size="sm" className={avatarClass} />
-			</Link>
+			<ActorAvatar
+				name={actor.name}
+				type={actor.type}
+				size="sm"
+				className={avatarClass}
+				onClick={() => openPerson(actor.id)}
+			/>
 		)
 	) : null
 
@@ -166,15 +165,15 @@ function CommentRow({
 			{actor.name}
 		</Link>
 	) : (
-		<Link
-			to="/$workspaceId/people/$actorId"
-			params={{ workspaceId, actorId: actor.id }}
+		<button
+			type="button"
+			onClick={() => openPerson(actor.id)}
 			className={cn(
 				'text-sm font-medium text-foreground cursor-pointer hover:underline transition-colors',
 			)}
 		>
 			{actor.name}
-		</Link>
+		</button>
 	)
 
 	return (
