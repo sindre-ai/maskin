@@ -304,7 +304,8 @@ struct LoopDetailStoreTests {
 		let step = LoopStep(
 			triggerID: "t", name: "x", triggerKind: .cron,
 			triggerConfig: .object(["expression": .string("0 17 * * 0")]))
-		#expect(step.firesSummary == "Runs every Sunday at 5:00 PM UTC")
+		// 17:00 UTC is 18:00 in Copenhagen winter time and 19:00 in summer time.
+		#expect(["Runs every Sunday at 18:00", "Runs every Sunday at 19:00"].contains(step.firesSummary))
 	}
 }
 
