@@ -40,6 +40,7 @@ import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { z } from 'zod'
 import {
+	ActorAutocomplete,
 	type CommentFilterState,
 	CommentFilters,
 	EMPTY_COMMENT_FILTER_STATE,
@@ -88,9 +89,14 @@ function isEditableOperator(value: unknown): value is ConditionOperator {
 
 interface FieldDefinition {
 	name: string
-	type: 'text' | 'number' | 'date' | 'enum' | 'boolean'
+	/** Shown in the field dropdown instead of `name` when set. */
+	label?: string
+	type: 'text' | 'number' | 'date' | 'enum' | 'boolean' | 'actor'
 	values?: string[]
 }
+
+/** Built-in condition field for object triggers. The value is the driver's actor id. */
+const DRIVER_FIELD: FieldDefinition = { name: 'driver', label: 'Driver', type: 'actor' }
 
 interface ConditionRow {
 	id: string
@@ -164,6 +170,12 @@ const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: strin
 	],
 	boolean: [
 		{ value: 'equals', label: 'equals' },
+		{ value: 'is_set', label: 'is set' },
+		{ value: 'is_not_set', label: 'is not set' },
+	],
+	actor: [
+		{ value: 'equals', label: 'equals' },
+		{ value: 'not_equals', label: 'does not equal' },
 		{ value: 'is_set', label: 'is set' },
 		{ value: 'is_not_set', label: 'is not set' },
 	],
@@ -627,6 +639,14 @@ export function TriggerForm({
 		return isPinnedObject || internalEntityTypes.has(entityType)
 	})
 	const isInternal = internalEntityTypes.has(entityType)
+	// Object triggers can also filter on the item's driver, next to the workspace fields.
+	const conditionFieldDefs = useMemo(
+		() =>
+			isInternal && !fieldDefs.some((f) => f.name === DRIVER_FIELD.name)
+				? [...fieldDefs, DRIVER_FIELD]
+				: fieldDefs,
+		[isInternal, fieldDefs],
+	)
 	const isSlack = isSlackEntityType(entityType)
 	const isCommentedAction = action === 'commented'
 	const slackIntegrationId = useMemo(
@@ -825,7 +845,7 @@ export function TriggerForm({
 	// and `evaluateConditions` already resolves. So a missing field-def list
 	// means a free-text field, not a disabled section.
 	const addCondition = () => {
-		const first = fieldDefs[0]
+		const first = conditionFieldDefs[0]
 		const ops = first
 			? (OPERATORS_BY_TYPE[first.type] ?? OPERATORS_BY_TYPE.text)
 			: OPERATORS_BY_TYPE.text
@@ -1229,7 +1249,8 @@ export function TriggerForm({
 										<ConditionEditor
 											key={condition.id}
 											condition={condition}
-											fieldDefs={fieldDefs}
+											fieldDefs={conditionFieldDefs}
+											actors={allActors ?? []}
 											onChange={(updates) => updateCondition(index, updates)}
 											onRemove={() => removeCondition(index)}
 										/>
@@ -1248,7 +1269,7 @@ export function TriggerForm({
 							{fieldDefs.length === 0 && (
 								<p className="text-xs text-muted-foreground">
 									{isInternal
-										? `No properties defined for ${entityType}s — name a field on the event payload, or configure properties in settings.`
+										? `No properties defined for ${entityType}s — configure properties in settings.`
 										: 'Name a field on the event payload, e.g. action or pull_request.merged.'}
 								</p>
 							)}
@@ -1477,11 +1498,13 @@ function FieldColumn({
 function ConditionEditor({
 	condition,
 	fieldDefs,
+	actors,
 	onChange,
 	onRemove,
 }: {
 	condition: ConditionRow
 	fieldDefs: FieldDefinition[]
+	actors: { id: string; name: string; type: string }[]
 	onChange: (updates: Partial<ConditionRow>) => void
 	onRemove: () => void
 }) {
@@ -1515,7 +1538,7 @@ function ConditionEditor({
 					<SelectContent>
 						{fieldDefs.map((f) => (
 							<SelectItem key={f.name} value={f.name}>
-								{f.name}
+								{f.label ?? f.name}
 							</SelectItem>
 						))}
 					</SelectContent>
@@ -1541,6 +1564,8 @@ function ConditionEditor({
 			{needsValue && (
 				<ConditionValueInput
 					fieldDef={fieldDef}
+					actors={actors}
+					conditionId={condition.id}
 					operator={condition.operator}
 					value={condition.value}
 					onChange={(value) => onChange({ value })}
@@ -1562,11 +1587,15 @@ function ConditionEditor({
 
 function ConditionValueInput({
 	fieldDef,
+	actors,
+	conditionId,
 	operator,
 	value,
 	onChange,
 }: {
 	fieldDef?: FieldDefinition
+	actors: { id: string; name: string; type: string }[]
+	conditionId: string
 	operator: string
 	value: SafeJsonValue
 	onChange: (value: SafeJsonValue) => void
@@ -1583,6 +1612,20 @@ function ConditionValueInput({
 				placeholder="days"
 				className="min-h-11 w-20 text-xs sm:min-h-8"
 			/>
+		)
+	}
+
+	if (fieldType === 'actor') {
+		return (
+			<div className="w-48">
+				<ActorAutocomplete
+					id={`condition-actor-${conditionId}`}
+					actors={actors}
+					selectedId={typeof value === 'string' && value ? value : null}
+					placeholder="Pick a person or agent"
+					onChange={(id) => onChange(id ?? '')}
+				/>
+			</div>
 		)
 	}
 

@@ -27,6 +27,15 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
 }))
 
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({
+		data: [
+			{ id: 'agent-1', name: 'Scout', type: 'agent' },
+			{ id: 'human-1', name: 'Magnus', type: 'human' },
+		],
+	}),
+}))
+
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => ({ data: [] }),
 }))
@@ -503,15 +512,15 @@ describe('TriggerForm', () => {
 
 	it('offers ADDITIONAL CONDITIONS on any event trigger, even with no field definitions', async () => {
 		const user = userEvent.setup()
-		// `workspace.settings` is empty, so this entity type has no field
-		// definitions — the same shape every integration-sourced type has.
+		// An integration-sourced type has no workspace field definitions, so the
+		// condition field is free text.
 		render(
 			<TriggerForm
 				{...defaultProps}
 				isCreated
 				initialValues={buildTriggerResponse({
 					type: 'event',
-					config: { entity_type: 'insight', action: 'created' },
+					config: { entity_type: 'github.pull_request', action: 'created' },
 				})}
 			/>,
 			{ wrapper: TestWrapper },
@@ -525,6 +534,61 @@ describe('TriggerForm', () => {
 
 		await user.type(field, 'action')
 		expect(field).toHaveValue('action')
+	})
+
+	describe('driver condition', () => {
+		it('offers Driver in Add condition and picks the driver by name', async () => {
+			const user = userEvent.setup()
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={buildTriggerResponse({
+						type: 'event',
+						config: { entity_type: 'insight', action: 'created' },
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('button', { name: /add condition/i }))
+			expect(screen.getByRole('combobox', { name: 'Driver' })).toBeInTheDocument()
+
+			await user.click(screen.getByRole('combobox', { name: 'Pick a person or agent' }))
+			await user.click(await screen.findByRole('option', { name: /Scout/ }))
+
+			await waitFor(() => {
+				const { buildPayload } = useAutoSave.mock.calls.at(-1)?.[0] as {
+					buildPayload: () => { config: { conditions?: unknown[] } } | null
+				}
+				expect(buildPayload()?.config.conditions).toEqual([
+					expect.objectContaining({ field: 'driver', operator: 'equals', value: 'agent-1' }),
+				])
+			})
+		})
+
+		it('reopens a saved driver condition in the actor picker', () => {
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={buildTriggerResponse({
+						type: 'event',
+						config: {
+							entity_type: 'insight',
+							action: 'created',
+							conditions: [{ field: 'driver', operator: 'not_equals', value: 'human-1' }],
+						},
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByRole('combobox', { name: 'Driver' })).toBeInTheDocument()
+			expect(screen.getByText('does not equal')).toBeInTheDocument()
+			expect(screen.getAllByText('Magnus').length).toBeGreaterThan(0)
+			expect(screen.queryByRole('textbox', { name: 'Condition field' })).not.toBeInTheDocument()
+		})
 	})
 
 	it("keeps the suggestion chips when the only event is the trigger's own creation", () => {
