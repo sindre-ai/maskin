@@ -163,6 +163,7 @@ export async function findBacklogTasksDueSoon(
 			status: row.status,
 			driverId: row.driverId,
 			reason: 'task_due',
+			queued: false,
 			nextStepId: null,
 			dueAt,
 		})
@@ -361,7 +362,7 @@ export class NextStepSweep {
 		])
 		const wokenPerAgent = new Map<string, number>()
 		const paused = new Map<string, boolean>()
-		const queues = new Map<string, ObjectNeedingNextStep[]>()
+		const queues = new Map<string, SweepItem[]>()
 
 		for (const item of found) {
 			if (busy.has(item.objectId) || covered.has(item.objectId)) continue
@@ -397,7 +398,7 @@ export class NextStepSweep {
 
 		for (const [driverId, due] of queues) {
 			if ((wokenPerAgent.get(driverId) ?? 0) >= MAX_WAKES_PER_AGENT_PER_TICK) continue
-			const claims: { item: ObjectNeedingNextStep; claimId: string }[] = []
+			const claims: { item: SweepItem; claimId: string }[] = []
 			// Claim until the run is full, so objects an earlier tick already holds don't use up the cap.
 			for (const item of due) {
 				if (claims.length >= MAX_OBJECTS_PER_QUEUE_RUN) break
@@ -515,7 +516,7 @@ export class NextStepSweep {
 	private async wakeQueue(
 		workspaceId: string,
 		driverId: string,
-		claims: { item: ObjectNeedingNextStep; claimId: string }[],
+		claims: { item: SweepItem; claimId: string }[],
 		total: number,
 		now: Date,
 	): Promise<void> {
