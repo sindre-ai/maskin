@@ -198,6 +198,33 @@ public final class ChatComposerModel {
 		return result
 	}
 
+	/// Everything in the bar, kept so an undone send can put it back.
+	public struct Snapshot: Sendable {
+		var text: String
+		var mentions: [ChatMention]
+		var attachments: [ChatAttachmentDraft]
+		var quote: Quote?
+	}
+
+	public func snapshot() -> Snapshot {
+		Snapshot(text: text, mentions: mentions, attachments: attachments.filter { $0.ref != nil }, quote: quote)
+	}
+
+	/// Puts a snapshot back after an undone send. Anything typed since stays, after the restored text.
+	public func restore(_ snapshot: Snapshot) {
+		let typed = trimmedText
+		if quote == nil { quote = snapshot.quote }
+		text = typed.isEmpty ? snapshot.text : snapshot.text + "\n" + typed
+		for mention in snapshot.mentions { addMention(mention) }
+		for attachment in snapshot.attachments
+		where !attachments.contains(where: { $0.id == attachment.id }) && attachments.count < ChatLimits.maxAttachments
+		{
+			attachments.append(attachment)
+		}
+		selection = nil
+		requestFocus()
+	}
+
 	/// `take()` for a message that fits, `takeLong()` for one that goes as a file.
 	public func takeForSend() async -> (text: String, metadata: ChatSendMetadata?)? {
 		isOverLength ? await takeLong() : take()

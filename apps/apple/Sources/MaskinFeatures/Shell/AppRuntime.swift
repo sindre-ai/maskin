@@ -15,6 +15,8 @@ public final class AppRuntime {
 	}
 
 	public let environment: AppEnvironment
+	/// The flags resolved for the signed-in actor; reloaded on every sign-in and workspace change.
+	public let featureFlags: FeatureFlagStore
 	public let router: DeepLinkRouter
 	public let push: PushRegistrar?
 	/// The in-app pre-prompt before the system's notification prompt. Nil without a registrar.
@@ -231,6 +233,7 @@ public final class AppRuntime {
 			NotificationPromptCoordinator(policy: NotificationPromptPolicy(storage: promptStorage), push: $0)
 		}
 		self.environment = environment
+		self.featureFlags = FeatureFlagStore(api: APIFeatureFlagsSource(client: environment.client))
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
@@ -341,6 +344,7 @@ public final class AppRuntime {
 			selectedTab = .forYou
 		}
 		lastSyncedWorkspaceId = environment.workspaceId
+		Task { await featureFlags.load() }
 		// Start the chat runtime now (not when the Chats tab first appears) so messages queued
 		// offline, or before the app was last killed, replay as soon as the user is signed in.
 		_ = ChatsRuntime.shared(environment: environment)
@@ -399,6 +403,7 @@ public final class AppRuntime {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
 		notificationPreferences = nil
+		featureFlags.reset()
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
 		stopSyncCoordinator()
@@ -625,6 +630,7 @@ public final class AppRuntime {
 		let running = forYouRuntime
 		forYouRuntime = nil
 		notificationPreferences = nil
+		featureFlags.reset()
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
 		if let push {
