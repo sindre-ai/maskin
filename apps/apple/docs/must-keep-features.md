@@ -1,7 +1,8 @@
 # Must-keep features (iPhone app)
 
 Things a person does in the app that must keep working through every redesign. Each row has a UI
-test in `Apps/MaskinUITests/MustKeepTests.swift` named `testMK<nn>_…`.
+test named `testMK<nn>_…` in `Apps/MaskinUITests/MustKeepTests.swift` (MK-01 to MK-09) or
+`Apps/MaskinUITests/MustKeepMoreTests.swift` (MK-10 and up).
 
 ## What these tests prove, and what they do not
 
@@ -48,9 +49,17 @@ contain renders. A row passing is necessary, not sufficient. Each row below stat
 | MK-07b | With a picture on the clipboard, taps the **+** (Attach) button in a chat | The menu lists **Paste image** | That the picture is attached | `testMK07b_AttachMenuOffersPasteImage` |
 | MK-08 | In the Webinars chat, types a line and taps **Send** | The line shows in the chat | That the real server accepts it (the demo server echoes it); sending with attachments, mentions or a quote | `testMK08_TypeAndSendShowsMessage` |
 | MK-09 | In the Webinars chat, pastes 8,200 characters and taps **Send** | The composer says the message goes as a file, and the chat shows the short message "…is attached as message-….txt" | That the file's content is right, or opens; a message just under 8,000 characters. The text is pasted, not typed | `testMK09_LongMessageSendsAsFile` |
+| MK-10 | In the Contoso renewal chat, opens the thread under a message with two replies, the first from the Chief of Staff | The thread shows the agent's reply and the person's reply | Unread counts; that an agent writes a reply (the words are demo data); replying to the agent | `testMK10_AgentReplyInThreadIsReachable` |
+| MK-11 | In Chats, taps **Threads**, then a thread in the list | The Threads list names the chat and the newest reply; the thread opens with the agent's reply | The New and Earlier split (the demo has one read thread); that the list refreshes when a reply arrives | `testMK11_ThreadsListOpensThread` |
+| MK-12 | On For you, taps the recommended option of the first decision card (Send all 7) | The card leaves the open list, the choice shows as a receipt or toast, and Undo is offered | That the choice reaches the server or an agent (the demo records a comment), that Undo works, the confirm step for a destructive option | `testMK12_PickDecisionOptionOnForYou` |
+| MK-13 | In the Priya Rao chat, types **@Pri** and picks Priya Rao | The list shows Priya Rao, and the pick becomes a chip in the composer | That the message is sent with the mention (nothing is sent); that an agent wakes up on it | `testMK13_MentionSomeoneInComposer` |
+| MK-14 | In the profile sheet, taps **Sign out**, confirms, then signs in again with an email and password | The sign-in screen shows after signing out; signing in opens the app on For you | That the password is checked (the demo accepts any), sign-in with Apple or a code, the discarded queue | `testMK14_SignOutAndSignIn` |
+| MK-15a | On their newest message, taps More, then **Edit**, adds words and taps Send | The composer says "Editing message"; the chat shows the edited words | That an older message can be edited (it cannot); the "edited" mark | `testMK15a_EditOwnNewestMessage` |
+| MK-15b | On a message, taps More, then **React**, then 👍 | The message shows a 👍 chip with a count of 1 | Taking a reaction back; reactions by other people | `testMK15b_ReactToMessage` |
+| MK-15c | Sends a message the server refuses | The chat shows "Not sent", and its More menu offers **Delete**, which removes it | Deleting a message that was sent: the app has no such action. Retry is not tapped | `testMK15c_DeleteUnsentMessage` |
+| MK-16 | In the Priya Rao chat, taps **+** (Attach), then **File** | The system file picker opens | Choosing a file and attaching it (the picker is a system screen); photos and the camera. A long message going as a file is MK-09 | `testMK16_AttachMenuOpensFilePicker` |
+| MK-17 | In Settings, opens **Integrations**, then Discover, taps PostHog, pastes a key and taps **Connect** | PostHog is in the Connected list | The sign-in sheet of an OAuth provider (Slack, Linear, Google): it opens a system sheet the demo cannot finish; that the key is valid | `testMK17_ConnectIntegrationWithKey` |
 
 ## Candidates to add next
 
-In order: an agent's reply inside a thread is reachable; open the Threads list; pick a decision option
-on a For you card; @mention someone; sign in and sign out; edit, delete and react to a message; attach a
-file; use a row action from the Chats list; connect an integration.
+Use a row action from the Chats list (pin, archive, delete a chat).

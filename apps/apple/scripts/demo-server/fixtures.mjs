@@ -1,3 +1,4 @@
+import { CONTOSO_ROOM, keyConnected, mustKeepMore } from './must-keep-fixtures.mjs'
 import { addPerfRoom, perfOverrides } from './perf-fixtures.mjs'
 
 // Demo data for the design review: the Northwind workspace from the Watch, iPad and TV prototypes.
@@ -263,6 +264,7 @@ const rooms = [
 		by: 'Chief of Staff',
 		at: DAY,
 	},
+	CONTOSO_ROOM,
 ]
 
 const PERF = process.env.DEMO_PERF === '1'
@@ -299,6 +301,8 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		})
 		if (hit) return hit
 	}
+	const more = mustKeepMore({ method, path, query, body, item })
+	if (more) return more
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
 		const event = {
@@ -584,6 +588,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				provider('google-calendar', 'Google Calendar', 'oauth2'),
 				provider('linear', 'Linear', 'oauth2'),
 				provider('google-drive', 'Google Drive', 'oauth2'),
+				provider('posthog', 'PostHog', 'api_key'),
 			],
 		}
 	}
@@ -612,6 +617,8 @@ export function overrides({ method, path, params, query, body, base, item }) {
 					needsReconnect: true,
 					missingScopes: ['workflow'],
 				}),
+				// Connected with a pasted key during this run (MK-17).
+				...keyConnected().map((provider, i) => row(960 + i, provider, 'northwind')),
 			],
 		}
 	}
