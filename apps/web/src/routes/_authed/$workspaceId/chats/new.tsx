@@ -384,7 +384,10 @@ function NewChatRoute() {
 				recipients.length === 1 && recipients[0]?.type === 'agent' ? recipients[0] : null
 			// Opened from a Message button and still exactly that one person: say which button.
 			const fromMessageButton =
-				search.from && recipients.length === 1 && recipients[0]?.id === search.agentId && !singleAgent
+				search.from &&
+				recipients.length === 1 &&
+				recipients[0]?.id === search.agentId &&
+				!singleAgent
 			trackChatSessionStarted({
 				entity_id: conversation.id,
 				entity_type: 'session',
