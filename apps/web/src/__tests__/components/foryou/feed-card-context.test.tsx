@@ -88,7 +88,7 @@ function buildItem(
 			created_at: new Date().toISOString(),
 			content: 'Send Alan the room request?',
 			attention: 3,
-			decision: d ?? undefined,
+			decision: d,
 		},
 	}
 }
