@@ -22,8 +22,8 @@ struct ComposerPasteTests {
 		#expect(model.text.isEmpty)
 	}
 
-	@Test("the + menu no longer has a Paste image row")
-	func noPasteRow() {
-		#expect(!ComposerAttachAction.allCases.map(\.label).contains("Paste image"))
+	@Test("the + menu keeps its Paste image row")
+	func pasteRowStays() {
+		#expect(ComposerAttachAction.allCases.map(\.label).contains("Paste image"))
 	}
 }

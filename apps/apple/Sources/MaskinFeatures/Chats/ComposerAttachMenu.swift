@@ -2,10 +2,11 @@ import MaskinDesign
 import SwiftUI
 
 /// What the `+` offers. Spec 7 §1 → Attach: Photo or video · Camera · File · Object · Person or agent.
-/// "Show formatting" / "Hide formatting" is the last row: it opens or closes the formatting row above
-/// the bar. Images are pasted with the system Paste, not from this menu.
+/// "Paste image" joins the list only while the clipboard holds a picture: the system Paste on the field
+/// takes an image too, and this row stays as a second way in. "Show formatting" / "Hide formatting" is
+/// the last row: it opens or closes the formatting row above the bar.
 enum ComposerAttachAction: String, CaseIterable, Identifiable {
-	case photo, camera, file, object, person, showFormatting, hideFormatting
+	case photo, camera, file, object, person, paste, showFormatting, hideFormatting
 
 	var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 		case .file: "File"
 		case .object: "Item"
 		case .person: "Person or agent"
+		case .paste: "Paste image"
 		case .showFormatting: "Show formatting"
 		case .hideFormatting: "Hide formatting"
 		}
@@ -28,6 +30,7 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 		case .file: "doc"
 		case .object: "cube"
 		case .person: "person"
+		case .paste: "doc.on.clipboard"
 		case .showFormatting, .hideFormatting: "textformat"
 		}
 	}
