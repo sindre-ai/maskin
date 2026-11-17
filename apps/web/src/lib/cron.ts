@@ -273,3 +273,111 @@ export function nextCronFire(expr: string, from: Date = new Date()): Date | null
 		}
 	}
 }
+
+/** The instant a Copenhagen wall-clock time falls on, summer and winter time included. */
+function copenhagenWallTimeToInstant(
+	year: number,
+	month: number,
+	day: number,
+	hour: number,
+	minute: number,
+): Date {
+	const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute)
+	// Two passes settle the offset when the guess lands on the other side of a clock change.
+	let instant = wallAsUtc
+	for (let i = 0; i < 2; i++) {
+		const at = copenhagenParts(new Date(instant))
+		const [h, m] = at.time.split(':').map(Number)
+		const shown = Date.UTC(at.year, at.month - 1, at.day, h, m)
+		instant -= shown - wallAsUtc
+	}
+	return new Date(instant)
+}
+
+/** The schedule fields a person picks in the trigger form. The hour, day of week and day
+ * of month are Copenhagen time. */
+export type CronPickerFields = Pick<
+	ParsedCron,
+	'frequency' | 'minute' | 'hour' | 'dayOfWeek' | 'dayOfMonth'
+>
+
+/** The next time the Copenhagen wall-clock schedule in `picked` fires, strictly after `now`. */
+function nextCopenhagenFire(picked: CronPickerFields, now: Date): Date | null {
+	const hour = Number(picked.hour)
+	const minute = Number(picked.minute)
+	const today = copenhagenParts(now)
+	switch (picked.frequency) {
+		case 'hourly':
+			return null
+		case 'daily':
+		case 'weekly': {
+			for (let offset = 0; offset <= 7; offset++) {
+				const day = new Date(Date.UTC(today.year, today.month - 1, today.day + offset))
+				if (picked.frequency === 'weekly' && day.getUTCDay() !== Number(picked.dayOfWeek)) continue
+				const candidate = copenhagenWallTimeToInstant(
+					day.getUTCFullYear(),
+					day.getUTCMonth() + 1,
+					day.getUTCDate(),
+					hour,
+					minute,
+				)
+				if (candidate > now) return candidate
+			}
+			return null
+		}
+		case 'monthly': {
+			const dayOfMonth = Number(picked.dayOfMonth)
+			// Months without that day (31st) are skipped; 24 months always reaches one.
+			for (let offset = 0; offset < 24; offset++) {
+				const first = new Date(Date.UTC(today.year, today.month - 1 + offset, 1))
+				const year = first.getUTCFullYear()
+				const month = first.getUTCMonth() + 1
+				if (new Date(Date.UTC(year, month - 1, dayOfMonth)).getUTCMonth() !== month - 1) continue
+				const candidate = copenhagenWallTimeToInstant(year, month, dayOfMonth, hour, minute)
+				if (candidate > now) return candidate
+			}
+			return null
+		}
+	}
+}
+
+/** The cron expression (UTC, the zone the server runs every schedule in) for what a person
+ * picked in Copenhagen time. Uses the next firing so summer and winter time are right.
+ * Hourly has no hour to convert, since the two zones differ by whole hours. */
+export function copenhagenPickerToCron(picked: CronPickerFields, now: Date = new Date()): string {
+	const next = nextCopenhagenFire(picked, now)
+	if (!next) return `${picked.minute} * * * *`
+	const minute = next.getUTCMinutes()
+	const hour = next.getUTCHours()
+	switch (picked.frequency) {
+		case 'daily':
+			return `${minute} ${hour} * * *`
+		case 'weekly':
+			return `${minute} ${hour} * * ${next.getUTCDay()}`
+		case 'monthly':
+			return `${minute} ${hour} ${next.getUTCDate()} * *`
+		default:
+			return `${picked.minute} * * * *`
+	}
+}
+
+/** The Copenhagen hour, weekday and day of month a cron expression (UTC) shows in the trigger
+ * form picker. This is the same next firing `describeCronExpression` reads, so the form and
+ * the list agree. `null` for anything `parseCronExpression` rejects. */
+export function cronToCopenhagenPicker(expr: string, now: Date = new Date()): ParsedCron | null {
+	const parsed = parseCronExpression(expr)
+	if (!parsed) return null
+	if (parsed.frequency === 'hourly') return parsed
+	const next = nextCronFire(expr, now)
+	if (!next) return parsed
+	const at = copenhagenParts(next)
+	const [hour, minute] = at.time.split(':').map(Number)
+	const dayOfWeek = Object.keys(DAY_NAMES).find((k) => DAY_NAMES[k] === at.weekday)
+	return {
+		frequency: parsed.frequency,
+		hour: String(hour),
+		minute: String(minute),
+		dayOfWeek: parsed.frequency === 'weekly' && dayOfWeek ? dayOfWeek : parsed.dayOfWeek,
+		dayOfMonth: parsed.frequency === 'monthly' ? String(at.day) : parsed.dayOfMonth,
+	}
+}

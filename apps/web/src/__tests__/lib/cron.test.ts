@@ -1,4 +1,6 @@
 import {
+	copenhagenPickerToCron,
+	cronToCopenhagenPicker,
 	describeCopenhagenDateTime,
 	describeCronExpression,
 	nextCronFire,
@@ -212,5 +214,94 @@ describe('parseCronExpression', () => {
 		expect(parseCronExpression('0 25 * * 1')).toBeNull()
 		expect(parseCronExpression('60 9 * * *')).toBeNull()
 		expect(parseCronExpression('0 9 32 * *')).toBeNull()
+	})
+})
+
+describe('copenhagenPickerToCron', () => {
+	// Winter: CET, UTC+1. Summer: CEST, UTC+2.
+	const winter = new Date(Date.UTC(2026, 0, 5, 8, 0, 0))
+	const summer = new Date(Date.UTC(2026, 6, 6, 8, 0, 0))
+	const daily = {
+		frequency: 'daily',
+		minute: '0',
+		hour: '9',
+		dayOfWeek: '1',
+		dayOfMonth: '1',
+	} as const
+
+	it('converts a picked Copenhagen hour to UTC in winter time', () => {
+		expect(copenhagenPickerToCron(daily, winter)).toBe('0 8 * * *')
+	})
+
+	it('converts a picked Copenhagen hour to UTC in summer time', () => {
+		expect(copenhagenPickerToCron(daily, summer)).toBe('0 7 * * *')
+	})
+
+	it('moves the weekday back when the conversion crosses midnight', () => {
+		const monday = {
+			...daily,
+			frequency: 'weekly',
+			hour: '0',
+			minute: '30',
+			dayOfWeek: '1',
+		} as const
+		expect(copenhagenPickerToCron(monday, winter)).toBe('30 23 * * 0')
+		expect(copenhagenPickerToCron(monday, summer)).toBe('30 22 * * 0')
+	})
+
+	it('moves the day of month back when the conversion crosses midnight', () => {
+		const first = { ...daily, frequency: 'monthly', hour: '1', dayOfMonth: '1' } as const
+		expect(copenhagenPickerToCron(first, winter)).toBe('0 0 1 * *')
+		const early = { ...first, hour: '0' } as const
+		expect(copenhagenPickerToCron(early, winter)).toBe('0 23 31 * *')
+	})
+
+	it('leaves hourly alone', () => {
+		expect(copenhagenPickerToCron({ ...daily, frequency: 'hourly', minute: '15' }, winter)).toBe(
+			'15 * * * *',
+		)
+	})
+
+	it('saves what the list shows for the same trigger', () => {
+		for (const now of [winter, summer]) {
+			const expr = copenhagenPickerToCron(daily, now)
+			expect(describeCronExpression(expr, now)).toBe('every day at 09:00')
+		}
+	})
+})
+
+describe('cronToCopenhagenPicker', () => {
+	const winter = new Date(Date.UTC(2026, 0, 5, 8, 0, 0))
+	const summer = new Date(Date.UTC(2026, 6, 6, 8, 0, 0))
+
+	it('shows the Copenhagen hour of a saved schedule in winter and summer time', () => {
+		expect(cronToCopenhagenPicker('0 8 * * *', winter)?.hour).toBe('9')
+		expect(cronToCopenhagenPicker('0 8 * * *', summer)?.hour).toBe('10')
+	})
+
+	it('shows the Copenhagen weekday and day of month after the conversion', () => {
+		expect(cronToCopenhagenPicker('30 23 * * 0', winter)).toMatchObject({
+			frequency: 'weekly',
+			hour: '0',
+			minute: '30',
+			dayOfWeek: '1',
+		})
+		expect(cronToCopenhagenPicker('0 23 31 * *', winter)).toMatchObject({
+			frequency: 'monthly',
+			hour: '0',
+			dayOfMonth: '1',
+		})
+	})
+
+	it('round-trips with copenhagenPickerToCron', () => {
+		for (const now of [winter, summer]) {
+			const picked = cronToCopenhagenPicker('0 8 * * 3', now)
+			expect(picked).not.toBeNull()
+			if (picked) expect(copenhagenPickerToCron(picked, now)).toBe('0 8 * * 3')
+		}
+	})
+
+	it('returns null for syntax the app does not generate', () => {
+		expect(cronToCopenhagenPicker('*/15 * * * *')).toBeNull()
 	})
 })

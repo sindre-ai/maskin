@@ -31,7 +31,7 @@ import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
+import { copenhagenPickerToCron, cronToCopenhagenPicker, describeCronExpression } from '@/lib/cron'
 import { isTriggerChange } from '@/lib/triggers'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
@@ -193,7 +193,7 @@ const UTTERANCE_SUGGESTIONS = [
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({
 	value: String(i),
-	label: i === 0 ? '12:00 AM' : i < 12 ? `${i}:00 AM` : i === 12 ? '12:00 PM' : `${i - 12}:00 PM`,
+	label: `${String(i).padStart(2, '0')}:00`,
 }))
 
 const MINUTES = Array.from({ length: 60 }, (_, i) => ({
@@ -276,11 +276,7 @@ function buildTriggerSummary({
 	fromStatus,
 	toStatus,
 	agentName,
-	frequency,
-	hour,
-	minute,
-	dayOfWeek,
-	dayOfMonth,
+	cronExpression,
 	scheduledDate,
 	scheduledTime,
 	commentFilter,
@@ -294,11 +290,8 @@ function buildTriggerSummary({
 	fromStatus?: string
 	toStatus?: string
 	agentName?: string
-	frequency?: string
-	hour?: string
-	minute?: string
-	dayOfWeek?: string
-	dayOfMonth?: string
+	/** The UTC cron expression the form would save. */
+	cronExpression?: string
 	scheduledDate?: string
 	scheduledTime?: string
 	commentFilter?: CommentFilterState
@@ -335,22 +328,7 @@ function buildTriggerSummary({
 	}
 
 	if (type === 'cron') {
-		const validFrequency =
-			frequency === 'hourly' ||
-			frequency === 'daily' ||
-			frequency === 'weekly' ||
-			frequency === 'monthly'
-				? frequency
-				: null
-		const schedule = validFrequency
-			? describeCronSchedule({
-					frequency: validFrequency,
-					minute: minute ?? '0',
-					hour: hour ?? '9',
-					dayOfWeek: dayOfWeek ?? '1',
-					dayOfMonth: dayOfMonth ?? '1',
-				})
-			: 'on a schedule'
+		const schedule = cronExpression ? describeCronExpression(cronExpression) : 'on a schedule'
 		return `Runs ${schedule} — ${agent} will be prompted to act.`
 	}
 
@@ -423,9 +401,10 @@ export function TriggerForm({
 
 	// Parse initial config
 	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}
+	// The picker shows Copenhagen time; the saved expression is UTC.
 	const initCron =
 		initialValues?.type === 'cron' && initConfig.expression
-			? parseCronExpression(String(initConfig.expression))
+			? cronToCopenhagenPicker(String(initConfig.expression))
 			: null
 
 	const [name, setName] = useState(initialValues?.name ?? '')
@@ -440,18 +419,10 @@ export function TriggerForm({
 	const [dayOfWeek, setDayOfWeek] = useState(initCron?.dayOfWeek ?? '1')
 	const [dayOfMonth, setDayOfMonth] = useState(initCron?.dayOfMonth ?? '1')
 
-	const buildCronExpression = useCallback(() => {
-		switch (frequency) {
-			case 'hourly':
-				return `${minute} * * * *`
-			case 'daily':
-				return `${minute} ${hour} * * *`
-			case 'weekly':
-				return `${minute} ${hour} * * ${dayOfWeek}`
-			case 'monthly':
-				return `${minute} ${hour} ${dayOfMonth} * *`
-		}
-	}, [frequency, minute, hour, dayOfWeek, dayOfMonth])
+	const buildCronExpression = useCallback(
+		() => copenhagenPickerToCron({ frequency, minute, hour, dayOfWeek, dayOfMonth }),
+		[frequency, minute, hour, dayOfWeek, dayOfMonth],
+	)
 
 	const initScheduledAt =
 		initialValues?.type === 'reminder' && initConfig.scheduled_at
@@ -903,11 +874,7 @@ export function TriggerForm({
 		fromStatus,
 		toStatus,
 		agentName,
-		frequency,
-		hour,
-		minute,
-		dayOfWeek,
-		dayOfMonth,
+		cronExpression: buildCronExpression(),
 		scheduledDate,
 		scheduledTime,
 		commentFilter: action === 'commented' ? commentFilterState : undefined,
@@ -1785,6 +1752,7 @@ function CronScheduleBuilder({
 								))}
 							</SelectContent>
 						</Select>
+						<span>Copenhagen time</span>
 					</>
 				)}
 
