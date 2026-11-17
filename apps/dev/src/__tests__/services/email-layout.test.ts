@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { clipAtWord, escapeHtml, renderEmail } from '../../services/email-layout'
+import {
+	bigNumber,
+	button,
+	clipAtWord,
+	escapeHtml,
+	nextStepLine,
+	renderEmail,
+	softBox,
+	tickList,
+	waitingRow,
+} from '../../services/email-layout'
 
 describe('clipAtWord', () => {
 	it('leaves text that fits alone and collapses its whitespace', () => {
@@ -46,11 +56,40 @@ describe('renderEmail', () => {
 		expect(html).toContain('>Stop these emails</a>')
 	})
 
-	it('uses the Maskin brand colours and font, not the old app palette', () => {
-		expect(html).toContain('#F0EDE7')
-		expect(html).toContain('#2563EB')
+	it("uses the web app's colours and font, not the maskin.io marketing palette", () => {
+		for (const light of ['#f6f7f9', '#ffffff', '#e5e8ec', '#10131a', '#5a6372', '#2545c8']) {
+			expect(html).toContain(light)
+		}
 		expect(html).toContain("'Schibsted Grotesk'")
-		expect(html).not.toMatch(/2545c8|eef0f4/i)
+		expect(html).toContain('letter-spacing: -0.035em')
+		expect(html).toContain('border-radius: 14px')
+		expect(html).not.toMatch(
+			/F0EDE7|FAFAF8|E2DDD7|141412|1C1B18|ECEAE4|A09A93|2A2925|2563EB|3B74F2/i,
+		)
+	})
+
+	it('has a plain card with no blue top edge', () => {
+		expect(html).not.toMatch(/height="3"/)
+		expect(html).not.toMatch(/border-(top|left): 3px/)
+	})
+
+	it('draws the soft boxes, waiting number, ticks and button in the web app tokens', () => {
+		const blocks = [
+			bigNumber(2, 'things need you'),
+			waitingRow('Starting with: x'),
+			tickList(['one', 'two']),
+			nextStepLine('Open it'),
+			softBox('tip'),
+			button('https://maskin.test/', 'Open it'),
+		].join('')
+		expect(blocks).toContain('color: #8f5508')
+		expect(blocks).toContain(
+			'background-color: #f6f7f9; border: 1px solid #e5e8ec; border-radius: 12px',
+		)
+		expect(blocks).toContain('background-color: #dff1e8; color: #166a49')
+		expect(blocks.match(/border-top: 1px solid #eef0f4/g)).toHaveLength(1)
+		expect(blocks).toContain('bgcolor="#2545c8"')
+		expect(blocks).toContain('border-radius: 10px')
 	})
 
 	it('has no scripts and only the web font stylesheet as an external link', () => {
@@ -62,7 +101,21 @@ describe('renderEmail', () => {
 
 	it('carries dark-mode and phone-width rules', () => {
 		expect(html).toContain('prefers-color-scheme: dark')
-		expect(html).toContain('#141412')
+		for (const dark of [
+			'#0d0f13',
+			'#12151a',
+			'#23272e',
+			'#e8eaee',
+			'#8a93a0',
+			'#1a1d23',
+			'#6a8cff',
+			'#060b1f',
+			'#e8b03e',
+			'#4fd39a',
+			'#022c22',
+		]) {
+			expect(html).toContain(dark)
+		}
 		expect(html).toContain('max-width: 620px')
 		expect(html).toContain('<meta name="color-scheme" content="light dark">')
 	})

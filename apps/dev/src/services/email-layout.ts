@@ -3,11 +3,11 @@
  * notification), as pure functions that return HTML strings.
  *
  * Table-based, inline styles on every element, no scripts. The look is the Maskin brand email
- * (Design Studio's maskin-system-email template): logo and wordmark on top, a linen page, a card
- * with a blue top edge, one blue button and a quiet footer. One small <style> block carries only
- * what inline styles cannot: the dark-mode colours and the phone-width padding; a client that
- * drops it still shows the full light layout. Colours are the maskin.io brand tokens in light and
- * dark. The warning amber and success green are kept from the web app for their meaning.
+ * (Design Studio's maskin-system-email template): logo and wordmark on top, a grey page, a white
+ * card with a hairline border, one cobalt button and a quiet footer. One small <style> block
+ * carries only what inline styles cannot: the dark-mode colours and the phone-width padding; a
+ * client that drops it still shows the full light layout. Colours are the web app's own tokens
+ * (apps/web/src/app.css), light in the inline styles and dark in the <style> block.
  */
 
 export function escapeHtml(value: string): string {
@@ -36,16 +36,18 @@ export function clipAtWord(text: string, max: number): string {
 const FONT =
 	"'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
 
-// Brand tokens from maskin.io (light values here, dark values in the <style> block).
+// The web app's tokens (apps/web/src/app.css), light values here, dark values in the <style> block.
 const C = {
-	page: '#F0EDE7',
-	card: '#FAFAF8',
-	text: '#111110',
-	muted: '#5A5751',
-	border: '#E2DDD7',
-	brand: '#2563EB',
-	warning: '#8F5508',
-	success: '#1B7F5A',
+	page: '#f6f7f9',
+	card: '#ffffff',
+	text: '#10131a',
+	muted: '#5a6372',
+	border: '#e5e8ec',
+	hairline: '#eef0f4',
+	brand: '#2545c8',
+	warning: '#8f5508',
+	success: '#166a49',
+	successFill: '#dff1e8',
 }
 
 const LOGO_URL = 'https://maskin.io/apple-touch-icon.png'
@@ -53,81 +55,85 @@ const HOME_URL = 'https://maskin.io'
 const FONT_URL =
 	'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;700&display=swap'
 
-// Dark values: page #141412, card #1C1B18, ink #ECEAE4, muted #A09A93, rule #2A2925, accent #3B74F2.
-// Inset blocks (waiting, next step, soft box) use the page colour, so they sit below the card.
+// Dark values: page #0d0f13, card #12151a, border #23272e, ink #e8eaee, muted #8a93a0,
+// hairline #1a1d23, brand #6a8cff (button text #060b1f). Soft boxes use the page colour.
 const DARK_CSS = `
 :root { color-scheme: light dark; supported-color-schemes: light dark; }
 @media (prefers-color-scheme: dark) {
-.m-page { background-color: #141412 !important; }
-.m-card { background-color: #1C1B18 !important; border-color: #2A2925 !important; }
-.m-text { color: #ECEAE4 !important; }
-.m-muted { color: #A09A93 !important; }
-.m-brand { color: #6B9BFF !important; }
-.m-inset { background-color: #141412 !important; }
-.m-next { border-left-color: #3B74F2 !important; }
-.m-wait { border-left-color: #E8B03E !important; }
-.m-tick { color: #4FD39A !important; }
-.m-btn { background-color: #3B74F2 !important; }
-.m-link { color: #A09A93 !important; }
-.m-logo { border: 1px solid #2A2925 !important; }
+.m-page { background-color: #0d0f13 !important; }
+.m-card { background-color: #12151a !important; border-color: #23272e !important; }
+.m-text { color: #e8eaee !important; }
+.m-muted { color: #8a93a0 !important; }
+.m-brand { color: #6a8cff !important; }
+.m-box { background-color: #0d0f13 !important; border-color: #23272e !important; }
+.m-rule { border-color: #1a1d23 !important; }
+.m-wait { color: #e8b03e !important; }
+.m-tick { background-color: #022c22 !important; color: #4fd39a !important; }
+.m-btn { background-color: #6a8cff !important; }
+.m-btn-text { color: #060b1f !important; }
+.m-link { color: #8a93a0 !important; }
+.m-logo { border: 1px solid #23272e !important; }
 }
 @media only screen and (max-width: 620px) {
-.m-pad { padding-left: 24px !important; padding-right: 24px !important; }
-.m-big { font-size: 48px !important; }
+.m-pad { padding-left: 22px !important; padding-right: 22px !important; }
+.m-h1 { font-size: 24px !important; line-height: 30px !important; }
+.m-big { font-size: 26px !important; }
 }
 `
 
-/** A small coloured tick used to start each finished-run line. */
+/** A small tick used to start each finished-run line. */
 const TICK = '&#10003;'
 
+/** The soft box shared by waiting, next step and the secondary text: page-colour fill, hairline border. */
+const BOX = `background-color: ${C.page}; border: 1px solid ${C.border}; border-radius: 12px;`
+
 export function headline(text: string): string {
-	return `<h1 class="m-text" style="margin: 0; padding: 0 0 20px; font-family: ${FONT}; font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.015em; color: ${C.text};">${escapeHtml(text)}</h1>`
+	return `<h1 class="m-h1 m-text" style="margin: 0; padding: 0 0 18px; font-family: ${FONT}; font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.035em; color: ${C.text};">${escapeHtml(text)}</h1>`
 }
 
-/** The headline moment: how many things wait, big, with its label beside it. */
+/** The headline moment: how many things wait, big in the waiting colour, with its label beside it. */
 export function bigNumber(count: number, label: string): string {
-	return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 20px;"><tr><td valign="middle" class="m-brand m-big" style="padding-right: 12px; font-family: ${FONT}; font-size: 56px; line-height: 56px; font-weight: 700; color: ${C.brand};">${count}</td><td valign="middle" class="m-text" style="font-family: ${FONT}; font-size: 22px; line-height: 28px; font-weight: 700; color: ${C.text};">${escapeHtml(label)}</td></tr></table>`
+	return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 18px;"><tr><td valign="middle" class="m-wait m-big" style="padding-right: 12px; font-family: ${FONT}; font-size: 32px; line-height: 36px; font-weight: 700; letter-spacing: -0.04em; color: ${C.warning};">${count}</td><td valign="middle" class="m-text m-h1" style="font-family: ${FONT}; font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: -0.035em; color: ${C.text};">${escapeHtml(label)}</td></tr></table>`
 }
 
 export function sectionHeading(text: string): string {
-	return `<p class="m-muted" style="margin: 24px 0 8px; font-family: ${FONT}; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: ${C.muted};">${escapeHtml(text)}</p>`
+	return `<p class="m-text" style="margin: 26px 0 4px; font-family: ${FONT}; font-size: 15px; line-height: 20px; font-weight: 700; letter-spacing: -0.01em; color: ${C.text};">${escapeHtml(text)}</p>`
 }
 
-/** One waiting item as its own row with a coloured edge. */
+/** One waiting item as its own soft box. */
 export function waitingRow(text: string): string {
-	return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px;"><tr><td class="m-wait m-inset m-text" style="padding: 12px 14px; background-color: ${C.page}; border-left: 3px solid ${C.warning}; border-radius: 4px; font-family: ${FONT}; font-size: 15px; line-height: 22px; color: ${C.text};">${escapeHtml(text)}</td></tr></table>`
+	return `<table role="presentation" class="m-box" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px; ${BOX}"><tr><td class="m-text" style="padding: 12px 14px; font-family: ${FONT}; font-size: 15px; line-height: 22px; color: ${C.text};">${escapeHtml(text)}</td></tr></table>`
 }
 
-/** Finished agent runs, one line each, with a small tick. */
+/** Finished agent runs, one row each with a round tick, rows split by a hairline. */
 export function tickList(lines: string[]): string {
-	const rows = lines
+	return lines
 		.map(
-			(l) =>
-				`<tr><td class="m-tick" valign="top" width="22" style="padding: 3px 0; font-family: ${FONT}; font-size: 14px; line-height: 22px; font-weight: 700; color: ${C.success};">${TICK}</td><td class="m-text" style="padding: 3px 0; font-family: ${FONT}; font-size: 15px; line-height: 22px; color: ${C.text};">${escapeHtml(l)}</td></tr>`,
+			(l, i) =>
+				`<table role="presentation" class="m-rule" width="100%" cellpadding="0" cellspacing="0" border="0" style="${i > 0 ? `border-top: 1px solid ${C.hairline};` : ''}"><tr><td width="34" valign="top" style="padding: 13px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td class="m-tick" align="center" width="22" height="22" style="width: 22px; height: 22px; border-radius: 11px; background-color: ${C.successFill}; color: ${C.success}; font-family: Arial, sans-serif; font-size: 12px; line-height: 22px; font-weight: 700;">${TICK}</td></tr></table></td><td class="m-text" style="padding: 12px 0; font-family: ${FONT}; font-size: 15px; line-height: 22px; color: ${C.text};">${escapeHtml(l)}</td></tr></table>`,
 		)
 		.join('')
-	return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px;">${rows}</table>`
 }
 
-/** The next step as one highlighted line. */
+/** The next step as one soft box. */
 export function nextStepLine(text: string): string {
-	return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px;"><tr><td class="m-next m-inset m-text" style="padding: 12px 14px; background-color: ${C.page}; border-left: 3px solid ${C.brand}; border-radius: 4px; font-family: ${FONT}; font-size: 15px; line-height: 22px; font-weight: 600; color: ${C.text};">${escapeHtml(text)}</td></tr></table>`
+	return `<table role="presentation" class="m-box" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px; ${BOX}"><tr><td class="m-text" style="padding: 12px 14px; font-family: ${FONT}; font-size: 15px; line-height: 22px; font-weight: 600; color: ${C.text};">${escapeHtml(text)}</td></tr></table>`
 }
 
 /** Secondary text (the onboarding lesson, the Marketplace pick) in a soft box; one line per entry. */
 export function softBox(text: string | string[]): string {
 	const lines = (Array.isArray(text) ? text : [text]).map(escapeHtml).join('<br>')
-	return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 20px 0 0;"><tr><td class="m-inset m-muted" style="padding: 12px 14px; background-color: ${C.page}; border-radius: 6px; font-family: ${FONT}; font-size: 14px; line-height: 22px; color: ${C.muted};">${lines}</td></tr></table>`
+	return `<table role="presentation" class="m-box" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 20px 0 0; ${BOX}"><tr><td class="m-muted" style="padding: 12px 14px; font-family: ${FONT}; font-size: 14px; line-height: 22px; color: ${C.muted};">${lines}</td></tr></table>`
 }
 
 /** Plain paragraph for the notification's own text. */
 export function paragraph(text: string): string {
-	return `<p class="m-text" style="margin: 0; padding: 0 0 16px; font-family: ${FONT}; font-size: 16px; line-height: 26px; color: ${C.text};">${escapeHtml(text)}</p>`
+	return `<p class="m-text" style="margin: 0; padding: 0 0 16px; font-family: ${FONT}; font-size: 16px; line-height: 25px; color: ${C.text};">${escapeHtml(text)}</p>`
 }
 
 /** The one brand-coloured button. */
 export function button(url: string, label: string): string {
-	return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 8px 0;"><tr><td class="m-btn" bgcolor="${C.brand}" style="background-color: ${C.brand}; border-radius: 8px;"><a href="${escapeHtml(url)}" style="display: inline-block; padding: 13px 22px; font-family: ${FONT}; font-size: 16px; line-height: 20px; font-weight: 600; color: #FFFFFF; text-decoration: none;">${escapeHtml(label)}</a></td></tr></table>`
+	return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 16px 0 4px;"><tr><td class="m-btn" bgcolor="${C.brand}" style="background-color: ${C.brand}; border-radius: 10px;"><a class="m-btn-text" href="${escapeHtml(url)}" style="display: inline-block; padding: 12px 22px; font-family: ${FONT}; font-size: 15px; line-height: 20px; font-weight: 600; color: #ffffff; text-decoration: none;">${escapeHtml(label)}</a></td></tr></table>`
 }
 
 /** A quiet inline link. */
@@ -150,15 +156,15 @@ export interface EmailLayoutInput {
 }
 
 /**
- * Wraps the blocks in the shared page: linen background, the Maskin logo and wordmark, a card
- * about 600 px wide with a blue top edge, and a quiet footer with the stop link (none when
+ * Wraps the blocks in the shared page: grey background, the Maskin logo and wordmark, a white card
+ * about 600 px wide with a hairline border, and a quiet footer with the stop link (none when
  * stopUrl is left out).
  */
 export function renderEmail({ preheader, blocks, stopUrl }: EmailLayoutInput): string {
 	// Padding after the preheader keeps the client from pulling body text into the inbox preview.
 	const hidden = `<div style="display: none; max-height: 0; overflow: hidden; mso-hide: all; font-size: 1px; line-height: 1px; color: ${C.page};">${escapeHtml(preheader)}${'&nbsp;&zwnj;'.repeat(40)}</div>`
-	const header = `<tr><td class="m-pad" style="padding: 0 8px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="padding-right: 10px;"><a href="${HOME_URL}" style="text-decoration: none;"><img class="m-logo" src="${LOGO_URL}" width="32" height="32" alt="Maskin" border="0" style="display: block; width: 32px; height: 32px; border: 0; border-radius: 7px;"></a></td><td valign="middle" style="font-family: ${FONT}; font-size: 20px; line-height: 24px; font-weight: 700; letter-spacing: -0.01em;"><a class="m-text" href="${HOME_URL}" style="color: ${C.text}; text-decoration: none;">Maskin</a></td></tr></table></td></tr>`
-	const footer = `<tr><td class="m-pad m-muted" style="padding: 24px 8px 0; font-family: ${FONT}; font-size: 13px; line-height: 20px; color: ${C.muted};">${stopUrl ? `${quietLink(stopUrl, 'Stop these emails')}<br>` : ''}<a class="m-link" href="${HOME_URL}" style="color: ${C.muted}; text-decoration: underline;">maskin.io</a></td></tr>`
+	const header = `<tr><td class="m-pad" style="padding: 0 6px 18px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="padding-right: 10px;"><a href="${HOME_URL}" style="text-decoration: none;"><img class="m-logo" src="${LOGO_URL}" width="30" height="30" alt="Maskin" border="0" style="display: block; width: 30px; height: 30px; border: 0; border-radius: 7px;"></a></td><td valign="middle" style="font-family: ${FONT}; font-size: 19px; line-height: 24px; font-weight: 700; letter-spacing: -0.02em;"><a class="m-text" href="${HOME_URL}" style="color: ${C.text}; text-decoration: none;">Maskin</a></td></tr></table></td></tr>`
+	const footer = `<tr><td class="m-pad m-muted" style="padding: 22px 6px 0; font-family: ${FONT}; font-size: 13px; line-height: 20px; color: ${C.muted};">${stopUrl ? `${quietLink(stopUrl, 'Stop these emails')}<br>` : ''}<a class="m-link" href="${HOME_URL}" style="color: ${C.muted}; text-decoration: underline;">maskin.io</a></td></tr>`
 	return [
 		'<!doctype html>',
 		'<html lang="en">',
@@ -175,10 +181,9 @@ export function renderEmail({ preheader, blocks, stopUrl }: EmailLayoutInput): s
 		`<table role="presentation" class="m-page" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.page}" style="background-color: ${C.page};"><tr><td align="center" style="padding: 32px 12px;">`,
 		'<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 600px;">',
 		header,
-		`<tr><td class="m-card" bgcolor="${C.card}" style="background-color: ${C.card}; border: 1px solid ${C.border}; border-radius: 12px;">`,
+		`<tr><td class="m-card" bgcolor="${C.card}" style="background-color: ${C.card}; border: 1px solid ${C.border}; border-radius: 14px;">`,
 		'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">',
-		`<tr><td class="m-btn" height="3" bgcolor="${C.brand}" style="height: 3px; line-height: 3px; font-size: 3px; background-color: ${C.brand}; border-top-left-radius: 12px; border-top-right-radius: 12px;">&nbsp;</td></tr>`,
-		`<tr><td class="m-pad" style="padding: 36px 40px 32px;">${blocks.join('')}</td></tr>`,
+		`<tr><td class="m-pad" style="padding: 34px 36px 38px;">${blocks.join('')}</td></tr>`,
 		'</table>',
 		'</td></tr>',
 		footer,
