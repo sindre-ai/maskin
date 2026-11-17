@@ -1054,6 +1054,7 @@ function LoopDetailRoute() {
 					placeholder={
 						driver ? `Message ${driver.name}, who drives ${loop.name ?? 'this flow'}` : undefined
 					}
+					agent={driver?.type === 'agent' ? { id: driver.id, name: driver.name } : undefined}
 					onUtterance={handleUtterance}
 				>
 					{proposedEdit && (
