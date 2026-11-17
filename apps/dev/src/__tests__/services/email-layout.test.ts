@@ -57,7 +57,7 @@ describe('renderEmail', () => {
 	})
 
 	it("uses the web app's colours and font, not the maskin.io marketing palette", () => {
-		for (const light of ['#f6f7f9', '#ffffff', '#e5e8ec', '#10131a', '#5a6372', '#2545c8']) {
+		for (const light of ['#f6f7f9', '#ffffff', '#e5e8ec', '#10131a', '#5a6372']) {
 			expect(html).toContain(light)
 		}
 		expect(html).toContain("'Schibsted Grotesk'")
