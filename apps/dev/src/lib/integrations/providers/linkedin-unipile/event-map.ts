@@ -34,9 +34,6 @@ async function isPendingInvitee(
 	contact: { status: string; firstContactChannel: string | null },
 	providerIds: Array<string | null>,
 ): Promise<boolean> {
-	// Transitional: people not yet moved to initial_contact still carry the old status. Remove
-	// this line once no person is in connection_requested.
-	if (contact.status === 'connection_requested') return true
 	if (contact.status !== 'initial_contact') return false
 	if (contact.firstContactChannel === 'linkedin') return true
 	const targets = providerIds.filter((id): id is string => !!id)
