@@ -207,4 +207,30 @@ describe('AuxiliaryActionMenu', () => {
 		expect(screen.queryByText(/^status$/i)).not.toBeInTheDocument()
 		expect(screen.queryByText(/^driver$/i)).not.toBeInTheDocument()
 	})
+	it('shows Create view with agent only when a handler is given, and calls it', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const object = buildObjectResponse({ type: 'task', status: 'todo' })
+		const onCreateViewRequest = vi.fn()
+
+		const { unmount } = render(
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={vi.fn()}
+				onCreateViewRequest={onCreateViewRequest}
+				workspaceId="ws-1"
+			/>,
+			{ wrapper: makeWrapper() },
+		)
+		await user.click(screen.getByRole('button', { name: /more actions/i }))
+		await user.click(await screen.findByRole('menuitem', { name: /create view with agent/i }))
+		expect(onCreateViewRequest).toHaveBeenCalledTimes(1)
+		unmount()
+
+		render(<AuxiliaryActionMenu object={object} onDeleteRequest={vi.fn()} workspaceId="ws-1" />, {
+			wrapper: makeWrapper(),
+		})
+		await user.click(screen.getByRole('button', { name: /more actions/i }))
+		await screen.findByRole('menuitem', { name: /copy link/i })
+		expect(screen.queryByRole('menuitem', { name: /create view with agent/i })).toBeNull()
+	})
 })

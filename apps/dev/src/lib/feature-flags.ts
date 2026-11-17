@@ -219,6 +219,14 @@ export const FLAGS = {
 	 * approved. Retire once it is on for everyone.
 	 */
 	PLAN_LIMIT_EMAIL: 'plan-limit-email',
+	/**
+	 * Gates the Create view with agent item in the menus on the Items list, an item's page and
+	 * a flow page (task [Add Create view with agent menu item](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/93b3749a-d33d-4d67-9513-4a79c11fc83c)).
+	 * Frontend only, actor-scoped: read with useFeatureFlag in use-create-view-with-agent. Off
+	 * means the three menus look as they do today. The chat it opens, pinned files and flow
+	 * views are existing features and are not gated. Retire once the item is on for everyone.
+	 */
+	CREATE_VIEW_WITH_AGENT: 'create-view-with-agent',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
