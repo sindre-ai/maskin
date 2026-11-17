@@ -126,30 +126,30 @@ public struct MainShell: View {
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
 		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
-		.topBanner(isVisible: awaitingCard) {
-			OfflineBanner(
-				isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
-				actionTitle: TrialCardStep.actionTitle
-			) { openCardStep() }
-				.padding(.horizontal, MaskinSpace.s8)
-				.animation(MaskinMotion.standard, value: awaitingCard)
-		}
-		.topBanner(isVisible: !runtime.isOnline || previewOffline) {
-			OfflineBanner(
-				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
-				actionTitle: queuedCount > 0 ? "View" : "Retry"
-			) {
-				if queuedCount > 0 {
-					showQueue = true
-				} else {
-					Task {
-						runtime.syncCoordinator?.requestRefresh(reason: "retry")
-						await runtime.forYou.store.refresh()
+		.topBanner(isVisible: awaitingCard || !runtime.isOnline || previewOffline) {
+			VStack(spacing: 0) {
+				OfflineBanner(
+					isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
+					actionTitle: queuedCount > 0 ? "View" : "Retry"
+				) {
+					if queuedCount > 0 {
+						showQueue = true
+					} else {
+						Task {
+							runtime.syncCoordinator?.requestRefresh(reason: "retry")
+							await runtime.forYou.store.refresh()
+						}
 					}
 				}
-			}
 				.padding(.horizontal, MaskinSpace.s8)
 				.animation(MaskinMotion.standard, value: runtime.isOnline || previewOffline)
+				OfflineBanner(
+					isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
+					actionTitle: TrialCardStep.actionTitle
+				) { openCardStep() }
+					.padding(.horizontal, MaskinSpace.s8)
+					.animation(MaskinMotion.standard, value: awaitingCard)
+			}
 		}
 		// A decision is on screen: the moment to explain notifications (never at first launch).
 		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
