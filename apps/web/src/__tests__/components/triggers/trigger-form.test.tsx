@@ -537,6 +537,10 @@ describe('TriggerForm', () => {
 	})
 
 	describe('driver condition', () => {
+		// The field dropdown is a labelless Radix select, so find it by its shown value.
+		const driverField = () =>
+			screen.getAllByRole('combobox').find((el) => el.textContent === 'Driver')
+
 		it('offers Driver in Add condition and picks the driver by name', async () => {
 			const user = userEvent.setup()
 			render(
@@ -552,7 +556,7 @@ describe('TriggerForm', () => {
 			)
 
 			await user.click(screen.getByRole('button', { name: /add condition/i }))
-			expect(screen.getByRole('combobox', { name: 'Driver' })).toBeInTheDocument()
+			expect(driverField()).toBeInTheDocument()
 
 			await user.click(screen.getByRole('combobox', { name: 'Pick a person or agent' }))
 			await user.click(await screen.findByRole('option', { name: /Scout/ }))
@@ -584,7 +588,7 @@ describe('TriggerForm', () => {
 				{ wrapper: TestWrapper },
 			)
 
-			expect(screen.getByRole('combobox', { name: 'Driver' })).toBeInTheDocument()
+			expect(driverField()).toBeInTheDocument()
 			expect(screen.getByText('does not equal')).toBeInTheDocument()
 			expect(screen.getAllByText('Magnus').length).toBeGreaterThan(0)
 			expect(screen.queryByRole('textbox', { name: 'Condition field' })).not.toBeInTheDocument()
