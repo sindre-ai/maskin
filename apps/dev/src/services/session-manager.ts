@@ -209,6 +209,7 @@ import {
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
 import { resolveAgentSendModes } from '../lib/send-permissions'
+import { sessionLogRedactor } from '../lib/session-log-redactor'
 import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
@@ -3592,6 +3593,8 @@ ${cont.continues_prompt}
 		// Keychain credentials: bring-your-own keys this session's actor may read.
 		const keychainEnv = await this.buildKeychainEnv(session)
 		Object.assign(envVars, keychainEnv)
+		// Kept in memory so the log writers can mask these values; see session-log-redactor.ts.
+		sessionLogRedactor.register(session.id, keychainEnv)
 
 		// Custom tool servers. One that Maskin fronts (gated) is reached through the gateway, which
 		// fills any saved credential in itself and tells the agent plainly if it may not. One that
@@ -4379,9 +4382,10 @@ ${cont.continues_prompt}
 							? { sinceUnixSec: Math.floor(lastChunkAt / 1000) }
 							: { tail: 0 as const }
 					firstConnect = false
-					for await (const chunk of this.containers.logs(containerId, true, logOpts)) {
+					for await (const rawChunk of this.containers.logs(containerId, true, logOpts)) {
 						attempt = 0
 						lastChunkAt = Date.now()
+						const chunk = { ...rawChunk, data: sessionLogRedactor.redact(sessionId, rawChunk.data) }
 						if (
 							chunk.stream === 'stdout' &&
 							thinkingRowThrottle.shouldDrop(sessionId, chunk.data)
@@ -6697,6 +6701,7 @@ ${cont.continues_prompt}
 		// activeSessions entry to key off.
 		sessionGithubLogClassifier.unregisterSession(sessionId)
 		thinkingRowThrottle.forget(sessionId)
+		sessionLogRedactor.forget(sessionId)
 	}
 
 	/**
@@ -6712,7 +6717,8 @@ ${cont.continues_prompt}
 		sessionId: string,
 		lines: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }>,
 	): Promise<void> {
-		for (const line of lines) {
+		for (const rawLine of lines) {
+			const line = { ...rawLine, content: sessionLogRedactor.redact(sessionId, rawLine.content) }
 			if (line.stream === 'stdout' && thinkingRowThrottle.shouldDrop(sessionId, line.content)) {
 				continue
 			}
@@ -7333,6 +7339,7 @@ ${cont.continues_prompt}
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
 		thinkingRowThrottle.forget(sessionId)
+		sessionLogRedactor.forget(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after remote session completion', { error: String(err) }),
 		)
