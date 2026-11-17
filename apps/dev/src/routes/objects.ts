@@ -79,6 +79,7 @@ import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
 import {
 	AgentFieldWriteError,
+	BodyEditError,
 	applyObjectUpdate,
 	guardedFieldsChanged,
 	recordAgentWriteRefused,
@@ -2243,6 +2244,9 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 		if (err instanceof OutcomeCheckError) {
 			return c.json(createApiError('CONFLICT', err.message), 409)
+		}
+		if (err instanceof BodyEditError) {
+			return c.json(createApiError('BAD_REQUEST', err.message), 400)
 		}
 		throw err
 	}

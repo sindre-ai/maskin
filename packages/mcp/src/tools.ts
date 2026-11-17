@@ -475,7 +475,7 @@ export const tools = {
 	},
 	update_objects: {
 		description:
-			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. To attach or detach files on an object, pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry — attached files appear under the object in the UI and are returned by get_objects. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. When referring to objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. When you move a draft or task to done because something was sent, also update every page that lists it (a drafts page, a target list, a contact) in the same turn, so no copy still says "unsent" or "on hold". When a human tells you they sent something themselves (their own mail or LinkedIn), log it on the contact and the task.',
+			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. To edit part of a long body, send `append` (text added to the end) or `replace` ({find, with, all?}: one exact piece swapped) instead of `content`; a `replace` that is missing or ambiguous writes nothing and says why. To attach or detach files on an object, pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry — attached files appear under the object in the UI and are returned by get_objects. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. In human-facing output (comments, summaries, notifications, descriptions) use the object\'s title, not its UUID; add a short id suffix only when two titles collide (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. When you move a draft or task to done because something was sent, also update every page that lists it (a drafts page, a target list, a contact) in the same turn, so no copy still says "unsent" or "on hold". When a human tells you they sent something themselves (their own mail or LinkedIn), log it on the contact and the task.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			updates: z
@@ -484,6 +484,33 @@ export const tools = {
 						id: z.string().uuid(),
 						title: z.string().optional(),
 						content: z.string().optional(),
+						append: z
+							.string()
+							.min(1)
+							.optional()
+							.describe(
+								'Text added to the end of the stored body, exactly as sent (start it with a newline to begin a new line). Use it instead of content to add to a long page without sending the page back. Not together with content or replace.',
+							),
+						replace: z
+							.object({
+								find: z
+									.string()
+									.min(1)
+									.describe(
+										'The exact piece of the stored body to change, character for character.',
+									),
+								with: z
+									.string()
+									.describe('What to put in its place. An empty string removes the piece.'),
+								all: z
+									.boolean()
+									.optional()
+									.describe('Replace every match instead of refusing when there is more than one.'),
+							})
+							.optional()
+							.describe(
+								'Change one piece of the stored body without sending the rest. If find is not in the body, or is in it more than once and all is not true, nothing is written and the error says which. Not together with content or append.',
+							),
 						status: z.string().optional(),
 						metadata: z
 							.record(z.unknown())

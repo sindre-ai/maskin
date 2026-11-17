@@ -2216,7 +2216,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 }
 
 const UPDATE_ENTRY_FIELDS =
-	'title, content, status, metadata, driver, attach_file_ids, detach_file_ids'
+	'title, content, append, replace, status, metadata, driver, attach_file_ids, detach_file_ids'
 
 /**
  * True when an update_objects entry asks for at least one write: a field change,
