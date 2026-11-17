@@ -1055,6 +1055,8 @@ struct ChatThreadView: View {
 /// swaps the lazy stack for a plain one there.
 struct ThreadTranscript: View {
 	let store: ChatStore
+	/// Opens a working agent's session from the thread's working line.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	var lazy = true
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
@@ -1157,6 +1159,17 @@ struct ThreadTranscript: View {
 	private func activity(at date: Date) -> some View {
 		let live = store.presences(at: date).map { PresenceRow(agent: $0.agent, presence: $0.presence) }
 		let sessions = store.liveSessions(at: date)
+		// The new chat list (flag chat-list-v2): one line naming who is working, each name a link to its session.
+		if ChatListFlagCache.lastKnown, !sessions.isEmpty {
+			ThreadWorkingLine(
+				agents: sessions.map {
+					ThreadWorkingLine.Agent(name: store.participant(for: $0.actorID).name, sessionID: $0.id)
+				},
+				onOpenSession: { runtime?.presentation = .session($0) }
+			)
+			.padding(.top, Self.listGap)
+			.padding(.horizontal, MaskinSpace.s3)
+		}
 		ForEach(live) { row in
 			Group {
 				let session = sessions.first { $0.actorID == row.agent.id }

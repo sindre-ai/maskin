@@ -52,6 +52,8 @@ private struct ChatsContainer: View {
 	@State private var store: ConversationsStore
 	@State private var chatSearch: ChatListSearchModel
 	@State private var showDisplay = false
+	/// The new chat list (flag chat-list-v2). Starts at the last answer and is read again on appear.
+	@State private var chatListV2 = ChatListFlagCache.lastKnown
 	@State private var selection: String?
 	@State private var search = ""
 	@State private var searchPresented = false
@@ -78,12 +80,19 @@ private struct ChatsContainer: View {
 			initialValue: ChatListSearchModel(
 				source: APIChatSearch(
 					baseURL: environment.baseURL, clientSource: environment.clientSource,
-					credentials: environment.auth.credentialsProvider)))
-		_store = State(
-			initialValue: ConversationsStore(
-				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
-				events: environment.events, cache: environment.snapshotCache,
-				preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID)))
+					credentials: environment.auth.credentialsProvider,
+					operators: { ChatListFlagCache.lastKnown })))
+		let store = ConversationsStore(
+			api: APIChatsSource(
+				client: environment.client, workspaceID: workspaceID,
+				attention: APIChatAttention(
+					baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider)),
+			events: environment.events, cache: environment.snapshotCache,
+			preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID))
+		// The new list reads the attention fields from the first page when the flag was on last time.
+		store.readsAttention = ChatListFlagCache.lastKnown
+		_store = State(initialValue: store)
 	}
 
 	private var session: StoredSession? { environment.auth.session }
@@ -102,18 +111,19 @@ private struct ChatsContainer: View {
 				chatSearch: chatSearch,
 				pillPlacement: TeamPillPlacement.resolve(
 					compactWidth: horizontalSizeClass == .compact, regularHeight: verticalSizeClass == .regular),
-				pill: runtime?.teamPill
+				pill: runtime?.teamPill,
+				chatListV2: chatListV2
 			)
 			.shellToolbar(
 				environment: environment, title: "Chats",
 				actions: ShellActions(
 					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
-					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
+					displaySymbol: ShellActions.slidersSymbol, displayActive: chatListV2 ? store.listGroupBy != .date : !store.displayOptions.isDefault,
 					displayToggle: { showDisplay = true },
 					hidesAvatar: true, newAlwaysVisible: true, newIsPrimary: true,
 					search: { searchPresented = true }))
 			.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search chats")
-			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store) }
+			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store, chatListV2: chatListV2) }
 			// iPad spec: the Team column is 430 wide.
 			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		} detail: {
@@ -161,6 +171,15 @@ private struct ChatsContainer: View {
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
 		.task { await store.start() }
+		.task {
+			let on = await ChatListFlag.isOn(APIFeatureFlags(client: environment.client))
+			ChatListFlagCache.lastKnown = on
+			chatListV2 = on
+			guard store.readsAttention != on else { return }
+			store.readsAttention = on
+			await store.refresh()
+			await store.refreshLater()
+		}
 		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
 			runtime?.teamPill.isCovered = covered
 		}
