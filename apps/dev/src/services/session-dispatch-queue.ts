@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, lte, notInArray } from 'drizzle-orm'
+import { and, asc, eq, gt, lte, notInArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
@@ -86,6 +86,11 @@ export interface SessionDispatchQueueOptions {
 	 * anyway; the stable idempotency key dedupes a late double-fire.
 	 */
 	tickTimeoutMs?: number
+	/**
+	 * Run at the start of every tick, before rows are claimed: the release pass for sessions held at
+	 * the daily limit (held-session-release.ts). Best-effort: a throw is logged and the tick goes on.
+	 */
+	beforeClaim?: () => Promise<void>
 	/**
 	 * Append a `system`-stream line to a session's transcript (SessionManager's
 	 * insertSystemLog). Optional and best-effort — a log write must never stop
@@ -181,6 +186,7 @@ export class SessionDispatchQueue {
 	private readonly tickTimeoutMs: number
 	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 	private readonly onPermanentFailure?: SessionDispatchQueueOptions['onPermanentFailure']
+	private readonly beforeClaim?: () => Promise<void>
 	private readonly settleDeps: SettleDependencies
 
 	constructor(
@@ -198,6 +204,7 @@ export class SessionDispatchQueue {
 		this.tickTimeoutMs = opts.tickTimeoutMs ?? this.leaseMs
 		this.appendSystemLog = opts.appendSystemLog
 		this.onPermanentFailure = opts.onPermanentFailure
+		this.beforeClaim = opts.beforeClaim
 		// Dispatch-queue sessions never reached an agent-server, so there is no
 		// sandbox to stop and no `/agent` workspace to push. settleSession's
 		// classification guard also skips pushAgentFiles for `dispatch_failure`,
@@ -272,6 +279,28 @@ export class SessionDispatchQueue {
 	}
 
 	/**
+	 * Make a parked row due now (a session held at the daily limit, enqueued with a `runAt` far
+	 * ahead). Only a row nobody has claimed yet is touched: a row already leased or attempted is
+	 * on its way and must not be reset. Returns false when there was no such row.
+	 */
+	async makeDue(sessionId: string): Promise<boolean> {
+		const now = new Date()
+		const rows = await this.db
+			.update(sessionDispatchAttempts)
+			.set({ nextAttemptAt: now, updatedAt: now })
+			.where(
+				and(
+					eq(sessionDispatchAttempts.sessionId, sessionId),
+					eq(sessionDispatchAttempts.status, 'pending'),
+					eq(sessionDispatchAttempts.attempt, 0),
+					gt(sessionDispatchAttempts.nextAttemptAt, now),
+				),
+			)
+			.returning({ id: sessionDispatchAttempts.id })
+		return rows.length > 0
+	}
+
+	/**
 	 * Process up to `batchSize` ready rows. Each row is claimed inside a short
 	 * transaction (SELECT FOR UPDATE SKIP LOCKED + UPDATE next_attempt_at to
 	 * `now + leaseMs`), so the lock is released before the dispatch call. If
@@ -292,6 +321,9 @@ export class SessionDispatchQueue {
 			// its backoff passes, but a long tick must not reclaim it either.
 			const tried: string[] = []
 			let startCalls = 0
+			await this.beforeClaim?.().catch((err) =>
+				logger.warn('Session dispatch queue beforeClaim failed', { error: String(err) }),
+			)
 			while (startCalls < this.batchSize) {
 				current = null
 				const claimed = await this.claimOne(tried)
@@ -327,9 +359,11 @@ export class SessionDispatchQueue {
 	}
 
 	/**
-	 * Claim one ready row. Atomically selects the oldest-created `pending` row
-	 * whose `next_attempt_at` is in the past (that column says when a row is
-	 * ready, never where it stands in line) and that is not in `exclude`, pushes its `next_attempt_at` forward
+	 * Claim one ready row. Atomically selects the `pending` row whose
+	 * `next_attempt_at` is in the past (that column says when a row is ready,
+	 * never where it stands in line) and that is not in `exclude`: a chat reply
+	 * first, then oldest-created. A burst of background wake-ups therefore
+	 * never makes a person waiting on a reply queue behind it. Pushes its `next_attempt_at` forward
 	 * by the lease, spends one attempt on it, and returns it. Returns `null`
 	 * when no row is ready.
 	 *
@@ -355,7 +389,15 @@ export class SessionDispatchQueue {
 						exclude.length > 0 ? notInArray(sessionDispatchAttempts.sessionId, exclude) : undefined,
 					),
 				)
-				.orderBy(asc(sessionDispatchAttempts.createdAt))
+				.orderBy(
+					// 0 for a session that answers a chat message, 1 for everything else.
+					sql`CASE WHEN EXISTS (
+						SELECT 1 FROM ${sessions}
+						WHERE ${sessions.id} = ${sessionDispatchAttempts.sessionId}
+							AND ${sessions.conversationId} IS NOT NULL
+					) THEN 0 ELSE 1 END`,
+					asc(sessionDispatchAttempts.createdAt),
+				)
 				.limit(1)
 				.for('update', { skipLocked: true })
 

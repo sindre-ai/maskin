@@ -1,10 +1,11 @@
 /**
- * daily-budget-card-scheduler.ts — the morning budget card (daily token budget, slice 1a).
+ * daily-budget-card-scheduler.ts — the morning budget card (daily budget, slice 1a).
  *
  * Ticks about once a minute. For every workspace that has a daily target set, once the
  * workspace's LOCAL clock reaches the start of its day it writes ONE For You card per human
- * owner: yesterday's line, today's bar against the target and the month forecast
- * (`lib/daily-budget-card.ts` builds the words).
+ * owner: yesterday's line, today's bar against the target and the month forecast, all in percent
+ * of the plan (`lib/daily-budget-card.ts` builds the words). A workspace whose plan has no limit
+ * to take a percent of (unmetered) gets no card.
  *
  * It copies the briefing push's pattern (`briefing-push-scheduler.ts`): one claim per day, no
  * model call, so an exhausted quota cannot silence it. It is a separate notification because the
@@ -22,8 +23,8 @@ import type { Database } from '@maskin/db'
 import { actors, sessions, triggers, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { FOR_YOU_KIND } from '@maskin/shared'
 import { and, asc, eq, gt, gte, lt, sql } from 'drizzle-orm'
+import { resolveWorkspaceCapCents } from '../lib/daily-budget'
 import {
-	type BudgetUnit,
 	type DayTotals,
 	type TriggerWindowStats,
 	buildBudgetCard,
@@ -52,6 +53,13 @@ const NO_TRIGGER_NAME = 'Not started by a trigger'
 const DAY_MS = 24 * 60 * 60_000
 const BATCH = 200
 
+type WorkspaceRow = {
+	id: string
+	settings: unknown
+	enterpriseGranted: boolean | null
+	billingOwnerId: string | null
+}
+
 /** First instant of the local calendar day that `at` falls on, in `timezone`. */
 export function startOfLocalDay(at: Date, timezone: string): Date | null {
 	const clock = localClock(at, timezone)
@@ -74,6 +82,46 @@ export function startOfLocalDay(at: Date, timezone: string): Date | null {
 export function daysInMonthOf(localDate: string): number {
 	const [y, m] = localDate.split('-').map(Number)
 	return new Date(Date.UTC(y as number, m as number, 0)).getUTCDate()
+}
+
+/**
+ * Per trigger: runs started in [from, to), how many carry a cost, and what they cost as a
+ * percent of the plan (cost in USD cents over the plan limit `capCents`). The one place that
+ * turns session cost into "today against target"; the card and the gate on new work both read it.
+ */
+export async function readWindowStats(
+	db: Database,
+	workspaceId: string,
+	capCents: number,
+	from: Date,
+	to: Date,
+): Promise<TriggerWindowStats[]> {
+	const spend = sql`(COALESCE(${sessions.totalCostUsd}, 0)::float8 * 10000.0 / ${capCents})`
+	const rows = await db
+		.select({
+			triggerId: sessions.triggerId,
+			name: triggers.name,
+			runs: sql<number>`count(*)::int`,
+			knownRuns: sql<number>`(count(*) FILTER (WHERE ${spend} > 0))::int`,
+			spent: sql<number>`COALESCE(sum(${spend}) FILTER (WHERE ${spend} > 0), 0)::float8`,
+		})
+		.from(sessions)
+		.leftJoin(triggers, eq(triggers.id, sessions.triggerId))
+		.where(
+			and(
+				eq(sessions.workspaceId, workspaceId),
+				gte(sessions.createdAt, from),
+				lt(sessions.createdAt, to),
+			),
+		)
+		.groupBy(sessions.triggerId, triggers.name)
+	return rows.map((r) => ({
+		triggerId: r.triggerId,
+		name: r.name ?? NO_TRIGGER_NAME,
+		runs: r.runs,
+		knownRuns: r.knownRuns,
+		spent: r.spent,
+	}))
 }
 
 export class DailyBudgetCardScheduler {
@@ -110,8 +158,13 @@ export class DailyBudgetCardScheduler {
 		try {
 			let after: string | null = null
 			for (;;) {
-				const batch: Array<{ id: string; settings: unknown }> = await this.db
-					.select({ id: workspaces.id, settings: workspaces.settings })
+				const batch: Array<WorkspaceRow> = await this.db
+					.select({
+						id: workspaces.id,
+						settings: workspaces.settings,
+						enterpriseGranted: workspaces.enterpriseGranted,
+						billingOwnerId: workspaces.billingOwnerId,
+					})
 					.from(workspaces)
 					.where(
 						and(
@@ -123,7 +176,7 @@ export class DailyBudgetCardScheduler {
 					.limit(BATCH)
 				for (const ws of batch) {
 					try {
-						if (await this.processWorkspace(ws.id, ws.settings, now)) sent++
+						if (await this.processWorkspace(ws, now)) sent++
 					} catch (err) {
 						logger.warn('Daily budget card failed', { workspaceId: ws.id, error: String(err) })
 					}
@@ -137,12 +190,11 @@ export class DailyBudgetCardScheduler {
 		return sent
 	}
 
-	private async processWorkspace(
-		workspaceId: string,
-		settings: unknown,
-		now: Date,
-	): Promise<boolean> {
-		const cfg = readBudgetSettings(settings)
+	private async processWorkspace(ws: WorkspaceRow, now: Date): Promise<boolean> {
+		const workspaceId = ws.id
+		const capCents = resolveWorkspaceCapCents(ws)
+		if (capCents === null) return false // unmetered plan: no limit to take a percent of
+		const cfg = readBudgetSettings(ws.settings, capCents)
 		if (!cfg) return false
 		const clock = localTimeReached(now, cfg.timezone, 0, CATCH_UP_WINDOW_MINUTES)
 		if (!clock) return false // not the start of the day yet, window over, or a bad timezone
@@ -153,13 +205,12 @@ export class DailyBudgetCardScheduler {
 			todayStart && startOfLocalDay(new Date(todayStart.getTime() - 60_000), cfg.timezone)
 		if (!todayStart || !yesterdayStart) return false
 
-		const { unit } = cfg.target
 		const [yesterday, today, forecastStats] = await Promise.all([
-			this.windowStats(workspaceId, unit, yesterdayStart, todayStart),
-			this.windowStats(workspaceId, unit, todayStart, now),
+			this.windowStats(workspaceId, capCents, yesterdayStart, todayStart),
+			this.windowStats(workspaceId, capCents, todayStart, now),
 			this.windowStats(
 				workspaceId,
-				unit,
+				capCents,
 				new Date(todayStart.getTime() - FORECAST_LOOKBACK_DAYS * DAY_MS),
 				todayStart,
 			),
@@ -175,6 +226,7 @@ export class DailyBudgetCardScheduler {
 				daysInMonthOf(clock.date),
 			),
 			approximate: FORECAST_APPROXIMATE,
+			note: cfg.note ?? undefined,
 		})
 
 		const sent = await this.claimAndSend(workspaceId, clock.date, card)
@@ -182,42 +234,13 @@ export class DailyBudgetCardScheduler {
 		return sent
 	}
 
-	/** Per trigger: runs started in [from, to), how many carry a cost, and what they cost. */
-	private async windowStats(
+	private windowStats(
 		workspaceId: string,
-		unit: BudgetUnit,
+		capCents: number,
 		from: Date,
 		to: Date,
 	): Promise<TriggerWindowStats[]> {
-		const spend =
-			unit === 'dollars'
-				? sql`COALESCE(${sessions.totalCostUsd}, 0)::float8`
-				: sql`(COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0) + COALESCE(${sessions.cacheCreationInputTokens}, 0))::float8`
-		const rows = await this.db
-			.select({
-				triggerId: sessions.triggerId,
-				name: triggers.name,
-				runs: sql<number>`count(*)::int`,
-				knownRuns: sql<number>`(count(*) FILTER (WHERE ${spend} > 0))::int`,
-				spent: sql<number>`COALESCE(sum(${spend}) FILTER (WHERE ${spend} > 0), 0)::float8`,
-			})
-			.from(sessions)
-			.leftJoin(triggers, eq(triggers.id, sessions.triggerId))
-			.where(
-				and(
-					eq(sessions.workspaceId, workspaceId),
-					gte(sessions.createdAt, from),
-					lt(sessions.createdAt, to),
-				),
-			)
-			.groupBy(sessions.triggerId, triggers.name)
-		return rows.map((r) => ({
-			triggerId: r.triggerId,
-			name: r.name ?? NO_TRIGGER_NAME,
-			runs: r.runs,
-			knownRuns: r.knownRuns,
-			spent: r.spent,
-		}))
+		return readWindowStats(this.db, workspaceId, capCents, from, to)
 	}
 
 	/**
@@ -301,7 +324,7 @@ export class DailyBudgetCardScheduler {
 	}
 }
 
-function totalsOf(stats: TriggerWindowStats[]): DayTotals {
+export function totalsOf(stats: TriggerWindowStats[]): DayTotals {
 	return stats.reduce(
 		(t, s) => ({
 			runs: t.runs + s.runs,

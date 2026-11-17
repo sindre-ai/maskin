@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { PageHeader } from '@/components/layout/page-header'
 import {
 	type FailedAgent,
@@ -9,7 +10,6 @@ import { isLiveLoopPill } from '@/components/loops/loop-pill'
 import { LoopRow } from '@/components/loops/loop-row'
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
-import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -26,6 +26,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { usePlanUsage } from '@/hooks/use-plan-usage'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useUpdateTrigger } from '@/hooks/use-triggers'
@@ -36,7 +37,7 @@ import {
 import { getActiveAgentSessions } from '@/lib/agent-status'
 import type { DisplaySettingsBody, LoopSummary } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronRight, LayoutList, RefreshCw, Rows3 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -115,7 +116,6 @@ function LoopsRoute() {
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
 	// Collapsed by default: the automations are background plumbing, not what the page is for.
 	const [automationsOpen, setAutomationsOpen] = useState(false)
 	const [tab, setTab] = useState<LoopTab>('all')
@@ -134,8 +134,14 @@ function LoopsRoute() {
 	}, [])
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
-	const showNoCreditsPill =
-		typeof billingUsage?.credit_balance_cents === 'number'
+	// Top-up is closed: the pill says Upgrade and opens Billing to pick a plan. With
+	// the percent display on it follows the 100% rule.
+	const planPercentOn = usePlanPercentEnabled()
+	const { state: planUsage } = usePlanUsage(workspaceId)
+	const navigate = useNavigate()
+	const showNoCreditsPill = planPercentOn
+		? planUsage?.paused === true
+		: typeof billingUsage?.credit_balance_cents === 'number'
 			? billingUsage.credit_balance_cents <= 0
 			: false
 
@@ -370,7 +376,12 @@ function LoopsRoute() {
 													loop.agentIds.filter((id) => workingAgentIds.has(id)).length
 												}
 												showNoCreditsPill={showNoCreditsPill}
-												onNoCreditsClick={() => setBuyCreditsOpen(true)}
+												onNoCreditsClick={() =>
+													navigate({
+														to: '/$workspaceId/settings/billing',
+														params: { workspaceId },
+													})
+												}
 											/>
 										))
 									)}
@@ -459,13 +470,6 @@ function LoopsRoute() {
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
-			{billingUsage?.credit_topup_available && (
-				<BuyCreditsDialog
-					open={buyCreditsOpen}
-					onOpenChange={setBuyCreditsOpen}
-					workspaceId={workspaceId}
-				/>
-			)}
 		</div>
 	)
 }

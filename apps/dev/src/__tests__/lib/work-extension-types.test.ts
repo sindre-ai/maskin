@@ -40,6 +40,6 @@ describe('work extension — loop registration (T2 of bet/loops-first-class, new
 	})
 
 	it('exposes loop in defaultSettings.display_names', () => {
-		expect(workExtension.defaultSettings?.display_names?.loop).toBe('Loop')
+		expect(workExtension.defaultSettings?.display_names?.loop).toBe('Flow')
 	})
 })

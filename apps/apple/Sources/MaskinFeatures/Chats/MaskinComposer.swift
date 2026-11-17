@@ -82,16 +82,19 @@ struct MaskinComposer: View {
 	/// An agent is typing, streaming or working: Stop takes the last slot while the field is empty.
 	var busy = false
 	var onStop: (() -> Void)?
+	/// A control that sits inside the bar, above the field (the item page's Comment / Message chip).
+	var topAccessory: AnyView?
 	let onSend: () -> Void
 
 	init(
 		model: ChatComposerModel, config: MaskinComposerConfig, busy: Bool = false,
-		onStop: (() -> Void)? = nil, onSend: @escaping () -> Void
+		onStop: (() -> Void)? = nil, topAccessory: AnyView? = nil, onSend: @escaping () -> Void
 	) {
 		self.model = model
 		self.config = config
 		self.busy = busy
 		self.onStop = onStop
+		self.topAccessory = topAccessory
 		self.onSend = onSend
 		_showsFormatting = State(initialValue: ComposerFormatting.isShown(actorID: model.selfActorID))
 	}
@@ -145,8 +148,8 @@ struct MaskinComposer: View {
 
 	var lastSlot: ComposerLastSlot {
 		ComposerLastSlot.resolve(
-			hasContent: model.hasContent, busy: busy && onStop != nil, showsMic: config.showsMic && micAvailable,
-			showsSend: config.showsSend)
+			hasContent: model.hasContent, hasText: !model.trimmedText.isEmpty, busy: busy && onStop != nil,
+			showsMic: config.showsMic && micAvailable, showsSend: config.showsSend)
 	}
 
 	/// While Stop is showing the mic stays beside it, so dictation is never blocked by a busy agent.
@@ -200,6 +203,9 @@ struct MaskinComposer: View {
 
 	private var bar: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+			if let topAccessory {
+				topAccessory
+			}
 			if let quote = ComposerQuoteStrip.content(for: model) {
 				ComposerQuoteStrip(label: quote.label, text: quote.text, onClear: model.clearQuote)
 					.padding(.top, MaskinSpace.s2)
@@ -292,22 +298,13 @@ struct MaskinComposer: View {
 			case .mic:
 				micButton
 			case .send:
-				ComposerCircleButton(
-					symbol: "arrow.up", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Send",
-					weight: .heavy
-				) {
-					MaskinHaptics.play(.light)
-					onSend()
-					// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
-					focused = false
+				sendButton
+			case .sendWithMic:
+				// A picture with no caption yet: the mic stays so it can be dictated, the way it stays beside Stop.
+				HStack(spacing: 0) {
+					micButton
+					sendButton
 				}
-				.disabled(!model.canSend)
-				.opacity(model.canSend ? 1 : 0.35)
-				.accessibilityHint(model.sendBlocker ?? "")
-				#if !os(watchOS) && !os(tvOS)
-				.keyboardShortcut(.return, modifiers: .command)
-				#endif
-				.transition(.opacity)
 			case .stop:
 				HStack(spacing: 0) {
 					// Stop must not take dictation away: the mic stays beside it while an agent works.
@@ -332,6 +329,25 @@ struct MaskinComposer: View {
 				EmptyView()
 			}
 		}
+	}
+
+	private var sendButton: some View {
+		ComposerCircleButton(
+			symbol: "arrow.up", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Send",
+			weight: .heavy
+		) {
+			MaskinHaptics.play(.light)
+			onSend()
+			// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
+			focused = false
+		}
+		.disabled(!model.canSend)
+		.opacity(model.canSend ? 1 : 0.35)
+		.accessibilityHint(model.sendBlocker ?? "")
+		#if !os(watchOS) && !os(tvOS)
+		.keyboardShortcut(.return, modifiers: .command)
+		#endif
+		.transition(.opacity)
 	}
 
 	private var micButton: some View {

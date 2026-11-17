@@ -154,6 +154,83 @@ describe('Workspace credential settings by caller', () => {
 			expect(body.llm_configured.anthropic).toBe(true)
 		})
 
+		describe('settings.agent_daily_budget', () => {
+			const BUDGET = { default_tokens: 5_000_000 }
+
+			it.each([
+				['a plain member', 'caller', 'human', PLAIN_MEMBER],
+				['an agent holding the admin role', 'agent-1', 'agent', AGENT_ADMIN],
+			])(
+				'refuses %s changing the budget with 403 and writes nothing',
+				async (_l, id, type, lookup) => {
+					const ws = buildWorkspace({ settings: { agent_daily_budget: { default_tokens: 1_000 } } })
+					const { app, mockResults, calls } = createTestApp(
+						workspacesRoutes,
+						'/api/workspaces',
+						id,
+						type,
+					)
+					mockResults.selectQueue = [MEMBER, [ws], lookup]
+					mockResults.update = [ws]
+
+					const res = await app.request(
+						jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+							settings: { agent_daily_budget: BUDGET },
+						}),
+					)
+
+					expect(res.status).toBe(403)
+					expect(calls.updates).toHaveLength(0)
+				},
+			)
+
+			it('refuses a member setting a budget where none is stored', async () => {
+				const ws = buildWorkspace({ settings: {} })
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], PLAIN_MEMBER]
+				mockResults.update = [ws]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { agent_daily_budget: BUDGET },
+					}),
+				)
+
+				expect(res.status).toBe(403)
+			})
+
+			it('lets a member spread the stored budget back unchanged', async () => {
+				const ws = buildWorkspace({ settings: { agent_daily_budget: BUDGET } })
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], PLAIN_MEMBER]
+				mockResults.update = [ws]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { agent_daily_budget: BUDGET, max_concurrent_sessions: 7 },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+			})
+
+			it('lets a human owner change the budget', async () => {
+				const ws = buildWorkspace({ settings: { agent_daily_budget: { default_tokens: 1_000 } } })
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [ws], HUMAN_OWNER]
+				mockResults.update = [ws]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { agent_daily_budget: BUDGET },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				expect(calls.updates[0]).toMatchObject({ settings: { agent_daily_budget: BUDGET } })
+			})
+		})
+
 		it('returns a human owner the settings without any key', async () => {
 			const ws = buildSecretWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')

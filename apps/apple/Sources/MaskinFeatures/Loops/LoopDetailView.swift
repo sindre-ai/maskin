@@ -84,6 +84,12 @@ struct LoopDetailView: View {
 					runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). ")
 				}
 				Divider().overlay(MaskinSurface.separator)
+				if let runtime, runtime.createViewAgent != nil {
+					manageRow(CreateViewMessage.label, symbol: "rectangle.3.group") {
+						runtime.startCreateView(.flow(id: store.loop.id, name: store.loop.displayName))
+					}
+					Divider().overlay(MaskinSurface.separator)
+				}
 				manageRow("Delete flow", symbol: "trash", destructive: true) { confirmDelete = true }
 			}
 			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))

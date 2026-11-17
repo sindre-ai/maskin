@@ -79,6 +79,14 @@ The screen is 1920x1080 and agents see all of it: `/screenshot` returns the full
 `/input` coordinates are native pixels (`WIDTH/HEIGHT` in `desktopd.py` must match the
 entrypoint's `SCREEN_SIZE` default).
 
+A saved password is typed with `{"action": "type_secret", "require": "password_field"}`, never
+plain `type`. desktopd first asks Chromium's debugging port (127.0.0.1:9222, set in the
+Dockerfile flags) which element has focus, and types only if exactly one page has focus and it
+is an `<input type=password>`. Otherwise it answers 409 `not_a_password_field` and types
+nothing; so does a missing debugging port, a cross-origin frame, or a field showing its text.
+An image without this action answers 400 `unknown action`, so an older computer types nothing
+either.
+
 It exists because `msb exec <vm> -- <cmd>` hangs (even `echo hi`) while the
 entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the host
 cannot run `xdotool`/`scrot` by exec'ing into the VM. `/healthz` returns 200

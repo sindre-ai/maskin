@@ -28,6 +28,21 @@ struct CommentBlocksTests {
 		#expect(decision?.answer(in: ["maybe"]) == nil)
 	}
 
+	@Test func aDefaultOnSilenceShowsItsLine() {
+		let value = decode(#"{"title":"x","expires_at":"2026-11-20T14:00:00Z","options":[{"label":"Hold","default_on_silence":true},{"label":"Go"}]}"#)
+		let decision = CommentDecision.parse(value)
+		#expect(decision?.options.first?.defaultOnSilence == true)
+		#expect(decision?.silenceLine?.hasPrefix("If nobody answers by ") == true)
+		#expect(decision?.silenceLine?.hasSuffix(#"the default is "Hold"."#) == true)
+	}
+
+	@Test func noLineWithoutADefaultOrADeadline() {
+		let noDefault = decode(#"{"title":"x","expires_at":"2026-11-20T14:00:00Z","options":[{"label":"Hold"},{"label":"Go"}]}"#)
+		let noDeadline = decode(#"{"title":"x","options":[{"label":"Hold","default_on_silence":true},{"label":"Go"}]}"#)
+		#expect(CommentDecision.parse(noDefault)?.silenceLine == nil)
+		#expect(CommentDecision.parse(noDeadline)?.silenceLine == nil)
+	}
+
 	@Test func taskIdsKeepOnlyUniqueUUIDs() {
 		let id = UUID().uuidString
 		let value = decode(#"{"metadata":{"tasks":["\#(id)","\#(id)","not-an-id"]}}"#)

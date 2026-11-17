@@ -16,8 +16,13 @@ import {
 	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
+	recordGoAheadShape,
+	scheduleNextStepSchema,
+	setNextStepSchema,
 	skillNameSchema,
+	skipDoneWhenSchema,
 	starterPromptListSchema,
+	updateNextStepSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
 
@@ -517,6 +522,59 @@ export const tools = {
 				)
 				.default([])
 				.describe('Relationships to create between existing objects'),
+		}),
+	},
+	set_next_step: {
+		description:
+			'Give an object you drive its next step: what happens next, who does it and by when. An object has at most one open or blocked next step, so a second one is refused (409) unless you pass replace: true, which closes the old one as skipped. Pass the action (one short sentence), due_at (an ISO time with a timezone) and optionally owner_id (an agent or person in the workspace; defaults to you). To say the step waits on something, pass exactly one of blocked_on_object_id, blocked_on_actor_id (then blocked_reason holds the question) or blocked_on_decision_comment_id: prose alone is not enough for a blocked step. This stores the step; it does not wake anyone. The step shows at the top of the object page for people. Use update_next_step to change it or close it.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...setNextStepSchema.shape,
+		}),
+	},
+	update_next_step: {
+		description:
+			'Change or close the next step on an object (its open or blocked step). Pass only what changes: action, due_at, owner_id, or status. status done or skipped closes the step and needs evidence (a link or result for done, the reason for skipped). status blocked needs exactly one of blocked_on_object_id, blocked_on_actor_id (with blocked_reason holding the question) or blocked_on_decision_comment_id; status open clears what it waited on. 404 when the object has no open or blocked step: use set_next_step to create one. To close it and plan the following step, call this with status done and then set_next_step.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...updateNextStepSchema.shape,
+		}),
+	},
+	schedule_next_step: {
+		description:
+			'End a turn with a next step that is backed by something. Use this instead of saying you will check back later with nothing behind it. Pass object_id, action (one short sentence) and due_at (an ISO time with a timezone, at least 5 minutes away). By default you are the owner: the step is stored and you are woken at due_at on that object, with the object and the step in the prompt. Pass owner_id for another agent and a task is created with that agent as driver; the step then waits on that task and no timer is set. A person as owner is stored and nobody is woken. Closing or replacing the step (update_next_step, or replace: true here) cancels the wake-up. Refused (409) while the object has an open or blocked step unless replace is true. Refused (429) when a run that started on its own already has its limit of wake-ups waiting; a run a person started is not limited. A wake-up that starts more than 1 hour late does nothing and leaves the step open. Use set_next_step instead when nobody should be woken.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			...scheduleNextStepSchema.shape,
+		}),
+	},
+	record_go_ahead: {
+		description:
+			'Record a person\u2019s go-ahead on a job: their yes to keep going without asking for each step. Use it when a person says so in a chat about the job: pass object_id, via chat and message_id, the id of their message. The message must be in a chat about this job and written by a person; yours or another agent\u2019s is refused (403). You cannot grant a go-ahead yourself. Never ask a person to say it again if you can quote their message. After recording, say so in the chat and in a comment on the job. From then on every session on the job is shown it, and you carry on with steps that send nothing in a person\u2019s name, spend nothing and delete nothing. It never covers sending, spending or deleting: those still need their own approval. It ends when the job closes or a person takes it back. Returns the go-ahead; 200 with the existing one when the job already has one.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The job (object) the go-ahead is for.'),
+			...recordGoAheadShape,
+		}),
+	},
+	take_back_go_ahead: {
+		description:
+			'Take back the go-ahead on a job. Use it when a person says stop, or when you are unsure the go-ahead still stands. Anyone may call it, because it only makes things safer. After this the next session on the job sees no go-ahead and asks again for anything that is not a safe step. 404 when the job has none.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The job (object) to take the go-ahead back from.'),
+		}),
+	},
+	skip_done_when: {
+		description:
+			'Write "list skipped, because X" on a job that needs no done-when list: one session can finish it, it undoes cleanly, nothing in it sends, spends or deletes, and no target is behind it. A plain chat question needs no skip. Anything else gets a list: propose it with create_comment and a done_when block on a decision card, with the person in mentions. The server refuses a skip on a bet, a target or a job with a target behind it (403), and counts every skip and every refusal. 400 when the job already has a list.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			object_id: z.string().uuid().describe('The job (object) that needs no list.'),
+			...skipDoneWhenSchema.shape,
 		}),
 	},
 	delete_object: {
@@ -2126,7 +2184,7 @@ export const tools = {
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead. Set `wait: true` to hold until the session has finished, however long that takes, and get back the session with the first 500 lines of its output; the wait ends early if the session is waiting for input or is paused (`settled: false`). To talk to a running session use send_session_message; to carry on with one that has ended or is paused use resume_session.',
+			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead. Set `wait: true` to hold until the session has finished, and get back the session with the first 500 lines of its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (it has not failed); it also ends early with `settled: false` if the session is waiting for input or is paused. To talk to a running session use send_session_message; to carry on with one that has ended or is paused use resume_session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -2147,7 +2205,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until the session has finished, however long that takes, then return the session with the first 500 lines of its output (oldest first) and `settled`. Ends early, with settled false, if the session is waiting for input or is paused. Ignores include_logs.',
+					'Hold until the session has finished, then return the session with the first 500 lines of its output (oldest first) and `settled`. Stops waiting after 2 hours: then `settled` is false and the session is still running. Ends early, with settled false, if the session is waiting for input or is paused. Ignores include_logs.',
 				),
 		}),
 	},
@@ -2262,7 +2320,7 @@ export const tools = {
 	},
 	resume_session: {
 		description:
-			"Carry on with a sub-chat that is not running (for an ordinary chat, @mention the agent with post_conversation_message instead, which wakes it whatever state it was in): one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished, however long that takes, and get its output; the wait ends early if it is waiting for input or paused (`settled: false`). For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
+			"Carry on with a sub-chat that is not running (for an ordinary chat, @mention the agent with post_conversation_message instead, which wakes it whatever state it was in): one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished and get its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (it has not failed); it also ends early with `settled: false` if the agent is waiting for input or paused. For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The session to carry on with'),
@@ -2277,13 +2335,13 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Wait for the agent to finish, however long that takes, and return the session with the first 500 lines of its output. Ends early, with settled false, if it is waiting for input or paused.',
+					'Wait for the agent to finish and return the session with the first 500 lines of its output. Stops waiting after 2 hours: then settled is false and the session is still running. Ends early, with settled false, if it is waiting for input or paused.',
 				),
 		}),
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403 (session started by a different actor): comment on the task or start your own with create_sub_chat instead.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (not failed); it also ends early with `settled: false` if the session is waiting for input or paused. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403 (session started by a different actor): comment on the task or start your own with create_sub_chat instead.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
@@ -2292,7 +2350,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until the session has finished, however long that takes, and return the session with the first 500 lines of its output. Ignored, with a note in the response, if the session stays open after replying.',
+					'Hold until the session has finished and return the session with the first 500 lines of its output. Stops waiting after 2 hours: then settled is false and the session is still running. Ignored, with a note in the response, if the session stays open after replying.',
 				),
 		}),
 	},

@@ -59,6 +59,7 @@ export type TaxonomyEntityType =
 	| 'file'
 	| 'loop'
 	| 'conversation'
+	| 'direct_message'
 
 // `file_viewer` was added so `comment_posted.source` can attribute review
 // comments back to the viewer surface — required for the "≥40% comment-after-
@@ -117,8 +118,18 @@ export function trackBetArchived(p: BaseProps & { entity_type: 'bet' }): void {
 	trackEvent('bet_archived', fillBase(p))
 }
 
-export function trackAgentSessionStarted(p: BaseProps & { entity_type: 'session' }): void {
-	trackEvent('agent_session_started', fillBase(p))
+// `plan` and `trial_state` are categories read from the cached billing state at the
+// moment the session starts (never an amount); they are left out when that state has
+// not loaded yet.
+export function trackAgentSessionStarted(
+	p: BaseProps & { entity_type: 'session'; plan?: string; trial_state?: string },
+): void {
+	const { plan, trial_state, ...base } = p
+	trackEvent('agent_session_started', {
+		...fillBase(base),
+		...(plan ? { plan } : {}),
+		...(trial_state ? { trial_state } : {}),
+	})
 }
 
 // A person who arrived through the button in a summary email (the link carries
@@ -255,7 +266,11 @@ export function trackAppActive(now: Date = new Date()): boolean {
 // surveyed Claude / ChatGPT session starts to track displacement over time.
 // `entity_id` is the container session id so PostHog can join back to the
 // sessions table. `workspace_id` + `actor_id` ride as super-properties.
-export type ChatSessionEntryPoint = 'sindre_session' | 'agent_one_shot'
+export type ChatSessionEntryPoint =
+	| 'sindre_session'
+	| 'agent_one_shot'
+	| 'person_message_row'
+	| 'person_message_page'
 
 // Kebab-cased role for the actor that opened the session. Fixed by the
 // Chief of Staff prototype bet's `posthog_query`: `chief-of-staff` when the
@@ -618,7 +633,7 @@ export function trackCreditLowShown(p: {
 // The person clicked an upgrade or renew button. `source` is where the button is.
 export function trackUpgradeClicked(p: {
 	source: 'billing_settings' | 'expired_dialog'
-	target_plan: 'pro' | 'team'
+	target_plan: 'starter' | 'pro' | 'team' | 'ultra'
 	current_plan: string
 }): void {
 	trackEvent('upgrade_clicked', {
@@ -679,8 +694,17 @@ export function trackChatMentionInserted(
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst
 // asked for so the events can be sliced without joining super-properties.
 
-export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }): void {
-	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
+// `pointerType` is the one from the tap that opened the menu ('touch' | 'mouse' | 'pen'), or
+// 'unknown' when no pointer came first (keyboard), so opens can be compared with
+// `open_attempted` per pointer type.
+export function trackSidebarWorkspaceSwitcherOpened(p: {
+	workspaceId: string
+	pointerType: string
+}): void {
+	trackEvent('sidebar.workspace_switcher.opened', {
+		workspaceId: p.workspaceId,
+		pointerType: p.pointerType,
+	})
 }
 
 // Mobile switcher bug (taps register, menu doesn't open): the two events below

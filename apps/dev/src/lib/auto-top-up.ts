@@ -26,6 +26,15 @@ export const AUTO_TOP_UP_EVENT = {
 
 export const AUTO_TOP_UP_INVOICE_KIND = 'auto_top_up'
 
+/**
+ * The pricing bet has no top-up (Magnus, 9 Nov 2026): at 100% of a plan, work waits for the next
+ * period. Every non-enterprise workspace is on a plan, so a rule cannot be turned on and no
+ * charge fires. A rule already saved is never touched.
+ */
+export function autoTopUpClosedForPlans(): boolean {
+	return true
+}
+
 /** Amounts in a customer's locked Stripe currency, from the fixed reference. USD cents in, minor units out. */
 export function usdCentsToChargeMinor(usdCents: number, currency: string): number {
 	switch (currency.toLowerCase()) {
@@ -68,6 +77,7 @@ export async function maybeAutoTopUp(params: {
 }): Promise<void> {
 	const { db, workspaceId, actorId } = params
 	try {
+		if (autoTopUpClosedForPlans()) return
 		const nowMs = params.now ?? Date.now()
 		const token = crypto.randomUUID()
 		const claimed = await claim(db, workspaceId, token, nowMs)

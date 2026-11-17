@@ -16,7 +16,7 @@ import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { createHealthHandler } from './lib/health'
-import { PlanCapExceededError } from './lib/llm-routing'
+import { PlanCapExceededError, TrialNotStartedError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
 import { requestTiming } from './lib/request-timing'
@@ -96,6 +96,10 @@ import oauthClientMetadataRoutes from './routes/oauth-client-metadata'
 import oauthDiscoveryRoutes from './routes/oauth-discovery'
 import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
+import objectDoneWhenRoutes from './routes/object-done-when'
+import objectGoAheadRoutes from './routes/object-go-ahead'
+import objectNextStepRoutes from './routes/object-next-step'
+import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -217,6 +221,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	options.onNodeWebSocket?.(nodeWebSocket)
 
 	app.onError((err, c) => {
+		if (err instanceof TrialNotStartedError) {
+			logger.warn('Trial not started', { plan: err.plan })
+			return c.json(
+				{ error: { code: ApiErrorCode.TRIAL_NOT_STARTED, message: err.message, plan: err.plan } },
+				402,
+			)
+		}
 		if (err instanceof PlanCapExceededError) {
 			logger.warn('Plan cap exceeded', {
 				plan: err.plan,
@@ -533,6 +544,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectApprovalsRoutes)
+	app.route('/api/objects', objectDoneWhenRoutes)
+	app.route('/api/objects', objectOutcomeRoutes)
+	app.route('/api/objects', objectGoAheadRoutes)
+	app.route('/api/objects', objectNextStepRoutes)
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)

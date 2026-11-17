@@ -42,8 +42,8 @@ struct AdvancedPage: View {
 				Text("Off, every tab shows its real data. On, it shows the state you pick.")
 			}
 			Section("About") {
-				if let url = SettingsServices(environment: environment).webSettingsURL {
-					Button("Privacy & data") { openURL(url) }
+				if environment.workspaceId != nil {
+					NavigationLink(value: SettingsRoute.workspace) { Text("Privacy & data") }
 				}
 				if let url = AuthConfig.current.privacyURL { Button("Privacy policy") { openURL(url) } }
 				if let url = AuthConfig.current.termsURL { Button("Terms of Service") { openURL(url) } }

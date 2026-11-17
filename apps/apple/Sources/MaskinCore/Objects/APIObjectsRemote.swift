@@ -433,6 +433,8 @@ private struct RelationshipDTO: Decodable {
 	var targetId: String
 	var targetTitle: String?
 	var type: String
+	var createdBy: String?
+	var createdAt: String?
 }
 
 private struct EventDTO: Decodable {
@@ -471,7 +473,14 @@ private struct GraphDTO: Decodable {
 				otherTitle: (title?.isEmpty == false ? title : nil) ?? "Untitled",
 				otherStatus: known?.status, otherDriver: known?.driver)
 		}
-		return ObjectGraph(object: object.model, links: links, events: (events ?? []).map(\.model))
+		let edges = (relationships ?? []).map {
+			OriginEdge(
+				type: $0.type, sourceType: $0.sourceType, sourceId: $0.sourceId, targetType: $0.targetType,
+				targetId: $0.targetId, createdBy: $0.createdBy, createdAt: $0.createdAt.flatMap(ISODate.parse))
+		}
+		return ObjectGraph(
+			object: object.model, links: links, events: (events ?? []).map(\.model),
+			origin: ObjectOrigin.resolve(objectId: me, edges: edges))
 	}
 }
 
@@ -604,6 +613,7 @@ struct FeedPreviewDTO: Decodable {
 	var recipients: [Recipient]?
 	var subject: String?
 	var details: [Detail]?
+	var context: String?
 	var body: String
 	var missing: [String]?
 	var warnings: [String]?
@@ -615,7 +625,7 @@ struct FeedPreviewDTO: Decodable {
 			kind: kind, label: label,
 			recipients: (recipients ?? []).map { .init(role: $0.role, name: $0.name, address: $0.address) },
 			subject: subject, details: (details ?? []).map { .init(label: $0.label, value: $0.value) },
-			body: body, missing: missing ?? [], warnings: warnings ?? [], contentHash: content_hash,
+			context: context, body: body, missing: missing ?? [], warnings: warnings ?? [], contentHash: content_hash,
 			delivery: delivery.flatMap { ObjectPreview.Delivery(rawValue: $0.state) })
 	}
 }

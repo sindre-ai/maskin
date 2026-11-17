@@ -253,6 +253,24 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
+	it('chat_session_started accepts the two person Message entry points', () => {
+		const capture = captureSpy()
+
+		for (const entry_point of ['person_message_row', 'person_message_page'] as const) {
+			trackChatSessionStarted({
+				entity_id: `sess-${entry_point}`,
+				entity_type: 'session',
+				entry_point,
+				entry_agent_role: null,
+				participant_count: 1,
+			})
+			expect(capture).toHaveBeenLastCalledWith(
+				'chat_session_started',
+				expect.objectContaining({ entry_point, participant_count: 1 }),
+			)
+		}
+	})
+
 	it('sindre_message_sent carries the session id and nothing else', () => {
 		const capture = captureSpy()
 
@@ -752,13 +770,14 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('sidebar.workspace_switcher.opened carries the workspaceId', () => {
+	it('sidebar.workspace_switcher.opened carries the workspaceId and pointerType', () => {
 		const capture = captureSpy()
 
-		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42' })
+		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42', pointerType: 'touch' })
 
 		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.opened', {
 			workspaceId: 'ws-42',
+			pointerType: 'touch',
 		})
 	})
 

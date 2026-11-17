@@ -210,6 +210,55 @@ describe('useCreateSession — agent_session_started', () => {
 	})
 })
 
+describe('useCreateSession — plan and trial_state on agent_session_started', () => {
+	const session = {
+		id: 'sess-10',
+		workspaceId,
+		actorId: 'agent-1',
+		triggerId: null,
+		status: 'pending',
+		containerId: null,
+		actionPrompt: 'do thing',
+		config: null,
+		result: null,
+		snapshotPath: null,
+		startedAt: null,
+		completedAt: null,
+		timeoutAt: null,
+		createdBy: 'human-1',
+		createdAt: null,
+		updatedAt: null,
+		currentActivity: null,
+	}
+
+	it.each([
+		['trial', 3 * 86_400_000, 'active'],
+		['trial', 0, 'ended'],
+		['pro', 5 * 86_400_000, 'none'],
+	])(
+		'sends plan %s with trial_state from the cached billing read',
+		async (plan, resetsIn, trialState) => {
+			vi.mocked(api.sessions.create).mockResolvedValue(session as never)
+			const { Wrapper, queryClient } = makeWrapper()
+			queryClient.setQueryData(queryKeys.billing.usage(workspaceId), {
+				plan,
+				period_resets_in_ms: resetsIn,
+			})
+			const { result } = renderHook(() => useCreateSession(workspaceId), { wrapper: Wrapper })
+
+			result.current.mutate({ actor_id: 'agent-1', action_prompt: 'do thing' })
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+			expect(trackAgentSessionStarted).toHaveBeenCalledWith({
+				entity_id: 'sess-10',
+				entity_type: 'session',
+				plan,
+				trial_state: trialState,
+			})
+		},
+	)
+})
+
 describe('useCreateComment — comment_posted', () => {
 	it('emits comment_posted with is_reply, attachment_count, is_multiline and length_bucket derived from variables', async () => {
 		vi.mocked(api.events.create).mockResolvedValue({} as never)

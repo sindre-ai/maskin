@@ -90,6 +90,39 @@ struct AppRuntimeDeepLinkTests {
 		#expect(runtime.presentation == nil)
 	}
 
+	@Test("a session link opens that session")
+	func sessionLink() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.open(URL(string: "maskin://ws-1/sessions/sess-3")!)
+		#expect(runtime.presentation == .session("sess-3"))
+	}
+
+	@Test("a settings link opens Settings on the named page, and the bare one on the hub")
+	func settingsLink() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.open(URL(string: "maskin://ws-1/settings/billing")!)
+		#expect(runtime.presentation == .settings)
+		#expect(runtime.settingsRoute == .billing)
+		runtime.open(URL(string: "maskin://ws-1/settings")!)
+		#expect(runtime.presentation == .settings)
+		#expect(runtime.settingsRoute == nil)
+	}
+
+	@Test("list links open the matching tab or sheet")
+	func listLinks() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.openObject("stale")
+		runtime.open(URL(string: "maskin://ws-1/loops")!)
+		#expect(runtime.selectedTab == .loops)
+		#expect(runtime.requestedLoopId == nil)
+		#expect(runtime.presentation == nil)
+		runtime.open(URL(string: "maskin://ws-1/chats")!)
+		#expect(runtime.selectedTab == .chats)
+		#expect(runtime.requestedConversationId == nil)
+		runtime.open(URL(string: "maskin://ws-1/triggers")!)
+		#expect(runtime.presentation == .triggers(nil))
+	}
+
 	@Test("a link into another workspace you belong to switches first, then opens")
 	func crossWorkspace() async {
 		let (runtime, environment) = await makeRuntime()

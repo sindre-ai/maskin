@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -106,23 +106,29 @@ vi.mock('@/lib/api', () => {
 	}
 })
 
-// The stub exposes the two callbacks this test drives and reports whether the
-// route is still handing it a decision receipt.
+// The stub exposes the callbacks this test drives and reports whether the
+// route is still handing it a decision receipt or a reply receipt.
 vi.mock('@/components/foryou/feed-card', () => ({
 	FeedCard: ({
 		item,
 		decided,
+		replied,
 		onDecide,
 		onMarkRead,
 		onReplied,
 	}: {
 		item: { object?: { title?: string | null } }
 		decided: { id: string; label: string } | null
+		replied: boolean
 		onDecide: (option: { id: string; label: string }) => void
 		onMarkRead: () => void
-		onReplied: () => void
+		onReplied: (text: string) => void
 	}) => (
-		<div data-testid="foryou-feed-card" data-decided={String(Boolean(decided))}>
+		<div
+			data-testid="foryou-feed-card"
+			data-decided={String(Boolean(decided))}
+			data-replied={String(replied)}
+		>
 			{item.object?.title}
 			<button type="button" onClick={() => onDecide({ id: 'approve', label: 'Approve' })}>
 				decide
@@ -130,7 +136,7 @@ vi.mock('@/components/foryou/feed-card', () => ({
 			<button type="button" onClick={onMarkRead}>
 				dismiss
 			</button>
-			<button type="button" onClick={onReplied}>
+			<button type="button" onClick={() => onReplied('Use the blue one')}>
 				reply
 			</button>
 		</div>
@@ -259,25 +265,30 @@ describe('For You — dismiss rollback', () => {
 	})
 
 	// The reader's own reply becomes a new unread event on the object, so the
-	// unread feed's next refetch returns the card again — leaving them looking
-	// at a card they just answered. Hide it optimistically the same way the
-	// "Mark as read" button does.
-	it('hides the card when the reader types an answer', async () => {
+	// unread feed's next refetch returns the card again. The card stays in the
+	// column as a receipt of what they sent, under "Waiting on an agent", rather
+	// than vanishing or reappearing as an open decision.
+	it('keeps the card as a receipt when the reader types an answer', async () => {
 		const user = userEvent.setup()
 		await renderFeed()
-		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-replied', 'false')
 
 		await user.click(screen.getByRole('button', { name: 'reply' }))
 		await act(async () => {
 			await Promise.resolve()
 		})
 
-		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+		const card = screen.getByTestId('foryou-feed-card')
+		expect(card).toHaveAttribute('data-replied', 'true')
+		expect(
+			within(screen.getByTestId('foryou-section-waiting')).getByTestId('foryou-feed-card'),
+		).toBe(card)
 	})
 
-	// The hide is for the mention the reader answered, not for the thread: when
-	// the agent answers the reply, that newer mention must show up live.
-	it('shows the card again when the thread gets a newer mention after the reply', async () => {
+	// The receipt is for the mention the reader answered, not for the thread: when
+	// the agent answers the reply, that newer mention must show up live as a card
+	// that is open again.
+	it('opens the card again when the thread gets a newer mention after the reply', async () => {
 		const user = userEvent.setup()
 		const view = await renderFeed()
 
@@ -285,16 +296,16 @@ describe('For You — dismiss rollback', () => {
 		await act(async () => {
 			await Promise.resolve()
 		})
-		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-replied', 'true')
 
 		// A refetch that returns the same event id (the mark-read racing the
-		// refetch) must not bring the card back.
+		// refetch) must not open the card again.
 		view.rerender(
 			<QueryClientProvider client={new QueryClient()}>
 				<ForYouPage />
 			</QueryClientProvider>,
 		)
-		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-replied', 'true')
 
 		// The agent answers: the same entity comes back with a higher event id.
 		testState.__items = [
@@ -306,12 +317,14 @@ describe('For You — dismiss rollback', () => {
 			</QueryClientProvider>,
 		)
 
-		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+		expect(screen.getAllByTestId('foryou-feed-card')).toHaveLength(1)
+		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-replied', 'false')
+		expect(screen.queryByTestId('foryou-section-waiting')).not.toBeInTheDocument()
 	})
 
 	// Symmetric to the bulk-dismiss rollback: if the mark-read fails after a
-	// typed reply, the card has to come back — otherwise it stays hidden
-	// forever behind an optimistic dismiss whose write never landed.
+	// typed reply, the card has to come back as an open card — otherwise it stays
+	// behind a receipt for a read whose write never landed.
 	it('puts the card back when the mark-read after a typed reply fails', async () => {
 		const user = userEvent.setup()
 		await renderFeed()
@@ -322,7 +335,7 @@ describe('For You — dismiss rollback', () => {
 			await Promise.resolve()
 		})
 
-		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+		expect(screen.getByTestId('foryou-feed-card')).toHaveAttribute('data-replied', 'false')
 	})
 
 	// Opening a page moves the read position and must not retire a card, so Dismiss

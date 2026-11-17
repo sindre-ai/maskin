@@ -13,6 +13,8 @@ struct NewChatSheet: View {
 	let currentActorID: String?
 	var prefill = ""
 	var initialRecipient: ChatParticipant?
+	/// Where the chat was started from, for `chat_session_started`.
+	var entryPoint = "agent_one_shot"
 	/// `live` is true when the person chose Live: the caller opens the conversation straight into a call.
 	let onCreated: (ConversationSummary, _ live: Bool) -> Void
 
@@ -20,6 +22,9 @@ struct NewChatSheet: View {
 	static let draftKey = "new-conversation"
 
 	@Environment(\.dismiss) private var dismiss
+	@Environment(\.scenePhase) private var scenePhase
+	/// Present in the app; absent in previews and snapshots, where undo send stays off.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var draft = NewConversationDraft()
 	@State private var query = ""
 	@State private var highlightedChip: String?
@@ -30,17 +35,27 @@ struct NewChatSheet: View {
 	@State private var roomName = ""
 	@State private var error: String?
 	@State private var composer: ChatComposerModel
+	/// The first message waits out its Undo window here (flag chat-undo-send): no chat exists until it ends.
+	@State private var undoSend = UndoSendHold()
+	@State private var presence = Presence()
 	@FocusState private var toFocused: Bool
+
+	/// Whether the sheet is still open, readable from a send that finishes after it closed.
+	private final class Presence {
+		var onScreen = true
+	}
 
 	init(
 		store: ConversationsStore, currentActorID: String?, prefill: String = "",
-		initialRecipient: ChatParticipant? = nil, uploader: (any ChatFileUploading)? = nil,
+		initialRecipient: ChatParticipant? = nil, entryPoint: String = "agent_one_shot",
+		uploader: (any ChatFileUploading)? = nil,
 		onCreated: @escaping (ConversationSummary, _ live: Bool) -> Void
 	) {
 		self.store = store
 		self.currentActorID = currentActorID
 		self.prefill = prefill
 		self.initialRecipient = initialRecipient
+		self.entryPoint = entryPoint
 		self.onCreated = onCreated
 		_composer = State(initialValue: ChatComposerModel(uploader: uploader, selfActorID: currentActorID ?? ""))
 	}
@@ -71,6 +86,15 @@ struct NewChatSheet: View {
 			.toolbarTitleDisplayMode(.inline)
 			#endif
 			.overlay { if isCreating { ProgressView() } }
+			.onAppear { presence.onScreen = true }
+			.onDisappear {
+				// Closing the sheet sends the held message at once, without opening the new chat.
+				presence.onScreen = false
+				undoSend.flush()
+			}
+			.onChange(of: scenePhase) { _, phase in
+				if phase != .active { undoSend.flush() }
+			}
 			.task {
 				if let initialRecipient, !draft.recipientIDs.contains(initialRecipient.id) { draft.toggle(initialRecipient.id) }
 				composer.splitsLongMessages = true
@@ -128,6 +152,7 @@ struct NewChatSheet: View {
 	private var bottomBar: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s5) {
 			StarterPromptsView(prompts: starters) { composer.addStarter($0) }
+			if undoSend.isHeld { UndoSendBar(onUndo: undoSend.undo) }
 			if !composer.trimmedText.isEmpty, restoredDraft {
 				Text("Draft saved · ⌘↩ to send")
 					.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
@@ -153,6 +178,12 @@ struct NewChatSheet: View {
 	}
 
 	private func send(live: Bool = false) async {
+		// A second first message would start a second chat: keep the text in the box.
+		if undoSend.isHeld {
+			error = "Undo your first message, or wait for it to send"
+			MaskinHaptics.play(.error)
+			return
+		}
 		// @mentions in the text also join the conversation.
 		var ids = draft.recipientIDs
 		for mention in composer.mentions where !ids.contains(mention.id) && mention.id != currentActorID {
@@ -160,12 +191,14 @@ struct NewChatSheet: View {
 		}
 		let people = NewConversationForm.recipients(ids, store: store, initialRecipient: initialRecipient)
 		guard !people.isEmpty else { return }
-		let roomTitle = roomName.trimmingCharacters(in: .whitespacesAndNewlines)
-		if asRoom, roomTitle.isEmpty {
+		// A room's name is read now, so editing the field during the Undo window changes nothing.
+		let roomTitle = asRoom ? roomName.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+		if let roomTitle, roomTitle.isEmpty {
 			error = "Name the room"
 			MaskinHaptics.play(.error)
 			return
 		}
+		let snapshot = composer.snapshot()
 		isCreating = true
 		defer { isCreating = false }
 		// Live starts the call with no first message; the typed text stays in the composer.
@@ -174,24 +207,55 @@ struct NewChatSheet: View {
 		let message = taken?.text
 		guard live || message != nil else { return }
 		error = nil
+		guard !live, runtime?.featureFlags.isEnabled(FeatureFlagID.chatUndoSend) == true else {
+			await create(
+				people: people, live: live, message: message, metadata: taken?.metadata, roomTitle: roomTitle)
+			return
+		}
+		MaskinHaptics.play(.light)
+		undoSend.hold(
+			send: {
+				Task {
+					await create(
+						people: people, live: false, message: message, metadata: taken?.metadata,
+						roomTitle: roomTitle, undoing: snapshot)
+				}
+			},
+			restore: { composer.restore(snapshot) })
+	}
+
+	/// Creates the chat with its first message. After an Undo window (`snapshot` set) a failure puts
+	/// the whole message back, and a sheet that was closed meanwhile does not pull the person to the new chat.
+	private func create(
+		people: [ChatParticipant], live: Bool, message: String?, metadata: ChatSendMetadata?,
+		roomTitle: String?, undoing snapshot: ChatComposerModel.Snapshot? = nil
+	) async {
+		isCreating = true
+		defer { isCreating = false }
 		do {
 			let created: ConversationSummary
-			if asRoom {
+			if let roomTitle {
 				created = try await store.createRoom(
 					title: roomTitle, participantIDs: people.map(\.id), firstMessage: message,
-					firstMessageMetadata: taken?.metadata)
+					firstMessageMetadata: metadata)
 			} else {
 				created = try await store.create(
 					title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
 					participantIDs: people.map(\.id), firstMessage: message,
-					firstMessageMetadata: taken?.metadata)
+					firstMessageMetadata: metadata)
 			}
-			Analytics.shared.chatSessionStarted(conversationId: created.id, participants: people)
+			Analytics.shared.chatSessionStarted(
+				conversationId: created.id, participants: people, entryPoint: entryPoint)
 			MaskinHaptics.play(.success)
+			guard presence.onScreen else { return }
 			onCreated(created, live)
 			dismiss()
 		} catch {
-			if let message { composer.text = message }
+			if let snapshot {
+				composer.restore(snapshot)
+			} else if let message {
+				composer.text = message
+			}
 			self.error = (error as? ChatsError)?.message ?? error.localizedDescription
 			MaskinHaptics.play(.error)
 		}

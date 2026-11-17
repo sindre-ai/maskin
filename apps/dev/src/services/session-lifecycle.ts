@@ -38,6 +38,7 @@ import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
 import { alertOwnersOncePerDay } from './run-death-alerts'
+import { admitSessionStart } from './self-start-limits'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -227,16 +228,40 @@ export async function startSession(
 
 	const createdBy = input.createdBy ?? input.actorId
 
+	// The gate on work agents start for themselves: labels why the session started and refuses a
+	// self-started one over a cap, in back-off or over the agent's daily budget (throws
+	// SessionNotAdmittedError before any row exists). Work that is not urgent while the workspace's
+	// daily target is used up comes back with `hold` and is parked below. A session a person
+	// started always passes.
+	const admission = await admitSessionStart(db, {
+		workspaceId: input.workspaceId,
+		actorId: input.actorId,
+		callerKind: input.callerKind,
+		config: input.config,
+		triggerType: input.triggerType,
+		retryOf: input.retryOf,
+		hasChat: belongsToChat(input),
+		createdBy,
+		initiatedFromObjectId: input.initiatedFromObjectId,
+		humanFacing: isHumanFacing(input),
+	})
+
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: withBackgroundDefaults(input),
+		config: {
+			...withStartReason(withBackgroundDefaults(input), admission.reason, belongsToChat(input)),
+			// Set on the row when it is made, so a held session never counts against the workspace
+			// start limit, not even for the moment before it is parked.
+			...(admission.hold ? { held: admission.hold } : {}),
+		},
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
 		sourceCommentEventId: input.sourceCommentEventId,
 		createdBy,
-		autoStart: input.autoStart,
+		// A held session is parked below instead of started; the rest start as the caller asked.
+		autoStart: admission.hold ? false : input.autoStart,
 		sourceSessionId: input.parentSessionId,
 		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
@@ -246,9 +271,25 @@ export async function startSession(
 
 	const session = await sessionManager.createSession(input.workspaceId, params)
 
-	// Daily budget 1a: one admission event per start, the baseline 1b is judged against. Every
-	// decision is 'admitted' until the gate exists. Best effort and not awaited: reporting must not
-	// slow the start path. recordSessionAdmission never throws, so there is nothing to catch here.
+	// Held at the daily limit: park the row, or start it as usual when it cannot be parked (no
+	// dispatch queue, or the queue write failed): a gate that cannot hold must not stop work.
+	const held =
+		admission.hold !== undefined &&
+		(await sessionManager.holdSession(session.id, new Date(admission.hold.until)))
+	if (admission.hold && !held) {
+		await releaseHeldMark(db, session.id)
+		if (input.autoStart !== false) {
+			sessionManager
+				.startSession(session.id)
+				.catch((err) =>
+					logger.error('Session start failed', { sessionId: session.id, error: String(err) }),
+				)
+		}
+	}
+
+	// Daily budget: one admission event per start (admitted, or deferred when the session is held),
+	// the record 1b is judged against. Best effort and not awaited: reporting must not slow the
+	// start path. recordSessionAdmission never throws, so there is nothing to catch here.
 	void recordSessionAdmission(db, {
 		sessionId: session.id,
 		workspaceId: input.workspaceId,
@@ -256,6 +297,11 @@ export async function startSession(
 		triggerId: input.triggerId ?? null,
 		callerKind: input.callerKind,
 		humanFacing: isHumanFacing(input),
+		startReason: admission.reason,
+		selfStarted: admission.selfStarted,
+		importance: admission.importance,
+		decision: held ? 'deferred' : 'admitted',
+		heldUntil: held ? admission.hold?.until : undefined,
 	})
 
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
@@ -315,6 +361,38 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/** The session could not be held after all: take the mark off so it counts and starts as normal. */
+async function releaseHeldMark(db: Database, sessionId: string): Promise<void> {
+	await db
+		.update(sessions)
+		.set({ config: sql`${sessions.config} - 'held'` })
+		.where(eq(sessions.id, sessionId))
+		.catch((err) =>
+			logger.warn('Failed to clear the held mark on a session that was not held', {
+				sessionId,
+				error: String(err),
+			}),
+		)
+}
+
+function belongsToChat(input: StartSessionInput): boolean {
+	const config = input.config as { conversation?: unknown } | undefined
+	return !!input.conversationId || !!config?.conversation
+}
+
+/**
+ * Stamps why the session started. A session that belongs to a chat keeps its config as given: it is
+ * person-started by definition, and the chat responder owns that config.
+ */
+function withStartReason(
+	config: SessionConfig | undefined,
+	reason: string,
+	hasChat: boolean,
+): SessionConfig | undefined {
+	if (hasChat) return config
+	return { ...config, start_reason: reason }
 }
 
 /** Human-facing work: a chat turn, or anything that belongs to a conversation. */

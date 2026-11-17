@@ -285,6 +285,7 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'update_trigger',
 	'create_loop',
 	'update_loop',
+	'create_sub_chat',
 	// Runs a command, changes access or credentials, creates or edits actors
 	'desktop_run',
 	'connect_integration',
@@ -321,6 +322,9 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 export const ORDINARY_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_objects',
 	'update_objects',
+	'set_next_step',
+	'schedule_next_step',
+	'update_next_step',
 	'create_comment',
 	'mark_read',
 	// An edge between two objects; deleting one is delete_relationship, which is held.

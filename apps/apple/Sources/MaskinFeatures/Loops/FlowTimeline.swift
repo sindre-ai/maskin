@@ -42,7 +42,8 @@ final class FlowTimelineModel {
 		self.flowID = flowID
 		self.flowName = flowName
 		store = ObjectsServices(environment: environment).detailStore(for: flowID)
-		let chats = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let chats = APIChatsSource(
+			client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 		composer = ChatComposerModel(uploader: chats, selfActorID: environment.auth.session?.actorId ?? "")
 		self.chats = chats
 		self.environment = environment
@@ -219,6 +220,57 @@ struct FlowTimelineComposer: View {
 		var config = model.config
 		config.roster = runtime?.mentionRoster()?.roster
 		return config
+	}
+}
+
+/// The chat a flow's composer opened with the flow's owner, and the message it carries.
+struct FlowOwnerThread: Identifiable {
+	let conversations: ConversationsStore
+	let conversationID: String
+	let recipient: AgentThreads.Recipient
+	let text: String
+	let metadata: ChatSendMetadata?
+	var id: String { conversationID }
+}
+
+/// The real conversation with the owner, in a sheet: the Chats thread and composer, with the message
+/// that opened it sent once through the same queue as any chat send.
+struct FlowOwnerThreadSheet: View {
+	let environment: AppEnvironment
+	let thread: FlowOwnerThread
+	@Environment(\.dismiss) private var dismiss
+	@State private var built: (chat: ChatStore, composer: ChatComposerModel)?
+
+	var body: some View {
+		NavigationStack {
+			Group {
+				if let built {
+					ChatThreadView(store: built.chat, composer: built.composer, conversations: thread.conversations)
+				} else {
+					Color.clear
+				}
+			}
+			.navigationTitle(thread.recipient.name)
+			#if os(iOS)
+			.navigationBarTitleDisplayMode(.inline)
+			#endif
+			.toolbar {
+				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+			}
+		}
+		.ambientBackground(showsBottom: false)
+		.task {
+			guard built == nil else { return }
+			let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
+			let desk = ChiefOfStaffDesk(
+				conversations: thread.conversations, uploader: source,
+				selfActorID: environment.auth.session?.actorId ?? "")
+			let chat = ChiefOfStaffSheet.makeChat(
+				environment: environment, desk: desk, conversationID: thread.conversationID)
+			let composer = ChatComposerModel(uploader: source, selfActorID: environment.auth.session?.actorId ?? "")
+			built = (chat, composer)
+			if chat.send(thread.text, metadata: thread.metadata) == nil { composer.text = thread.text }
+		}
 	}
 }
 

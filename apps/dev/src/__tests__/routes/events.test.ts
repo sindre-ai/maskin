@@ -1094,6 +1094,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
@@ -1191,6 +1192,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup — the object has a driver, and they are a thread
 					// participant, so the fallback ladder (case 2) will handle them.
@@ -1264,6 +1266,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
@@ -1351,6 +1354,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
@@ -1394,6 +1398,88 @@ describe('Events Routes', () => {
 				expect(sessionManager.createSession).not.toHaveBeenCalled()
 			})
 
+			it('does NOT spawn thread-reply sessions for an agent reply that mentions someone else', async () => {
+				const objectId = randomUUID()
+				const commenterAgentId = '00000000-0000-0000-0000-000000000bbc'
+				const earlierAgentId = randomUUID()
+				const mentionedAgentId = randomUUID()
+				const rootCommentId = 730300
+				const newCommentId = 730400
+
+				const newComment = buildEvent({
+					id: newCommentId,
+					workspaceId: wsId,
+					actorId: commenterAgentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: {
+						content: 'Noted, no ask for you.',
+						mentions: [mentionedAgentId],
+						parentEventId: rootCommentId,
+					},
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					eventsRoutes,
+					'/api/events',
+					commenterAgentId,
+					'agent',
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				// Full spawn-path data is queued on purpose: without the guard the earlier
+				// agent poster below would be woken, so a missing guard fails this test.
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // object lookup
+					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // the same card read again for a status button tap: nothing stamped
+					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
+					[{ id: mentionedAgentId }], // the mentioned agents
+					[{ driver: null }], // driver lookup for the fallback exclusion
+					[
+						{
+							id: newCommentId,
+							actorId: commenterAgentId,
+							actorType: 'agent',
+							data: { content: 'Noted, no ask for you.', parentEventId: rootCommentId },
+						},
+						{
+							id: 730301,
+							actorId: earlierAgentId,
+							actorType: 'agent',
+							data: { content: 'earlier agent reply', parentEventId: rootCommentId },
+						},
+						{
+							id: rootCommentId,
+							actorId: randomUUID(),
+							actorType: 'human',
+							data: { content: 'Root' },
+						},
+					],
+				]
+				mockResults.insert = [newComment]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'Noted, no ask for you.',
+							mentions: [mentionedAgentId],
+							parent_event_id: rootCommentId,
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
 			it('does NOT spawn a thread-reply session for the agent who authored the new comment', async () => {
 				const objectId = randomUUID()
 				const agentAId = '00000000-0000-0000-0000-000000000aaa'
@@ -1423,6 +1509,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
@@ -1502,6 +1589,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Mention resolution inside postComment
 					[{ id: agentAId }],

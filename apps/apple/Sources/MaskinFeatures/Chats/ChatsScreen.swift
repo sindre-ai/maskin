@@ -67,6 +67,7 @@ private struct ChatsContainer: View {
 		let id = UUID()
 		var prefill = ""
 		var recipient: ChatParticipant?
+		var entryPoint = "agent_one_shot"
 	}
 
 	init(
@@ -151,7 +152,8 @@ private struct ChatsContainer: View {
 			if request.live {
 				Task { await startLive(with: request.agent) }
 			} else {
-				newChat = NewChatRequest(prefill: request.draft, recipient: request.agent)
+				newChat = NewChatRequest(
+					prefill: request.draft, recipient: request.agent, entryPoint: request.entryPoint)
 			}
 		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
@@ -175,8 +177,8 @@ private struct ChatsContainer: View {
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
-				initialRecipient: request.recipient,
-				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+				initialRecipient: request.recipient, entryPoint: request.entryPoint,
+				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 			) { created, live in
 				selection = created.id
 				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
@@ -410,7 +412,7 @@ private struct ChatThreadHost: View {
 	private func make() -> (chat: ChatStore, composer: ChatComposerModel) {
 		let conversationID = conversationID
 		let session = environment.auth.session
-		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 		let chat = ChatStore(
 			conversationID: conversationID, currentActorID: session?.actorId ?? "",
 			currentActorName: session?.name ?? "You", api: source,

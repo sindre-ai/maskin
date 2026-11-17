@@ -112,6 +112,8 @@ needs `applinks:maskin.io?mode=developer` or a real install). `xcrun simctl open
 (`MaskinFeatures/Invites/InviteView.swift`). `InviteCoordinator` keeps the token in `UserDefaults` (`invite.pending.v1`, at most 7 days)
 so it survives sign-in and a cold launch; it is forgotten on Accept, Decline, a dead invite, or closing the screen while signed in.
 Signed in, Accept posts `POST /api/invites/{token}/accept` with the stored key and no `X-Workspace-Id`, then switches to the returned
-workspace. A different signed-in email than the invited one asks first. Signed-out people without an account see a pointer to maskin.io:
-`InviteStore.createAccount` is the single hook FE-2 (native sign-up) sets to start account creation instead.
+workspace. A different signed-in email than the invited one asks first. Signed-out people see a create-account form (invited email fixed, optional name, password) that posts
+`{email, password, name?}` with no key, signs in with the key the server returns and switches to the workspace, like the web invite page;
+"Sign in to accept" is the other way in. A 409 (account already exists) says to sign in. With `MaskinEnableSignUp` off the form is
+replaced by a pointer to maskin.io.
 Test: `xcrun simctl openurl booted "maskin://invite?token=<raw>"`.

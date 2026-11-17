@@ -1,0 +1,27 @@
+{
+	"name": "@maskin/ext-targets",
+	"version": "0.0.1",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./server/index.ts",
+			"default": "./server/index.ts"
+		},
+		"./server": {
+			"types": "./server/index.ts",
+			"default": "./server/index.ts"
+		},
+		"./shared": {
+			"types": "./shared.ts",
+			"default": "./shared.ts"
+		}
+	},
+	"dependencies": {
+		"@maskin/module-sdk": "workspace:*"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0"
+	}
+}

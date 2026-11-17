@@ -56,6 +56,7 @@ import { EditableMarkdownStage, useEditableMarkdown } from './editable-markdown-
 import {
 	MediaPlayer,
 	PdfPreview,
+	isAudio,
 	isHtml,
 	isInlineImage,
 	isMarkdown,
@@ -172,9 +173,15 @@ function MediaViewerStage({ file }: { file: FileDetail }) {
 	return (
 		<StageFrame>
 			<div className="flex h-full w-full items-center justify-center overflow-auto p-0 md:p-6">
-				{/* w-full gives the element a real width on mobile (a flex-centred media element
-				    otherwise collapses). */}
-				<MediaPlayer file={file} className="max-h-full w-full max-w-full md:w-auto" />
+				{/* A flex-centred media element otherwise collapses: w-full gives it a real width on
+				    mobile. On desktop a video sizes itself (md:w-auto), but an audio element has no
+				    intrinsic size here and shrinks to 0, so it gets a fixed readable width instead. */}
+				<MediaPlayer
+					file={file}
+					className={
+						isAudio(file.mimeType) ? 'w-full max-w-xl' : 'max-h-full w-full max-w-full md:w-auto'
+					}
+				/>
 			</div>
 		</StageFrame>
 	)

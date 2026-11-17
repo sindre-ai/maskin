@@ -1,7 +1,9 @@
 import type { Database } from '@maskin/db'
 import { sessions, workspaceAiUsage } from '@maskin/db/schema'
-import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
+import { and, eq, gte, or, sql } from 'drizzle-orm'
+import { notifyPlanLimitReached } from '../services/plan-limit-email'
+import { trackPlanLimitReached } from './analytics/plan-limit-events'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
 	checkApiKeyCreditMark,
@@ -64,7 +66,7 @@ export type LlmRoute =
  * Trial is included so BYO-LLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
-const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
+const MASKIN_PLAN_ROUTED_PLANS = new Set<string>(['trial', ...PAID_PLANS])
 
 /**
  * True when Maskin funds this workspace's LLM usage. Every route that reaches
@@ -386,7 +388,114 @@ export async function getWorkspacePlanUsdCentsUsage(
 	return ceilCents(totalCents)
 }
 
-export type MaskinPlan = 'trial' | 'pro' | 'team'
+export interface PlanTokenUsage {
+	inputTokens: number
+	outputTokens: number
+	sessionCount: number
+}
+
+/**
+ * Input and output tokens and the session count of the same maskin_plan sessions
+ * `getWorkspacePlanUsdCentsUsage` sums since `periodStartMs`, so a token figure
+ * always sits next to the dollar total it belongs to. Product analytics only:
+ * it is never shown to a customer.
+ */
+export async function getWorkspacePlanTokenUsage(
+	db: Pick<Database, 'select'>,
+	workspaceId: string,
+	periodStartMs?: number,
+): Promise<PlanTokenUsage> {
+	const [row] = await db
+		.select({
+			inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+			outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+			sessionCount: sql<string>`COUNT(*)`,
+		})
+		.from(sessions)
+		.where(planUsageConds(workspaceId, periodStartMs))
+	return {
+		inputTokens: Number(row?.inputTokens ?? 0),
+		outputTokens: Number(row?.outputTokens ?? 0),
+		sessionCount: Number(row?.sessionCount ?? 0),
+	}
+}
+
+export interface PlanUsageWindow {
+	workspaceId: string
+	periodStartMs?: number
+}
+
+export interface PlanUsage extends PlanTokenUsage {
+	usdCents: number
+}
+
+// How many workspaces one grouped read covers, so the OR of period conditions stays small.
+const PLAN_USAGE_CHUNK = 200
+
+/**
+ * The plan usage of many workspaces in two grouped reads (sessions, and spend with no
+ * session) per chunk, not the eight or so per workspace `getWorkspacePlanUsdCentsUsage` and
+ * `getWorkspacePlanTokenUsage` run. Each workspace is measured over its own period with the
+ * same conditions (`planUsageConds`, `aiUsageConds`), the same per-session cost rule
+ * (`sessionUsageCents`, written out in SQL) and the same one rounding on the aggregate as
+ * `getWorkspacePlanUsdCentsUsage`, so the figures equal the usage page's. A workspace with no
+ * rows is absent from the result. Product analytics only.
+ */
+export async function getPlanUsageForWorkspaces(
+	db: Pick<Database, 'select'>,
+	windows: PlanUsageWindow[],
+): Promise<Map<string, PlanUsage>> {
+	const out = new Map<string, PlanUsage>()
+	for (let i = 0; i < windows.length; i += PLAN_USAGE_CHUNK) {
+		const chunk = windows.slice(i, i + PLAN_USAGE_CHUNK)
+		const sessionConds = or(...chunk.map((w) => planUsageConds(w.workspaceId, w.periodStartMs)))
+		const aiConds = or(...chunk.map((w) => aiUsageConds(w.workspaceId, w.periodStartMs)))
+		const [sessionRows, aiRows] = await Promise.all([
+			db
+				.select({
+					workspaceId: sessions.workspaceId,
+					// Per session: its reported cost, else the token-rate estimate (sessionUsageCents).
+					cents: sql<string>`COALESCE(SUM(CASE WHEN ${sessions.totalCostUsd} > 0 THEN ${sessions.totalCostUsd} * 100 ELSE (COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0))::numeric / ${LEGACY_TOKENS_PER_USD_CENT} END), 0)`,
+					inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+					outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+					sessionCount: sql<string>`COUNT(*)`,
+				})
+				.from(sessions)
+				.where(sessionConds)
+				.groupBy(sessions.workspaceId),
+			db
+				.select({
+					workspaceId: workspaceAiUsage.workspaceId,
+					total: sql<string>`COALESCE(SUM(${workspaceAiUsage.costUsd}), 0)`,
+				})
+				.from(workspaceAiUsage)
+				.where(aiConds)
+				.groupBy(workspaceAiUsage.workspaceId),
+		])
+		const cents = new Map<string, number>()
+		for (const row of sessionRows) {
+			cents.set(row.workspaceId, Number(row.cents))
+			out.set(row.workspaceId, {
+				usdCents: 0,
+				inputTokens: Number(row.inputTokens),
+				outputTokens: Number(row.outputTokens),
+				sessionCount: Number(row.sessionCount),
+			})
+		}
+		for (const row of aiRows) {
+			cents.set(row.workspaceId, (cents.get(row.workspaceId) ?? 0) + usdToCents(row.total))
+			if (!out.has(row.workspaceId)) {
+				out.set(row.workspaceId, { usdCents: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 })
+			}
+		}
+		for (const [workspaceId, usage] of out) {
+			if (cents.has(workspaceId)) usage.usdCents = ceilCents(cents.get(workspaceId) ?? 0)
+		}
+	}
+	return out
+}
+
+export type MaskinPlan = 'trial' | PaidPlan
 
 interface PlanCapContext {
 	plan: MaskinPlan
@@ -417,14 +526,33 @@ export class PlanCapExceededError extends Error {
 	readonly periodEnd: number | null
 
 	constructor(ctx: PlanCapContext) {
-		super(
-			`${ctx.plan} plan cap exceeded: $${(ctx.used / 100).toFixed(2)} of $${(ctx.cap / 100).toFixed(2)} used this period.`,
-		)
+		super(`The ${ctx.plan} plan is used up for this period.`)
 		this.name = 'PlanCapExceededError'
 		this.plan = ctx.plan
 		this.used = ctx.used
 		this.cap = ctx.cap
 		this.periodEnd = ctx.periodEnd
+	}
+}
+
+/** How long a paused automation waits before it asks again while a workspace has no card yet. */
+const TRIAL_NOT_STARTED_RETRY_MS = 5 * 60_000
+
+/**
+ * A workspace that signed up through the card step has not put a card down, so nothing runs
+ * (bet "A card to start a 7-day trial", task T2). Surfaces as HTTP 402 with
+ * `{ code: 'TRIAL_NOT_STARTED' }`, and the client offers "Add card".
+ *
+ * It extends PlanCapExceededError on purpose: every place that already treats a plan cap as the
+ * workspace working as designed (not a Sentry error, automations paused rather than failed)
+ * treats this the same way. `used` and `cap` are 0, and `periodEnd` is a few minutes out so a
+ * paused automation asks again soon after the card is down instead of waiting out an hour.
+ */
+export class TrialNotStartedError extends PlanCapExceededError {
+	constructor() {
+		super({ plan: 'trial', used: 0, cap: 0, periodEnd: Date.now() + TRIAL_NOT_STARTED_RETRY_MS })
+		this.name = 'TrialNotStartedError'
+		this.message = 'Your trial has not started. Add a card to begin your 7 days.'
 	}
 }
 
@@ -452,7 +580,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
-function effectivePeriodEnd(
+export function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
 ): number | null {
@@ -531,6 +659,11 @@ export async function checkPlanCap(params: {
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 	if (params.enterprise) return
 
+	// Signed up through the card step and no card yet: nothing runs until the trial has started.
+	if (plan === 'trial' && billing?.trial_state === 'awaiting_card') {
+		throw new TrialNotStartedError()
+	}
+
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 	if (cap === null) return
@@ -547,11 +680,26 @@ export async function checkPlanCap(params: {
 	if (used < cap) return
 	if (canUseCreditBalance(maskinPlan, billing)) return
 
+	const periodEnd = effectivePeriodEnd(periodStartMs, periodEndMs)
+	void trackPlanLimitReached({
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
+		usedCents: used,
+		capCents: cap,
+		readTokens: () => getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs),
+	})
+	void notifyPlanLimitReached({
+		db: params.db,
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
+	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
+		periodEnd,
 	})
 }
 

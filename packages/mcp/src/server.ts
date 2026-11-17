@@ -4470,6 +4470,138 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'set_next_step',
+		{
+			description: tools.set_next_step.description,
+			inputSchema: tools.set_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/next-step`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('set_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'schedule_next_step',
+		{
+			description: tools.schedule_next_step.description,
+			inputSchema: tools.schedule_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/objects/${object_id}/schedule-next-step`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('schedule_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_next_step',
+		{
+			description: tools.update_next_step.description,
+			inputSchema: tools.update_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'PATCH', `/api/objects/${object_id}/next-step`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('update_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'record_go_ahead',
+		{
+			description: tools.record_go_ahead.description,
+			inputSchema: tools.record_go_ahead.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/go-ahead`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('record_go_ahead', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'take_back_go_ahead',
+		{
+			description: tools.take_back_go_ahead.description,
+			inputSchema: tools.take_back_go_ahead.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id } = args
+			const result = await apiCall(
+				config,
+				'DELETE',
+				`/api/objects/${object_id}/go-ahead`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('take_back_go_ahead', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'skip_done_when',
+		{
+			description: tools.skip_done_when.description,
+			inputSchema: tools.skip_done_when.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/objects/${object_id}/done-when/skip`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('skip_done_when', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_object',
 		{
 			description: tools.delete_object.description,
@@ -10496,10 +10628,10 @@ export function createMcpServer(config: McpConfig) {
 						p.triggers > 0 ? `${p.triggers} trigger${p.triggers === 1 ? '' : 's'}` : '',
 						p.skills > 0 ? `${p.skills} skill${p.skills === 1 ? '' : 's'}` : '',
 					].filter(Boolean)
-					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Loop installed.'
+					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Flow installed.'
 				}
 			} catch (err) {
-				return textResponse(`❌ Failed to install loop: ${String(err)}`)
+				return textResponse(`❌ Failed to install flow: ${String(err)}`)
 			}
 
 			// Build magic login link (only safe on localhost).
@@ -10562,11 +10694,11 @@ INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this 
 Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to next steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
 			const loopLine = loopObjectId
-				? `\n🔁 It's now running as a Loop: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
+				? `\n🔁 It's now running as a Flow: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
 				: ''
 
 			return textResponse(
-				`✅ Loop installed in workspace "${workspace.name}". ${installSummary}
+				`✅ Flow installed in workspace "${workspace.name}". ${installSummary}
 ${loopLine}
 🌐 Open the workspace: ${workspaceUrl}
 ${claudeCredsBlock}`,

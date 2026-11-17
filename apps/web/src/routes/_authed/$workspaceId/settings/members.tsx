@@ -37,11 +37,13 @@ import {
 	useWorkspaceMembers,
 } from '@/hooks/use-workspaces'
 import type { MemberResponse, PendingInviteListItem } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { personMessageLink } from '@/lib/person-message-link'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
+import { Bot, MessageSquare, Plus, Trash2, UserPlus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -72,6 +74,7 @@ function MembersPage() {
 	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
 	const removeMember = useRemoveWorkspaceMember(workspaceId)
 	const navigate = useNavigate()
+	const currentActorId = getStoredActor()?.id
 	const [showInviteDialog, setShowInviteDialog] = useState(false)
 	const [activeHumanId, setActiveHumanId] = useState<string | null>(memberFromSearch ?? null)
 	const [pendingRemoval, setPendingRemoval] = useState<MemberResponse | null>(null)
@@ -159,11 +162,11 @@ function MembersPage() {
 						return (
 							<div
 								key={member.actorId}
-								className="flex flex-wrap items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60 sm:flex-nowrap"
+								className="flex flex-wrap items-center gap-3 px-2 py-3 transition-colors hover:bg-secondary/60 lg:flex-nowrap"
 							>
 								<button
 									type="button"
-									className="flex min-w-0 flex-1 items-center gap-3 text-left"
+									className="flex min-w-[8rem] flex-1 items-center gap-3 text-left"
 									onClick={() => {
 										if (member.type === 'agent') {
 											navigate({
@@ -211,6 +214,29 @@ function MembersPage() {
 												))}
 											</SelectContent>
 										</Select>
+									</ViewerTooltip>
+								)}
+								{member.type === 'human' && member.actorId !== currentActorId && (
+									<ViewerTooltip>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="shrink-0"
+											aria-label={`Message ${member.name}`}
+											title={`Message ${member.name}`}
+											disabled={!canWrite}
+											onClick={() =>
+												navigate(
+													personMessageLink(
+														workspaceId,
+														{ id: member.actorId, name: member.name },
+														'person_message_row',
+													),
+												)
+											}
+										>
+											<MessageSquare size={14} />
+										</Button>
 									</ViewerTooltip>
 								)}
 								<ViewerTooltip>

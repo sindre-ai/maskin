@@ -123,7 +123,16 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		// outside links must fall through to the markdown view's own confirm-and-open path.
 		.environment(
 			\.markdownInternalLinkHandler,
-			{ @MainActor [runtime] url in DeepLink(url: url) != nil && runtime.open(url) })
+			{ @MainActor [runtime] url in
+				if DeepLink(url: url) != nil { return runtime.open(url) }
+				// A page of the workspace the app has no screen for (the marketplace's own address, a
+				// sub-page): say so, instead of sending the person to Safari and a login.
+				if DeepLink.isWorkspacePage(url) {
+					toast = "The app can't open this page yet."
+					return true
+				}
+				return false
+			})
 		.environment(\.markdownInternalLinkInfo, { @MainActor [links] url in links.info(for: url) })
 		.environment(\.markdownStandaloneLink, { @MainActor [environment] url, _ in
 			LinkedItemStores.standaloneStyle(for: url, environment: environment)
@@ -214,6 +223,12 @@ extension RootView {
 				token: token, remote: remote,
 				viewer: {
 					environment.auth.session.map { InviteViewer(apiKey: $0.apiKey, email: $0.email) }
+				},
+				signedUp: { signUp in
+					try environment.auth.adopt(
+						StoredSession(
+							apiKey: signUp.apiKey, actorId: signUp.actorId, name: signUp.name,
+							email: signUp.email, workspaceId: signUp.workspaceId))
 				},
 				joined: { workspaceId in
 					// Load the new workspace into the list first, then switch to it.
