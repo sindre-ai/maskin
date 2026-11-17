@@ -1,6 +1,5 @@
 // The chat list's search box: one call to GET /api/search for chats only, so a chat is found by
 // its title, a person in it or a word in its messages, whether or not the list has loaded it.
-// Operators (agent:, from:, with:, team:, is:) are read out of the words by the server.
 
 import {
 	SEARCH_QUERY_DEBOUNCE_MS,
@@ -14,7 +13,11 @@ const CHAT_TYPES = ['chat']
 // all five groups is "every chat", archived ones included.
 const EVERY_STATUS: string[] = [...STATUS_GROUP_KEYS]
 
-export function useChatListSearch(workspaceId: string, text: string) {
+/**
+ * `operators` is the new chat list's: the server then reads agent:, from:, with:, team: and is:
+ * (and "phrases" and -words) out of the words. The old list leaves it off and searches as before.
+ */
+export function useChatListSearch(workspaceId: string, text: string, operators = false) {
 	const typed = text.trim()
 	const debounced = useDebouncedValue(typed, SEARCH_QUERY_DEBOUNCE_MS)
 	const query = useSearchQuery(
@@ -25,7 +28,7 @@ export function useChatListSearch(workspaceId: string, text: string) {
 			statuses: EVERY_STATUS,
 			updated: '',
 			sort: 'rel',
-			operators: true,
+			operators,
 		},
 		typed !== '',
 	)
