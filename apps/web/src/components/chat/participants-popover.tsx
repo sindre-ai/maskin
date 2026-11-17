@@ -16,11 +16,11 @@ import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ConversationParticipantResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { copyChatLink } from '@/lib/copy-chat-link'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
 import { Link2, Search } from 'lucide-react'
 import { type ReactNode, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 
 interface ParticipantsPopoverProps {
 	workspaceId: string
@@ -120,15 +120,6 @@ export function ParticipantsPopover({
 				}
 			},
 		})
-	}
-
-	const handleCopyLink = async () => {
-		try {
-			await navigator.clipboard.writeText(window.location.href)
-			toast.success('Link copied')
-		} catch {
-			toast.error('Could not copy link')
-		}
 	}
 
 	return (
@@ -271,7 +262,7 @@ export function ParticipantsPopover({
 					<div className="border-t border-border px-1 pt-1.5">
 						<button
 							type="button"
-							onClick={() => void handleCopyLink()}
+							onClick={() => void copyChatLink()}
 							className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-foreground hover:bg-accent"
 						>
 							<Link2 size={14} className="shrink-0 text-muted-foreground" aria-hidden />
