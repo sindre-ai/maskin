@@ -1,5 +1,5 @@
 import type { ConversationListItemResponse } from '@/lib/api'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../setup'
 
@@ -32,26 +32,32 @@ describe('useChatRowActions', () => {
 		vi.mocked(api.conversations.retryMessage).mockResolvedValue({ retried: true })
 	})
 
-	it('Done archives the chat and offers Undo for 6 seconds', () => {
+	it('Done archives the chat and offers Undo for 6 seconds', async () => {
 		const { result } = renderHook(() => useChatRowActions('ws-1'), { wrapper: TestWrapper })
 		act(() => result.current.done(row, 'hover'))
-		expect(api.conversations.updateMe).toHaveBeenCalledWith('conv-1', 'ws-1', { archived: true })
+		await waitFor(() =>
+			expect(api.conversations.updateMe).toHaveBeenCalledWith('conv-1', 'ws-1', { archived: true }),
+		)
 		expect(track).toHaveBeenCalledWith({ action: 'done', via: 'hover' })
 		const [text, options] = toast.mock.calls[0]
 		expect(text).toBe('Marked done')
 		expect(options.duration).toBe(6000)
 		expect(options.action.label).toBe('Undo')
 		act(() => options.action.onClick())
-		expect(api.conversations.updateMe).toHaveBeenLastCalledWith('conv-1', 'ws-1', {
-			archived: false,
-		})
+		await waitFor(() =>
+			expect(api.conversations.updateMe).toHaveBeenLastCalledWith('conv-1', 'ws-1', {
+				archived: false,
+			}),
+		)
 		expect(track).toHaveBeenLastCalledWith({ action: 'undo', via: 'hover' })
 	})
 
-	it('Later sets the flag and the toast says a new message brings it back', () => {
+	it('Later sets the flag and the toast says a new message brings it back', async () => {
 		const { result } = renderHook(() => useChatRowActions('ws-1'), { wrapper: TestWrapper })
 		act(() => result.current.later(row, 'menu'))
-		expect(api.conversations.updateMe).toHaveBeenCalledWith('conv-1', 'ws-1', { later: true })
+		await waitFor(() =>
+			expect(api.conversations.updateMe).toHaveBeenCalledWith('conv-1', 'ws-1', { later: true }),
+		)
 		expect(toast.mock.calls[0][0]).toBe('Moved to Later. A new message brings it back.')
 		expect(track).toHaveBeenCalledWith({ action: 'later', via: 'menu' })
 	})

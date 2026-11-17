@@ -126,7 +126,8 @@ describe('ChatListV2', () => {
 		await screen.findByRole('heading', { name: 'Today' })
 		expect(screen.getByRole('button', { name: /Needs you/ }).textContent).toBe('Needs you2')
 		expect(screen.getByRole('button', { name: /Unread/ }).textContent).toBe('Unread1')
-		expect(screen.getByRole('button', { name: /Later/ }).textContent).toBe('Later1')
+		// The row's own Later button shares the name; only the pills carry aria-pressed.
+		expect(screen.getByRole('button', { name: /Later/, pressed: false }).textContent).toBe('Later1')
 		expect(screen.getByRole('button', { name: 'All' }).textContent).toBe('All')
 	})
 
