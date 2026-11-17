@@ -13,6 +13,7 @@ import {
 import { isActorHumanPaused } from '../lib/agent-pause'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { maybeTrackOnboardingResearchAnswered } from '../lib/analytics/onboarding-events'
 import {
 	claimCommentResponder,
 	releaseCommentResponderClaim,
@@ -704,6 +705,16 @@ app.openapi(createCommentRoute, (async (c) => {
 				error: String(err),
 			}),
 		)
+	}
+
+	if (actorType === 'human' && parentEventId !== undefined) {
+		void maybeTrackOnboardingResearchAnswered(db, {
+			workspaceId,
+			actorId,
+			objectId: body.entity_id,
+			parentEventId,
+			content: body.content,
+		})
 	}
 
 	const serialized = serializeArray([comment])[0] as z.infer<typeof createCommentResponseSchema>

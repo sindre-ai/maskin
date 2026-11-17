@@ -49,6 +49,7 @@ import {
 	trackMessageSentTagged,
 } from '../lib/analytics/chat-tag-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { maybeTrackOnboardingSecondMessage } from '../lib/analytics/onboarding-events'
 import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -1805,6 +1806,14 @@ app.openapi(postMessageRoute, (async (c) => {
 			client: resolveChatTagClient(c.req.header(CLIENT_SOURCE_HEADER)),
 			content: body.content,
 			taggedIds: mentionedIds,
+		})
+	}
+
+	if (callerType === 'human') {
+		void maybeTrackOnboardingSecondMessage(db, {
+			workspaceId,
+			conversationId: id,
+			actorId: callerId,
 		})
 	}
 
