@@ -53,6 +53,8 @@ interface LoopCustomViewProps {
 	onProposeChange?: (change: ProposedChange) => void
 	/** Raised after a proposed change was saved: the view reloads its lists so it shows the new value. */
 	reloadToken?: number
+	/** Told whenever a reload starts or ends, so the page can disable its Refresh item while one runs. */
+	onRefreshingChange?: (refreshing: boolean) => void
 }
 
 export function LoopCustomView({
@@ -62,6 +64,7 @@ export function LoopCustomView({
 	onOpenItem,
 	onProposeChange,
 	reloadToken,
+	onRefreshingChange,
 }: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
@@ -90,6 +93,7 @@ export function LoopCustomView({
 			onOpenItem={onOpenItem}
 			onProposeChange={onProposeChange}
 			reloadToken={reloadToken}
+			onRefreshingChange={onRefreshingChange}
 		/>
 	)
 }
@@ -103,6 +107,7 @@ function ViewFrame({
 	onOpenItem,
 	onProposeChange,
 	reloadToken,
+	onRefreshingChange,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
@@ -112,6 +117,7 @@ function ViewFrame({
 	onOpenItem?: (objectId: string) => void
 	onProposeChange?: (change: ProposedChange) => void
 	reloadToken?: number
+	onRefreshingChange?: (refreshing: boolean) => void
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const navigate = useNavigate()
@@ -179,6 +185,9 @@ function ViewFrame({
 	// is true while any query is in flight.
 	const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 	const [refreshing, setRefreshing] = useState(false)
+	useEffect(() => {
+		onRefreshingChange?.(refreshing)
+	}, [refreshing, onRefreshingChange])
 	const pendingRef = useRef(0)
 	// When each source's answer on screen was fetched, by query key.
 	const answeredAtRef = useRef(new Map<string, number>())
