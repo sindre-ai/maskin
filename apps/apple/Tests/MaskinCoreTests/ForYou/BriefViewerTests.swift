@@ -142,6 +142,37 @@ struct BriefPlaybackTests {
 		#expect(p.index == 0 && p.steps == 1)
 	}
 
+	@Test("back from a deck's first card opens the previous deck on its last card")
+	func deckStepsBackIntoDeck() {
+		var p = playback()
+		p.setSteps(3)
+		p.next(); p.next(); p.next()
+		#expect(p.index == 1 && p.step == 0)
+		p.previous()
+		#expect(p.index == 0 && p.step == 0 && p.steps == 1)
+		p.setSteps(3)
+		#expect(p.index == 0 && p.step == 2)
+		p.previous()
+		#expect(p.step == 1)
+	}
+
+	@Test("back into a slide that is not a deck, or moving on before it loads, stays on the first card")
+	func backIntoPlainSlide() {
+		var plain = playback()
+		plain.next()
+		plain.previous()
+		plain.setSteps(1)
+		#expect(plain.index == 0 && plain.step == 0)
+		var early = playback()
+		early.next()
+		early.previous()
+		early.next()
+		early.previous()
+		early.next()
+		early.setSteps(3)
+		#expect(early.index == 1 && early.step == 0)
+	}
+
 	@Test("time turns a deck's cards, then moves on")
 	func deckAdvancesOnTime() {
 		var p = playback()
