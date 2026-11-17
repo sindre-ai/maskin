@@ -59,10 +59,7 @@ public struct NotificationPreferences: Equatable, Sendable {
 	/// The summary email switch. When the person never chose, the server sends what the sending
 	/// rule would give them, so this is always the state to show.
 	public var emailDigestEnabled: Bool
-	/// The Email switch per kind other than the summary. Each is off until the person switches it on.
-	public var emailNeedsYou: Bool
-	public var emailConversation: Bool
-	public var emailTips: Bool
+	/// The Flow activity Email switch. Off until the person switches it on.
 	public var emailFlowActivity: Bool
 	/// The Marketplace picks switch for the summary email. Off until the person turns it on.
 	public var marketplacePicksEnabled: Bool
@@ -77,8 +74,7 @@ public struct NotificationPreferences: Equatable, Sendable {
 	public init(
 		timezone: String? = nil, quietHours: QuietHours? = nil, categories: Categories = .init(),
 		briefingEnabled: Bool = true, briefingTime: Int = NotificationPreferences.defaultBriefingTime,
-		emailDigestEnabled: Bool = false, emailNeedsYou: Bool = false, emailConversation: Bool = false,
-		emailTips: Bool = false, emailFlowActivity: Bool = false,
+		emailDigestEnabled: Bool = false, emailFlowActivity: Bool = false,
 		marketplacePicksEnabled: Bool = false, emailRhythm: EmailRhythm = .daily,
 		mutedWorkspaceIds: [String] = []
 	) {
@@ -88,9 +84,6 @@ public struct NotificationPreferences: Equatable, Sendable {
 		self.briefingEnabled = briefingEnabled
 		self.briefingTime = briefingTime
 		self.emailDigestEnabled = emailDigestEnabled
-		self.emailNeedsYou = emailNeedsYou
-		self.emailConversation = emailConversation
-		self.emailTips = emailTips
 		self.emailFlowActivity = emailFlowActivity
 		self.marketplacePicksEnabled = marketplacePicksEnabled
 		self.emailRhythm = emailRhythm
@@ -125,9 +118,6 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 	public var briefingEnabled: Bool?
 	public var briefingTime: Int?
 	public var emailDigestEnabled: Bool?
-	public var emailNeedsYou: Bool?
-	public var emailConversation: Bool?
-	public var emailTips: Bool?
 	public var emailFlowActivity: Bool?
 	public var marketplacePicksEnabled: Bool?
 	public var emailRhythm: NotificationPreferences.EmailRhythm?
@@ -158,9 +148,6 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 		if let briefingEnabled { next.briefingEnabled = briefingEnabled }
 		if let briefingTime { next.briefingTime = briefingTime }
 		if let emailDigestEnabled { next.emailDigestEnabled = emailDigestEnabled }
-		if let emailNeedsYou { next.emailNeedsYou = emailNeedsYou }
-		if let emailConversation { next.emailConversation = emailConversation }
-		if let emailTips { next.emailTips = emailTips }
 		if let emailFlowActivity { next.emailFlowActivity = emailFlowActivity }
 		if let marketplacePicksEnabled { next.marketplacePicksEnabled = marketplacePicksEnabled }
 		if let emailRhythm { next.emailRhythm = emailRhythm }
@@ -189,7 +176,7 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 			case needsYou = "needs_you", conversation, digest, tips, flowActivity = "flow_activity"
 		}
 		enum EmailCategoryKey: String, CodingKey {
-			case needsYou = "needs_you", conversation, tips, flowActivity = "flow_activity"
+			case flowActivity = "flow_activity"
 		}
 
 		func encode(to encoder: any Encoder) throws {
@@ -219,13 +206,8 @@ public struct NotificationPreferencesPatch: Equatable, Sendable {
 				try cat.encodeIfPresent(patch.tips, forKey: .tips)
 				try cat.encodeIfPresent(patch.flowActivity, forKey: .flowActivity)
 			}
-			if patch.emailNeedsYou != nil || patch.emailConversation != nil || patch.emailTips != nil
-				|| patch.emailFlowActivity != nil
-			{
+			if patch.emailFlowActivity != nil {
 				var email = c.nestedContainer(keyedBy: EmailCategoryKey.self, forKey: .emailCategories)
-				try email.encodeIfPresent(patch.emailNeedsYou, forKey: .needsYou)
-				try email.encodeIfPresent(patch.emailConversation, forKey: .conversation)
-				try email.encodeIfPresent(patch.emailTips, forKey: .tips)
 				try email.encodeIfPresent(patch.emailFlowActivity, forKey: .flowActivity)
 			}
 			try c.encodeIfPresent(patch.briefingEnabled, forKey: .briefingEnabled)
