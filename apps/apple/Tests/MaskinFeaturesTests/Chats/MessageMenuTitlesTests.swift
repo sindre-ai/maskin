@@ -4,13 +4,12 @@ import Testing
 
 @Suite("MessageMenuActions")
 struct MessageMenuTitlesTests {
-	@Test("Select text sits after Copy when the message has text")
-	func selectTextAfterCopy() {
+	@Test("Copy comes before Pin")
+	func copyBeforePin() {
 		var actions = MessageMenuActions()
 		actions.onCopy = {}
-		actions.onSelectText = {}
 		actions.onPin = {}
-		#expect(actions.titles == ["Copy", "Select text", "Pin"])
+		#expect(actions.titles == ["Copy", "Pin"])
 	}
 
 	@Test("Reply in thread is the only reply row, first in the menu")
@@ -22,15 +21,14 @@ struct MessageMenuTitlesTests {
 		#expect(!actions.titles.contains("Reply"))
 	}
 
-	@Test("an agent's plain words offer Open <agent>, after Select text")
+	@Test("an agent's plain words offer Open <agent>, after Copy")
 	func openAgent() {
 		var actions = MessageMenuActions()
 		actions.onCopy = {}
-		actions.onSelectText = {}
 		actions.onOpenAgent = {}
 		actions.openAgentTitle = "Open Relay"
 		actions.onPin = {}
-		#expect(actions.titles == ["Copy", "Select text", "Open Relay", "Pin"])
+		#expect(actions.titles == ["Copy", "Open Relay", "Pin"])
 	}
 
 	@Test("an agent named like an action cannot hijack it: rows run by identity, not by title")
@@ -50,10 +48,14 @@ struct MessageMenuTitlesTests {
 		#expect(calls.copy == 1 && calls.open == 1)
 	}
 
-	@Test("no Select text for a message without text")
-	func noSelectTextWithoutText() {
+	@Test("the More button shows only when the menu has rows")
+	func moreButtonNeedsRows() {
 		var actions = MessageMenuActions()
-		actions.onPin = {}
-		#expect(!actions.titles.contains("Select text"))
+		#expect(!actions.hasItems)
+		actions.onReact = { _ in }
+		#expect(actions.hasItems)
+		actions.onReact = nil
+		actions.onCopy = {}
+		#expect(actions.hasItems)
 	}
 }

@@ -393,7 +393,8 @@ final class ScreenTourTests: XCTestCase {
 				skipped.append("no-message")
 				return
 			}
-			msg.press(forDuration: 1.2)
+			let more = msg.buttons["More"].firstMatch
+			(more.exists ? more : app.buttons["More"].firstMatch).tap()
 			sleep(2)
 			capture("32-message-menu", expect: ["Reply", "Copy"], wait: 4)
 			let reply = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'thread'")).firstMatch

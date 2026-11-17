@@ -3,10 +3,10 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Spec 7 §5 long-press actions, built on the system context menu (blur, haptic, a preview of the
-/// bubble clamped to six lines, 44pt rows). All messages: Copy · Select text · Pin/Unpin. Your newest:
-/// Edit. Agent messages: Try again · Make it shorter · Good answer · Not right. No reaction strip:
-/// the API carries no reactions. A top-level message also offers Reply in thread.
+/// Spec 7 §5 message actions, opened from the "More" button beside the bubble (a long-press on the
+/// words selects them instead). All messages: Copy · Pin/Unpin. Your newest: Edit. Agent messages:
+/// Try again · Make it shorter · Good answer · Not right. No reaction strip: the API carries no
+/// reactions. A top-level message also offers Reply in thread.
 struct MessageMenuActions {
 	/// Opens (or starts) the thread under this message.
 	var onThread: (() -> Void)?
@@ -14,8 +14,6 @@ struct MessageMenuActions {
 	var onReact: ((String) -> Void)?
 	var reacted: Set<String> = []
 	var onCopy: (() -> Void)?
-	/// Opens the message's text in a sheet where single words can be selected.
-	var onSelectText: (() -> Void)?
 	/// Opens the agent that wrote this message. An agent's words have no avatar or name row to
 	/// tap, so the long-press menu is how every one of them reaches the agent's page.
 	var onOpenAgent: (() -> Void)?
@@ -39,7 +37,6 @@ struct MessageMenuActions {
 		var out: [(MessageMenuItem, String)] = []
 		if onThread != nil { out.append((.thread, "Reply in thread")) }
 		if onCopy != nil { out.append((.copy, "Copy")) }
-		if onSelectText != nil { out.append((.selectText, "Select text")) }
 		if onOpenAgent != nil { out.append((.openAgent, openAgentTitle)) }
 		if onPin != nil { out.append((.pin, isPinned ? "Unpin" : "Pin")) }
 		if onEdit != nil { out.append((.edit, "Edit")) }
@@ -56,12 +53,14 @@ struct MessageMenuActions {
 	/// The row titles in order, for tests and accessibility.
 	var titles: [String] { entries.map(\.title) }
 
+	/// Whether the menu has anything to show (the reaction row is not one of `entries`).
+	var hasItems: Bool { !entries.isEmpty || onReact != nil }
+
 	/// Runs the action behind a row.
 	func run(_ item: MessageMenuItem) {
 		switch item {
 		case .thread: onThread?()
 		case .copy: onCopy?()
-		case .selectText: onSelectText?()
 		case .openAgent: onOpenAgent?()
 		case .pin: onPin?()
 		case .edit: onEdit?()
@@ -78,7 +77,7 @@ struct MessageMenuActions {
 
 /// What a long-press menu row does, independent of the words on it.
 enum MessageMenuItem: Hashable {
-	case thread, copy, selectText, openAgent, pin, edit, tryAgain, shorter, goodAnswer, notRight, retrySend,
+	case thread, copy, openAgent, pin, edit, tryAgain, shorter, goodAnswer, notRight, retrySend,
 		discard, readAloud
 }
 
@@ -102,9 +101,6 @@ struct MessageMenuItems: View {
 		}
 		if let onCopy = actions.onCopy {
 			Button(action: onCopy) { Label("Copy", systemImage: "doc.on.doc") }
-		}
-		if let onSelectText = actions.onSelectText {
-			Button(action: onSelectText) { Label("Select text", systemImage: "text.cursor") }
 		}
 		if let onOpenAgent = actions.onOpenAgent {
 			Button(action: onOpenAgent) { Label(actions.openAgentTitle, systemImage: "person.crop.circle") }
@@ -152,31 +148,38 @@ struct MessageMenuItems: View {
 	}
 }
 
-/// The bubble as the menu shows it: the text clamped to six lines, in the bubble's own colours.
-struct MessagePreview: View {
-	let message: ChatMessage
-	let isOwn: Bool
+/// The "More" button beside a bubble. It opens the message menu, so a long-press on the words is
+/// free to select them.
+struct MessageMoreButton: View {
+	let actions: MessageMenuActions
 
 	var body: some View {
-		Text(ChatPreviewText.plain(message.content).isEmpty ? "Attachment" : ChatPreviewText.plain(message.content))
-			.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
-			.lineSpacing(BubbleShape.lineSpacing)
-			.foregroundStyle(isOwn ? MaskinSurface.onInverse : MaskinColor.ink2)
-			.padding(.vertical, isOwn ? BubbleShape.myVertical : BubbleShape.theirVertical)
-			.padding(.horizontal, BubbleShape.horizontal)
-			.background(isOwn ? MaskinSurface.inverse : MaskinSurface.card)
-			.clipShape(isOwn ? BubbleShape.mine : BubbleShape.agent)
-			.padding(MaskinSpace.s4)
+		Menu {
+			MessageMenuItems(actions: actions)
+		} label: {
+			Image(systemName: "ellipsis")
+				.maskinSymbol(MaskinFontSize.t14, weight: .semibold)
+				.foregroundStyle(MaskinColor.ink4)
+				.frame(width: MaskinSpace.s14, height: MaskinSpace.s14)
+				.contentShape(Rectangle())
+		}
+		.accessibilityLabel("More")
 	}
 }
 
 extension View {
-	/// Long-press (the system's 400ms-class press) opens the actions with a preview of the bubble.
-	func messageContextMenu(_ message: ChatMessage, isOwn: Bool, actions: MessageMenuActions) -> some View {
-		contextMenu {
-			MessageMenuItems(actions: actions)
-		} preview: {
-			MessagePreview(message: message, isOwn: isOwn)
+	/// Puts the "More" button beside the bubble (before it for your own, after it for theirs), and
+	/// leaves the bubble's own words to the system's long-press selection.
+	@ViewBuilder
+	func messageMoreMenu(actions: MessageMenuActions, isOwn: Bool) -> some View {
+		if actions.hasItems {
+			HStack(alignment: .top, spacing: 0) {
+				if isOwn { MessageMoreButton(actions: actions) }
+				self
+				if !isOwn { MessageMoreButton(actions: actions) }
+			}
+		} else {
+			self
 		}
 	}
 }
