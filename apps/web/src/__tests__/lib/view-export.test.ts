@@ -87,6 +87,16 @@ describe('parseExportPages', () => {
 	})
 })
 
+// jsdom's Blob has no arrayBuffer(), so read it the way a page would without it.
+function readBytes(blob: Blob): Promise<ArrayBuffer> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader()
+		reader.onload = () => resolve(reader.result as ArrayBuffer)
+		reader.onerror = () => reject(reader.error)
+		reader.readAsArrayBuffer(blob)
+	})
+}
+
 describe('buildPdf', () => {
 	it('writes one page per image with a valid cross-reference table', async () => {
 		const blob = buildPdf([
@@ -94,7 +104,7 @@ describe('buildPdf', () => {
 			{ jpeg: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), pw: 2, ph: 2, w: 75, h: 37.5 },
 		])
 		expect(blob.type).toBe('application/pdf')
-		const text = new TextDecoder('latin1').decode(await blob.arrayBuffer())
+		const text = new TextDecoder('latin1').decode(await readBytes(blob))
 		expect(text.startsWith('%PDF-1.4')).toBe(true)
 		expect(text).toContain('/Count 2')
 		expect(text.match(/\/Type \/Page /g)).toHaveLength(2)

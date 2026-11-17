@@ -352,6 +352,11 @@ describe('LoopViewTab', () => {
 			await user.click(await screen.findByText('Export'))
 			return user
 		}
+		// A pointer click on an item inside the open submenu does not reach its onSelect in jsdom
+		// (the menu stays open), so the item is clicked directly once it is on screen.
+		function chooseExport(label: string) {
+			fireEvent.click(screen.getByRole('menuitem', { name: label }))
+		}
 
 		it('has no Export, only Refresh, for a view that cannot be renamed or removed when the flag is off', async () => {
 			files.byId = { good: list }
@@ -379,8 +384,8 @@ describe('LoopViewTab', () => {
 			flag.on = true
 			files.byId = { good: list }
 			render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Deals" />)
-			const user = await openExportChoices()
-			await user.click(screen.getByRole('menuitem', { name: label }))
+			await openExportChoices()
+			chooseExport(label)
 			await waitFor(() => expect(exporter.save).toHaveBeenCalledTimes(1))
 			expect(exporter.fromFrame).toHaveBeenCalledTimes(1)
 			expect(exporter.fromDocument).not.toHaveBeenCalled()
@@ -401,8 +406,8 @@ describe('LoopViewTab', () => {
 				},
 			}
 			render(<LoopViewTab workspaceId="w" loopId="l" fileId="deck" name="Briefing" />)
-			const user = await openExportChoices()
-			await user.click(screen.getByRole('menuitem', { name: 'PDF' }))
+			await openExportChoices()
+			chooseExport('PDF')
 			await waitFor(() => expect(exporter.save).toHaveBeenCalledTimes(1))
 			expect(exporter.fromDocument).toHaveBeenCalledWith(
 				'<html><body><section class="slide">One</section></body></html>',
@@ -416,8 +421,8 @@ describe('LoopViewTab', () => {
 			exporter.fromFrame.mockRejectedValue(new Error('boom'))
 			vi.spyOn(console, 'error').mockImplementation(() => {})
 			render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Deals" />)
-			const user = await openExportChoices()
-			await user.click(screen.getByRole('menuitem', { name: 'PNG' }))
+			await openExportChoices()
+			chooseExport('PNG')
 			expect(await screen.findByRole('alert')).toHaveTextContent(EXPORT_FAILED_MESSAGE)
 			expect(exporter.save).not.toHaveBeenCalled()
 		})
