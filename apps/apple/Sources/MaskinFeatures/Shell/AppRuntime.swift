@@ -27,6 +27,10 @@ public final class AppRuntime {
 	/// Keeps the contact names and numbers file for the phone's caller ID current. Nil when this
 	/// build isn't signed with the App Group.
 	@ObservationIgnored private let callerID: CallerIDRefresher?
+	/// The phone's own on or off answer for Caller ID, and how many numbers the file holds. Asks the
+	/// phone to load the file again after it changes.
+	public let callerIDStatus = CallerIDStatusStore(
+		directory: SystemCallDirectory(), countLoaded: { FileCallerIDListStore.shared()?.load()?.count ?? 0 })
 
 	/// The tab on screen. (Notification permission is NOT asked on a tab change: it waits for a
 	/// moment of value, see `valueMomentSeen()`.)
@@ -418,7 +422,23 @@ public final class AppRuntime {
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
 			// Needs a workspace to read contacts from. Skips itself when it ran in the last 24 hours.
-			if session.workspaceId?.isEmpty == false { Task { await callerID?.refresh() } }
+			if session.workspaceId?.isEmpty == false {
+				Task {
+					await refreshCallerID(force: false)
+					await callerIDStatus.reportStatus(to: .shared)
+				}
+			}
+		}
+	}
+
+	/// Rebuilds the caller ID file when it is due (always, when `force`), and asks the phone to load
+	/// it when it was rewritten. A skipped or failed rebuild leaves the file, and the phone, alone.
+	func refreshCallerID(force: Bool) async {
+		guard let callerID else { return await callerIDStatus.refreshStatus() }
+		if case .refreshed = await callerID.refresh(force: force) {
+			await callerIDStatus.reloadPhone()
+		} else {
+			await callerIDStatus.refreshStatus()
 		}
 	}
 
@@ -457,7 +477,10 @@ public final class AppRuntime {
 		selectedTab = .forYou
 		FileStore.clearExports()
 		// Other people's numbers must not outlive the session.
-		Task { await callerID?.wipe() }
+		Task {
+			await callerID?.wipe()
+			await callerIDStatus.reloadPhone()
+		}
 	}
 
 	/// The signed-in actor changed (`nil` = signed out): keep the push token registered for them.
@@ -688,6 +711,8 @@ public final class AppRuntime {
 		ShareQueue.shared()?.removeAll()
 		// The names and numbers loaded for the phone's caller ID are this account's too.
 		await callerID?.wipe()
+		// The file is gone: have the phone drop the names it was holding.
+		await callerIDStatus.reloadPhone()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
