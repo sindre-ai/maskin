@@ -20,11 +20,6 @@ name: Apple iPad layout screenshots (manual)
 # Cost: one Mac job, one Debug build and two short test runs. The 45 minute job limit is a hang guard.
 
 on:
-  # TEMPORARY: GitHub only lets you dispatch a workflow that is on main, so this runs once on push to
-  # the task branch, on the default ref below. Removed in the next commit, before merge.
-  push:
-    branches:
-      - feat/task-c0f65db4-ipad-layout-screenshots
   workflow_dispatch:
     inputs:
       ref:
@@ -57,7 +52,7 @@ jobs:
       - name: Check out the ref to photograph
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref || 'feat/task-c8e483f2-ipad-one-navigation' }}
+          ref: ${{ inputs.ref }}
 
       - name: Check out the tour from this workflow's own commit
         uses: actions/checkout@v6
@@ -71,7 +66,7 @@ jobs:
           set -euo pipefail
           cp tooling/apps/apple/Apps/MaskinUITests/IPadLayoutTourTests.swift apps/apple/Apps/MaskinUITests/IPadLayoutTourTests.swift
           rm -rf tooling
-          echo "photographing: $(git rev-parse HEAD) (ref: ${{ inputs.ref || 'feat/task-c8e483f2-ipad-one-navigation' }})"
+          echo "photographing: $(git rev-parse HEAD) (ref: ${{ inputs.ref }})"
 
       - name: Select Xcode 26
         run: |
