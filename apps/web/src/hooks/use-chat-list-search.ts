@@ -13,12 +13,23 @@ const CHAT_TYPES = ['chat']
 // all five groups is "every chat", archived ones included.
 const EVERY_STATUS: string[] = [...STATUS_GROUP_KEYS]
 
-export function useChatListSearch(workspaceId: string, text: string) {
+/**
+ * `operators` is the new chat list's: the server then reads agent:, from:, with:, team: and is:
+ * (and "phrases" and -words) out of the words. The old list leaves it off and searches as before.
+ */
+export function useChatListSearch(workspaceId: string, text: string, operators = false) {
 	const typed = text.trim()
 	const debounced = useDebouncedValue(typed, SEARCH_QUERY_DEBOUNCE_MS)
 	const query = useSearchQuery(
 		workspaceId,
-		{ text: debounced, types: CHAT_TYPES, statuses: EVERY_STATUS, updated: '', sort: 'rel' },
+		{
+			text: debounced,
+			types: CHAT_TYPES,
+			statuses: EVERY_STATUS,
+			updated: '',
+			sort: 'rel',
+			operators,
+		},
 		typed !== '',
 	)
 	// Words typed but not yet sent: the previous answer is on screen, so show it as pending.
