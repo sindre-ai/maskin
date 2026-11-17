@@ -473,7 +473,7 @@ interface Actor {
 	type: string
 }
 
-function ActorAutocomplete({
+export function ActorAutocomplete({
 	id,
 	actors,
 	selectedId,

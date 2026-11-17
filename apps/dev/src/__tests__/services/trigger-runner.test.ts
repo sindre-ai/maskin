@@ -331,6 +331,146 @@ describe('TriggerRunner', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
+		describe('driver condition', () => {
+			const driverCondition = [{ field: 'driver', operator: 'equals', value: 'actor-abc' }]
+			const driverTrigger = (action: string) =>
+				buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					config: { entity_type: 'task', action, conditions: driverCondition },
+				})
+
+			it('fires on created when the new item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: 'actor-abc' } }],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on created when the driver differs', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: 'actor-xyz' } }],
+				]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires on updated when the item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('updated')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-abc' },
+								updated: { status: 'todo', driver: 'actor-abc' },
+							},
+						},
+					],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'updated' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on updated when the driver differs', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('updated')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-xyz' },
+								updated: { status: 'todo', driver: 'actor-xyz' },
+							},
+						},
+					],
+				]
+
+				bridge.emit('event', { ...baseEvent, action: 'updated' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires on status_changed when the item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('status_changed')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-abc' },
+								updated: { status: 'in_progress', driver: 'actor-abc' },
+							},
+						},
+					],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on status_changed when the driver differs', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('status_changed')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-xyz' },
+								updated: { status: 'in_progress', driver: 'actor-xyz' },
+							},
+						},
+					],
+				]
+
+				bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires on commented when the commented item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('commented')],
+					[{ data: { content: 'hi' } }], // fetchEventData
+					[{ id: baseEvent.entity_id, type: 'task', driver: 'actor-abc' }], // target object row
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'commented' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on commented when the commented item has another driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('commented')],
+					[{ data: { content: 'hi' } }],
+					[{ id: baseEvent.entity_id, type: 'task', driver: 'actor-xyz' }],
+				]
+
+				bridge.emit('event', { ...baseEvent, action: 'commented' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+		})
+
 		it('does not fire or throw when filter uses dotted path and intermediate is null', async () => {
 			const trigger = buildTrigger({
 				workspaceId: 'ws-1',

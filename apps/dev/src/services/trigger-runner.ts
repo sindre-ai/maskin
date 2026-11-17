@@ -954,18 +954,22 @@ export class TriggerRunner {
 		// the event row so `filter.actorId` matches the author (the JSON
 		// payload has no author field), and `on_target_type` from the hydrated
 		// object row so `filter.on_target_type` pins to bet/task/insight (tech
-		// spec §5.4 fold 6). For every other event action the root stays the
+		// spec §5.4 fold 6), plus `driver` from the same row so a condition on
+		// the commented item's driver reads like it does on updated events.
+		// For every other event action the root stays the
 		// raw data payload — no shape change.
 		const buildFilterRoot = async (
 			data: Record<string, unknown>,
 		): Promise<Record<string, unknown>> => {
 			if (event.action === 'commented') {
 				const ctx = await getObjectContext()
-				const targetType = (ctx.current as { type?: string } | undefined)?.type
+				const target = ctx.current as { type?: string; driver?: string | null } | undefined
+				const targetType = target?.type
 				return {
 					...data,
 					actorId: event.actor_id,
 					...(targetType !== undefined ? { on_target_type: targetType } : {}),
+					...(target ? { driver: target.driver ?? null } : {}),
 				}
 			}
 			const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
