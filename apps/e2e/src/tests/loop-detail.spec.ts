@@ -70,11 +70,10 @@ test.describe('Loop detail page', () => {
 			).toBeVisible()
 			// Step rows show the trigger's title, not its action prompt (#2777).
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
-			// The pipeline is one card with a column per agent; the trigger sits under
-			// its agent and has its own on/off switch. The card scrolls inside itself,
-			// never the page.
+			// The pipeline is one card; an event with no status to place sits in the Any change
+			// strip, names the agent it wakes and has its own on/off switch.
 			const pipeline = page.getByTestId('loop-pipeline')
-			await expect(pipeline.getByRole('link', { name: 'Relay' })).toBeVisible()
+			await expect(pipeline.getByText('Relay', { exact: true })).toBeVisible()
 			await expect(pipeline.getByText('Event', { exact: true })).toBeVisible()
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toHaveCount(0)
 			const triggerSwitch = pipeline.getByRole('switch', { name: /Triage feedback/ })

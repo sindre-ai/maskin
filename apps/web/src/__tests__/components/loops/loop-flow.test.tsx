@@ -1,5 +1,4 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -19,8 +18,23 @@ import { createWorkspaceWrapper } from '../../setup'
 const relay = buildActorListItem({ id: 'relay', name: 'Relay', type: 'agent' })
 const compass = buildActorListItem({ id: 'compass', name: 'Compass', type: 'agent' })
 
+const TASK_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'validated', 'done']
+
 function wrapper() {
-	return createWorkspaceWrapper({ id: 'ws-1', settings: {} })
+	return createWorkspaceWrapper({
+		id: 'ws-1',
+		settings: { statuses: { task: TASK_STATUSES, bet: ['opportunity', 'define', 'active'] } },
+	})
+}
+
+function statusChange(id: string, toStatus: string, extra: Record<string, unknown> = {}) {
+	return buildTriggerResponse({
+		id,
+		targetActorId: 'relay',
+		type: 'event',
+		name: `Fires on ${toStatus}`,
+		config: { entity_type: 'task', action: 'status_changed', to_status: toStatus, ...extra },
+	})
 }
 
 const relayEvent = buildTriggerResponse({
@@ -60,32 +74,125 @@ describe('LoopFlow', () => {
 		expect(screen.queryByText(/triggers on/)).not.toBeInTheDocument()
 	})
 
-	it('draws one column per agent with its trigger cards', async () => {
+	it('draws the task statuses left to right, with an arrow between each pair', async () => {
 		render(
-			<LoopFlow
-				workspaceId="ws-1"
-				triggers={[relayEvent, compassCron]}
-				actors={[relay, compass]}
-			/>,
+			<LoopFlow workspaceId="ws-1" triggers={[statusChange('t-1', 'todo')]} actors={[relay]} />,
 			{
 				wrapper: wrapper(),
 			},
+		)
+
+		const row = await screen.findByTestId('loop-status-row-task')
+		const boxes = TASK_STATUSES.map((status) =>
+			within(row).getByTestId(`loop-status-task-${status}`),
+		)
+		expect(boxes.map((b) => b.querySelector('span')?.textContent)).toEqual([
+			'Backlog',
+			'To do',
+			'In progress',
+			'In review',
+			'Validated',
+			'Done',
+		])
+		expect(row.querySelectorAll('svg[aria-hidden]')).toHaveLength(TASK_STATUSES.length - 1)
+	})
+
+	it('places a trigger under the status it fires on, with the agent it wakes', async () => {
+		const t = statusChange('t-1', 'in_review', { from_status: 'in_progress' })
+		render(<LoopFlow workspaceId="ws-1" triggers={[t, relayEvent]} actors={[relay]} />, {
+			wrapper: wrapper(),
+		})
+
+		const column = await screen.findByTestId('loop-status-task-in_review')
+		expect(within(column).getByText('Fires on in_review')).toBeInTheDocument()
+		expect(within(column).getByText('from in_progress')).toBeInTheDocument()
+		expect(within(column).getByText('Relay')).toBeInTheDocument()
+		// A card is a link to the trigger's own page.
+		expect(screen.getByRole('link', { name: /Fires on in_review/ })).toBeInTheDocument()
+		// The other statuses stay as empty boxes so the flow reads end to end.
+		expect(within(screen.getByTestId('loop-status-task-done')).queryByRole('link')).toBeNull()
+	})
+
+	it('omits the from-status when the trigger fires from any status', async () => {
+		render(
+			<LoopFlow workspaceId="ws-1" triggers={[statusChange('t-1', 'todo')]} actors={[relay]} />,
+			{
+				wrapper: wrapper(),
+			},
+		)
+
+		await screen.findByTestId('loop-status-task-todo')
+		expect(screen.queryByText(/^from /)).not.toBeInTheDocument()
+	})
+
+	it('shows an unplaced event trigger and a schedule in their own strips', async () => {
+		const created = buildTriggerResponse({
+			id: 't-created',
+			targetActorId: 'relay',
+			type: 'event',
+			name: 'Greets new tasks',
+			config: { entity_type: 'task', action: 'created' },
+		})
+		const anyStatus = statusChange('t-any', '__any__')
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={[statusChange('t-1', 'todo'), created, anyStatus, compassCron]}
+				actors={[relay, compass]}
+			/>,
+			{ wrapper: wrapper() },
 		)
 
 		const pipeline = await screen.findByTestId('loop-pipeline')
-		expect(within(pipeline).getByText('Relay')).toBeInTheDocument()
-		expect(within(pipeline).getByText('Compass')).toBeInTheDocument()
-		expect(within(pipeline).getByText('Normalises the Slack event')).toBeInTheDocument()
-		expect(within(pipeline).getByText('Sweeps stuck insights nightly')).toBeInTheDocument()
-		// A card is a link to the trigger's own page.
-		expect(screen.getByRole('link', { name: /Normalises the Slack event/ })).toBeInTheDocument()
+		const anyChange = screen.getByRole('heading', { name: 'Any change' })
+			.parentElement as HTMLElement
+		expect(within(anyChange).getByText('Greets new tasks')).toBeInTheDocument()
+		expect(within(anyChange).getByText('Fires on __any__')).toBeInTheDocument()
+		const schedule = screen.getByRole('heading', { name: 'Runs on a schedule' })
+			.parentElement as HTMLElement
+		expect(within(schedule).getByText('Sweeps stuck insights nightly')).toBeInTheDocument()
+		expect(within(schedule).getByText('Compass')).toBeInTheDocument()
+		// None of them sits under a status.
+		expect(
+			within(screen.getByTestId('loop-status-row-task')).queryByText('Greets new tasks'),
+		).toBeNull()
+		expect(pipeline).toBeInTheDocument()
 	})
 
-	it('labels a cron trigger Schedule and anything else Event', async () => {
+	it('puts a trigger whose status is not in the schema in the Any change strip, status shown', async () => {
+		const gone = statusChange('t-gone', 'shipped')
 		render(
 			<LoopFlow
 				workspaceId="ws-1"
-				triggers={[relayEvent, compassCron]}
+				triggers={[gone, statusChange('t-1', 'done')]}
+				actors={[relay]}
+			/>,
+			{
+				wrapper: wrapper(),
+			},
+		)
+
+		const anyChange = (await screen.findByRole('heading', { name: 'Any change' }))
+			.parentElement as HTMLElement
+		expect(within(anyChange).getByText('Fires on shipped')).toBeInTheDocument()
+		expect(within(anyChange).getByText('fires on shipped')).toBeInTheDocument()
+		expect(
+			within(screen.getByTestId('loop-status-row-task')).queryByText('Fires on shipped'),
+		).toBeNull()
+	})
+
+	it('draws one labelled row per item type', async () => {
+		const bet = buildTriggerResponse({
+			id: 't-bet',
+			targetActorId: 'compass',
+			type: 'event',
+			name: 'Shapes the bet',
+			config: { entity_type: 'bet', action: 'status_changed', to_status: 'define' },
+		})
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={[statusChange('t-1', 'todo'), bet]}
 				actors={[relay, compass]}
 			/>,
 			{
@@ -93,40 +200,39 @@ describe('LoopFlow', () => {
 			},
 		)
 
-		expect(await screen.findByText('Schedule')).toBeInTheDocument()
-		expect(screen.getByText('Event')).toBeInTheDocument()
+		expect(await screen.findByTestId('loop-status-row-task')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-status-row-bet')).toBeInTheDocument()
+		expect(
+			within(screen.getByTestId('loop-status-bet-define')).getByText('Shapes the bet'),
+		).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Bet' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Task' })).toBeInTheDocument()
 	})
 
-	it("orders the steps by the flow's trigger order, else A to Z", async () => {
+	it("orders the cards in a status by the flow's trigger order, else A to Z", async () => {
+		const first = statusChange('t-a', 'todo')
+		const second = buildTriggerResponse({ ...first, id: 't-b', name: 'Aardvark' })
 		const names = () =>
-			within(screen.getByTestId('loop-pipeline'))
-				.getAllByRole('link', { name: /(Relay|Compass)$/ })
+			within(screen.getByTestId('loop-status-task-todo'))
+				.getAllByRole('link')
 				.map((a) => a.textContent)
 
 		const { unmount } = render(
 			<LoopFlow
 				workspaceId="ws-1"
-				triggers={[relayEvent, compassCron]}
-				actors={[relay, compass]}
-				loop={buildLoopSummary({ triggerIds: ['t-relay', 't-compass'] })}
+				triggers={[first, second]}
+				actors={[relay]}
+				loop={buildLoopSummary({ triggerIds: ['t-a', 't-b'] })}
 			/>,
 			{ wrapper: wrapper() },
 		)
-		// Each link starts with the agent's avatar initials.
-		expect(names()).toEqual(['RERelay', 'COCompass'])
+		expect(names()[0]).toContain('Fires on todo')
 		unmount()
 
-		render(
-			<LoopFlow
-				workspaceId="ws-1"
-				triggers={[relayEvent, compassCron]}
-				actors={[relay, compass]}
-			/>,
-			{
-				wrapper: wrapper(),
-			},
-		)
-		expect(names()).toEqual(['COCompass', 'RERelay'])
+		render(<LoopFlow workspaceId="ws-1" triggers={[first, second]} actors={[relay]} />, {
+			wrapper: wrapper(),
+		})
+		expect(names()[0]).toContain('Aardvark')
 	})
 
 	it('turns a trigger on or off from the card without opening it', async () => {
@@ -150,44 +256,6 @@ describe('LoopFlow', () => {
 
 		const card = (await screen.findByRole('switch')).closest('div')
 		expect(card?.className).toContain('opacity-55')
-	})
-
-	it('shows an agent the flow names but no trigger sets off, with "No trigger"', async () => {
-		render(
-			<LoopFlow
-				workspaceId="ws-1"
-				triggers={[relayEvent]}
-				actors={[relay, compass]}
-				loop={buildLoopSummary({ agentIds: ['relay', 'compass'], triggerIds: ['t-relay'] })}
-			/>,
-			{ wrapper: wrapper() },
-		)
-
-		expect(await screen.findByText('No trigger')).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /Compass$/ })).toBeInTheDocument()
-	})
-
-	it('filters the columns by agent from the chips', async () => {
-		const user = userEvent.setup()
-		render(
-			<LoopFlow
-				workspaceId="ws-1"
-				triggers={[relayEvent, compassCron]}
-				actors={[relay, compass]}
-			/>,
-			{
-				wrapper: wrapper(),
-			},
-		)
-
-		expect(await screen.findByRole('button', { name: /All steps/ })).toHaveTextContent('2')
-		await user.click(screen.getByRole('button', { name: /^Compass/ }))
-
-		expect(screen.queryByText('Normalises the Slack event')).not.toBeInTheDocument()
-		expect(screen.getByText('Sweeps stuck insights nightly')).toBeInTheDocument()
-
-		await user.click(screen.getByRole('button', { name: /All steps/ }))
-		expect(screen.getByText('Normalises the Slack event')).toBeInTheDocument()
 	})
 
 	it('says the flow runs when asked when it has no triggers', async () => {
@@ -266,21 +334,5 @@ describe('LoopFlow', () => {
 		expect(await screen.findByText('Sweep the stuck insights')).toBeInTheDocument()
 		expect(screen.getByText('When task is created')).toBeInTheDocument()
 		expect(screen.queryByText('t-b')).not.toBeInTheDocument()
-	})
-
-	it('keeps a very long agent name on one line in its chip', async () => {
-		const longAgent = buildActorListItem({
-			id: 'long',
-			name: 'An agent with an extraordinarily long name that keeps going past any column',
-			type: 'agent',
-		})
-		const t = buildTriggerResponse({ id: 't-l', targetActorId: 'long', type: 'event', config: {} })
-		render(<LoopFlow workspaceId="ws-1" triggers={[relayEvent, t]} actors={[relay, longAgent]} />, {
-			wrapper: wrapper(),
-		})
-
-		const chip = await screen.findByRole('button', { name: /An agent with an extraordinarily/ })
-		expect(chip.className).toContain('max-w-full')
-		expect(chip.querySelector('.truncate')).not.toBeNull()
 	})
 })
