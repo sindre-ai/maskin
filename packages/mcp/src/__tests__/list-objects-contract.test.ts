@@ -407,12 +407,16 @@ describe('list_objects, the one query tool', () => {
 					const first = await callRaw(bigHarness, 'list_objects', {
 						workspace_id: WS,
 						limit: 100,
+						// Concise rows, so a whole page of 100 fits under the response size cap.
+						detail: 'concise',
 						...extra,
 					})
 					expect(pageOf(first)).toMatchObject({ returned: 100, has_more: true })
 					const second = await callRaw(bigHarness, 'list_objects', {
 						workspace_id: WS,
 						limit: 100,
+						// Concise rows, so a whole page of 100 fits under the response size cap.
+						detail: 'concise',
 						cursor: first.structured.next_cursor,
 						...extra,
 					})
