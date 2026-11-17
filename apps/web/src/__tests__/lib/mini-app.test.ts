@@ -8,6 +8,7 @@ import {
 	VIEWER_GOTO_PAGE_MESSAGE,
 	VIEWER_PAGE_MESSAGE,
 	VIEWER_SLIDE_SELECTOR,
+	VIEWER_STEP_MESSAGE,
 	VIEWER_WHEEL_MESSAGE,
 	applyViewerPage,
 	collectViewerSlides,
@@ -15,6 +16,7 @@ import {
 	prepareBridgedViewHtml,
 	prepareIsolatedViewHtml,
 	prepareMiniAppHtml,
+	prepareStoryHtml,
 	prepareViewerHtml,
 	readViewSources,
 	showViewerPage,
@@ -372,6 +374,17 @@ describe('viewer paging controller', () => {
 		expect(collectViewerSlides(root)).toHaveLength(3)
 	})
 
+	it('marks the slide it shows as active and clears the class from the others', () => {
+		const root = document.createElement('div')
+		root.innerHTML =
+			'<section class="slide active"></section><section class="slide"></section><section class="slide"></section>'
+		const slides = collectViewerSlides(root)
+		applyViewerPage(slides, 2)
+		expect(slides.map((slide) => slide.classList.contains('active'))).toEqual([false, false, true])
+		applyViewerPage(slides, 0)
+		expect(slides.map((slide) => slide.classList.contains('active'))).toEqual([true, false, false])
+	})
+
 	it('injects the paging controller only for a paged document', () => {
 		const html = '<!DOCTYPE html><html><head></head><body></body></html>'
 		const paged = prepareViewerHtml(html, { paged: true })
@@ -594,5 +607,45 @@ describe('readViewSources', () => {
 		const result = readViewSources(doc(sources))
 		expect(result.ok).toBe(false)
 		if (!result.ok) expect(result.error.length).toBeGreaterThan(0)
+	})
+})
+
+describe('prepareStoryHtml', () => {
+	const html =
+		'<!DOCTYPE html><html><head></head><body><section class="slide"></section></body></html>'
+
+	it('hands the deck to the host: the controller, the step message and one policy', () => {
+		const story = prepareStoryHtml(html)
+		expect(story).toContain(`!=='${VIEWER_GOTO_PAGE_MESSAGE}'`)
+		expect(story).toContain(`type:'${VIEWER_STEP_MESSAGE}'`)
+		expect(story.match(/<meta http-equiv="Content-Security-Policy"/g)).toHaveLength(1)
+		// The deck's own pager and tap zones are hidden, and its keys and swipe are caught first.
+		expect(story).toContain('.zone,.tap,.foot .nav{display:none!important}')
+		expect(story).toContain("addEventListener('keydown'")
+		expect(story).toContain('},true);')
+		// A page the host walks must not also scroll-lock or forward wheel events.
+		expect(story).not.toContain(VIEWER_WHEEL_MESSAGE)
+	})
+
+	it('opens on the slide it is given, and on the first by default', () => {
+		expect(prepareStoryHtml(html)).toContain('var current=0;')
+		expect(prepareStoryHtml(html, 5)).toContain('var current=5;')
+		expect(prepareStoryHtml(html, 5)).toContain('go(5)')
+		expect(prepareStoryHtml(html, -3)).toContain('var current=0;')
+		expect(prepareStoryHtml(html, Number.NaN)).toContain('var current=0;')
+	})
+
+	it('leaves the file viewer controller without the takeover', () => {
+		const paged = prepareViewerHtml(html, { paged: true })
+		expect(paged).not.toContain(VIEWER_STEP_MESSAGE)
+		expect(paged).toContain('var current=0;')
+	})
+
+	it('still removes an agent-written policy and refresh', () => {
+		const story = prepareStoryHtml(
+			'<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><meta http-equiv="refresh" content="0;url=https://x.test"></head><body></body></html>',
+		)
+		expect(story).not.toContain('default-src *')
+		expect(story).not.toContain('refresh')
 	})
 })
