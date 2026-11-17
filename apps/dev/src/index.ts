@@ -69,6 +69,7 @@ import { DriverWaker } from './services/driver-wake'
 import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { createHeldSessionRelease } from './services/held-session-release'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -586,6 +587,14 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// way the trigger runner learns to stop firing against it.
 	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
 		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
+	// Daily budget: lets sessions held at the daily limit go when there is room (most important
+	// first). Runs on the queue's tick, throttled; nothing is held outside production.
+	beforeClaim: () => releaseHeldSessionsOnTick(),
+})
+const releaseHeldSessionsOnTick = createHeldSessionRelease({
+	db,
+	makeDue: (sessionId) => sessionDispatchQueue.makeDue(sessionId),
+	freeStartSlots: (workspaceId) => sessionManager.freeStartSlots(workspaceId),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
