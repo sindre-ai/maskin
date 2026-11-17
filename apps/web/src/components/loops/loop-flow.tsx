@@ -258,7 +258,7 @@ export function LoopFlow({
 											data-testid={`loop-status-${row.entityType}-${column.status}`}
 											className="flex w-52 shrink-0 flex-col gap-2"
 										>
-											<span className="rounded-lg border border-border px-3 py-1 text-[12.5px] font-semibold text-foreground">
+											<span className="rounded-lg border border-border px-3 py-1 text-[12.5px] font-semibold first-letter:uppercase text-foreground">
 												{statusLabel(column.status)}
 											</span>
 											{column.triggers.map((t) => {
