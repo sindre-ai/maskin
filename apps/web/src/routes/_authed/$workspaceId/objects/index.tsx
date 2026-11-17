@@ -216,6 +216,11 @@ function ObjectsRoute() {
 	const viewTabsOn = useFeatureFlag('create-view-with-agent') && !filesTab
 	const listViews = useItemsListViews(typeFilter, viewTabsOn)
 	const [listTab, setListTab] = useState(LIST_TAB)
+	// Views belong to one type, so switching the type chip goes back to the list.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: typeFilter is the trigger, not a value read
+	useEffect(() => {
+		setListTab(LIST_TAB)
+	}, [typeFilter])
 	const allViewTabs = useMemo(() => toViewTabs(listViews.views), [listViews.views])
 	const viewTabs = useExistingViews(workspaceId, allViewTabs)
 	const activeView = viewTabs.find((v) => v.value === listTab)
