@@ -471,28 +471,36 @@ struct ObjectsListView: View {
 		}
 		.swipeActions(edge: .leading, allowsFullSwipe: true) {
 			if !picking.isActive {
-				if let ask {
-					Button {
-						MaskinHaptics.play(.success)
-						askActions.approve(ask)
-						undoOffer = UndoOffer(message: "Approved. Undo.") { askActions.undo(ask) }
-					} label: {
-						Label("Approve", systemImage: "checkmark")
-					}
-					.tint(MaskinSurface.inverse)
-				} else if ObjectsUrgency.needsYou(object), let target = store.approveTarget(for: object) {
-					Button {
-						MaskinHaptics.play(.success)
-						Task {
-							if let undo = await store.approve(object.id) {
-								offerUndo(undo, message: "Moved to \(MaskinStatus.label(for: target)). Undo.")
-							}
+				switch ObjectRowSwipe.leading(
+					hasAsk: ask != nil, needsYou: ObjectsUrgency.needsYou(object),
+					canApprove: store.approveTarget(for: object) != nil, canMarkDone: store.doneTarget(for: object) != nil)
+				{
+				case .approveAsk:
+					if let ask {
+						Button {
+							MaskinHaptics.play(.success)
+							askActions.approve(ask)
+							undoOffer = UndoOffer(message: "Approved. Undo.") { askActions.undo(ask) }
+						} label: {
+							Label("Approve", systemImage: "checkmark")
 						}
-					} label: {
-						Label("Approve", systemImage: "checkmark")
+						.tint(MaskinSurface.inverse)
 					}
-					.tint(MaskinSurface.inverse)
-				} else if store.doneTarget(for: object) != nil {
+				case .approve:
+					if let target = store.approveTarget(for: object) {
+						Button {
+							MaskinHaptics.play(.success)
+							Task {
+								if let undo = await store.approve(object.id) {
+									offerUndo(undo, message: "Moved to \(MaskinStatus.label(for: target)). Undo.")
+								}
+							}
+						} label: {
+							Label("Approve", systemImage: "checkmark")
+						}
+						.tint(MaskinSurface.inverse)
+					}
+				case .done:
 					Button {
 						MaskinHaptics.play(.success)
 						Task {
@@ -502,20 +510,25 @@ struct ObjectsListView: View {
 						Label("Done", systemImage: "checkmark")
 					}
 					.tint(MaskinSurface.inverse)
+				case .hold, .archive, .delete, nil:
+					EmptyView()
 				}
 			}
 		}
 		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 			if !picking.isActive {
-				if let ask {
-					Button {
-						MaskinHaptics.play(.selection)
-						holdTarget = ask
-					} label: {
-						Label("Hold", systemImage: "pause")
+				switch ObjectRowSwipe.trailing(hasAsk: ask != nil, canArchive: store.canArchive([object.id])) {
+				case .hold:
+					if let ask {
+						Button {
+							MaskinHaptics.play(.selection)
+							holdTarget = ask
+						} label: {
+							Label("Hold", systemImage: "pause")
+						}
+						.tint(MaskinColor.ink4)
 					}
-					.tint(MaskinColor.ink4)
-				} else if store.canArchive([object.id]) {
+				case .archive:
 					Button {
 						MaskinHaptics.play(.selection)
 						Task {
@@ -525,13 +538,15 @@ struct ObjectsListView: View {
 						Label("Archive", systemImage: "archivebox")
 					}
 					.tint(MaskinColor.ink4)
-				} else {
+				case .delete:
 					Button {
 						deleteHeld(object)
 					} label: {
 						Label("Delete", systemImage: "trash")
 					}
 					.tint(MaskinColor.ink4)
+				case .approveAsk, .approve, .done:
+					EmptyView()
 				}
 			}
 		}

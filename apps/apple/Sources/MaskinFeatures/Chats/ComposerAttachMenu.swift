@@ -10,6 +10,17 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 
 	var id: String { rawValue }
 
+	/// The rows the `+` shows, in order. Camera needs a device camera, Paste image needs a picture on
+	/// the clipboard, and the last row flips with the formatting row's state.
+	static func available(hasCamera: Bool, clipboardHasImage: Bool, showsFormatting: Bool) -> [ComposerAttachAction] {
+		var actions: [ComposerAttachAction] = [.photo]
+		if hasCamera { actions.append(.camera) }
+		actions += [.file, .object, .person]
+		if clipboardHasImage { actions.append(.paste) }
+		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
+		return actions
+	}
+
 	var label: String {
 		switch self {
 		case .photo: "Photo or video"

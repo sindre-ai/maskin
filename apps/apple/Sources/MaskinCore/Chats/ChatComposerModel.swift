@@ -323,6 +323,13 @@ public final class ChatComposerModel {
 		setText(String(chars), selecting: end..<end)
 	}
 
+	/// Put a trigger (`@` for a person, `/` for an item) at the caret, with a space before it unless the
+	/// text is empty or already ends in whitespace, so the trigger starts a word and opens its picker.
+	public func insertTrigger(_ trigger: String) {
+		let needsSpace = !(text.isEmpty || text.last?.isWhitespace == true)
+		insert(needsSpace ? " \(trigger)" : trigger)
+	}
+
 	/// Complete the `:query` being typed with the chosen emoji.
 	public func pickEmoji(_ emoji: String) {
 		guard let trigger = EmojiTrigger.find(in: text) else {
