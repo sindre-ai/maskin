@@ -252,7 +252,14 @@ public struct APIFilesRemote: FilesRemote {
 			case .ok(let ok):
 				// Mapped straight from the decoded body: re-encoding a 10 MB payload to JSON and back
 				// would copy the bytes several more times.
-				return try Self.model(ok.body.json)
+				var detail = try Self.model(ok.body.json)
+				// Over the inline cap the server sends no bytes, only a download link the generated body
+				// has no field for, so it is read from a second, hand-built request.
+				if detail.data.isEmpty, detail.sizeBytes > FileUploadLimits.maxInlineBytes {
+					detail.contentOmitted = true
+					detail.downloadURL = await downloadURL(ofFile: id)
+				}
+				return detail
 			case .notFound:
 				throw FileError("This file doesn't exist or you don't have access.", isNotFound: true)
 			default:
@@ -263,6 +270,17 @@ public struct APIFilesRemote: FilesRemote {
 			let d = RemoteFailure.describe(error)
 			throw FileError(d.message, isOffline: d.isOffline)
 		}
+	}
+
+	private struct OmittedDTO: Decodable {
+		var downloadUrl: String?
+	}
+
+	/// The one-hour link to a file too large to read inline; nil when it can't be fetched, so the
+	/// viewer still says the file is too large to preview.
+	private func downloadURL(ofFile id: String) async -> URL? {
+		guard let data = try? await send(method: "GET", path: "api/files/\(id)") else { return nil }
+		return (try? Self.decode(OmittedDTO.self, from: data))?.downloadUrl.flatMap(URL.init(string:))
 	}
 
 	private static func model(_ json: Operations.get_sol_api_sol_files_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload)

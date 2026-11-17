@@ -26,7 +26,13 @@
 // host answers (only after a click, only contract fields) and who has the flag.
 
 import { type DataQuerySpec, dataQuerySpecSchema } from '@maskin/shared'
-import { type ListSourceEntry, isListDeclaration, parseListSource } from './view-lists'
+import {
+	LIST_REFUSED_MESSAGE,
+	type ListSourceEntry,
+	deniedCountKey,
+	isListDeclaration,
+	parseListSource,
+} from './view-lists'
 
 export const MINI_APP_CSP = [
 	"default-src 'none'",
@@ -435,6 +441,9 @@ export function readViewSources(html: string): ViewSourcesResult {
 				error:
 					`Source "${name}" is not a valid query: ${issue?.path.join('.') || 'query'} ${issue?.message ?? ''}`.trim(),
 			}
+		}
+		if (deniedCountKey(parsed.data) !== null) {
+			return { ok: false, error: `Source "${name}": ${LIST_REFUSED_MESSAGE}.` }
 		}
 		sources.set(name, parsed.data)
 	}

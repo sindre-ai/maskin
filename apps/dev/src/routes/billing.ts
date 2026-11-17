@@ -285,7 +285,7 @@ type BillingWorkspace = {
 }
 
 // The plan and billing window the usage read (and its breakdown) are measured over.
-function resolveBillingWindow(workspace: BillingWorkspace) {
+export function resolveBillingWindow(workspace: BillingWorkspace) {
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
 
@@ -604,7 +604,7 @@ app.openapi(checkoutRoute, async (c) => {
 })
 
 // ── Card step: save a card for the 7-day trial, no charge ────────────────────────────────────────
-// A workspace that signed up through the card step (trial-card-percent flag) waits for a card.
+// A workspace that signed up through the card step waits for a card.
 // setup hands the browser a Stripe card-setup secret and the public key; start reads the finished
 // setup back from Stripe, refuses a plain card that already had a trial, and starts the 7 days.
 
@@ -1388,7 +1388,7 @@ app.openapi(setAutoTopUpRoute, async (c) => {
 	)?.billing
 	if (rule.enabled) {
 		// The pricing bet has no top-up: at 100% a plan waits for next month. A rule that was
-		// already saved is left alone, so switching the flag off brings it back.
+		// already saved is left alone.
 		if (autoTopUpClosedForPlans()) {
 			return c.json(
 				createApiError(

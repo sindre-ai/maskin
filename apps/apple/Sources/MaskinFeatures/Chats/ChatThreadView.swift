@@ -97,6 +97,8 @@ struct ChatThreadView: View {
 	@State private var matchIDs: [String] = []
 	@State private var matchSet: Set<String> = []
 	@State private var handsFreeTracker = HandsFreeTracker()
+	/// A sent message waits out its Undo window here (flag chat-undo-send).
+	@State private var undoSend = UndoSendHold()
 	private var failedCount: Int { store.messages.filter(\.isFailed).count }
 	private var currentMatchID: String? {
 		guard searching, let matchIndex, matchIDs.indices.contains(matchIndex) else { return nil }
@@ -211,13 +213,19 @@ struct ChatThreadView: View {
 					primeHandsFree()
 				}
 				.onDisappear {
+					// Leaving the thread sends a held message at once, so it is never dropped.
+					undoSend.flush()
 					store.isActive = false
 					// A call keeps speaking when you leave the thread.
 					if liveCalls?.current == nil { SpeechReader.shared.stop() }
 					store.stop()
 					if liveCalls?.visibleConversationID == store.conversationID { liveCalls?.visibleConversationID = nil }
 				}
-				.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
+				.onChange(of: scenePhase) { _, phase in
+					store.isActive = phase == .active
+					// Going to the background sends a held message at once.
+					if phase != .active { undoSend.flush() }
+				}
 				// An agent's reply is on screen: the moment to explain notifications.
 				.onChange(of: store.messages.contains { $0.author == .agent && $0.status == .sent }, initial: true) { _, seen in
 					if seen { runtime?.valueMomentSeen() }
@@ -777,9 +785,11 @@ struct ChatThreadView: View {
 						searchText = ""
 					})
 			} else {
+				if undoSend.isHeld { UndoSendBar(onUndo: undoSend.undo) }
 				composerField
 			}
 		}
+		.animation(MaskinMotion.quick, value: undoSend.isHeld)
 		// Floats above the stack instead of sitting in it. This stack is the bottom inset, so a
 		// button that took room in it made the inset taller the moment it appeared; the thread's
 		// viewport moved, "near the bottom" flipped, the button went away and the inset shrank
@@ -860,22 +870,35 @@ struct ChatThreadView: View {
 			return
 		}
 		// Over the cap: the full text uploads as a file first, then the short message goes.
+		let snapshot = composer.snapshot()
 		if composer.isOverLength {
 			Task {
 				guard let (text, metadata) = await composer.takeLong() else { return }
-				deliver(text, metadata: metadata)
+				deliver(text, metadata: metadata, undoing: snapshot)
 			}
 			return
 		}
 		guard let (text, metadata) = composer.take() else { return }
-		deliver(text, metadata: metadata)
+		deliver(text, metadata: metadata, undoing: snapshot)
 	}
 
-	private func deliver(_ text: String, metadata: ChatSendMetadata?) {
+	/// Queues the message, or with undo send on holds it for the Undo window first.
+	private func deliver(_ text: String, metadata: ChatSendMetadata?, undoing snapshot: ChatComposerModel.Snapshot) {
+		guard runtime?.featureFlags.isEnabled(FeatureFlagID.chatUndoSend) == true else {
+			queue(text, metadata: metadata)
+			return
+		}
+		MaskinHaptics.play(.light)
+		undoSend.hold(
+			send: { queue(text, metadata: metadata, quietly: true) },
+			restore: { composer.restore(snapshot) })
+	}
+
+	private func queue(_ text: String, metadata: ChatSendMetadata?, quietly: Bool = false) {
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
 			composer.text = text
-		} else {
+		} else if !quietly {
 			MaskinHaptics.play(.light)
 		}
 	}
@@ -1337,6 +1360,10 @@ struct ThreadTranscript: View {
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
+				},
+				draftSkipped: message.author == .agent && message.serverID.map { store.isDraftSkipped(inMessage: $0) } == true,
+				onSkippedDraft: {
+					store.tellAgentOfSkip(linkedBy: message.actorID, author: message.author, cardMessageID: message.serverID)
 				},
 				cardOwners: cardOwners
 			)

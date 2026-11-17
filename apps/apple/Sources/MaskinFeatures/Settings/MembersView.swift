@@ -14,6 +14,10 @@ struct MembersView: View {
 	let agents: AgentsStore?
 	var onOpenAgent: (String) -> Void = { _ in }
 	var onHire: () -> Void = {}
+	/// Starts a chat with a person. Nil hides the Message icon on every row.
+	var onMessage: ((ChatParticipant) -> Void)?
+	/// False for viewers, who cannot start chats: the icon shows, disabled.
+	var canMessage = true
 	/// Pending email invitations (v3). Nil hides the group and the Invite button.
 	let invitations: InvitationsStore?
 	@State private var invitationTarget: PendingInvitation?
@@ -23,13 +27,16 @@ struct MembersView: View {
 
 	init(
 		store: MembersStore, agents: AgentsStore? = nil, invitations: InvitationsStore? = nil,
-		onOpenAgent: @escaping (String) -> Void = { _ in }, onHire: @escaping () -> Void = {}
+		onOpenAgent: @escaping (String) -> Void = { _ in }, onHire: @escaping () -> Void = {},
+		onMessage: ((ChatParticipant) -> Void)? = nil, canMessage: Bool = true
 	) {
 		_store = State(initialValue: store)
 		self.invitations = invitations
 		self.agents = agents
 		self.onOpenAgent = onOpenAgent
 		self.onHire = onHire
+		self.onMessage = onMessage
+		self.canMessage = canMessage
 	}
 
 	private var roster: MembersRoster.Groups {
@@ -153,7 +160,18 @@ struct MembersView: View {
 				store.busyIDs.contains(member.id)
 					? PageState("Updating", .muted) : WorkspacePageState.member(role: member.role)),
 			showsChevron: !member.isAgent,
-			action: member.isAgent ? nil : { memberDetail = member.id })
+			action: member.isAgent ? nil : { memberDetail = member.id },
+			message: messageAction(for: member))
+	}
+
+	/// "Message Sam" on every person but you, once the screen knows how to start a chat.
+	private func messageAction(for member: WorkspaceMember) -> PageRowModel.MessageAction? {
+		guard let onMessage,
+			WorkspacePageState.canMessage(member, currentActorId: store.currentActorId)
+		else { return nil }
+		return PageRowModel.MessageAction(
+			label: "Message \(member.name)", isEnabled: canMessage,
+			action: { onMessage(ChatParticipant(id: member.actorId, name: member.name, kind: .human)) })
 	}
 
 	/// An agent: its role under the name, Working in Patina or Idle / Paused in grey, opens the agent.

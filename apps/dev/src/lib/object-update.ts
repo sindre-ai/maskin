@@ -14,6 +14,11 @@ import { trackSupportItemResolved } from './analytics/support-events'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
 import { insertNotificationsWithEvents } from './notifications'
+import {
+	OutcomeCheckRequiredError,
+	passedRoundStillValid,
+	requiresOutcomeCheck,
+} from './outcome-check'
 
 type ObjectUpdate = z.infer<typeof updateObjectSchema>
 
@@ -30,6 +35,11 @@ export interface ApplyObjectUpdateInput {
 	actorType?: string
 	/** Apply only if the object is still in this status, checked under the row lock. */
 	onlyIfStatus?: string
+	/**
+	 * The outcome check round that passed for this close. An agent's close of a job with an
+	 * approved done-when list is refused without it (see lib/outcome-check.ts).
+	 */
+	outcomeCheckId?: string
 }
 
 export interface ApplyObjectUpdateResult {
@@ -162,6 +172,20 @@ export async function applyObjectUpdate(
 	if (input.actorType === 'agent') {
 		const refused = guardedFieldsChanged(current, body)
 		if (refused.length > 0) throw new AgentFieldWriteError(refused, current.type)
+	}
+
+	// The hold point: an agent closes a job with an approved done-when list only behind a passed
+	// check. The route runs the check before this transaction; this refuses when it did not.
+	if (
+		input.actorType === 'agent' &&
+		(await requiresOutcomeCheck(tx, current, body.status)) &&
+		!(await passedRoundStillValid(tx, {
+			objectId: id,
+			toStatus: body.status as string,
+			checkId: input.outcomeCheckId,
+		}))
+	) {
+		throw new OutcomeCheckRequiredError()
 	}
 
 	// A status change made from an answer to a card: the card was written about one status, so

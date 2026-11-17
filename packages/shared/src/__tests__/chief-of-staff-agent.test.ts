@@ -105,6 +105,25 @@ describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 		expect(content).not.toContain('**Confirm all**')
 	})
 
+	it('points to the card in Message 2 instead of restating the summary', () => {
+		const start = content.indexOf('### Message 2')
+		const end = content.indexOf('### Message 3')
+		const message2 = content.slice(start, end)
+		expect(message2).toContain("It's waiting in the card.")
+		expect(message2).toContain('Do not restate the summary')
+		expect(message2).toContain('do not post a second card')
+		// the quoted line the person reads is a pointer, not a question with taps
+		const quoted = message2
+			.split('\n')
+			.filter((line) => line.startsWith('>'))
+			.join('\n')
+		expect(quoted).not.toContain('Is that right?')
+	})
+
+	it('keeps the script line tying the brief to the trigger gate', () => {
+		expect(content).toContain('First-pass brief filed')
+	})
+
 	it('recommends only from the catalog, as an Install link, and never installs', () => {
 		expect(content).toContain('Never recommend something that is not in the catalog')
 		expect(content).toContain('NEVER call it with a loop id or confirm')

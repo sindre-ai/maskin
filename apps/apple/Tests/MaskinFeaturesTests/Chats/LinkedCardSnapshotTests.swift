@@ -75,6 +75,27 @@ private struct StubTasks: ObjectDraftsRemote {
 	}
 }
 
+private let replyID = "bbbbbbbb-2222-3333-4444-555555555555"
+
+/// A LinkedIn reply draft that carries the message it answers.
+private struct StubReply: ObjectDraftsRemote {
+	func detail(objectId: String) async throws -> ObjectDetail {
+		let preview = ObjectPreview(
+			kind: "linkedin_message", label: "LinkedIn message",
+			recipients: [.init(role: "to", name: "Mette Holm")],
+			context: "Hi Sam, thanks for the demo last week. Could we move the pilot start to the 24th, and can you send the updated price for six teams?",
+			body: "Hi Mette, the 24th works. Six teams is 4,800 DKK a month. I will send the price sheet today.",
+			contentHash: "r1")
+		return ObjectDetail(
+			object: WorkObject(id: objectId, type: "task", title: "Reply to Mette", content: preview.body, status: "draft"),
+			workspaceId: ws, preview: preview)
+	}
+
+	func approve(objectId: String, contentHash: String, idempotencyKey: String) async throws -> ObjectPreview {
+		throw ObjectApprovalError.changed
+	}
+}
+
 private let workingAgentID = "77777777-2222-3333-4444-555555555555"
 private let idleAgentID = "88888888-2222-3333-4444-555555555555"
 private let pinnedChatID = "99999999-2222-3333-4444-555555555555"
@@ -477,6 +498,84 @@ extension LinkedCardSnapshotTests {
 				.frame(height: 820)
 				.environment(\.linkedItems, store)
 			try await render(sheet, width: 390, dark: dark, name: "linked-sheet")
+		}
+	}
+}
+
+extension LinkedCardSnapshotTests {
+	@Test("a reply draft shows the original above the text, with Skip and Approve, and Skipped once pressed")
+	func replyDraft() async throws {
+		let store = LinkedItemStore(objects: StubReply(), files: StubFiles(), workspaceID: { ws })
+		let target = LinkedTarget(kind: .object, uuid: replyID)
+		await store.resolve([target])
+		guard case .draft(let object, let preview)? = store.item(for: target) else {
+			Issue.record("the reply draft did not resolve")
+			return
+		}
+		#expect(preview.originalMessage?.hasPrefix("Hi Sam, thanks for the demo") == true)
+		#expect(preview.recipients.first?.name == "Mette Holm")
+		var plain = preview
+		plain.context = nil
+		#expect(plain.originalMessage == nil)
+		let asked = ChatQuestionItem(
+			index: 0, header: "Reply", question: "Send this reply to Mette?", multiSelect: false,
+			options: [.init(label: "Approve", detail: "It answers both of Mette's questions.", recommended: true)])
+		for dark in [false, true] {
+			let content = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+				LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, onSkipped: {})
+				LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, skipped: true, onSkipped: {})
+				LinkedDraftCard(object: object, preview: preview, defaultExpanded: true, skippedInChat: true, onSkipped: {})
+				LinkedDraftCard(
+					object: object, preview: preview,
+					askNote: DraftQuestionNote(questions: [asked]), onSkipped: {})
+				LinkedDraftCard(object: object, preview: plain, defaultExpanded: true, onSkipped: {})
+			}
+			.environment(\.linkedItems, store)
+			try await render(content, width: 390, dark: dark, name: "linked-reply-draft")
+		}
+	}
+
+	@Test("a question posted with a draft that can be approved is not drawn; a question alone still is")
+	func questionBesideDraft() async throws {
+		let store = LinkedItemStore(objects: StubReply(), files: StubFiles(), workspaceID: { ws })
+		await store.resolve([LinkedTarget(kind: .object, uuid: replyID)])
+		let question: JSONValue = .object([
+			"question": .object([
+				"questions": .array([
+					.object([
+						"header": .string("Reply"), "question": .string("Send this reply to Mette?"),
+						"options": .array([
+							.object([
+								"label": .string("Approve"), "description": .string("It answers both of Mette's questions."),
+								"recommended": .bool(true),
+							]),
+							.object(["label": .string("Skip")]),
+						]),
+					])
+				])
+			])
+		])
+		let withDraft = ChatMessage(
+			id: "m1", serverID: 1, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content: "Drafted a reply.\n\n[Reply to Mette](https://maskin.io/\(ws)/objects/\(replyID))",
+			createdAt: Date(timeIntervalSince1970: 1_790_000_000), metadata: question)
+		let alone = ChatMessage(
+			id: "m2", serverID: 2, conversationID: "c", actorID: "relay", actorName: "Relay", author: .agent,
+			content: "Send this reply to Mette?", createdAt: Date(timeIntervalSince1970: 1_790_000_100), metadata: question)
+		#expect(!withDraft.questions.isEmpty)
+		let note = try #require(DraftQuestionNote(questions: withDraft.questions))
+		#expect(note.question == "Send this reply to Mette?")
+		#expect(note.reason == "It answers both of Mette's questions.")
+		#expect(DraftQuestionNote(questions: []) == nil)
+		#expect(store.hasApprovableDraft(in: LinkedTarget.extract(from: withDraft.content)))
+		#expect(!store.hasApprovableDraft(in: LinkedTarget.extract(from: alone.content)))
+		for dark in [false, true] {
+			let column = VStack(alignment: .leading, spacing: MaskinSpace.s9) {
+				MessageRow(message: withDraft, isOwn: false, showsAuthor: true, onSkippedDraft: {})
+				MessageRow(message: alone, isOwn: false, showsAuthor: false)
+			}
+			.environment(\.linkedItems, store)
+			try await render(column, width: 390, dark: dark, name: "linked-reply-with-question")
 		}
 	}
 }

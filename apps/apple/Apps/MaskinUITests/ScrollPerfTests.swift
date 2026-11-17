@@ -9,12 +9,14 @@ import XCTest
 ///   DEMO_PERF=1 PORT=3010 node scripts/demo-server/server.mjs
 ///   xcodebuild ... MASKIN_API_BASE_URL=http://localhost:3010 test -only-testing:MaskinUITests/ScrollPerfTests
 ///
-/// Each screen has two tests that run the same scroll `iterations` times: one reports peak and average
-/// physical memory and wall time for the scroll itself, the other reports hitch time ratio and hitch
-/// count. They are separate because the hitch metric crashes the test process on the simulator, and
-/// that would take the memory and clock numbers with it. On the simulator the hitch tests skip with a
-/// message; they run on a device. Simulator numbers are useful for comparing two builds on one
-/// machine, not as device numbers.
+/// Each screen has two tests that run the same scroll `iterations` times: one reports wall time for
+/// the scroll itself, the other reports hitch time ratio and hitch count. They are separate because
+/// the hitch metric crashes the test process on the simulator. On the simulator the hitch tests skip
+/// with a message; they run on a device. Memory is not measured here: Apple's memory metric crashes
+/// the same way on the simulator, so `scripts/perf-scroll.sh` samples the app's resident memory from
+/// the host while the scroll runs. The test only writes a line to `PERF_MARK_FILE` when each scroll
+/// round starts and stops, so the script knows which samples belong to the scroll. Simulator numbers
+/// are useful for comparing two builds on one machine, not as device numbers.
 @MainActor
 final class ScrollPerfTests: XCTestCase {
 	private static let session =
@@ -37,8 +39,32 @@ final class ScrollPerfTests: XCTestCase {
 		return o
 	}
 
-	private func memoryAndClock() -> [XCTMetric] {
-		[XCTMemoryMetric(application: app), XCTClockMetric()]
+	private func clock() -> [XCTMetric] {
+		[XCTClockMetric()]
+	}
+
+	/// Appends "<epoch seconds> start|stop" to PERF_MARK_FILE, if set. The simulator shares the host's
+	/// file system, so the script can read it.
+	private func mark(_ what: String) {
+		guard let path = ProcessInfo.processInfo.environment["PERF_MARK_FILE"],
+			let handle = FileHandle(forWritingAtPath: path)
+		else { return }
+		defer { try? handle.close() }
+		_ = try? handle.seekToEnd()
+		try? handle.write(contentsOf: Data("\(Date().timeIntervalSince1970) \(what)\n".utf8))
+	}
+
+	/// Prints and saves what the app shows (element tree, screenshot) so a missing row can be told apart
+	/// from a slow one. Goes to the test log, and to PERF_EVIDENCE_DIR when set.
+	private func dumpEvidence(_ name: String) {
+		let tree = app.debugDescription
+		let brand = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'brand'")).count
+		print("PERF-EVIDENCE \(name): app state \(app.state.rawValue), \(brand) elements with 'brand' in the label")
+		print("PERF-EVIDENCE \(name): element tree\n\(tree)")
+		guard let dir = ProcessInfo.processInfo.environment["PERF_EVIDENCE_DIR"] else { return }
+		let base = URL(fileURLWithPath: dir).appendingPathComponent(name)
+		try? tree.write(to: base.appendingPathExtension("txt"), atomically: true, encoding: .utf8)
+		try? app.screenshot().pngRepresentation.write(to: base.appendingPathExtension("png"))
 	}
 
 	/// The hitch metric asserts inside MetricKit on the simulator, which ends the whole test process,
@@ -55,7 +81,9 @@ final class ScrollPerfTests: XCTestCase {
 	/// Scrolls `swipes` times in `direction` with a fast flick, then puts the screen back.
 	private func scrollRound(swipes: Int, away: () -> Void, back: () -> Void) {
 		startMeasuring()
+		mark("start")
 		for _ in 0..<swipes { away() }
+		mark("stop")
 		stopMeasuring()
 		for _ in 0..<swipes { back() }
 	}
@@ -65,9 +93,13 @@ final class ScrollPerfTests: XCTestCase {
 	private func openChatThread() {
 		app.tabBars.buttons["Chats"].tap()
 		let row = app.staticTexts["Brand shoot"].firstMatch
-		XCTAssertTrue(row.waitForExistence(timeout: 90), "long thread in the Team list")
+		let found = row.waitForExistence(timeout: 90)
+		if !found { dumpEvidence("chat-thread-missing") }
+		XCTAssertTrue(found, "long thread in the Team list")
 		let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: row)
-		XCTAssertEqual(XCTWaiter().wait(for: [hittable], timeout: 90), .completed, "long thread row is tappable")
+		let tappable = XCTWaiter().wait(for: [hittable], timeout: 90) == .completed
+		if !tappable { dumpEvidence("chat-thread-not-tappable") }
+		XCTAssertTrue(tappable, "long thread row is tappable")
 		row.tap()
 		// Let the newest page and its first photos arrive before measuring.
 		sleep(6)
@@ -102,7 +134,7 @@ final class ScrollPerfTests: XCTestCase {
 
 	func testChatThreadScroll() throws {
 		openChatThread()
-		scrollChatThread(metrics: memoryAndClock())
+		scrollChatThread(metrics: clock())
 	}
 
 	func testChatThreadHitch() throws {
@@ -113,7 +145,7 @@ final class ScrollPerfTests: XCTestCase {
 
 	func testForYouScroll() throws {
 		openForYou()
-		scrollForYou(metrics: memoryAndClock())
+		scrollForYou(metrics: clock())
 	}
 
 	func testForYouHitch() throws {

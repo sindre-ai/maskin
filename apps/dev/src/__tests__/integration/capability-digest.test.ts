@@ -276,7 +276,7 @@ describe('capability digest (integration)', () => {
 			expect(summary.sent).toBe(1)
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(1)
-			expect(notes[0]?.content).toContain('send_chat')
+			expect(notes[0]?.content).toContain('send chat')
 		})
 
 		it('an entry for another workspace does not turn it on here', async () => {
@@ -322,10 +322,9 @@ describe('capability digest (integration)', () => {
 
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(1)
-			expect(notes[0]?.content).toContain(
-				'Hey Integration, quick check on what your agents can do.',
-			)
-			expect(notes[0]?.content).toContain('New this week: Maskin has 1 new tool (send_chat), and ')
+			expect(notes[0]?.content).toContain('Hey Integration, here is what your agents can now do.')
+			expect(notes[0]?.content).toContain(' can now send chat in Maskin.')
+			expect(notes[0]?.content).not.toMatch(/[a-z]+_[a-z]+/)
 			expect(notes[0]?.metadata).toMatchObject({
 				delivery: { kind: 'proactive', reason: 'capability_note', version: 1 },
 			})
@@ -420,8 +419,8 @@ describe('capability digest (integration)', () => {
 			await scanner().tick()
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(2)
-			expect(notes[1]?.content).toContain('tool_two')
-			expect(notes[1]?.content).not.toContain('tool_one')
+			expect(notes[1]?.content).toContain('tool two')
+			expect(notes[1]?.content).not.toContain('tool one')
 			expect(await eventsFor('capability_digest_sent')).toHaveLength(2)
 		})
 
@@ -518,7 +517,7 @@ describe('capability digest (integration)', () => {
 			await scanner().tick()
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(2)
-			expect(notes[1]?.content).toContain('tool_two')
+			expect(notes[1]?.content).toContain('tool two')
 			expect(await eventsFor('capability_digest_sent')).toHaveLength(2)
 		})
 
@@ -537,7 +536,7 @@ describe('capability digest (integration)', () => {
 			expect(await notesIn(ownerChat)).toHaveLength(1)
 			const adminNotes = await notesIn(adminChat)
 			expect(adminNotes).toHaveLength(2)
-			expect(adminNotes[1]?.content).toContain('tool_two')
+			expect(adminNotes[1]?.content).toContain('tool two')
 			const reasons = (await skippedFor(ownerId)).map((e) => (e.data as { reason: string }).reason)
 			expect(reasons).toEqual(['opted_out'])
 		})
@@ -610,7 +609,7 @@ describe('capability digest (integration)', () => {
 			await db.update(integrations).set({ config: {} }).where(eq(integrations.id, slackId))
 			await runCapabilityDigest(db, workspaceId)
 			const [note] = await notesIn(chatId)
-			expect(note?.content).toContain('Slack has 1 new tool (slack_react)')
+			expect(note?.content).toContain('can now react in Slack.')
 		})
 
 		it('reconnect and not-attached items go to owners and admins only, and carry no secrets', async () => {
@@ -661,14 +660,14 @@ describe('capability digest (integration)', () => {
 			for (const chat of [ownerChat, adminChat]) {
 				const [note] = await notesIn(chat)
 				expect(note?.content).toContain(
-					'Needs you: Slack wants a reconnect before the new write scope works.',
+					'Needs you: Slack needs a reconnect before your agents can use the new write access.',
 				)
 				expect(note?.content).toContain(
 					'Also: Google Meet is connected but none of your agents can use it yet. An admin decides whether any agent gets it.',
 				)
 			}
 			const [memberNote] = await notesIn(memberChat)
-			expect(memberNote?.content).toContain('Maskin has 1 new tool (send_chat)')
+			expect(memberNote?.content).toContain('can now send chat in Maskin.')
 			expect(memberNote?.content).not.toContain('Needs you')
 			expect(memberNote?.content).not.toContain('Google Meet')
 			expect(memberNote?.content).not.toContain('Slack')

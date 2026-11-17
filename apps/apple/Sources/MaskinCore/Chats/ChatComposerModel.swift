@@ -36,16 +36,31 @@ public struct ChatAttachmentDraft: Identifiable, Equatable, Sendable {
 	public var isImage: Bool { mimeType.hasPrefix("image/") }
 }
 
-/// A file ready to upload (already loaded and, for photos, downsampled).
+/// A file ready to upload: bytes already loaded (photos, downsampled, and files the JSON route
+/// takes), or a file on disk for one too big to hold in memory.
 public struct PreparedChatFile: Sendable {
 	public var name: String
 	public var mimeType: String
+	/// The bytes; empty for a file-backed one.
 	public var data: Data
+	/// Where a large file sits. We own it: the composer removes it once the upload is over.
+	public var fileURL: URL?
+	public var sizeBytes: Int
 
 	public init(name: String, mimeType: String, data: Data) {
 		self.name = name
 		self.mimeType = mimeType
 		self.data = data
+		self.fileURL = nil
+		self.sizeBytes = data.count
+	}
+
+	public init(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) {
+		self.name = name
+		self.mimeType = mimeType
+		self.data = Data()
+		self.fileURL = fileURL
+		self.sizeBytes = sizeBytes
 	}
 }
 
@@ -67,7 +82,7 @@ public final class ChatComposerModel {
 	public private(set) var focusRequest = 0
 	public private(set) var mentions: [ChatMention] = []
 	public private(set) var attachments: [ChatAttachmentDraft] = []
-	/// A rule the last action ran into ("That file is over 10 MB."), shown once then cleared.
+	/// A rule the last action ran into ("That file is over 1 GB."), shown once then cleared.
 	public var notice: String?
 	/// The message being replied to or edited, shown as a strip inside the bar (7-Chat §1).
 	public private(set) var quote: Quote?
@@ -183,6 +198,33 @@ public final class ChatComposerModel {
 		return result
 	}
 
+	/// Everything in the bar, kept so an undone send can put it back.
+	public struct Snapshot: Sendable {
+		var text: String
+		var mentions: [ChatMention]
+		var attachments: [ChatAttachmentDraft]
+		var quote: Quote?
+	}
+
+	public func snapshot() -> Snapshot {
+		Snapshot(text: text, mentions: mentions, attachments: attachments.filter { $0.ref != nil }, quote: quote)
+	}
+
+	/// Puts a snapshot back after an undone send. Anything typed since stays, after the restored text.
+	public func restore(_ snapshot: Snapshot) {
+		let typed = trimmedText
+		if quote == nil { quote = snapshot.quote }
+		text = typed.isEmpty ? snapshot.text : snapshot.text + "\n" + typed
+		for mention in snapshot.mentions { addMention(mention) }
+		for attachment in snapshot.attachments
+		where !attachments.contains(where: { $0.id == attachment.id }) && attachments.count < ChatLimits.maxAttachments
+		{
+			attachments.append(attachment)
+		}
+		selection = nil
+		requestFocus()
+	}
+
 	/// `take()` for a message that fits, `takeLong()` for one that goes as a file.
 	public func takeForSend() async -> (text: String, metadata: ChatSendMetadata?)? {
 		isOverLength ? await takeLong() : take()
@@ -199,7 +241,7 @@ public final class ChatComposerModel {
 		let split = LongMessageSplit.make(full)
 		var fileRef: ChatAttachmentRef?
 		if let split {
-			guard let data = split.fileText.data(using: .utf8), data.count <= ChatLimits.maxFileBytes else {
+			guard let data = split.fileText.data(using: .utf8), data.count <= ChatLimits.maxTextFileBytes else {
 				notice = "This message is too large to send as a file (over 10 MB)."
 				return nil
 			}
@@ -451,16 +493,24 @@ public final class ChatComposerModel {
 		jobs[id] = Task { [weak self] in
 			do {
 				let file = try await prepare()
-				guard file.data.count <= ChatLimits.maxFileBytes else {
-					self?.finish(id, .failed("Over the 10 MB limit."))
+				// A file on disk is ours to remove once this attempt is over; a retry prepares it again.
+				defer { if let url = file.fileURL { try? FileManager.default.removeItem(at: url) } }
+				guard file.sizeBytes <= ChatLimits.maxFileBytes else {
+					self?.finish(id, .failed("Over the 1 GB limit."))
 					return
 				}
-				let ref = try await uploader.upload(name: file.name, mimeType: file.mimeType, data: file.data)
+				let ref: ChatAttachmentRef
+				if let url = file.fileURL {
+					ref = try await uploader.upload(
+						name: file.name, mimeType: file.mimeType, fileURL: url, sizeBytes: file.sizeBytes)
+				} else {
+					ref = try await uploader.upload(name: file.name, mimeType: file.mimeType, data: file.data)
+				}
 				try Task.checkCancellation()
 				var uploaded = ref
 				uploaded.name = uploaded.name ?? file.name
 				uploaded.mimeType = uploaded.mimeType ?? file.mimeType
-				uploaded.sizeBytes = uploaded.sizeBytes ?? file.data.count
+				uploaded.sizeBytes = uploaded.sizeBytes ?? file.sizeBytes
 				self?.finish(id, .uploaded(uploaded))
 			} catch is CancellationError {
 				return
@@ -538,18 +588,25 @@ public enum DictationText {
 }
 
 /// What the composer's last slot shows. One rule, shared by every variant, so the swap is the
-/// same everywhere: nothing to send → mic; text or an attachment → send; an agent working while
-/// the field is empty → stop (the composer keeps the mic beside it so dictation is never blocked).
+/// same everywhere: nothing to send → mic; text → send; an attachment with no text → send with the
+/// mic beside it (so a picture can still get a spoken caption); an agent working while the field is
+/// empty → stop (the composer keeps the mic beside it so dictation is never blocked).
 public enum ComposerLastSlot: Equatable, Sendable {
-	case mic, send, stop, none
+	case mic, send, sendWithMic, stop, none
 
 	/// - Parameters:
 	///   - hasContent: text or an attachment is in the bar.
+	///   - hasText: the field itself has text, so a mic beside Send has nothing to add.
 	///   - busy: an agent is typing, streaming or working, and `onStop` exists.
 	///   - showsMic: the host offers dictation.
 	///   - showsSend: false for a field whose sheet commits (Hold reason).
-	public static func resolve(hasContent: Bool, busy: Bool, showsMic: Bool, showsSend: Bool) -> ComposerLastSlot {
-		if hasContent { return showsSend ? .send : .none }
+	public static func resolve(
+		hasContent: Bool, hasText: Bool, busy: Bool, showsMic: Bool, showsSend: Bool
+	) -> ComposerLastSlot {
+		if hasContent {
+			guard showsSend else { return .none }
+			return showsMic && !hasText ? .sendWithMic : .send
+		}
 		if busy { return .stop }
 		return showsMic ? .mic : .none
 	}

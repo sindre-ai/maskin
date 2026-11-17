@@ -10628,10 +10628,10 @@ export function createMcpServer(config: McpConfig) {
 						p.triggers > 0 ? `${p.triggers} trigger${p.triggers === 1 ? '' : 's'}` : '',
 						p.skills > 0 ? `${p.skills} skill${p.skills === 1 ? '' : 's'}` : '',
 					].filter(Boolean)
-					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Loop installed.'
+					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Flow installed.'
 				}
 			} catch (err) {
-				return textResponse(`❌ Failed to install loop: ${String(err)}`)
+				return textResponse(`❌ Failed to install flow: ${String(err)}`)
 			}
 
 			// Build magic login link (only safe on localhost).
@@ -10694,11 +10694,11 @@ INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this 
 Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to next steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
 			const loopLine = loopObjectId
-				? `\n🔁 It's now running as a Loop: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
+				? `\n🔁 It's now running as a Flow: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
 				: ''
 
 			return textResponse(
-				`✅ Loop installed in workspace "${workspace.name}". ${installSummary}
+				`✅ Flow installed in workspace "${workspace.name}". ${installSummary}
 ${loopLine}
 🌐 Open the workspace: ${workspaceUrl}
 ${claudeCredsBlock}`,

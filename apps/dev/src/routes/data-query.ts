@@ -418,7 +418,7 @@ async function readSpec(db: Database, workspaceId: string, rawSpec: string): Pro
 				),
 			)
 			.limit(1)
-		if (!loop) return { status: 404, error: createApiError('NOT_FOUND', 'Loop not found') }
+		if (!loop) return { status: 404, error: createApiError('NOT_FOUND', 'Flow not found') }
 	}
 	return { spec }
 }

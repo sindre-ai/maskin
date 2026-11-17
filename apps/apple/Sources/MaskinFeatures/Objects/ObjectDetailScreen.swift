@@ -65,7 +65,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		let env = services.environment
 		_composer = State(
 			initialValue: ChatComposerModel(
-				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? ""),
+				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? "", largeUploads: env.largeUploads),
 				selfActorID: env.auth.session?.actorId ?? ""))
 		environment = services.environment
 		self.onOpenObject = onOpenObject
@@ -308,6 +308,14 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							editing = true
 						} label: {
 							Label("Edit", systemImage: "pencil")
+						}
+						if let appRuntime, appRuntime.createViewAgent != nil {
+							Button {
+								appRuntime.startCreateView(
+									.object(id: object.id, title: object.displayTitle, type: object.type))
+							} label: {
+								Label(CreateViewMessage.label, systemImage: "rectangle.3.group")
+							}
 						}
 						if store.canArchive, object.status != ObjectDetailStore.archivedStatus {
 							Button {

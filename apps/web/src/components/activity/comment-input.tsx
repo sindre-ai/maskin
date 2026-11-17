@@ -35,8 +35,8 @@ interface CommentInputProps {
 	parentEventId?: number
 	// Fires once the comment is actually on the server. Callers that take an
 	// irreversible action on a reply (For You marks the thread read, which drops
-	// the card) must use this one and not `onQueued`.
-	onSubmitted?: () => void
+	// the card) must use this one and not `onQueued`. Receives the text that was sent.
+	onSubmitted?: (content: string) => void
 	// Fires when a comment carrying attachments is handed to the pending-comments
 	// queue, which uploads and POSTs in the background. The comment has NOT been
 	// posted yet and may still fail, so this is for clearing local composer state
@@ -247,7 +247,7 @@ function CommentInputForm({
 				{
 					onSuccess: () => {
 						resetComposer()
-						onSubmitted?.()
+						onSubmitted?.(trimmed)
 					},
 				},
 			)

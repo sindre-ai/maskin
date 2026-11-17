@@ -158,7 +158,11 @@ test.describe('Declutter — For you', () => {
 				: route.fallback(),
 		)
 		await page.goto(`/${account.workspaceId}`)
-		await expect(page.getByText('Nothing needs you right now.')).toBeVisible()
+		await expect(page.getByText("You're caught up")).toBeVisible()
+		await expect(page.getByText('New items that need your OK show up here.')).toBeVisible()
+		// One message, not two: the lead line stays out of an empty, unfiltered feed.
+		await expect(page.getByText('You are clear')).toHaveCount(0)
+		await expect(page.getByTestId('foryou-greeting')).toHaveCount(0)
 	})
 })
 
