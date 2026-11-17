@@ -29,6 +29,12 @@ name: iOS TestFlight
 # so this is the only way to symbolicate a crash log from a CI build. Each artifact is about
 # 400 MB, which is why retention is 7 days and not 14.
 #
+# Crash and error reports: the build carries the DSN of the native app's Sentry project (maskin-ios), see
+# MASKIN_SENTRY_DSN below, so a TestFlight build reports crashes and nothing else does. The dSYMs are also
+# uploaded to that project so crashes show real function names. The upload needs one repository secret,
+# SENTRY_AUTH_TOKEN (an organization token with release and project read-write rights). Unset = the
+# upload step is skipped and the build goes on; the 7 day artifact above stays the fallback.
+#
 # Internal testers get the build automatically once App Store Connect finishes processing it,
 # if the internal TestFlight group has "Automatic distribution" switched on.
 #
@@ -87,6 +93,9 @@ jobs:
       # The PostHog project token (public by design, same as the web build's VITE_POSTHOG_KEY). Unset =
       # the app ships without analytics: it sends nothing and never asks.
       POSTHOG_PROJECT_KEY: ${{ vars.POSTHOG_PROJECT_KEY }}
+      # The Sentry DSN of the native app's project (maskin-ios). A DSN ships inside the app by design, so it
+      # is not a secret. Only this workflow sets it: debug builds, CI compiles and tests report nothing.
+      MASKIN_SENTRY_DSN: https://0b63561779279f716f2ffebdbb9afaac@o4510993475960832.ingest.de.sentry.io/4512449147437136
     steps:
       - name: Check signing secrets
         id: gate
@@ -164,6 +173,7 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CURRENT_PROJECT_VERSION="$build_number" \
             MASKIN_POSTHOG_KEY="$POSTHOG_PROJECT_KEY" \
+            MASKIN_SENTRY_DSN="$MASKIN_SENTRY_DSN" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
 
@@ -178,6 +188,26 @@ jobs:
           path: ${{ runner.temp }}/Maskin.xcarchive/dSYMs
           if-no-files-found: warn
           retention-days: 7
+
+      # Sends the same dSYMs to Sentry so crash reports show function names. Skipped when the token
+      # secret is not set, and never fails the build: the TestFlight upload below matters more.
+      - name: Upload the debug symbols to Sentry
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'maskin' }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'maskin-ios' }}
+          # The project's ingest host ends in .de.sentry.io, so the organization lives in the EU region.
+          SENTRY_URL: https://de.sentry.io
+        run: |
+          set -euo pipefail
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::notice::Sentry symbol upload skipped: the SENTRY_AUTH_TOKEN secret is not set yet."
+            exit 0
+          fi
+          npx --yes @sentry/cli@2 debug-files upload \
+            "$RUNNER_TEMP/Maskin.xcarchive/dSYMs"
 
       - name: Export and upload to TestFlight
         if: steps.gate.outputs.enabled == 'true'

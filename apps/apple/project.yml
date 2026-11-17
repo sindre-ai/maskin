@@ -90,6 +90,8 @@ targets:
         # Product analytics (PostHog). Empty key = the build never sends and never asks; see Analytics.
         MaskinPostHogKey: $(MASKIN_POSTHOG_KEY)
         MaskinPostHogHost: $(MASKIN_POSTHOG_HOST)
+        # Crash and error reports (Sentry). Empty DSN = the build never reports; see SentrySink.
+        MaskinSentryDSN: $(MASKIN_SENTRY_DSN)
         # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion. Settings › Delete
         # account exists, so every configuration shows "Create account" (docs/app-store-notes.md).
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)

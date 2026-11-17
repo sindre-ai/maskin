@@ -73,13 +73,15 @@ public enum MaskinClient {
 		clientSource: String,
 		credentials: @escaping MaskinCredentialsProvider,
 		onUnauthorized: (@Sendable (_ apiKey: String) async -> Void)? = nil,
-		session: URLSession? = nil
+		session: URLSession? = nil,
+		errorReporter: ErrorReporter = .shared
 	) -> Client {
 		Client(
 			serverURL: serverURL,
 			transport: session.map { URLSessionTransport(configuration: .init(session: $0)) }
 				?? URLSessionTransport(),
 			middlewares: [
+				ErrorReportingMiddleware(reporter: errorReporter),
 				MaskinAuthMiddleware(
 					credentials: credentials, clientSource: clientSource, onUnauthorized: onUnauthorized),
 				IdempotencyMiddleware(),

@@ -332,6 +332,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 
 	static func wrap(_ error: Error) -> ObjectsError {
 		if let error = error as? ObjectsError { return error }
+		ErrorReporter.shared.reportThrown(error)
 		var current: Error? = error
 		while let e = current {
 			if let url = e as? URLError {
