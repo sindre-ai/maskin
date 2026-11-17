@@ -26,7 +26,7 @@ struct SettingsRouteView: View {
 			MembersView(
 				store: services.membersStore(), invitations: services.invitationsStore(),
 				onMessage: runtime.map { runtime in
-					{ runtime.startChat(with: $0, entryPoint: "person_message_row") }
+					{ runtime.startChat(with: $0, entryPoint: $1) }
 				},
 				canMessage: environment.workspaces.selected?.role != "viewer")
 		case .integrations:

@@ -361,7 +361,7 @@ struct ProfileSheet: View {
 				store: services.membersStore(), agents: agents, invitations: services.invitationsStore(),
 				onOpenAgent: { path.append(.agent($0)) },
 				onHire: { path.append(.item(.marketplace)) },
-				onMessage: { runtime.startChat(with: $0, entryPoint: "person_message_row") },
+				onMessage: { runtime.startChat(with: $0, entryPoint: $1) },
 				canMessage: environment.workspaces.selected?.role != "viewer")
 		default:
 			if let route = item.settingsRoute { SettingsRouteView(route: route, environment: environment) }

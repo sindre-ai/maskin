@@ -295,6 +295,19 @@ struct AnalyticsTests {
 		#expect(!props.values.contains(.string("Sam Example")))
 	}
 
+	@Test("chat_session_started from a person's page names the page entry point and never the person")
+	func chatStartedFromPersonPage() {
+		let (analytics, sink, _) = make(consent: .granted)
+		analytics.sessionChanged(actorId: "actor-1", workspaceId: "ws-1")
+		sink.events.removeAll()
+		let person = ChatParticipant(id: "h-1", name: "Sam Example", kind: .human)
+		analytics.chatSessionStarted(conversationId: "chat-1", participants: [person], entryPoint: "person_message_page")
+		let props = sink.events[0].properties
+		#expect(props["entry_point"] == "person_message_page")
+		#expect(props["participant_count"] == 1)
+		#expect(!props.values.contains(.string("Sam Example")))
+	}
+
 	@Test("object_created carries the id and the object's type, nothing typed by the person")
 	func objectCreated() {
 		let (analytics, sink, _) = make(consent: .granted)
