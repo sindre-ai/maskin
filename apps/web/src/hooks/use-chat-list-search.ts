@@ -1,5 +1,6 @@
 // The chat list's search box: one call to GET /api/search for chats only, so a chat is found by
 // its title, a person in it or a word in its messages, whether or not the list has loaded it.
+// Operators (agent:, from:, with:, team:, is:) are read out of the words by the server.
 
 import {
 	SEARCH_QUERY_DEBOUNCE_MS,
@@ -18,7 +19,14 @@ export function useChatListSearch(workspaceId: string, text: string) {
 	const debounced = useDebouncedValue(typed, SEARCH_QUERY_DEBOUNCE_MS)
 	const query = useSearchQuery(
 		workspaceId,
-		{ text: debounced, types: CHAT_TYPES, statuses: EVERY_STATUS, updated: '', sort: 'rel' },
+		{
+			text: debounced,
+			types: CHAT_TYPES,
+			statuses: EVERY_STATUS,
+			updated: '',
+			sort: 'rel',
+			operators: true,
+		},
 		typed !== '',
 	)
 	// Words typed but not yet sent: the previous answer is on screen, so show it as pending.
