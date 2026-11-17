@@ -7,6 +7,8 @@ import OpenAPIRuntime
 public enum FeatureFlagID {
 	/// Undo send in chat: a sent message is held for a few seconds behind an Undo bar.
 	public static let chatUndoSend = "chat-undo-send"
+	/// "Create view with agent" item in the items list, item and flow menus.
+	public static let createViewWithAgent = "create-view-with-agent"
 }
 
 /// Network seam for the resolved flags (`GET /api/feature-flags`).
