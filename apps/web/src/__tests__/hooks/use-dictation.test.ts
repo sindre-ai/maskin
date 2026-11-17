@@ -102,7 +102,7 @@ describe('useDictation', () => {
 		expect(trackStop).toHaveBeenCalled()
 	})
 
-	it('tells the user when no speech was detected', async () => {
+	it('stays quiet when no speech was detected', async () => {
 		installMic()
 		mockCreate.mockResolvedValue({ text: '  ' })
 		const onPhrase = vi.fn()
@@ -112,7 +112,9 @@ describe('useDictation', () => {
 		await waitFor(() => expect(result.current.recording).toBe(true))
 		act(() => result.current.toggle())
 
-		await waitFor(() => expect(mockToast.info).toHaveBeenCalledWith('No speech detected'))
+		await waitFor(() => expect(mockCreate).toHaveBeenCalled())
+		await waitFor(() => expect(result.current.transcribing).toBe(false))
+		expect(mockToast.info).not.toHaveBeenCalled()
 		expect(onPhrase).not.toHaveBeenCalled()
 	})
 
@@ -269,7 +271,8 @@ describe('useDictation', () => {
 		await waitFor(() => expect(result.current.recording).toBe(true))
 		act(() => result.current.toggle())
 
-		await waitFor(() => expect(mockToast.info).toHaveBeenCalledWith('No speech detected'))
+		await waitFor(() => expect(result.current.transcribing).toBe(false))
+		expect(mockToast.info).not.toHaveBeenCalled()
 		expect(mockCreate).not.toHaveBeenCalled()
 	})
 

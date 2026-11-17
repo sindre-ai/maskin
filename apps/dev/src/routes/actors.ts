@@ -7,6 +7,13 @@ import {
 	agentFiles,
 	agentSkills,
 	conversationParticipants,
+	conversationPendingTurns,
+	conversations,
+	extensions,
+	fileComments,
+	fileProposalChanges,
+	fileProposals,
+	fileUploads,
 	files,
 	imports,
 	integrations,
@@ -18,8 +25,11 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
+	starState,
 	subscriptions,
 	triggers,
+	voiceSessions,
+	workspaceInvitations,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces,
@@ -2087,9 +2097,27 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Delete relationships
 		await tx.delete(relationships).where(eq(relationships.createdBy, id))
 
+		// Triggers that survive (created by someone else, aimed at someone else) may name
+		// this agent as a hand-off or escalation target.
+		await tx
+			.update(triggers)
+			.set({ handsOffToActorId: null })
+			.where(eq(triggers.handsOffToActorId, id))
+		await tx
+			.update(triggers)
+			.set({ escalatesToActorId: null })
+			.where(eq(triggers.escalatesToActorId, id))
+
 		// Delete per-actor feed bookkeeping
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
 		await tx.delete(readState).where(eq(readState.actorId, id))
+		await tx.delete(starState).where(eq(starState.actorId, id))
+
+		// Chat turns buffered for this agent, and the voice calls it took part in.
+		await tx.delete(conversationPendingTurns).where(eq(conversationPendingTurns.actorId, id))
+		await tx
+			.delete(voiceSessions)
+			.where(or(eq(voiceSessions.agentActorId, id), eq(voiceSessions.humanActorId, id)))
 
 		// Delete orphan-thread-detection ledger rows expecting a reply from this actor
 		await tx
@@ -2119,10 +2147,39 @@ app.openapi(deleteActorRoute, (async (c) => {
 			.update(workspaceSkills)
 			.set({ createdBy: null })
 			.where(eq(workspaceSkills.createdBy, id))
+		// Same for the rest of what an agent can author: chats it started, invitations it
+		// sent, comments it wrote, file changes it proposed, uploads it began. Fields that
+		// are optional (who resolved a comment, who decided a change, who created an
+		// extension) are cleared instead.
+		await tx
+			.update(conversations)
+			.set({ createdBy: actorId })
+			.where(eq(conversations.createdBy, id))
+		await tx
+			.update(workspaceInvitations)
+			.set({ invitedByActorId: actorId })
+			.where(eq(workspaceInvitations.invitedByActorId, id))
+		await tx.update(fileComments).set({ authorId: actorId }).where(eq(fileComments.authorId, id))
+		await tx.update(fileComments).set({ resolvedBy: null }).where(eq(fileComments.resolvedBy, id))
+		await tx.update(fileProposals).set({ authorId: actorId }).where(eq(fileProposals.authorId, id))
+		await tx
+			.update(fileProposalChanges)
+			.set({ decidedBy: null })
+			.where(eq(fileProposalChanges.decidedBy, id))
+		await tx.update(fileUploads).set({ createdBy: actorId }).where(eq(fileUploads.createdBy, id))
+		await tx.update(extensions).set({ createdBy: null }).where(eq(extensions.createdBy, id))
+
+		// A connection that belongs to this agent alone (its own LinkedIn account) goes with
+		// it: handing it to another actor would give that actor the agent's credentials.
+		await tx.delete(integrations).where(eq(integrations.actorId, id))
 
 		// Clean up workspace references
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, id))
 		await tx.update(workspaces).set({ createdBy: null }).where(eq(workspaces.createdBy, id))
+		await tx
+			.update(workspaces)
+			.set({ billingOwnerId: null })
+			.where(eq(workspaces.billingOwnerId, id))
 		await tx.update(integrations).set({ createdBy: actorId }).where(eq(integrations.createdBy, id))
 
 		// Clean up self-references and delete

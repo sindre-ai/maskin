@@ -324,7 +324,7 @@ app.openapi(getMarketplaceLoopRoute, (async (c) => {
 
 	const [row] = await db.select().from(marketplaceLoops).where(eq(marketplaceLoops.id, id)).limit(1)
 	if (!row) {
-		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Marketplace flow not found'), 404)
 	}
 
 	const itemRows = await db

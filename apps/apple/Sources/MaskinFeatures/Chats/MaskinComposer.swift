@@ -148,8 +148,8 @@ struct MaskinComposer: View {
 
 	var lastSlot: ComposerLastSlot {
 		ComposerLastSlot.resolve(
-			hasContent: model.hasContent, busy: busy && onStop != nil, showsMic: config.showsMic && micAvailable,
-			showsSend: config.showsSend)
+			hasContent: model.hasContent, hasText: !model.trimmedText.isEmpty, busy: busy && onStop != nil,
+			showsMic: config.showsMic && micAvailable, showsSend: config.showsSend)
 	}
 
 	/// While Stop is showing the mic stays beside it, so dictation is never blocked by a busy agent.
@@ -301,22 +301,13 @@ struct MaskinComposer: View {
 			case .mic:
 				micButton
 			case .send:
-				ComposerCircleButton(
-					symbol: "arrow.up", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Send",
-					weight: .heavy
-				) {
-					MaskinHaptics.play(.light)
-					onSend()
-					// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
-					focused = false
+				sendButton
+			case .sendWithMic:
+				// A picture with no caption yet: the mic stays so it can be dictated, the way it stays beside Stop.
+				HStack(spacing: 0) {
+					micButton
+					sendButton
 				}
-				.disabled(!model.canSend)
-				.opacity(model.canSend ? 1 : 0.35)
-				.accessibilityHint(model.sendBlocker ?? "")
-				#if !os(watchOS) && !os(tvOS)
-				.keyboardShortcut(.return, modifiers: .command)
-				#endif
-				.transition(.opacity)
 			case .stop:
 				HStack(spacing: 0) {
 					// Stop must not take dictation away: the mic stays beside it while an agent works.
@@ -341,6 +332,25 @@ struct MaskinComposer: View {
 				EmptyView()
 			}
 		}
+	}
+
+	private var sendButton: some View {
+		ComposerCircleButton(
+			symbol: "arrow.up", fill: MaskinSurface.inverse, foreground: MaskinSurface.onInverse, label: "Send",
+			weight: .heavy
+		) {
+			MaskinHaptics.play(.light)
+			onSend()
+			// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
+			focused = false
+		}
+		.disabled(!model.canSend)
+		.opacity(model.canSend ? 1 : 0.35)
+		.accessibilityHint(model.sendBlocker ?? "")
+		#if !os(watchOS) && !os(tvOS)
+		.keyboardShortcut(.return, modifiers: .command)
+		#endif
+		.transition(.opacity)
 	}
 
 	private var micButton: some View {

@@ -192,7 +192,7 @@ export function buildBudgetCard(input: BudgetCardInput): BudgetCardText {
 export function readBudgetSettings(
 	settings: unknown,
 	capCents: number | null,
-): { target: BudgetTarget; timezone: string; note: string | null } | null {
+): { target: BudgetTarget; timezone: string; stopShare: number; note: string | null } | null {
 	const parsed = storedDailyBudgetSchema.safeParse(
 		(settings as { daily_budget?: unknown } | null)?.daily_budget,
 	)
@@ -201,6 +201,7 @@ export function readBudgetSettings(
 	return {
 		target: { amount: budget.amount },
 		timezone: budget.timezone,
+		stopShare: budget.stop_share,
 		note:
 			earlier && !earlier.converted
 				? `Your earlier daily target could not be turned into a percent of your plan, so this card uses ${formatPercent(budget.amount)} a day. Set a percent in Settings, Billing.`

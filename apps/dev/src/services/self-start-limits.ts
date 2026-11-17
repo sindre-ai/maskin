@@ -7,8 +7,10 @@
  *   2. caps automatic continuations of one reason on one object at 2 in a row,
  *   3. backs off after 2 self-started runs in a row that changed nothing on the object, and asks a
  *      person after 3,
- *   4. holds a per-agent daily token budget for self-started runs (warns at 80%, stops at 100%).
- * A session a person started is never refused. Every refusal is written as a `session_admission`
+ *   4. holds a per-agent daily token budget for self-started runs (warns at 80%, stops at 100%),
+ *   5. holds work that is not urgent while the workspace's daily target is used up: it waits in a
+ *      session row of its own (`Admitted.hold`) and runs later (held-session-release.ts).
+ * A session a person started is never refused or held. Every refusal is written as a `session_admission`
  * event (decision `blocked` or `deferred`) and throws SessionNotAdmittedError; callers that start
  * work in the background treat that as "not started", not as a failure.
  *
@@ -26,8 +28,10 @@ import {
 	FOR_YOU_KIND,
 	MAX_AUTOMATIC_CONTINUATIONS,
 	SELF_STARTED_REASONS,
+	type SessionImportance,
 	type SessionStartReason,
 	agentDailyBudgetSchema,
+	sessionImportance,
 	sessionStartReasonSchema,
 } from '@maskin/shared'
 import { and, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
@@ -42,6 +46,13 @@ import {
 	localDayStart,
 	readDailyTarget,
 } from './daily-budget-events'
+import {
+	DAILY_BUDGET_HOLD_KILLSWITCH_ENV_VAR,
+	HELD_BACKSTOP_AFTER_DAY_START_MS,
+	type HeldConfig,
+	readDayAgainstTarget,
+	stopLineReached,
+} from './daily-budget-hold'
 import { resolveSourceActor } from './push-schedule-shared'
 
 export const SELF_START_LIMITS_KILLSWITCH_ENV_VAR = 'FEATURE_SELF_START_LIMITS'
@@ -522,11 +533,19 @@ export interface AdmitInput {
 	hasChat: boolean
 	createdBy: string
 	initiatedFromObjectId: string | null
+	/** A chat turn, or anything that belongs to a conversation: urgent, never held. */
+	humanFacing?: boolean
 }
 
 export interface Admitted {
 	reason: SessionStartReason
 	selfStarted: boolean
+	importance: SessionImportance
+	/**
+	 * Set when the workspace's daily target is used up and this work is not urgent. The caller makes
+	 * the session row and parks it: a refusal throws before any row exists, and held work needs one.
+	 */
+	hold?: HeldConfig
 }
 
 async function refuse(
@@ -807,6 +826,28 @@ async function checkAgentBudget(
 }
 
 /**
+ * Holds work that is not urgent once today's spend has reached the stop-at share of the daily
+ * target. Cost is written when a run ends, so a running session is invisible here and a day can
+ * overshoot by one run: accepted, there is no mid-run stop. Returns null (admit) when no target is
+ * set or the line is not reached.
+ */
+async function checkWorkspaceBudget(
+	db: Database,
+	input: AdmitInput,
+	importance: SessionImportance,
+	now: Date,
+): Promise<HeldConfig | null> {
+	if (importance === 'urgent') return null
+	const day = await readDayAgainstTarget(db, input.workspaceId, now)
+	if (!day || !stopLineReached(day)) return null
+	return {
+		importance,
+		held_at: now.toISOString(),
+		until: new Date(day.nextDayStart.getTime() + HELD_BACKSTOP_AFTER_DAY_START_MS).toISOString(),
+	}
+}
+
+/**
  * The one admission decision. Returns the label to stamp on the session, or throws
  * SessionNotAdmittedError. Never throws anything else: an unexpected failure admits the session.
  */
@@ -817,6 +858,7 @@ export async function admitSessionStart(
 	now: Date = new Date(),
 ): Promise<Admitted> {
 	let reason: SessionStartReason = 'internal'
+	let importance: SessionImportance = 'urgent'
 	try {
 		const needsCreator =
 			!input.hasChat &&
@@ -834,12 +876,16 @@ export async function admitSessionStart(
 			creatorType,
 		})
 		const selfStarted = isSelfStarted(reason)
-		if (!selfStarted || env[SELF_START_LIMITS_KILLSWITCH_ENV_VAR] === '0') {
-			return { reason, selfStarted }
+		importance = sessionImportance(reason, input.humanFacing === true)
+		if (selfStarted && env[SELF_START_LIMITS_KILLSWITCH_ENV_VAR] !== '0') {
+			await checkObjectLimits(db, input, reason, now)
+			await checkAgentBudget(db, input, reason, now)
 		}
-		await checkObjectLimits(db, input, reason, now)
-		await checkAgentBudget(db, input, reason, now)
-		return { reason, selfStarted }
+		const hold =
+			env[DAILY_BUDGET_HOLD_KILLSWITCH_ENV_VAR] === '0'
+				? null
+				: await checkWorkspaceBudget(db, input, importance, now)
+		return hold ? { reason, selfStarted, importance, hold } : { reason, selfStarted, importance }
 	} catch (err) {
 		if (err instanceof SessionNotAdmittedError) throw err
 		logger.error('Self-start gate failed, session admitted', {
@@ -847,7 +893,7 @@ export async function admitSessionStart(
 			actorId: input.actorId,
 			error: String(err),
 		})
-		return { reason, selfStarted: isSelfStarted(reason) }
+		return { reason, selfStarted: isSelfStarted(reason), importance }
 	}
 }
 

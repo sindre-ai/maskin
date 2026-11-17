@@ -285,7 +285,7 @@ type BillingWorkspace = {
 }
 
 // The plan and billing window the usage read (and its breakdown) are measured over.
-function resolveBillingWindow(workspace: BillingWorkspace) {
+export function resolveBillingWindow(workspace: BillingWorkspace) {
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
 

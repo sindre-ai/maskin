@@ -28,6 +28,13 @@ struct WorkspacePageStateTests {
 				== "Needs sign-in")
 	}
 
+	@Test func messageIconIsForPeopleOtherThanYou() {
+		#expect(WorkspacePageState.canMessage(member("h-1", "Sam"), currentActorId: "h-2"))
+		#expect(!WorkspacePageState.canMessage(member("h-2", "Me", .owner), currentActorId: "h-2"))
+		#expect(!WorkspacePageState.canMessage(member("a-1", "Scout", agent: true), currentActorId: "h-2"))
+		#expect(WorkspacePageState.canMessage(member("h-1", "Sam"), currentActorId: nil))
+	}
+
 	@Test func memberSubtitles() {
 		#expect(WorkspacePageState.memberSubtitle(isAgent: false, role: .owner, isYou: true) == "Owner · you")
 		#expect(WorkspacePageState.memberSubtitle(isAgent: false, role: .member, isYou: false) == nil)

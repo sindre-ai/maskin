@@ -84,6 +84,46 @@ export function daysInMonthOf(localDate: string): number {
 	return new Date(Date.UTC(y as number, m as number, 0)).getUTCDate()
 }
 
+/**
+ * Per trigger: runs started in [from, to), how many carry a cost, and what they cost as a
+ * percent of the plan (cost in USD cents over the plan limit `capCents`). The one place that
+ * turns session cost into "today against target"; the card and the gate on new work both read it.
+ */
+export async function readWindowStats(
+	db: Database,
+	workspaceId: string,
+	capCents: number,
+	from: Date,
+	to: Date,
+): Promise<TriggerWindowStats[]> {
+	const spend = sql`(COALESCE(${sessions.totalCostUsd}, 0)::float8 * 10000.0 / ${capCents})`
+	const rows = await db
+		.select({
+			triggerId: sessions.triggerId,
+			name: triggers.name,
+			runs: sql<number>`count(*)::int`,
+			knownRuns: sql<number>`(count(*) FILTER (WHERE ${spend} > 0))::int`,
+			spent: sql<number>`COALESCE(sum(${spend}) FILTER (WHERE ${spend} > 0), 0)::float8`,
+		})
+		.from(sessions)
+		.leftJoin(triggers, eq(triggers.id, sessions.triggerId))
+		.where(
+			and(
+				eq(sessions.workspaceId, workspaceId),
+				gte(sessions.createdAt, from),
+				lt(sessions.createdAt, to),
+			),
+		)
+		.groupBy(sessions.triggerId, triggers.name)
+	return rows.map((r) => ({
+		triggerId: r.triggerId,
+		name: r.name ?? NO_TRIGGER_NAME,
+		runs: r.runs,
+		knownRuns: r.knownRuns,
+		spent: r.spent,
+	}))
+}
+
 export class DailyBudgetCardScheduler {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
@@ -194,42 +234,13 @@ export class DailyBudgetCardScheduler {
 		return sent
 	}
 
-	/**
-	 * Per trigger: runs started in [from, to), how many carry a cost, and what they cost as a
-	 * percent of the plan (cost in USD cents over the plan limit `capCents`).
-	 */
-	private async windowStats(
+	private windowStats(
 		workspaceId: string,
 		capCents: number,
 		from: Date,
 		to: Date,
 	): Promise<TriggerWindowStats[]> {
-		const spend = sql`(COALESCE(${sessions.totalCostUsd}, 0)::float8 * 10000.0 / ${capCents})`
-		const rows = await this.db
-			.select({
-				triggerId: sessions.triggerId,
-				name: triggers.name,
-				runs: sql<number>`count(*)::int`,
-				knownRuns: sql<number>`(count(*) FILTER (WHERE ${spend} > 0))::int`,
-				spent: sql<number>`COALESCE(sum(${spend}) FILTER (WHERE ${spend} > 0), 0)::float8`,
-			})
-			.from(sessions)
-			.leftJoin(triggers, eq(triggers.id, sessions.triggerId))
-			.where(
-				and(
-					eq(sessions.workspaceId, workspaceId),
-					gte(sessions.createdAt, from),
-					lt(sessions.createdAt, to),
-				),
-			)
-			.groupBy(sessions.triggerId, triggers.name)
-		return rows.map((r) => ({
-			triggerId: r.triggerId,
-			name: r.name ?? NO_TRIGGER_NAME,
-			runs: r.runs,
-			knownRuns: r.knownRuns,
-			spent: r.spent,
-		}))
+		return readWindowStats(this.db, workspaceId, capCents, from, to)
 	}
 
 	/**
@@ -313,7 +324,7 @@ export class DailyBudgetCardScheduler {
 	}
 }
 
-function totalsOf(stats: TriggerWindowStats[]): DayTotals {
+export function totalsOf(stats: TriggerWindowStats[]): DayTotals {
 	return stats.reduce(
 		(t, s) => ({
 			runs: t.runs + s.runs,

@@ -101,7 +101,7 @@ test.describe('Marketplace loop filter', () => {
 		).toBeVisible()
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
-		await filter.fill('Product Discovery Loop')
+		await filter.fill('Product Discovery Flow')
 
 		await expect(loopsSection.getByRole('heading', { name: /Product Discovery/ })).toBeVisible()
 		await expect(

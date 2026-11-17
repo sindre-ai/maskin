@@ -21,6 +21,7 @@ vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: { pages: [{ conversations: [] }] } }),
+	useCreateConversation: () => ({ mutateAsync: vi.fn() }),
 }))
 vi.mock('@/hooks/use-loops', () => ({ useLoops: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-subscriptions', () => ({

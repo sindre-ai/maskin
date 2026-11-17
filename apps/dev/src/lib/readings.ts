@@ -14,7 +14,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm'
 type ReadingRow = typeof readings.$inferSelect
 
 /** `<namespace>.<key>`, lowercase. Same rule as the table's check constraint. */
-const MEASURE_RE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/
+export const MEASURE_RE = /^[a-z0-9_]+(\.[a-z0-9_]+)+$/
 
 /** A write the caller got wrong. Server code only, so it is thrown, not mapped to a status. */
 export class ReadingError extends Error {

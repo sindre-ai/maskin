@@ -141,13 +141,13 @@ export interface EmailLayoutInput {
 	preheader: string
 	/** Block HTML from the helpers above, in reading order. */
 	blocks: string[]
-	/** Signed stop link for the footer. */
-	stopUrl: string
+	/** Signed stop link for the footer. Left out for a mail about the account itself, which has no stop link. */
+	stopUrl?: string
 }
 
 /**
  * Wraps the blocks in the shared page: grey background, a branded strip with the Maskin name, a
- * white card about 560 px wide, and a quiet footer with the stop link.
+ * white card about 560 px wide, and a quiet footer with the stop link (none when stopUrl is left out).
  */
 export function renderEmail({ preheader, blocks, stopUrl }: EmailLayoutInput): string {
 	// Padding after the preheader keeps the client from pulling body text into the inbox preview.
@@ -168,7 +168,9 @@ export function renderEmail({ preheader, blocks, stopUrl }: EmailLayoutInput): s
 		`<table role="presentation" class="m-card" width="560" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 560px; background-color: ${C.card}; border: 1px solid ${C.border}; border-radius: 8px; overflow: hidden;">`,
 		`<tr><td class="m-strip m-pad" style="padding: 14px 24px; background-color: ${C.brand};"><span class="m-strip-text" style="font-family: ${FONT}; font-size: 16px; line-height: 20px; font-weight: 700; letter-spacing: 0.02em; color: #ffffff;">Maskin</span></td></tr>`,
 		`<tr><td class="m-pad" style="padding: 28px 24px 8px;">${blocks.join('')}</td></tr>`,
-		`<tr><td class="m-pad" style="padding: 8px 24px 24px;"><p class="m-muted" style="margin: 16px 0 0; font-family: ${FONT}; font-size: 13px; line-height: 18px; color: ${C.muted};">${quietLink(stopUrl, 'Stop these emails')}</p></td></tr>`,
+		stopUrl
+			? `<tr><td class="m-pad" style="padding: 8px 24px 24px;"><p class="m-muted" style="margin: 16px 0 0; font-family: ${FONT}; font-size: 13px; line-height: 18px; color: ${C.muted};">${quietLink(stopUrl, 'Stop these emails')}</p></td></tr>`
+			: `<tr><td class="m-pad" style="padding: 0 24px 16px;"></td></tr>`,
 		'</table>',
 		'</td></tr></table>',
 		'</body>',

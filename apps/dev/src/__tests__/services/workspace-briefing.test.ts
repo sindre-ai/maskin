@@ -56,7 +56,7 @@ describe('buildWorkspaceStartupBlock', () => {
 				'Don\'t ask permission for those: "Want me to...?" about something you could just do blocks the work. Do them, then end with the next step you would suggest and your recommendation, so a person can say go or redirect.',
 			)
 			expect(block).toContain(
-				"Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a loop live or make another status change reserved for people, or change who has access or which credentials exist.",
+				"Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a flow live or make another status change reserved for people, or change who has access or which credentials exist.",
 			)
 			expect(block).toContain(
 				'If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted.',

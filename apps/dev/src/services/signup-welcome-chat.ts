@@ -35,7 +35,7 @@ export function buildSignupOnboardingContext(ctx: {
 		`What I gave at sign-up — ${facts}.`,
 		`Researcher is putting together a first look at me and my organization. It is filed on my signup-context knowledge object (id: ${ctx.knowledgeObjectId}), and anything I tell you here that looks like context about me or my organization should be folded into that same object.`,
 		'',
-		'When I reply, help me get set up: answer what I ask, and suggest concrete first steps (an agent to create, a loop from the marketplace, an integration to connect). Suggest before you change anything.',
+		'When I reply, help me get set up: answer what I ask, and suggest concrete first steps (an agent to create, a flow from the marketplace, an integration to connect). Suggest before you change anything.',
 	].join('\n')
 }
 

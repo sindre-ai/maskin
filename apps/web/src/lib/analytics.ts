@@ -59,6 +59,7 @@ export type TaxonomyEntityType =
 	| 'file'
 	| 'loop'
 	| 'conversation'
+	| 'direct_message'
 
 // `file_viewer` was added so `comment_posted.source` can attribute review
 // comments back to the viewer surface — required for the "≥40% comment-after-
@@ -265,7 +266,11 @@ export function trackAppActive(now: Date = new Date()): boolean {
 // surveyed Claude / ChatGPT session starts to track displacement over time.
 // `entity_id` is the container session id so PostHog can join back to the
 // sessions table. `workspace_id` + `actor_id` ride as super-properties.
-export type ChatSessionEntryPoint = 'sindre_session' | 'agent_one_shot'
+export type ChatSessionEntryPoint =
+	| 'sindre_session'
+	| 'agent_one_shot'
+	| 'person_message_row'
+	| 'person_message_page'
 
 // Kebab-cased role for the actor that opened the session. Fixed by the
 // Chief of Staff prototype bet's `posthog_query`: `chief-of-staff` when the

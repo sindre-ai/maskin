@@ -1,7 +1,8 @@
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
+import { formatCompact } from '@/components/shared/relative-time'
 import { useActors } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
-import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
 import { useForYou } from '@/hooks/use-for-you'
 import { useLoops } from '@/hooks/use-loops'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -47,7 +48,7 @@ import { rowSub, rowTitle } from '@/lib/search/row-display'
 import { serializeSearchState, urlStateFromParts } from '@/lib/search/url-state'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
-import type { SearchResultRow } from '@maskin/shared'
+import { DIRECT_MESSAGE_ROW_TYPE, START_CHAT_ROW_TYPE, type SearchResultRow } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	Bot,
@@ -76,7 +77,7 @@ import {
 import { toast } from 'sonner'
 import { ParticipantMenu } from './participant-menu'
 import { SearchField } from './search-field'
-import { orderRows } from './search-results'
+import { isContactRow, orderLauncherRows } from './search-results'
 import { PartialNotice, ResultsError, ResultsSkeleton } from './search-states'
 
 // The ⌘K launcher. It is the search page's field in a smaller
@@ -97,8 +98,17 @@ const KIND_BY_GROUP: Record<SearchResultRow['group'], string> = {
 	automations: 'AUTOMATION',
 }
 
+const DIRECT_MESSAGE_KIND = 'DIRECT MESSAGE'
+
+/** The grey line of a direct message: the last message, then how long ago ("You: on it · 2h"). */
+function directMessageSub(row: SearchResultRow): string | undefined {
+	const age = row.updatedAt ? formatCompact(new Date(row.updatedAt), 30) : null
+	return [row.snippet, age].filter(Boolean).join(' · ') || undefined
+}
+
 /** The kind column: ITEM / FLOW / CHAT as v3 draws it. Rows in Needs you are decisions. */
 function resultKind(group: string, row: SearchResultRow): string {
+	if (row.type === DIRECT_MESSAGE_ROW_TYPE) return DIRECT_MESSAGE_KIND
 	return group === 'Needs you' && row.group === 'objects' ? 'DECISION' : KIND_BY_GROUP[row.group]
 }
 const MAX_NEEDS_YOU = 3
@@ -108,10 +118,14 @@ interface PaletteRow {
 	group: string
 	/** Right-aligned kind column: COMMAND / GO TO / the entity's own kind / SEARCH. */
 	kind: string
+	/** The kind column below 640px, where the full word does not fit. */
+	kindShort?: string
 	title: string
 	sub?: string
 	/** Matched text from the item's body, shown as a grey line under the title. */
 	snippet?: string
+	/** Dimmed and inert while its action runs. */
+	busy?: boolean
 	run: () => void
 }
 
@@ -403,6 +417,9 @@ function LauncherPanel({
 		useSearchState(vocab)
 	const { parts } = state
 	const [announcement, setAnnouncement] = useState('')
+	// The teammate whose chat is being created, so the row can dim and ignore a second Enter.
+	const [startingId, setStartingId] = useState<string | null>(null)
+	const createConversation = useCreateConversation(workspaceId)
 
 	useEffect(() => {
 		inputRef.current?.focus()
@@ -517,25 +534,78 @@ function LauncherPanel({
 		navigateToSearchRow(navigate, workspaceId, row)
 	}
 
+	// A teammate with no chat yet: make their direct message (or find it, if it appeared in the
+	// meantime), then open it. A failure leaves the palette open on the same row.
+	const startChat = async (row: SearchResultRow, position: number, listSize: number) => {
+		if (startingId) return
+		setStartingId(row.id)
+		setAnnouncement('Starting chat')
+		try {
+			const conversation = await createConversation.mutateAsync({
+				title: row.title,
+				participant_actor_ids: [row.id],
+				direct: true,
+			})
+			trackSearchRowOpened({
+				surface: 'command_palette',
+				entityId: conversation.id,
+				entityType: searchEntityType('chats', DIRECT_MESSAGE_ROW_TYPE),
+				group: 'chats',
+				position,
+				hasQuery: true,
+				listSize,
+				uiVersion: 'v2',
+			})
+			pushRecentSearchEntry(workspaceId, { q: query, types, statuses })
+			onClose()
+			navigate({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId, conversationId: conversation.id },
+			})
+		} catch {
+			setStartingId(null)
+			setAnnouncement('')
+			toast.error("Couldn't start the chat. Try again.")
+		}
+	}
+
 	const resultRow = (
 		row: SearchResultRow,
 		group: string,
 		position: number,
 		listSize: number,
 		withQuery: boolean,
-	): PaletteRow => ({
-		id: `${group}-${row.group}-${row.id}`,
-		group,
-		kind: resultKind(group, row),
-		title: rowTitle(row),
-		sub: rowSub(row),
-		snippet: row.snippet ?? undefined,
+	): PaletteRow => {
+		const base = {
+			id: `${group}-${row.group}-${row.id}`,
+			group,
+			kind: resultKind(group, row),
+			title: rowTitle(row),
+		}
 		// A row from the previous answer must not open while the new one is on its way.
-		run: () => {
-			if (withQuery && !settled) return
-			openResult(row, position, listSize, withQuery)
-		},
-	})
+		const ready = !withQuery || settled
+		if (row.type === START_CHAT_ROW_TYPE) {
+			const starting = startingId === row.id
+			return {
+				...base,
+				sub: starting ? 'Starting chat…' : 'Start a chat',
+				busy: starting,
+				run: () => {
+					if (ready) void startChat(row, position, listSize)
+				},
+			}
+		}
+		const isDirectMessage = row.type === DIRECT_MESSAGE_ROW_TYPE
+		return {
+			...base,
+			...(isDirectMessage ? { kindShort: 'DM' } : {}),
+			sub: isDirectMessage ? directMessageSub(row) : rowSub(row),
+			snippet: isDirectMessage ? undefined : (row.snippet ?? undefined),
+			run: () => {
+				if (ready) openResult(row, position, listSize, withQuery)
+			},
+		}
+	}
 
 	const failed = isError && !data
 	const loading = !isEmpty && !data && !failed
@@ -675,11 +745,20 @@ function LauncherPanel({
 		}
 
 		if (!isEmpty) {
-			const shown = orderRows(data?.results ?? [], 'rel').slice(0, MAX_JUMP_ROWS)
+			const shown = orderLauncherRows(data?.results ?? []).slice(0, MAX_JUMP_ROWS)
+			const jumpTo = shown.filter((row) => !isContactRow(row))
+			const contacts = shown.filter(isContactRow)
 			groups.push({
 				label: 'Jump to',
-				rows: shown.map((row, index) =>
+				rows: jumpTo.map((row, index) =>
 					resultRow(row, 'Jump to', index + 1, shown.length, hasQuery),
+				),
+			})
+			// CRM contacts come last, under their own heading.
+			groups.push({
+				label: 'Contacts',
+				rows: contacts.map((row, index) =>
+					resultRow(row, 'Contacts', jumpTo.length + index + 1, shown.length, hasQuery),
 				),
 			})
 		}
@@ -888,7 +967,11 @@ function LauncherPanel({
 							role="group"
 							aria-label={group.label}
 							// The previous answer stays on screen, dimmed, while a new one loads.
-							className={cn(group.label === 'Jump to' && !settled && data && 'opacity-60')}
+							className={cn(
+								group.label === 'Jump to' || group.label === 'Contacts'
+									? !settled && data && 'opacity-60'
+									: undefined,
+							)}
 						>
 							<div
 								aria-hidden="true"
@@ -909,11 +992,13 @@ function LauncherPanel({
 									role="option"
 									tabIndex={-1}
 									aria-selected={row.id === activeId}
+									aria-busy={row.busy || undefined}
 									onMouseMove={() => setActiveId(row.id)}
 									onClick={row.run}
 									className={cn(
 										'group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.75 max-lg:min-h-11 pointer-coarse:min-h-11',
 										row.id === activeId && 'bg-secondary',
+										row.busy && 'opacity-60',
 									)}
 								>
 									<span className="flex min-w-0 flex-1 flex-col">
@@ -932,7 +1017,14 @@ function LauncherPanel({
 										) : null}
 									</span>
 									<span className="shrink-0 font-mono text-[11px] font-semibold text-muted-foreground">
-										{row.kind}
+										{row.kindShort ? (
+											<>
+												<span className="max-sm:hidden">{row.kind}</span>
+												<span className="sm:hidden">{row.kindShort}</span>
+											</>
+										) : (
+											row.kind
+										)}
 									</span>
 									<span
 										aria-hidden="true"

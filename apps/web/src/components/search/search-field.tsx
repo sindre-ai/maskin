@@ -61,7 +61,7 @@ export function SearchField({
 }: SearchFieldProps) {
 	const composing = useRef(false)
 	const palette = variant === 'palette'
-	// The search page's form row: a borderless grey pill at the right of the "Search" label.
+	// The search page's form row: a grey pill with the control border at the right of the "Search" label.
 	const row = variant === 'row'
 	const suggestionLabel = suggestion ? pillLabel(vocab, suggestion.kind, suggestion.value) : ''
 
@@ -131,7 +131,7 @@ export function SearchField({
 				palette
 					? 'min-h-14 px-4.5 py-1'
 					: row
-						? 'min-h-9 rounded-full bg-muted px-3.5 py-0.5 transition-colors focus-within:ring-2 focus-within:ring-ring/30'
+						? 'min-h-9 rounded-full border border-control bg-muted px-3.5 py-0.5 transition-colors focus-within:ring-2 focus-within:ring-ring/30'
 						: 'min-h-[50px] rounded-lg border border-control bg-background px-3 py-1.5 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
 			)}
 		>
