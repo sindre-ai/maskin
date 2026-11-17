@@ -126,7 +126,7 @@ public struct MainShell: View {
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
 		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
-		.safeAreaInset(edge: .top, spacing: 0) {
+		.topBanner(isVisible: awaitingCard) {
 			OfflineBanner(
 				isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
 				actionTitle: TrialCardStep.actionTitle
@@ -134,7 +134,7 @@ public struct MainShell: View {
 				.padding(.horizontal, MaskinSpace.s8)
 				.animation(MaskinMotion.standard, value: awaitingCard)
 		}
-		.safeAreaInset(edge: .top, spacing: 0) {
+		.topBanner(isVisible: !runtime.isOnline || previewOffline) {
 			OfflineBanner(
 				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
 				actionTitle: queuedCount > 0 ? "View" : "Retry"
@@ -278,6 +278,35 @@ private struct AdaptiveTabs: View {
 		#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
 			.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
 		#endif
+	}
+}
+
+/// A notice at the top of the app. iPhone and Mac inset it above the content. The iPad's tab bar is
+/// at the top of the screen, so an inset would cover the bar (and the avatar and "+" beside it):
+/// there the notice sits above the tab view and pushes the bar down, with a little room below it.
+private struct TopBanner<Banner: View>: ViewModifier {
+	let isVisible: Bool
+	let banner: Banner
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		if ShellIdiom.isPad {
+			VStack(spacing: 0) {
+				banner.padding(.bottom, isVisible ? MaskinSpace.s3 : 0)
+				// With no notice the content keeps running under the status bar, as before.
+				content.ignoresSafeArea(.container, edges: isVisible ? [] : .top)
+			}
+		} else {
+			content.safeAreaInset(edge: .top, spacing: 0) { banner }
+		}
+	}
+}
+
+extension View {
+	fileprivate func topBanner<Banner: View>(
+		isVisible: Bool, @ViewBuilder _ banner: () -> Banner
+	) -> some View {
+		modifier(TopBanner(isVisible: isVisible, banner: banner()))
 	}
 }
 
