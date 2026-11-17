@@ -3742,9 +3742,10 @@ export function createMcpServer(config: McpConfig) {
 
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
-			// the wire response see the same, capped shape.
-			const capped = applyResponseTokenCap(name, addCopenhagenTimesToResponse(response))
-			const finalResponse = capped.response
+			// the wire response see the same, capped shape. The Copenhagen times go on
+			// after the cap, so they never shorten a page.
+			const capped = applyResponseTokenCap(name, response)
+			const finalResponse = addCopenhagenTimesToResponse(capped.response)
 
 			// Response-size baseline for response-size telemetry. Measures the
 			// two channels MCP serializes onto the wire — `content`

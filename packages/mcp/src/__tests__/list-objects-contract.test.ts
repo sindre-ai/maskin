@@ -313,7 +313,16 @@ describe('list_objects, the one query tool', () => {
 			})
 			for (const row of rowsOf(raw)) {
 				expect(Object.keys(row).sort()).toEqual(
-					['driver', 'id', 'status', 'title', 'type', 'updatedAt', 'url'].sort(),
+					[
+						'driver',
+						'id',
+						'status',
+						'title',
+						'type',
+						'updatedAt',
+						'updatedAt_copenhagen',
+						'url',
+					].sort(),
 				)
 				expect(row).not.toHaveProperty('content')
 			}
