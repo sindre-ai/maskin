@@ -1532,7 +1532,7 @@ function ConditionEditor({
 				/>
 			) : (
 				<Select value={condition.field} onValueChange={handleFieldChange}>
-					<SelectTrigger className="min-h-11 sm:min-h-8">
+					<SelectTrigger aria-label="Condition field" className="min-h-11 sm:min-h-8">
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
@@ -1623,6 +1623,7 @@ function ConditionValueInput({
 					actors={actors}
 					selectedId={typeof value === 'string' && value ? value : null}
 					placeholder="Pick a person or agent"
+					ariaLabel="Pick a person or agent"
 					onChange={(id) => onChange(id ?? '')}
 				/>
 			</div>

@@ -227,21 +227,24 @@ test.describe('Trigger detail page', () => {
 			})
 
 			// The section is reachable on touch — no hover-only reveal — and adding
-			// a condition works even with no workspace field definitions, which is
-			// the case for every integration-sourced event type.
+			// a condition works even with no workspace field definitions. An
+			// insight has none, so the first row is the built-in Driver condition
+			// with an actor picker for its value.
 			const addCondition = page.getByRole('button', { name: 'Add condition' })
 			await expect(addCondition).toBeVisible()
 			await addCondition.click()
-			const field = page.getByRole('textbox', { name: 'Condition field' })
+			const field = page.getByRole('combobox').filter({ hasText: 'Driver' })
 			await expect(field).toBeVisible()
-			await field.fill('action')
-			await expect(field).toHaveValue('action')
+			const picker = page.getByRole('combobox', { name: 'Pick a person or agent' })
+			await expect(picker).toBeVisible()
 
 			// Condition rows read in both colour modes.
 			await page.emulateMedia({ colorScheme: 'dark' })
 			await expect(field).toBeVisible()
+			await expect(picker).toBeVisible()
 			await page.emulateMedia({ colorScheme: 'light' })
 			await expect(field).toBeVisible()
+			await expect(picker).toBeVisible()
 		})
 	}
 
