@@ -144,6 +144,14 @@ export const FLAGS = {
 	 */
 	DONE_WHEN_LIST: 'done-when-list',
 	/**
+	 * Gates the simpler For You card (task [Give For You cards their context](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8ac3f27a-4f3f-4c9e-9e90-d43a03ffe71b)):
+	 * the object the card is about on its first line, the chat composer as the message box, plain
+	 * summary text, no Recommended tag on a lone answer, Open the task to decide when there are no
+	 * buttons, and Open chat on the reply receipt. UI only, read where the card draws. Off means
+	 * the card looks as it does today. Retire once it is on for everyone.
+	 */
+	FOR_YOU_CARD_CONTEXT: 'foryou-card-context',
+	/**
 	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
 	 * else, or a decision card it posted expires. Backend only, workspace-scoped: read with
