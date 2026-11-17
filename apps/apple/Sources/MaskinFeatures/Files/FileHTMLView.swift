@@ -12,7 +12,13 @@ import WebKit
 #if canImport(WebKit)
 @MainActor
 final class HTMLProbe {
-	weak var webView: WKWebView?
+	/// A new web view is a new page, so a card asked for on the last one no longer applies.
+	weak var webView: WKWebView? {
+		didSet { if oldValue !== webView { wantedCard = 0 } }
+	}
+	/// The card asked for last. The page is cleaned and loaded in the background, so a request that
+	/// arrives before it has loaded finds no deck; `pageDidFinishLoading` replays it.
+	private var wantedCard = 0
 
 	private static let script = """
 		var el = document.elementFromPoint(x * window.innerWidth, y * window.innerHeight);
@@ -33,6 +39,7 @@ final class HTMLProbe {
 	/// many times. Decks listen for these keys, so no deck has to know the app exists. In the page's
 	/// own world, where its listeners live.
 	func showCard(_ index: Int) async {
+		wantedCard = max(index, 0)
 		guard let webView else { return }
 		let script = """
 			var press = function (key) {
@@ -43,6 +50,11 @@ final class HTMLProbe {
 			"""
 		_ = try? await webView.callAsyncJavaScript(
 			script, arguments: ["n": max(index, 0)], in: nil, contentWorld: .page)
+	}
+
+	/// The page has loaded: turn it to the card that was asked for while it was still loading.
+	func pageDidFinishLoading() async {
+		if wantedCard > 0 { await showCard(wantedCard) }
 	}
 
 	func element(at point: FilePoint) async -> (selector: String, bounds: FileBounds)? {
