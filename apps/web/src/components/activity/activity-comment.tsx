@@ -144,13 +144,14 @@ function CommentRow({
 				<ActorAvatar name={actor.name} type={actor.type} size="sm" className={avatarClass} />
 			</Link>
 		) : (
-			<ActorAvatar
-				name={actor.name}
-				type={actor.type}
-				size="sm"
-				className={avatarClass}
-				onClick={() => setHumanDialogActorId(actor.id)}
-			/>
+			<Link
+				to="/$workspaceId/people/$actorId"
+				params={{ workspaceId, actorId: actor.id }}
+				aria-hidden="true"
+				tabIndex={-1}
+			>
+				<ActorAvatar name={actor.name} type={actor.type} size="sm" className={avatarClass} />
+			</Link>
 		)
 	) : null
 
@@ -165,15 +166,15 @@ function CommentRow({
 			{actor.name}
 		</Link>
 	) : (
-		<button
-			type="button"
-			onClick={() => setHumanDialogActorId(actor.id)}
+		<Link
+			to="/$workspaceId/people/$actorId"
+			params={{ workspaceId, actorId: actor.id }}
 			className={cn(
 				'text-sm font-medium text-foreground cursor-pointer hover:underline transition-colors',
 			)}
 		>
 			{actor.name}
-		</button>
+		</Link>
 	)
 
 	return (
