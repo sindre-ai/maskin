@@ -14,12 +14,47 @@
  */
 
 import type { Database } from '@maskin/db'
-import type { integrations } from '@maskin/db/schema'
+import { type integrations, linkedinActions } from '@maskin/db/schema'
+import { and, eq, inArray } from 'drizzle-orm'
 import { decideDirection, readOwnLinkedinIds } from './direction'
 import type { UnipileEnvelope } from './envelope'
 import { findContactsBySlug, resolveSender } from './sender-resolution'
 
 export type IntegrationRow = typeof integrations.$inferSelect
+
+/**
+ * initial_contact covers both a LinkedIn invite and a first email, so the status alone no longer
+ * says a connection is the answer to an invite. The person counts as a pending invitee when
+ * first_contact_channel is linkedin (it is set for invites sent before the action log began) or
+ * the action log holds a sent invite from this account to them. An empty channel is not linkedin.
+ */
+async function isPendingInvitee(
+	db: Database,
+	integration: IntegrationRow,
+	contact: { status: string; firstContactChannel: string | null },
+	providerIds: Array<string | null>,
+): Promise<boolean> {
+	// Transitional: people not yet moved to initial_contact still carry the old status. Remove
+	// this line once no person is in connection_requested.
+	if (contact.status === 'connection_requested') return true
+	if (contact.status !== 'initial_contact') return false
+	if (contact.firstContactChannel === 'linkedin') return true
+	const targets = providerIds.filter((id): id is string => !!id)
+	if (targets.length === 0) return false
+	const [sent] = await db
+		.select({ id: linkedinActions.id })
+		.from(linkedinActions)
+		.where(
+			and(
+				eq(linkedinActions.integrationId, integration.id),
+				eq(linkedinActions.tool, 'send_connection_request'),
+				eq(linkedinActions.outcome, 'ok'),
+				inArray(linkedinActions.targetProviderId, targets),
+			),
+		)
+		.limit(1)
+	return !!sent
+}
 
 export interface ClassifyContext {
 	db: Database
@@ -223,7 +258,8 @@ export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 		// payload.public_identifier and no getProfile call is made. Ids and status only:
 		// no names, headline or profile data. This handler writes nothing to contacts;
 		// the owning rep moves the contact later.
-		//   accepted  slug matches a contact in connection_requested; entityId is the contact id
+		//   accepted  slug matches a contact in initial_contact whose first contact was a LinkedIn
+		//             invite (see isPendingInvitee); entityId is the contact id
 		//   new       anything else (no match, another status, no public identifier); entityId is
 		//             the integration id
 		classify: async ({ db, envelope, integration }) => {
@@ -257,7 +293,10 @@ export const EVENT_MAP: Readonly<Record<string, EventMapRow>> = {
 					}
 				: {}
 
-			if (contact?.status === 'connection_requested') {
+			if (
+				contact &&
+				(await isPendingInvitee(db, integration, contact, [otherId, publicIdentifier]))
+			) {
 				return {
 					kind: 'emit',
 					action: 'accepted',

@@ -83,8 +83,7 @@ const GROUP_STATUSES_BY_TYPE: Record<string, Partial<Record<StatusGroupKey, read
 		new: ['new_lead'],
 		in_progress: [
 			'qualified',
-			'connection_requested',
-			'messaged',
+			'initial_contact',
 			'in_conversation',
 			'meeting_booked',
 			'follow_up_later',
