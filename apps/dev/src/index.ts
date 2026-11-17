@@ -317,7 +317,7 @@ const driverWaker = new DriverWaker(db, notifyBridge)
 driverWaker.start()
 
 // Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
-// workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
+// workspace has been swept for 3 days and has the next-step-sweep-wake flag.
 const nextStepSweep = new NextStepSweep(db)
 nextStepSweep.start()
 
