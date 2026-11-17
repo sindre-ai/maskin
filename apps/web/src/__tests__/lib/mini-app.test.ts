@@ -559,6 +559,24 @@ describe('readViewSources', () => {
 		expect(result.sources.has('by_status')).toBe(true)
 	})
 
+	it('refuses a count source that groups, filters or sums on a contact detail', () => {
+		for (const source of [
+			'{"a":{"type":"contact","group_by":"metadata.email"}}',
+			'{"a":{"type":"contact","filters":{"metadata":{"sales_strategy":"x"}}}}',
+			'{"a":{"type":"contact","aggregate":{"op":"sum","field":"reach"}}}',
+		]) {
+			const result = readViewSources(doc(source))
+			expect(result.ok).toBe(false)
+			if (!result.ok)
+				expect(result.error).toContain("This view asks for data the app doesn't offer")
+		}
+	})
+
+	it('lets a count source group by a CRM category field', () => {
+		const result = readViewSources(doc('{"a":{"type":"contact","group_by":"metadata.owner"}}'))
+		expect(result.ok).toBe(true)
+	})
+
 	it('does not run scripts while reading', () => {
 		const spy = vi.fn()
 		;(window as unknown as { __ran?: () => void }).__ran = spy
