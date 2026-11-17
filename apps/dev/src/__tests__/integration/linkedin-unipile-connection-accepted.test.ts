@@ -311,6 +311,19 @@ describe('relation.new classification', () => {
 		expect(rows[0]?.action).toBe('new')
 	})
 
+	it('still records accepted for a person not yet moved off connection_requested', async () => {
+		const contact = await insertContact('https://www.linkedin.com/in/jane-doe', {
+			status: 'connection_requested',
+			channel: null,
+		})
+
+		await deliver(relationNew())
+
+		const rows = await connectionEvents()
+		expect(rows[0]?.action).toBe('accepted')
+		expect(rows[0]?.entityId).toBe(contact.id)
+	})
+
 	it('does not match martin against martin-emil-sloth-55a6655', async () => {
 		await insertContact('https://www.linkedin.com/in/martin-emil-sloth-55a6655')
 
