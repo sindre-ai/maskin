@@ -433,8 +433,8 @@ struct MessageRow: View {
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .trailing)
+			.messageMoreMenu(actions: actions, isOwn: true)
 			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: true, actions: actions)
 			if let appended = layout?.appended, !appended.isEmpty {
 				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				VStack(alignment: .trailing, spacing: MaskinSpace.s3) {
@@ -520,8 +520,8 @@ struct MessageRow: View {
 					}
 				}
 			}
+			.messageMoreMenu(actions: menuActions, isOwn: false)
 			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: false, actions: menuActions)
 			if let appended = layout?.appended {
 				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				ForEach(appended) { target in
