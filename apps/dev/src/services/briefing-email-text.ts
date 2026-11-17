@@ -1,34 +1,34 @@
 /**
- * briefing-email-text.ts — the summary email, as pure functions.
+ * briefing-email-text.ts — the digest email, as pure functions.
  *
- * Every mail has three parts: what finished for the person since the last mail (runs of a flow
- * grouped per flow, up to 3 flows, then up to 5 runs that tie to no flow, newest first, each
- * list followed by "and N more"), what waits on them, and one next-step line. The facts and
- * their wording come from the daily briefing push (`buildBriefingText`), so an email never says a
- * different number than the push or the For You screen. No AI call, no message bodies: only the
- * titles the push already shows.
- *
- * Steps 1 to 3 (the first three mails anyone gets, new or existing) also carry one short lesson
- * each (a card, a flow, your results), plain how-to and no offers. After that the mail is the plain daily summary.
+ * One mail a day (or a week) of what the person has not dealt with, in two parts. "Needs you" is
+ * what waits on a decision or a reply, at most three rows, each with its own button. "Updates" is
+ * the person's other unread notifications in three groups (Objects, Flows, Chats), one line each,
+ * at most five rows a group. Below the list: the next-step line and, in the first three mails, one
+ * short lesson. Then one "Open Maskin" button. The rows come from digest-email-data.ts. No AI
+ * call, and no message text: a chat row is the chat's name and how many new messages.
  */
-import { MAX_FINISHED_RUNS } from './briefing-push-scheduler'
-import type { BriefingText, FinishedFlow } from './briefing-push-scheduler'
+import type {
+	DigestData,
+	DigestGroup,
+	DigestUpdateRow,
+	DigestWaitingRow,
+} from './digest-email-data'
 import {
-	bigNumber,
 	button,
 	clipAtWord as clip,
+	countHeading,
 	headline,
 	linkRow,
+	moreLink,
+	needBox,
 	nextStepLine,
 	renderEmail,
 	sectionHeading,
 	softBox,
-	tickList,
-	waitingRow,
+	spacer,
+	updateRows,
 } from './email-layout'
-
-/** Most flows named in the finished part; the rest fold into "and N more flows". */
-export const MAX_FINISHED_FLOWS = 3
 
 export type EmailStep = 1 | 2 | 3 | 'daily'
 
@@ -90,9 +90,18 @@ export interface PickBlock {
 }
 
 export interface SummaryEmailInput {
-	summary: BriefingText
+	digest: DigestData
 	step: EmailStep
-	/** Where the button goes: the top waiting card, or the workspace home. Already tagged. */
+	/** Workspace-less app address, like https://app.maskin.io, without a trailing slash. */
+	appUrl: string
+	/** The person's IANA timezone; times in the mail are in it. */
+	timezone: string
+	now: Date
+	/** The person's send time as "07:30", named in the footer. */
+	sendTime: string
+	/** "weekly" changes the footer to say one email a week; anything else says a day. */
+	rhythm: string | null
+	/** The "Open Maskin" button, already tagged. */
 	buttonUrl: string
 	/** Signed stop link; the one-click header points at the same URL. */
 	stopUrl: string
@@ -109,93 +118,121 @@ export interface SummaryEmail {
 	headers: Record<string, string>
 }
 
-export function buttonLabel(summary: BriefingText): string {
-	return summary.waiting > 0 ? 'Open it' : 'Open Maskin'
-}
+export const BUTTON_LABEL = 'Open Maskin'
 
-export interface Section {
-	kind: 'done' | 'waiting' | 'next'
-	heading: string
-	lines: string[]
-}
-
-function runLine(run: { agentName: string; objectTitle: string | null }): string {
-	return run.objectTitle
-		? `${run.agentName} finished '${clip(run.objectTitle, 60)}'`
-		: `${run.agentName} finished a task`
-}
-
-/** Says only that runs finished; never what they produced or whether they went well. */
-function flowLine(flow: FinishedFlow): string {
-	const count = `${flow.runs} ${flow.runs === 1 ? 'run' : 'runs'} finished`
-	const latest = flow.latestTitle ? `, latest '${clip(flow.latestTitle, 60)}'` : ''
-	return `${clip(flow.flowName, 60)}: ${count}${latest}`
-}
-
-/** The parts that hold content; a part with nothing to say is left out. */
-export function summarySections(summary: BriefingText, nextStep: string | null): Section[] {
-	const sections: Section[] = []
-	const where =
-		summary.multiWorkspace && summary.workspaceName ? ` in ${summary.workspaceName}` : ''
-
-	const runs = summary.finishedRuns ?? []
-	const flows = summary.finishedFlows ?? []
-	if (summary.finished > 0) {
-		const lines = flows.slice(0, MAX_FINISHED_FLOWS).map(flowLine)
-		const moreFlows = flows.length - lines.length
-		if (moreFlows > 0) lines.push(`and ${moreFlows} more ${moreFlows === 1 ? 'flow' : 'flows'}`)
-
-		// Runs that tie to no flow stay in the plain list.
-		const untied = summary.finished - flows.reduce((sum, f) => sum + f.runs, 0)
-		const runLines = runs.slice(0, MAX_FINISHED_RUNS).map(runLine)
-		const more = untied - runLines.length
-		if (runLines.length === 0 && untied > 0) {
-			runLines.push(`${untied} agent ${untied === 1 ? 'run' : 'runs'} finished`)
-		} else if (more > 0) {
-			runLines.push(`and ${more} more`)
-		}
-		sections.push({
-			kind: 'done',
-			heading: `Done for you${where}`,
-			lines: [...lines, ...runLines],
-		})
+/**
+ * The subject and the heading. Both parts: "2 need you, 5 other updates". Only updates: "5 updates".
+ * Only waiting items: "2 need you". One of a kind reads "1 needs you", "1 update", "1 other update".
+ */
+export function digestSubject(waiting: number, updates: number): string {
+	const need = waiting === 1 ? '1 needs you' : `${waiting} need you`
+	if (waiting > 0 && updates > 0) {
+		return `${need}, ${updates} other ${updates === 1 ? 'update' : 'updates'}`
 	}
-
-	// The count is the mail's title ("3 things need you"), so this part only adds what the title does not.
-	if (summary.waiting > 0) {
-		const lines: string[] = []
-		if (summary.topHeadline) lines.push(`Starting with: ${clip(summary.topHeadline, 90)}`)
-		if (summary.waitingElsewhere) lines.push(`${summary.waitingElsewhere} more in other workspaces`)
-		if (lines.length > 0)
-			sections.push({ kind: 'waiting', heading: `Waiting on you${where}`, lines })
-	}
-
-	if (nextStep) sections.push({ kind: 'next', heading: 'Next step', lines: [nextStep] })
-	return sections
+	if (waiting > 0) return need
+	return `${updates} ${updates === 1 ? 'update' : 'updates'}`
 }
 
-/** The hidden inbox preview: the first line of content that is not the subject. */
-function summaryPreheader(summary: BriefingText, sections: Section[], lesson: string | null) {
-	const order = ['waiting', 'done', 'next'] as const
-	const lines = order.flatMap((kind) => sections.find((s) => s.kind === kind)?.lines ?? [])
-	return (
-		lines.find((l) => l !== summary.title) ?? lesson ?? 'See what is waiting for you in Maskin.'
-	)
+function timeParts(at: Date, timezone: string, withWeekday: boolean): string {
+	const options: Intl.DateTimeFormatOptions = {
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23',
+		...(withWeekday ? { weekday: 'short' } : {}),
+	}
+	try {
+		return new Intl.DateTimeFormat('en-US', { ...options, timeZone: timezone })
+			.format(at)
+			.replace(',', '')
+	} catch {
+		return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' })
+			.format(at)
+			.replace(',', '')
+	}
+}
+
+function localDay(at: Date, timezone: string): string {
+	try {
+		return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(at)
+	} catch {
+		return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(at)
+	}
+}
+
+/** "09:12" for today, "Tue 09:12" for another day. */
+export function clockLabel(at: Date, now: Date, timezone: string): string {
+	return timeParts(at, timezone, localDay(at, timezone) !== localDay(now, timezone))
+}
+
+function whenLabel(row: DigestWaitingRow, now: Date, timezone: string): string {
+	return row.dueAt
+		? `Due ${timeParts(row.dueAt, timezone, true)}`
+		: `Asked ${clockLabel(row.at, now, timezone)}`
+}
+
+const GROUP_LABELS: Record<DigestGroup['kind'], string> = {
+	objects: 'Objects',
+	flows: 'Flows',
+	chats: 'Chats',
+}
+
+/** The hidden inbox preview: the first waiting item (or update) and how many more are unread. */
+export function digestPreheader(digest: DigestData): string {
+	const first = digest.waiting[0]?.title ?? digest.groups[0]?.rows[0]?.title
+	const total = digest.waitingCount + digest.updatesCount
+	if (!first) return 'See what is new in Maskin.'
+	const rest = total - 1
+	return rest > 0 ? `${first}, and ${rest} more unread.` : first
 }
 
 export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
-	const { summary, step, buttonUrl, stopUrl, nextStep, pick } = input
+	const { digest, step, appUrl, timezone, now, buttonUrl, stopUrl, nextStep, pick } = input
 	const lesson = step === 'daily' ? null : STEP_LESSON[step]
-	const label = buttonLabel(summary)
-	const sections = summarySections(summary, nextStep)
+	const subject = digestSubject(digest.waitingCount, digest.updatesCount)
 	const pickDescription = pick ? clip(pick.description, 140) : ''
+	const homeUrl = (block: string) =>
+		`${appUrl}/${digest.anchorWorkspaceId ?? ''}?surface=email&block=${block}`.replace('//?', '/?')
+	const rowUrl = (path: string, block: string) => `${appUrl}${path}?surface=email&block=${block}`
+	const moreWaiting = digest.waitingCount - digest.waiting.length
+	const period = input.rhythm === 'weekly' ? 'week' : 'day'
+	const footerNote = `One email a ${period} instead of one per notification. It lists what is still unread when it goes out, at ${input.sendTime}.`
 
 	const text = [
-		summary.title,
-		...sections.flatMap((s) => ['', s.heading, ...s.lines.map((l) => `- ${l}`)]),
+		subject,
+		...(digest.waitingCount > 0
+			? [
+					'',
+					`Needs you (${digest.waitingCount})`,
+					...digest.waiting.flatMap((r) => [
+						`- ${r.title}${r.line ? `: ${r.line}` : ''} [${r.typeLabel}, ${whenLabel(r, now, timezone)}]`,
+						`  ${r.buttonLabel}: ${rowUrl(r.path, 'waiting')}`,
+					]),
+					...(moreWaiting > 0
+						? [`${moreWaiting} more waiting for you in Maskin: ${homeUrl('waiting')}`]
+						: []),
+				]
+			: []),
+		...(digest.updatesCount > 0
+			? [
+					'',
+					`Updates (${digest.updatesCount})`,
+					...digest.groups.flatMap((g) => [
+						'',
+						`${GROUP_LABELS[g.kind]} (${g.count})`,
+						...g.rows.flatMap((r) => [
+							`- ${r.title}: ${r.line}, ${clockLabel(r.at, now, timezone)}`,
+							`  ${rowUrl(r.path, 'updates')}`,
+						]),
+						...(g.count > g.rows.length
+							? [`${g.count - g.rows.length} more in Maskin: ${homeUrl('updates')}`]
+							: []),
+					]),
+				]
+			: []),
+		...(nextStep ? ['', 'Next step', `- ${nextStep}`] : []),
 		...(lesson ? ['', lesson] : []),
 		'',
-		`${label}: ${buttonUrl}`,
+		`${BUTTON_LABEL}: ${buttonUrl}`,
 		...(pick
 			? [
 					'',
@@ -208,23 +245,57 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 				]
 			: []),
 		'',
+		footerNote,
 		`Stop these emails: ${stopUrl}`,
 	].join('\n')
 
-	// Reading order in the mail: the headline moment, what waits, what finished, the next step.
-	const part = (kind: Section['kind']) => sections.find((s) => s.kind === kind)
-	const waiting = part('waiting')
-	const done = part('done')
-	const next = part('next')
+	const needsYou =
+		digest.waitingCount > 0
+			? [
+					countHeading('Needs you', digest.waitingCount),
+					needBox(
+						digest.waiting.map((r) => ({
+							title: r.title,
+							line: r.line,
+							typeLabel: r.typeLabel,
+							typeKind: r.typeKind,
+							when: whenLabel(r, now, timezone),
+							url: rowUrl(r.path, 'waiting'),
+							buttonLabel: r.buttonLabel,
+						})),
+					),
+					...(moreWaiting > 0
+						? [moreLink(homeUrl('waiting'), `${moreWaiting} more waiting for you in Maskin`)]
+						: []),
+				]
+			: []
+	const updates =
+		digest.updatesCount > 0
+			? [
+					countHeading('Updates', digest.updatesCount, true),
+					...digest.groups.flatMap((g) => [
+						countHeading(GROUP_LABELS[g.kind], g.count, true),
+						updateRows(
+							g.rows.map((r: DigestUpdateRow) => ({
+								title: r.title,
+								line: `${r.line}, ${clockLabel(r.at, now, timezone)}`,
+								url: rowUrl(r.path, 'updates'),
+							})),
+						),
+						...(g.count > g.rows.length
+							? [moreLink(homeUrl('updates'), `${g.count - g.rows.length} more in Maskin`)]
+							: []),
+					]),
+				]
+			: []
 	const blocks = [
-		summary.waiting > 0
-			? bigNumber(summary.waiting, summary.waiting === 1 ? 'thing needs you' : 'things need you')
-			: headline(summary.title),
-		...(waiting ? [sectionHeading(waiting.heading), ...waiting.lines.map(waitingRow)] : []),
-		...(done ? [sectionHeading(done.heading), tickList(done.lines)] : []),
-		...(next ? [sectionHeading(next.heading), ...next.lines.map(nextStepLine)] : []),
+		headline(subject),
+		...needsYou,
+		...updates,
+		...(nextStep ? [sectionHeading('Next step'), nextStepLine(nextStep)] : []),
 		...(lesson ? [softBox(lesson)] : []),
-		button(buttonUrl, label),
+		spacer(),
+		button(buttonUrl, BUTTON_LABEL),
 		...(pick
 			? [
 					sectionHeading('Marketplace pick'),
@@ -241,13 +312,14 @@ export function buildSummaryEmail(input: SummaryEmailInput): SummaryEmail {
 			: []),
 	]
 	const html = renderEmail({
-		preheader: summaryPreheader(summary, sections, lesson),
+		preheader: digestPreheader(digest),
 		blocks,
+		footerNote,
 		stopUrl,
 	})
 
 	return {
-		subject: summary.title,
+		subject,
 		text,
 		html,
 		headers: {
