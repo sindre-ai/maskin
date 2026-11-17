@@ -4946,6 +4946,119 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('Keychain values in stored session logs', () => {
+		// Fake values only. None of these is, or was ever, a real secret.
+		const ENV_NAME = 'KEYCHAIN_BYO_APIKEY_FAKE'
+		const FAKE_KEY = 'fake-key-0123456789-abcdefghij'
+		const FAKE_PEM = [
+			'-----BEGIN PRIVATE KEY-----',
+			'FAKEFAKEFAKEfakefakefakeAAAA1111BBBB2222',
+			'cccc3333DDDD4444eeee5555FFFF6666gggg7777',
+			'-----END PRIVATE KEY-----',
+		].join('\n')
+
+		function storedContent(): string[] {
+			return calls.inserts
+				.filter((row): row is { content: string } => typeof row === 'object' && row !== null)
+				.map((row) => String((row as { content?: unknown }).content ?? ''))
+		}
+
+		function printed(value: string): string[] {
+			const toolResult = JSON.stringify({
+				type: 'user',
+				message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_x', content: value }] },
+			})
+			return [`raw: ${value}`, `${toolResult}\n`]
+		}
+
+		async function viaStream(sessionId: string, containerId: string, data: string[]) {
+			;(
+				manager as unknown as { activeSessions: Map<string, { tempDir: string }> }
+			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					for (const chunk of data) yield { stream: 'stdout' as const, data: chunk }
+				},
+			}))
+			;(
+				manager as unknown as { streamContainerLogs(sessionId: string, containerId: string): void }
+			).streamContainerLogs(sessionId, containerId)
+			await (
+				manager as unknown as {
+					activeSessions: Map<string, { logsDrained?: Promise<void> }>
+				}
+			).activeSessions.get(sessionId)?.logsDrained
+		}
+
+		const redactor = () =>
+			import('../../lib/session-log-redactor').then((m) => m.sessionLogRedactor)
+
+		it('stores neither the raw key nor its JSON-escaped form on the remote path', async () => {
+			const sessionId = randomUUID()
+			;(await redactor()).register(sessionId, { [ENV_NAME]: FAKE_KEY })
+			try {
+				await manager.appendRemoteSessionLogs(
+					sessionId,
+					printed(FAKE_KEY).map((content) => ({ stream: 'stdout' as const, content })),
+				)
+				const stored = storedContent().join('\n')
+				expect(stored).not.toContain(FAKE_KEY)
+				expect(stored).toContain(`[REDACTED · ${ENV_NAME}]`)
+			} finally {
+				;(await redactor()).forget(sessionId)
+			}
+		})
+
+		it('stores neither the raw key nor its JSON-escaped form on the local Docker path', async () => {
+			const sessionId = randomUUID()
+			;(await redactor()).register(sessionId, { [ENV_NAME]: FAKE_KEY })
+			try {
+				await viaStream(sessionId, 'container-keychain-key', printed(FAKE_KEY))
+				const stored = storedContent().join('\n')
+				expect(stored).not.toContain(FAKE_KEY)
+				expect(stored).toContain(`[REDACTED · ${ENV_NAME}]`)
+			} finally {
+				;(await redactor()).forget(sessionId)
+			}
+		})
+
+		it('stores no body line of a multi-line key printed in full, on both paths', async () => {
+			const sessionId = randomUUID()
+			;(await redactor()).register(sessionId, { [ENV_NAME]: FAKE_PEM })
+			try {
+				await manager.appendRemoteSessionLogs(
+					sessionId,
+					[...printed(FAKE_PEM), ...FAKE_PEM.split('\n')].map((content) => ({
+						stream: 'stdout' as const,
+						content,
+					})),
+				)
+				await viaStream(sessionId, 'container-keychain-pem', [
+					...printed(FAKE_PEM),
+					...FAKE_PEM.split('\n'),
+				])
+				const stored = storedContent().join('\n')
+				expect(stored).not.toContain('FAKEFAKEFAKE')
+				expect(stored).not.toContain('cccc3333')
+				expect(stored).not.toContain('BEGIN PRIVATE KEY')
+			} finally {
+				;(await redactor()).forget(sessionId)
+			}
+		})
+
+		it('stores the lines of a session that was given no key unchanged, on both paths', async () => {
+			const sessionId = randomUUID()
+			const lines = [`raw: ${FAKE_KEY}`, '{"usage":{"input_tokens":12}}\n']
+			await manager.appendRemoteSessionLogs(
+				sessionId,
+				lines.map((content) => ({ stream: 'stdout' as const, content })),
+			)
+			await viaStream(sessionId, 'container-keychain-none', lines)
+			const stored = storedContent().filter((c) => lines.includes(c))
+			expect(stored).toEqual([...lines, ...lines])
+		})
+	})
+
 	describe('streamContainerLogs() — reconnect on transient stream drop', () => {
 		it('falls back to tail:0 when no chunk was ever ingested, writes a drop marker, and does not surface the "interrupted" sentinel', async () => {
 			// Regression guard for the false-positive auto-pause bug: when
