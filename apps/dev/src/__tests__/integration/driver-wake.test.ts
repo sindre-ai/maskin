@@ -403,7 +403,7 @@ describe('DriverWaker', () => {
 		expect(startSessionMock).not.toHaveBeenCalled()
 		expect(wokenEvents()).toEqual([
 			expect.objectContaining({
-				reason: 'status_changed',
+				reason: 'task_ready',
 				outcome: 'dropped_other_mechanism',
 				drop_reason: 'run_already_started',
 				agent_id: driverId,
