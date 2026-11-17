@@ -1,11 +1,10 @@
 // The heartbeat pre-check on the cron path (bet "Agents take the lead", sweep task, item 4).
-// It is record-only: behind the next-step-sweep flag, a daily heartbeat writes what it found and
-// the run starts either way, even when the check itself fails.
+// It is record-only: a daily heartbeat writes what it found and the run starts either way, even
+// when the check itself fails.
 
 import { events } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readPrecheckFacts } from '../../lib/heartbeat-precheck'
 import { HEARTBEAT_METADATA_KEY } from '../../services/default-heartbeat'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
@@ -35,7 +34,6 @@ vi.mock('../../lib/heartbeat-precheck', async (importOriginal) => {
 describe('cron heartbeat pre-check (integration)', () => {
 	let workspaceId: string
 	let agentId: string
-	let previousFeatures: string | undefined
 
 	type FireCron = (trigger: unknown, tick: Date) => Promise<void>
 	const fire = (trigger: unknown) => {
@@ -75,37 +73,11 @@ describe('cron heartbeat pre-check (integration)', () => {
 		captureMock.mockClear()
 		startSessionMock.mockClear()
 		vi.mocked(readPrecheckFacts).mockClear()
-		previousFeatures = process.env.FF_WORKSPACE_FEATURES
 		workspaceId = (await insertWorkspace(db, getTestActorId())).id
 		agentId = (await insertActor(db, { type: 'agent', name: 'Owner' })).id
 	})
 
-	afterEach(() => {
-		if (previousFeatures === undefined) Reflect.deleteProperty(process.env, 'FF_WORKSPACE_FEATURES')
-		else process.env.FF_WORKSPACE_FEATURES = previousFeatures
-		_resetFeatureFlagConfig()
-	})
-
-	function flagOn() {
-		process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:next-step-sweep`
-		_resetFeatureFlagConfig()
-	}
-
-	it('with the flag off it writes nothing and the run starts as before', async () => {
-		const trigger = await heartbeat()
-		await ranYesterday(trigger.id)
-
-		await fire(trigger)
-
-		expect(readPrecheckFacts).not.toHaveBeenCalled()
-		expect(await prechecks(trigger.id)).toHaveLength(0)
-		expect(startSessionMock).toHaveBeenCalledTimes(1)
-		expect(startSessionMock.mock.calls[0]?.[0].config).toBeUndefined()
-		expect(woken()).toHaveLength(0)
-	})
-
-	it('with the flag on it writes the event and the run still starts', async () => {
-		flagOn()
+	it('it writes the event and the run still starts', async () => {
 		const trigger = await heartbeat()
 		await ranYesterday(trigger.id)
 
@@ -123,7 +95,6 @@ describe('cron heartbeat pre-check (integration)', () => {
 	})
 
 	it('a trigger without the daily heartbeat marker is not pre-checked', async () => {
-		flagOn()
 		const trigger = await heartbeat({})
 		await ranYesterday(trigger.id)
 
@@ -134,7 +105,6 @@ describe('cron heartbeat pre-check (integration)', () => {
 	})
 
 	it('when the check fails the run still starts and nothing is written', async () => {
-		flagOn()
 		const trigger = await heartbeat()
 		await ranYesterday(trigger.id)
 		vi.mocked(readPrecheckFacts).mockRejectedValueOnce(new Error('boom'))

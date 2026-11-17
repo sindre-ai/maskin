@@ -102,7 +102,6 @@ import {
 import { readEmptyTurnFallbackModel } from '../lib/empty-turn-fallback'
 import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -2748,17 +2747,11 @@ export class SessionManager extends EventEmitter {
 	/**
 	 * The "Go-ahead on the job" block, the one place a session is shown a person's stored go-ahead:
 	 * built at every launch for an unattended run (next to its goal) and for a chat (next to what it
-	 * drives). Behind the go-ahead flag (workspace-scoped, or per driver actor), so with the flag off
-	 * nothing is read or added. Never saved on the session: a go-ahead taken back between two
+	 * drives). Never saved on the session: a go-ahead taken back between two
 	 * launches must not be shown again from a saved copy. A failure here only costs the block, never
 	 * the launch.
 	 */
 	private async resolveGoAheadBlock(session: typeof sessions.$inferSelect): Promise<string> {
-		if (
-			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.GO_AHEAD, { actorId: session.actorId })
-		) {
-			return ''
-		}
 		try {
 			return await buildGoAheadBlock(
 				this.db,
@@ -2778,21 +2771,13 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * The "Jobs you are handed" block for a chat session: how to treat a job a person hands the
-	 * agent, and the flow and company targets it can serve. Behind the job-target-in-chat flag
-	 * (workspace-scoped), so with the flag off nothing is built or saved. Built on the first launch
-	 * and saved on `sessions.config.chat_job_target`; a resume reuses the saved text. A failure here
+	 * agent, and the flow and company targets it can serve. Built on the first launch and saved
+	 * on `sessions.config.chat_job_target`; a resume reuses the saved text. A failure here
 	 * only costs the block, never the launch.
 	 */
 	private async resolveChatJobTargetBlock(session: typeof sessions.$inferSelect): Promise<string> {
 		const { conversationId } = session
 		if (!conversationId) return ''
-		if (
-			!isFlagEnabledForWorkspace(session.workspaceId, FLAGS.JOB_TARGET_IN_CHAT, {
-				actorId: session.actorId,
-			})
-		) {
-			return ''
-		}
 		const config = (session.config as Record<string, unknown>) ?? {}
 		if (typeof config.chat_job_target === 'string') return config.chat_job_target
 		try {

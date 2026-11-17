@@ -34,7 +34,6 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import {
 	type PrecheckResult,
 	decidePrecheck,
@@ -1397,9 +1396,9 @@ export class TriggerRunner {
 	}
 
 	/**
-	 * The heartbeat pre-check, record-only (bet "Agents take the lead", sweep task, item 4). Behind
-	 * the next-step-sweep flag. Writes what it found as a heartbeat_precheck event on the trigger and
-	 * as driver_woken (source heartbeat, outcome skipped_nothing_due when it would have skipped).
+	 * The heartbeat pre-check, record-only (bet "Agents take the lead", sweep task, item 4). Writes
+	 * what it found as a heartbeat_precheck event on the trigger and as driver_woken (source
+	 * heartbeat, outcome skipped_nothing_due when it would have skipped).
 	 * It never stops a run: enforcing it is a separate step that needs the owners' agreement.
 	 */
 	private async recordHeartbeatPrecheck(
@@ -1407,7 +1406,6 @@ export class TriggerRunner {
 		tick: Date,
 	): Promise<PrecheckResult | null> {
 		if (!isDailyHeartbeat(trigger)) return null
-		if (!isFlagEnabledForWorkspace(trigger.workspaceId, FLAGS.NEXT_STEP_SWEEP)) return null
 		try {
 			const result = decidePrecheck(await readPrecheckFacts(this.db, trigger, tick))
 			logger.info(

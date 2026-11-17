@@ -102,7 +102,6 @@ export function FeedCard({
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
-	const doneWhenOn = useFeatureFlag('done-when-list')
 	const contextOn = useFeatureFlag('foryou-card-context')
 	// The ask leads, not the object. `cardHeadline` falls back through the
 	// comment's first line to the object title, so a card still reads sensibly
@@ -387,9 +386,7 @@ export function FeedCard({
 							</p>
 							{objectLine}
 						</div>
-						{decision.done_when && doneWhenOn ? (
-							<DoneWhenCardLines block={decision.done_when} />
-						) : null}
+						{decision.done_when ? <DoneWhenCardLines block={decision.done_when} /> : null}
 						{decision.draft ? (
 							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
 						) : null}

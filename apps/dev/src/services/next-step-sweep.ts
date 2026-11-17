@@ -2,7 +2,7 @@
  * next-step-sweep.ts — plain-code backstop for lost wake-ups (bet "Agents take the lead", rule 4,
  * task "Sweep for overdue next steps, wake drivers"). No model call.
  *
- * Every 5 minutes, on every server instance, for each workspace with the `next-step-sweep` flag:
+ * Every 5 minutes, on every server instance, for each workspace:
  *   - overdue: an open next step more than 5 minutes past due;
  *   - no step: a covered object (see NEXT_STEP_COVERED_OBJECTS) driven by an agent with no open or
  *     blocked step, not updated for 2 hours.
@@ -16,7 +16,7 @@
  * budget in self-start-limits.ts apply (start_reason `sweep`).
  *
  * First-run flood guard. The day this goes live every driven object in the list has no step. So a
- * workspace is RECORD-ONLY until the sweep has been recording there for 3 days and the second flag
+ * workspace is RECORD-ONLY until the sweep has been recording there for 3 days and the flag
  * `next-step-sweep-wake` is on: it writes the claim row and the driver_woken analytics event
  * (outcome recorded_only) and starts nothing. A woken tick starts at most 3 runs per agent.
  * Comparing the recorded list with what is really stuck is a person's step before that flag goes on.
@@ -32,12 +32,13 @@ import {
 	nextSteps,
 	objects,
 	sessions,
+	workspaces,
 } from '@maskin/db/schema'
 import { isDecisionExpired, parseCommentDecision } from '@maskin/shared'
 import { and, eq, gte, inArray, isNull, min, notInArray, or, sql } from 'drizzle-orm'
 import { isActorHumanPaused } from '../lib/agent-pause'
 import { type DriverWakeReason, trackDriverWoken } from '../lib/analytics/driver-woken-events'
-import { FLAGS, getFeatureFlagConfig, isFlagEnabledForWorkspace } from '../lib/feature-flags'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import {
 	type ObjectNeedingNextStep,
@@ -62,23 +63,21 @@ const DECISION_CARD_MAX_AGE_MS = 14 * DAY_MS
 /** Objects looked at per workspace per tick. The rest wait for the next tick. */
 const CANDIDATES_PER_WORKSPACE = 500
 
-export type SweepMode = 'off' | 'record' | 'wake'
+export type SweepMode = 'record' | 'wake'
 export type SweepReason = Extract<DriverWakeReason, 'step_overdue' | 'no_next_step'>
 
 // ── Pure decisions ─────────────────────────────────────────────────────────
 
 /**
  * What the sweep does in a workspace. `firstRecordedAt` is the oldest claim row there: the wake
- * flag alone never starts a run in the first 3 days of recording, so flipping both flags the same
- * day cannot flood the agents.
+ * flag alone never starts a run in the first 3 days of recording, so turning it on the day a
+ * workspace is first swept cannot flood the agents.
  */
 export function sweepMode(input: {
-	sweepOn: boolean
 	wakeOn: boolean
 	firstRecordedAt: Date | null
 	now: Date
 }): SweepMode {
-	if (!input.sweepOn) return 'off'
 	if (!input.wakeOn || !input.firstRecordedAt) return 'record'
 	return input.now.getTime() - input.firstRecordedAt.getTime() >= RECORD_ONLY_MS ? 'wake' : 'record'
 }
@@ -227,22 +226,13 @@ export class NextStepSweep {
 		this.timer = null
 	}
 
-	/** Workspaces whose flag list names the sweep. The list comes from the environment. */
-	private flaggedWorkspaceIds(): string[] {
-		const suffix = `:${FLAGS.NEXT_STEP_SWEEP}`
-		const ids: string[] = []
-		for (const entry of getFeatureFlagConfig().workspaceFeatures) {
-			if (entry.endsWith(suffix)) ids.push(entry.slice(0, -suffix.length))
-		}
-		return ids
-	}
-
-	/** One pass over every flagged workspace. A pass that is still running is not started twice. */
+	/** One pass over every workspace. A pass that is still running is not started twice. */
 	async tick(): Promise<void> {
 		if (this.running) return
 		this.running = true
 		try {
-			for (const workspaceId of this.flaggedWorkspaceIds()) {
+			const rows = await this.db.select({ id: workspaces.id }).from(workspaces)
+			for (const { id: workspaceId } of rows) {
 				await this.sweepWorkspace(workspaceId).catch((err) =>
 					logger.error('Next step sweep failed for a workspace', {
 						workspace_id: workspaceId,
@@ -262,12 +252,10 @@ export class NextStepSweep {
 			.from(nextStepSweepClaims)
 			.where(eq(nextStepSweepClaims.workspaceId, workspaceId))
 		const mode = sweepMode({
-			sweepOn: isFlagEnabledForWorkspace(workspaceId, FLAGS.NEXT_STEP_SWEEP),
 			wakeOn: isFlagEnabledForWorkspace(workspaceId, FLAGS.NEXT_STEP_SWEEP_WAKE),
 			firstRecordedAt: first?.at ?? null,
 			now,
 		})
-		if (mode === 'off') return
 
 		const found = await findObjectsNeedingNextStep(this.db, {
 			workspaceId,
