@@ -153,7 +153,7 @@ export function ChatListV2({
 
 	// Search: words leave the grouped list and ask the server for every chat the person is in.
 	const needle = query.trim()
-	const search = useChatListSearch(workspaceId, needle)
+	const search = useChatListSearch(workspaceId, needle, true)
 	const known = useMemo(
 		() => new Map<string, ConversationListItemResponse>(fetched.map((c) => [c.id, c])),
 		[fetched],
