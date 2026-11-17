@@ -4,7 +4,7 @@
  * before it was removed (their saved choice stays in the database, unread). Mail is captured, never
  * sent.
  */
-import { notificationPreferences } from '@maskin/db/schema'
+import { notificationPreferences, workspaceMembers } from '@maskin/db/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendEmail = vi.fn()
@@ -30,6 +30,10 @@ describe('creating a notification sends no email', () => {
 		const person = await insertActor(db, { type: 'human' })
 		const personId = person.id as string
 		const ws = await insertWorkspace(db, getTestActorId())
+		// The route only accepts a target who is a member of the workspace.
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: personId, role: 'member' })
 		await db.insert(notificationPreferences).values({
 			actorId: personId,
 			emailDigestEnabled: true,
