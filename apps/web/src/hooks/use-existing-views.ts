@@ -19,8 +19,8 @@ export function useExistingViews<T extends { fileId: string }>(
 		enabled: !!workspaceId && ids.length > 0,
 	})
 	return useMemo(() => {
-		if (!data) return views
+		if (ids.length === 0 || !data) return views
 		const found = new Set(data.map((file) => file.id))
 		return views.filter((v) => found.has(v.fileId))
-	}, [views, data])
+	}, [views, ids, data])
 }
