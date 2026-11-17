@@ -282,6 +282,10 @@ const participantRow = (id) => {
 // Comments posted to an object, kept for the life of the server so a refetch still shows them.
 const postedComments = new Map()
 let nextEventId = 9000
+// Messages sent from the app, per conversation id, so the chat shows them again after a refetch.
+const postedMessages = new Map()
+let nextMessageId = 1000
+let nextFileId = 8000
 
 export function overrides({ method, path, params, query, body, base, item }) {
 	if (PERF) {
@@ -316,6 +320,55 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		}
 		postedComments.set(body.entity_id, [...(postedComments.get(body.entity_id) ?? []), event])
 		return { status: 201, body: event }
+	}
+	// A message sent from the app: echo what was sent, as the real API does, so the chat shows the
+	// words typed (an empty sample would replace them). MK-08 and MK-09 depend on this.
+	const sendMatch = path.match(/^\/api\/conversations\/([^/]+)\/messages$/)
+	if (method === 'post' && sendMatch && typeof body?.content === 'string') {
+		const message = {
+			...base,
+			id: nextMessageId++,
+			conversationId: sendMatch[1],
+			actorId: ME.id,
+			actorName: ME.name,
+			actorType: 'human',
+			kind: 'message',
+			content: body.content,
+			metadata: body.metadata ?? null,
+			sessionId: null,
+			createdAt: new Date().toISOString(),
+			editedAt: null,
+			deletedAt: null,
+			threadRootId: body.thread_root_id ?? null,
+			threadAlsoInChannel: false,
+			thread: null,
+			spawned_sessions: [],
+			reactions: [],
+		}
+		postedMessages.set(sendMatch[1], [...(postedMessages.get(sendMatch[1]) ?? []), message])
+		return { status: 201, body: message }
+	}
+	// A file uploaded from the app: echo its name, type and size.
+	if (method === 'post' && path === '/api/files' && typeof body?.name === 'string') {
+		const size = Buffer.from(
+			body.content ?? '',
+			body.encoding === 'base64' ? 'base64' : 'utf8',
+		).length
+		return {
+			status: 201,
+			body: {
+				...base,
+				id: uuid(nextFileId++),
+				workspaceId: WORKSPACE_ID,
+				name: body.name,
+				description: null,
+				mimeType: body.mime_type ?? 'application/octet-stream',
+				sizeBytes: size,
+				createdBy: ME.id,
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+			},
+		}
 	}
 	// Any email and password signs in as the first human, with a key and the demo workspace, so the
 	// app has a workspace to load instead of the schema-sample's empty one.
@@ -764,6 +817,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	if (method === 'get' && msgMatch) {
 		const r = rooms.find((x) => uuid(x.n) === msgMatch[1])
 		if (!r) return null
+		const sent = postedMessages.get(uuid(r.n)) ?? []
 		const m = (id, actor, text, at) => ({
 			...item,
 			id,
@@ -793,6 +847,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 						m(1, first, 'Seven follow-ups to Northwind are ready.', 30),
 						m(2, ME, 'Why not all 47 contacts?', 20),
 						m(3, first, 'Only 7 have Sales approval. The other 40 still need review.', 10),
+						...sent,
 					],
 					has_more: false,
 				},
@@ -846,6 +901,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 							},
 							60,
 						),
+						...sent,
 					],
 					has_more: false,
 				},
@@ -887,6 +943,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 									`Not sent yet. Here is the draft:\n\nhttps://maskin.io/${WORKSPACE_ID}/objects/${uuid(7001)}\n\nReply "send" and it goes out.`,
 									1,
 								),
+								...sent,
 							],
 					has_more: false,
 				},
@@ -897,6 +954,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 				messages: [
 					m(1, ME, 'Where are we on the Northwind follow-ups?', r.at + 12),
 					m(2, first, r.snippet, r.at),
+					...sent,
 				],
 				has_more: false,
 			},
