@@ -52,7 +52,7 @@ public struct Trigger: Identifiable, Equatable, Sendable, Codable {
 		self.updatedAt = updatedAt
 	}
 
-	/// "Runs every day at 9:00 AM" / "When bet changes from any to done".
+	/// "Runs every day at 09:00" (Copenhagen time) / "When bet changes from any to done".
 	public var summary: String { TriggerDescriber.describe(kind: kind, config: config) }
 
 	/// The editable schedule of a cron trigger; `nil` for other kinds or an expression outside the
@@ -69,7 +69,7 @@ public struct Trigger: Identifiable, Equatable, Sendable, Codable {
 
 /// Human-readable trigger summaries — a port of `describeTrigger` in the web app.
 public enum TriggerDescriber {
-	public static func describe(kind: Trigger.Kind, config: JSONValue) -> String {
+	public static func describe(kind: Trigger.Kind, config: JSONValue, now: Date = Date()) -> String {
 		switch kind {
 		case .event:
 			let entity = config["entity_type"]?.stringValue ?? "object"
@@ -81,13 +81,12 @@ public enum TriggerDescriber {
 			return "When \(entity) is \(readable(action))"
 		case .cron:
 			if let expression = config["expression"]?.stringValue, !expression.isEmpty {
-				return "Runs \(CronSchedule.describe(expression))"
+				return "Runs \(CronSchedule.describe(expression, now: now))"
 			}
 			return "Runs on a schedule"
 		case .reminder:
 			if let at = AutomationDates.parse(config["scheduled_at"]?.stringValue) {
-				let style = Date.FormatStyle(date: .abbreviated, time: .shortened)
-				return "Fires on \(at.formatted(style))"
+				return "Fires on \(CronSchedule.copenhagenDateTime(at, now: now))"
 			}
 			return "One-time reminder"
 		case .other:
