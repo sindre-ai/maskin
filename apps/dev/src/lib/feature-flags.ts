@@ -211,6 +211,13 @@ export const FLAGS = {
 	 * is on for everyone.
 	 */
 	SEND_PERMISSIONS_SCREEN: 'send-permissions-screen',
+	/**
+	 * Gates the agents in the top row of the iOS share sheet (task [Agents show as people in the iOS share sheet](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e7484a53-3495-4654-b7c3-bded62fb9348)).
+	 * iOS app only, actor-scoped: read by AppRuntime before the app donates an agent to iOS. Off
+	 * means nothing new is donated and the row shows what it shows today. Retire once the row is
+	 * on for everyone.
+	 */
+	IOS_SHARE_SUGGESTIONS: 'ios-share-suggestions',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
