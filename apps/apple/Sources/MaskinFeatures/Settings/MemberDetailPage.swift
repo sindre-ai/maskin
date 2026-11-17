@@ -8,6 +8,10 @@ import SwiftUI
 struct MemberDetailPage: View {
 	let store: MembersStore
 	let memberID: String
+	/// Starts a chat with this person (entry point `person_message_page`). Nil hides the button.
+	var onMessage: ((ChatParticipant, _ entryPoint: String) -> Void)?
+	/// False for viewers, who cannot start chats: the button shows, disabled.
+	var canMessage = true
 	@Environment(\.dismiss) private var dismiss
 	@State private var confirmRemove = false
 
@@ -28,6 +32,18 @@ struct MemberDetailPage: View {
 				if store.canRemove(member) {
 					Button("Remove from workspace", role: .destructive) { confirmRemove = true }
 						.buttonStyle(.secondaryAction)
+				}
+			}
+			.toolbar {
+				if let onMessage, WorkspacePageState.canMessage(member, currentActorId: store.currentActorId) {
+					ToolbarItem(placement: .primaryAction) {
+						Button("Message", systemImage: "message") {
+							onMessage(
+								ChatParticipant(id: member.actorId, name: member.name, kind: .human), "person_message_page")
+						}
+						.disabled(!canMessage)
+						.accessibilityLabel("Message \(member.name)")
+					}
 				}
 			}
 			.confirmationDialog(
