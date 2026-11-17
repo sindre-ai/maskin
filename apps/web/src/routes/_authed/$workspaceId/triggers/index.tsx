@@ -71,6 +71,7 @@ function TriggersRoute() {
 		<div className="mx-auto w-full max-w-190">
 			<PageHeader
 				title="Triggers"
+				subtitle="Schedule times are in Copenhagen time."
 				crumb={{
 					parentLabel: 'Settings',
 					parentTo: '/$workspaceId/settings',

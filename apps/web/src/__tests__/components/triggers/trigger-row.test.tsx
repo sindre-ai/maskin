@@ -2,7 +2,7 @@ import { TriggerRow, describeTrigger } from '@/components/triggers/trigger-row'
 import type { TriggerResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const navigateSpy = vi.fn()
 
@@ -155,5 +155,36 @@ describe('describeTrigger status_changed', () => {
 				},
 			}),
 		).toBe('When contact changes from new_lead to in_conversation')
+	})
+})
+
+describe('describeTrigger schedules', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	it('describes a fixed day and month as a one-time Copenhagen date, not raw cron', () => {
+		vi.useFakeTimers({ now: new Date('2026-10-20T08:00:00Z') })
+		expect(describeTrigger({ type: 'cron', config: { expression: '0 8 3 11 *' } })).toBe(
+			'Runs once on 3 Nov at 09:00',
+		)
+	})
+
+	it('shows a daily UTC schedule in Copenhagen winter and summer time', () => {
+		vi.useFakeTimers({ now: new Date('2026-01-05T08:00:00Z') })
+		expect(describeTrigger({ type: 'cron', config: { expression: '0 8 * * *' } })).toBe(
+			'Runs every day at 09:00',
+		)
+		vi.setSystemTime(new Date('2026-07-06T08:00:00Z'))
+		expect(describeTrigger({ type: 'cron', config: { expression: '0 8 * * *' } })).toBe(
+			'Runs every day at 10:00',
+		)
+	})
+
+	it('shows a reminder in Copenhagen time whatever the browser zone is', () => {
+		vi.useFakeTimers({ now: new Date('2026-10-20T08:00:00Z') })
+		expect(
+			describeTrigger({ type: 'reminder', config: { scheduled_at: '2026-11-03T08:00:00Z' } }),
+		).toBe('Fires on 3 Nov at 09:00')
 	})
 })
