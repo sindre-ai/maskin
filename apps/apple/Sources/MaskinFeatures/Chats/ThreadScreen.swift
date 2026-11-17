@@ -15,6 +15,7 @@ struct ThreadScreen: View {
 	@State private var draft = ""
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
+	@State private var listening = false
 	@State private var selectingText: ChatMessage?
 	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -199,17 +200,21 @@ struct ThreadScreen: View {
 					.onSubmit(send)
 					.padding(.leading, MaskinSpace.s10)
 					.padding(.vertical, MaskinSpace.s6)
-				Button(action: send) {
-					Image(systemName: "arrow.up")
-						.maskinSymbol(MaskinFontSize.t18, weight: .bold)
-						.foregroundStyle(canSend ? MaskinSurface.onInverse : MaskinColor.inkPlaceholder)
-						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-						.background(canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
+				DictationButton(text: $draft, listening: $listening)
+				// While the mic is open it keeps the send slot, as in the chat composer.
+				if !listening {
+					Button(action: send) {
+						Image(systemName: "arrow.up")
+							.maskinSymbol(MaskinFontSize.t18, weight: .bold)
+							.foregroundStyle(canSend ? MaskinSurface.onInverse : MaskinColor.inkPlaceholder)
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.background(canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
+					}
+					.buttonStyle(.maskinPressed)
+					.disabled(!canSend)
+					.padding(.trailing, MaskinSpace.s2)
+					.accessibilityLabel("Send reply")
 				}
-				.buttonStyle(.maskinPressed)
-				.disabled(!canSend)
-				.padding(.trailing, MaskinSpace.s2)
-				.accessibilityLabel("Send reply")
 			}
 			.background(MaskinSurface.card, in: Capsule())
 			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
