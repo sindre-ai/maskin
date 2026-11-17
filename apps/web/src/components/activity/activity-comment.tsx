@@ -459,7 +459,21 @@ export function ActivityComment({
 								actors={actorList}
 								workspaceId={workspaceId}
 								onReply={idx === replies.length - 1 ? handleReply : undefined}
+								isDecisionPoint={hasDecision(reply)}
 								variant={variant}
+								footer={
+									// The server stores every reply against the thread root, so an
+									// answer to this ask is a later reply in the same thread. Replies
+									// before it cannot have answered it.
+									hasDecision(reply) ? (
+										<CommentDecisionBlock
+											event={reply}
+											workspaceId={workspaceId}
+											objectId={objectId}
+											replies={replies.slice(idx + 1)}
+										/>
+									) : undefined
+								}
 							/>
 						</div>
 					))}

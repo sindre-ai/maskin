@@ -2,6 +2,9 @@ import { ActivityComment } from '@/components/activity/activity-comment'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse } from '../../factories'
+import { TestWrapper } from '../../setup'
+
+const { createMutate } = vi.hoisted(() => ({ createMutate: vi.fn() }))
 
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: undefined }),
@@ -27,7 +30,7 @@ vi.mock('@/hooks/use-actors', () => ({
 }))
 
 vi.mock('@/hooks/use-events', () => ({
-	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+	useCreateComment: () => ({ mutate: createMutate, isPending: false }),
 }))
 
 vi.mock('@/hooks/use-files', () => ({
@@ -449,5 +452,104 @@ describe('ActivityComment', () => {
 		expect(screen.getByText('matters').tagName).toBe('STRONG')
 		expect(screen.getByRole('link', { name: 'the retry window' })).toBeInTheDocument()
 		expect(document.body.textContent).not.toContain('**matters**')
+	})
+	describe('a decision posted as a reply', () => {
+		const decision = {
+			title: 'Ship the retry backoff?',
+			summary: '3 sessions stalled last night. The patch is written and tested.',
+			options: [
+				{ label: 'Hold', consequences: ['Nothing ships', 'Stalls keep happening'] },
+				{ label: 'Ship', recommended: true, consequences: ['Goes out tonight', 'No rollback'] },
+			],
+		}
+		const root = buildEventResponse({ id: 1, action: 'commented', data: { content: 'Thread' } })
+		const decisionReply = buildEventResponse({
+			id: 2,
+			actorId: 'actor-2',
+			action: 'commented',
+			data: { content: 'Pick one', parentEventId: 1, decision },
+		})
+
+		beforeEach(() => createMutate.mockReset())
+
+		it('shows the Needs you badge and the option buttons, as on a root comment', () => {
+			render(
+				<ActivityComment
+					event={root}
+					replies={[decisionReply]}
+					workspaceId="ws-1"
+					objectId="obj-1"
+					variant="bubble"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByText('Needs you')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Ship/ })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Hold/ })).toBeInTheDocument()
+		})
+
+		it('posts the taken option threaded under the reply that asked', async () => {
+			const user = userEvent.setup()
+			render(
+				<ActivityComment
+					event={root}
+					replies={[decisionReply]}
+					workspaceId="ws-1"
+					objectId="obj-1"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('button', { name: /Ship/ }))
+
+			expect(createMutate).toHaveBeenCalledTimes(1)
+			expect(createMutate.mock.calls[0][0]).toMatchObject({
+				entity_id: 'obj-1',
+				content: 'Ship',
+				parent_event_id: 2,
+			})
+		})
+
+		it('shows it answered once a later reply carries an option label', () => {
+			const answer = buildEventResponse({
+				id: 3,
+				action: 'commented',
+				data: { content: 'Hold', parentEventId: 1 },
+			})
+			render(
+				<ActivityComment
+					event={root}
+					replies={[decisionReply, answer]}
+					workspaceId="ws-1"
+					objectId="obj-1"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByText(/Answered:/)).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Ship/ })).not.toBeInTheDocument()
+		})
+
+		it('ignores an option-label reply posted before the ask', () => {
+			const earlier = buildEventResponse({
+				id: 2,
+				action: 'commented',
+				data: { content: 'Hold', parentEventId: 1 },
+			})
+			const ask = { ...decisionReply, id: 3 }
+			render(
+				<ActivityComment
+					event={root}
+					replies={[earlier, ask]}
+					workspaceId="ws-1"
+					objectId="obj-1"
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.queryByText(/Answered:/)).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Ship/ })).toBeInTheDocument()
+		})
 	})
 })
