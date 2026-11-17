@@ -17,7 +17,7 @@ import { useQuery } from '@tanstack/react-query'
 
 interface LoopViewChangePromptProps {
 	workspaceId: string
-	loopId: string
+	loopId?: string
 	/** The change a view proposed, or null when none is waiting for an answer. */
 	change: ProposedChange | null
 	/** The person said no, or closed the question. Nothing was saved. */

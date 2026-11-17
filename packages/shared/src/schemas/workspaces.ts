@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { loopViewRowSchema } from '../loops/loop-views'
 import { storedDailyBudgetSchema } from './daily-budget'
 import { LOOP_STATUSES } from './objects'
 import { agentDailyBudgetSchema } from './self-start-limits'
@@ -270,6 +271,11 @@ export const workspaceSettingsSchema = z.object({
 	// dead-linking. PATCH /api/workspaces/:id shallow-merges top-level keys, so
 	// pin/unpin writes replace the whole array.
 	pinned_files: z.array(z.string().uuid()).default([]),
+	// Custom views shown as tabs on the Items list, keyed by object type ("all" for the list with
+	// no type picked): { name, file_id } rows, the same shape as a flow's metadata.views.
+	// References only, like pinned_files. PATCH /api/workspaces/:id replaces this top-level key
+	// wholesale, so a writer re-reads the whole map first.
+	list_views: z.record(z.string(), z.array(loopViewRowSchema)).optional(),
 	// Public "method site" publishing config (ADR #6 on the Publish bet).
 	// `enabled` is the master switch — false by default so a workspace opts in
 	// before any object metadata surfaces at /method/*. `version` bumps on any
