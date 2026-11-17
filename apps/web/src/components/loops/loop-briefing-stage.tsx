@@ -7,6 +7,7 @@ import { readViewSources } from '@/lib/mini-app'
 import { detectViewerVariantFromDom, detectViewerVariantFromFilename } from '@/lib/viewer-detect'
 import { Link } from '@tanstack/react-router'
 import { ExternalLink } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * Whether a pinned view is a deck or briefing page: a file marked as a briefing, or an HTML file
@@ -29,17 +30,34 @@ export function isDeckView(file: FileDetail): boolean {
  * deck to a strip. "Open full page" goes to the file page for annotations and comments.
  *
  * `hideTitle` is for a pinned view, whose tab already shows its name above the box.
+ *
+ * Raising `reloadToken` fetches the file again and redraws the viewer from it, the same hand
+ * reload a custom view does. `onRefreshingChange` tells the tab while that fetch runs.
  */
 export function LoopBriefingStage({
 	workspaceId,
 	fileId,
 	hideTitle = false,
+	reloadToken,
+	onRefreshingChange,
 }: {
 	workspaceId: string
 	fileId: string
 	hideTitle?: boolean
+	reloadToken?: number
+	onRefreshingChange?: (refreshing: boolean) => void
 }) {
-	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
+	const { data: file, isLoading, isError, isFetching, refetch } = useFile(workspaceId, fileId)
+	const [stageKey, setStageKey] = useState(0)
+	const handledReloadRef = useRef(reloadToken ?? 0)
+	useEffect(() => {
+		if (reloadToken === undefined || reloadToken === handledReloadRef.current) return
+		handledReloadRef.current = reloadToken
+		void refetch().then(() => setStageKey((k) => k + 1))
+	}, [reloadToken, refetch])
+	useEffect(() => {
+		onRefreshingChange?.(isFetching)
+	}, [isFetching, onRefreshingChange])
 	if (isLoading) return <Skeleton className="h-[60vh] w-full" />
 	if (isError || !file) {
 		return (
@@ -70,7 +88,7 @@ export function LoopBriefingStage({
 				data-testid="loop-briefing-stage"
 				className="relative flex h-[max(24rem,calc(100dvh-22rem))] min-h-0 overflow-hidden rounded-xl border border-border"
 			>
-				<ViewerStage file={file} />
+				<ViewerStage key={stageKey} file={file} />
 			</div>
 		</div>
 	)

@@ -16,16 +16,16 @@ import { useFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
 import type { ProposedChange } from '@/lib/loop-view-bridge'
 import { MAX_LOOP_VIEW_NAME_LENGTH } from '@maskin/shared'
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 /**
  * One custom view as the body of its own tab, under a row with its name and a
- * "···" menu (rename, remove). A view that cannot be shown says why in a note;
- * leaving the tab and coming back (the page remounts it) retries.
+ * "···" menu (refresh, rename, remove). A view that cannot be shown says why in a note;
+ * Refresh, or leaving the tab and coming back (the page remounts it), retries.
  *
  * `onRename` / `onRemove` are omitted for a view the flow does not own (the
- * Briefings view), which then shows no menu.
+ * Briefings view), which then shows only Refresh.
  *
  * A view that is a deck or briefing page shows in the same tall, fitted and paged viewer as the
  * Briefings tab, not the self-sizing frame, which shrinks a deck to a strip. Lists and dashboards
@@ -63,87 +63,101 @@ export function LoopViewTab({
 	const dateChange = useFeatureFlag('loop-view-date-change')
 	const [proposed, setProposed] = useState<ProposedChange | null>(null)
 	// Raised on each saved change so the view reloads its lists and shows the new value.
+	// Also raised by the menu's Refresh, which is the same reload run by hand.
 	const [reloadToken, setReloadToken] = useState(0)
+	const [refreshing, setRefreshing] = useState(false)
 	const isMobile = useIsMobile()
 	const [renaming, setRenaming] = useState(false)
 	const [draft, setDraft] = useState(name ?? '')
-	const hasMenu = Boolean(onRename || onRemove)
 	// Shares the file's cache entry with the frame below, so this costs no second load.
 	const { data: file } = useFile(workspaceId, fileId)
 	const isDeck = useMemo(() => (file ? isDeckView(file) : false), [file])
 	const trimmed = draft.trim()
 
-	const header =
-		name !== undefined || hasMenu ? (
-			<div className="mb-4 flex items-center gap-2.5 px-1">
-				{renaming ? (
-					<form
-						className="flex items-center gap-2"
-						onSubmit={async (e) => {
-							e.preventDefault()
-							if (!trimmed || !onRename) return
-							if (await onRename(trimmed)) setRenaming(false)
+	const header = (
+		<div className="mb-4 flex items-center gap-2.5 px-1">
+			{renaming ? (
+				<form
+					className="flex items-center gap-2"
+					onSubmit={async (e) => {
+						e.preventDefault()
+						if (!trimmed || !onRename) return
+						if (await onRename(trimmed)) setRenaming(false)
+					}}
+				>
+					<Input
+						autoFocus
+						value={draft}
+						maxLength={MAX_LOOP_VIEW_NAME_LENGTH}
+						aria-label="View name"
+						onChange={(e) => setDraft(e.target.value)}
+						className="w-52"
+					/>
+					<Button type="submit" size="sm" disabled={!trimmed || busy}>
+						Save
+					</Button>
+					<Button type="button" size="sm" variant="ghost" onClick={() => setRenaming(false)}>
+						Cancel
+					</Button>
+				</form>
+			) : (
+				name !== undefined && <h2 className="text-sm font-semibold text-foreground">{name}</h2>
+			)}
+			<span className="flex-1" />
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7 text-muted-foreground"
+						aria-label="View actions"
+						disabled={busy}
+					>
+						<MoreHorizontal size={15} />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					<DropdownMenuItem
+						disabled={refreshing}
+						onSelect={() => {
+							// A view that could not be shown is mounted again, which tries it again.
+							setFailure(null)
+							setReloadToken((n) => n + 1)
 						}}
 					>
-						<Input
-							autoFocus
-							value={draft}
-							maxLength={MAX_LOOP_VIEW_NAME_LENGTH}
-							aria-label="View name"
-							onChange={(e) => setDraft(e.target.value)}
-							className="w-52"
-						/>
-						<Button type="submit" size="sm" disabled={!trimmed || busy}>
-							Save
-						</Button>
-						<Button type="button" size="sm" variant="ghost" onClick={() => setRenaming(false)}>
-							Cancel
-						</Button>
-					</form>
-				) : (
-					<h2 className="text-sm font-semibold text-foreground">{name}</h2>
-				)}
-				<span className="flex-1" />
-				{hasMenu && (
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								variant="ghost"
-								size="icon"
-								className="h-7 w-7 text-muted-foreground"
-								aria-label="View actions"
-								disabled={busy}
-							>
-								<MoreHorizontal size={15} />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							{onRename && (
-								<DropdownMenuItem
-									onSelect={() => {
-										setDraft(name ?? '')
-										setRenaming(true)
-									}}
-								>
-									<Pencil size={14} /> Rename
-								</DropdownMenuItem>
-							)}
-							{onRemove && (
-								<DropdownMenuItem onSelect={onRemove} className="text-error focus:text-error">
-									<Trash2 size={14} /> Remove view
-								</DropdownMenuItem>
-							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
-				)}
-			</div>
-		) : null
+						<RefreshCw size={14} /> Refresh
+					</DropdownMenuItem>
+					{onRename && (
+						<DropdownMenuItem
+							onSelect={() => {
+								setDraft(name ?? '')
+								setRenaming(true)
+							}}
+						>
+							<Pencil size={14} /> Rename
+						</DropdownMenuItem>
+					)}
+					{onRemove && (
+						<DropdownMenuItem onSelect={onRemove} className="text-error focus:text-error">
+							<Trash2 size={14} /> Remove view
+						</DropdownMenuItem>
+					)}
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	)
 
 	if (isDeck) {
 		return (
 			<>
 				{header}
-				<LoopBriefingStage workspaceId={workspaceId} fileId={fileId} hideTitle />
+				<LoopBriefingStage
+					workspaceId={workspaceId}
+					fileId={fileId}
+					hideTitle
+					reloadToken={reloadToken}
+					onRefreshingChange={setRefreshing}
+				/>
 			</>
 		)
 	}
@@ -180,6 +194,7 @@ export function LoopViewTab({
 						onFailure={setFailure}
 						onOpenItem={itemPanel ? setOpenId : undefined}
 						onProposeChange={dateChange ? setProposed : undefined}
+						onRefreshingChange={setRefreshing}
 						reloadToken={reloadToken}
 					/>
 				</div>

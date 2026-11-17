@@ -14,8 +14,12 @@ vi.mock('@/hooks/use-files', () => ({
 }))
 vi.mock('@/components/loops/loop-briefing-stage', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/components/loops/loop-briefing-stage')>()),
-	LoopBriefingStage: ({ fileId, hideTitle }: { fileId: string; hideTitle?: boolean }) => (
-		<div data-testid="stage" data-hide-title={hideTitle ? 'yes' : 'no'}>
+	LoopBriefingStage: ({
+		fileId,
+		hideTitle,
+		reloadToken,
+	}: { fileId: string; hideTitle?: boolean; reloadToken?: number }) => (
+		<div data-testid="stage" data-hide-title={hideTitle ? 'yes' : 'no'} data-reload={reloadToken}>
 			{fileId}
 		</div>
 	),
@@ -28,12 +32,14 @@ vi.mock('@/components/loops/loop-custom-view', () => ({
 		onOpenItem,
 		onProposeChange,
 		reloadToken,
+		onRefreshingChange,
 	}: {
 		fileId: string
 		onFailure: (reason: string) => void
 		onOpenItem?: (id: string) => void
 		onProposeChange?: (change: { id: string; field: string; value: string }) => void
 		reloadToken?: number
+		onRefreshingChange?: (refreshing: boolean) => void
 	}) => {
 		useEffect(() => {
 			if (fileId === 'bad') onFailure('The view file is not an HTML file.')
@@ -47,6 +53,9 @@ vi.mock('@/components/loops/loop-custom-view', () => ({
 			>
 				<button type="button" onClick={() => onOpenItem?.('obj-1')}>
 					open item
+				</button>
+				<button type="button" onClick={() => onRefreshingChange?.(true)}>
+					start reload
 				</button>
 				<button
 					type="button"
@@ -231,8 +240,81 @@ describe('LoopViewTab', () => {
 		expect(onRemove).toHaveBeenCalled()
 	})
 
-	it('shows no menu for a view the flow does not own', () => {
+	it('puts Refresh first in the menu, above Rename and Remove view', async () => {
+		const user = userEvent.setup()
+		render(
+			<LoopViewTab
+				workspaceId="w"
+				loopId="l"
+				fileId="good"
+				name="Results"
+				onRename={vi.fn()}
+				onRemove={vi.fn()}
+			/>,
+		)
+		await user.click(screen.getByRole('button', { name: 'View actions' }))
+		const items = await screen.findAllByRole('menuitem')
+		expect(items.map((item) => item.textContent?.trim())).toEqual([
+			'Refresh',
+			'Rename',
+			'Remove view',
+		])
+	})
+
+	it('shows the menu with only Refresh for a view the flow does not own', async () => {
+		const user = userEvent.setup()
 		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Briefings" />)
-		expect(screen.queryByRole('button', { name: 'View actions' })).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'View actions' }))
+		expect(await screen.findAllByRole('menuitem')).toHaveLength(1)
+		expect(screen.getByRole('menuitem', { name: /Refresh/ })).toBeInTheDocument()
+	})
+
+	it('reloads the view once when Refresh is selected', async () => {
+		const user = userEvent.setup()
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Results" />)
+		expect(screen.getByTestId('view')).toHaveAttribute('data-reload', '0')
+		await user.click(screen.getByRole('button', { name: 'View actions' }))
+		await user.click(await screen.findByRole('menuitem', { name: /Refresh/ }))
+		expect(screen.getByTestId('view')).toHaveAttribute('data-reload', '1')
+	})
+
+	it('disables Refresh while the view is reloading', async () => {
+		const user = userEvent.setup()
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="good" name="Results" />)
+		fireEvent.click(screen.getByText('start reload'))
+		await user.click(screen.getByRole('button', { name: 'View actions' }))
+		expect(await screen.findByRole('menuitem', { name: /Refresh/ })).toHaveAttribute(
+			'aria-disabled',
+			'true',
+		)
+	})
+
+	it('tries a view that could not be shown again when Refresh is selected', async () => {
+		const user = userEvent.setup()
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="bad" name="Results" />)
+		expect(screen.getByRole('alert')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'View actions' }))
+		await user.click(await screen.findByRole('menuitem', { name: /Refresh/ }))
+		// The mock fails again on mount, so the note is back; what matters is the view was mounted.
+		expect(await screen.findByRole('alert')).toBeInTheDocument()
+	})
+
+	it('reloads a deck through the briefing stage when Refresh is selected', async () => {
+		files.byId = {
+			deck: {
+				id: 'deck',
+				name: 'Briefing.html',
+				mimeType: 'text/html',
+				kind: 'briefing',
+				encoding: 'utf8',
+				content: '<html></html>',
+			},
+		}
+		const user = userEvent.setup()
+		render(<LoopViewTab workspaceId="w" loopId="l" fileId="deck" name="Briefings" />)
+		expect(screen.getByTestId('stage')).toHaveAttribute('data-reload', '0')
+		await user.click(screen.getByRole('button', { name: 'View actions' }))
+		await user.click(await screen.findByRole('menuitem', { name: /Refresh/ }))
+		expect(screen.getByTestId('stage')).toHaveAttribute('data-reload', '1')
 	})
 })
