@@ -61,7 +61,6 @@ describe('renderEmail', () => {
 			expect(html).toContain(light)
 		}
 		expect(html).toContain("'Schibsted Grotesk'")
-		expect(html).toContain('letter-spacing: -0.035em')
 		expect(html).toContain('border-radius: 14px')
 		expect(html).not.toMatch(
 			/F0EDE7|FAFAF8|E2DDD7|141412|1C1B18|ECEAE4|A09A93|2A2925|2563EB|3B74F2/i,
@@ -82,6 +81,7 @@ describe('renderEmail', () => {
 			softBox('tip'),
 			button('https://maskin.test/', 'Open it'),
 		].join('')
+		expect(blocks).toContain('letter-spacing: -0.035em')
 		expect(blocks).toContain('color: #8f5508')
 		expect(blocks).toContain(
 			'background-color: #f6f7f9; border: 1px solid #e5e8ec; border-radius: 12px',
