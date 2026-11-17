@@ -291,6 +291,14 @@ export function DisplayPanel({
 	const driverOptions = actors ?? []
 	const hasOwners = driverOptions.length > 0
 
+	function setAllProperties(visible: boolean) {
+		for (const col of hideableColumns) {
+			if ((columnVisibility?.[col.id] !== false) !== visible) {
+				onColumnVisibilityChange?.(col.id, visible)
+			}
+		}
+	}
+
 	function toggleStatus(status: string) {
 		const next = activeStatuses.includes(status)
 			? activeStatuses.filter((s) => s !== status)
@@ -634,22 +642,51 @@ export function DisplayPanel({
 						</>
 					)}
 
-					{/* PROPERTIES — one check row per hideable column. */}
+					{/* PROPERTIES — one toggle chip per hideable column, wrapping across
+					 * the row, with Select all / Deselect all beside the heading. */}
 					{showProperties && (
 						<>
 							<div>
-								<SectionHeader>Properties</SectionHeader>
-								<div data-testid="display-properties">
+								<div className="flex items-center justify-between pr-2.5">
+									<SectionHeader>Properties</SectionHeader>
+									<div className="flex items-center gap-3 text-xs text-muted-foreground">
+										<button
+											type="button"
+											className="transition-colors hover:text-foreground"
+											onClick={() => setAllProperties(true)}
+										>
+											Select all
+										</button>
+										<button
+											type="button"
+											className="transition-colors hover:text-foreground"
+											onClick={() => setAllProperties(false)}
+										>
+											Deselect all
+										</button>
+									</div>
+								</div>
+								<div
+									data-testid="display-properties"
+									className="flex flex-wrap gap-1.5 px-2.5 pb-1.5"
+								>
 									{hideableColumns.map((col) => {
 										const isVisible = columnVisibility?.[col.id] !== false
 										return (
-											<CheckRow
+											<button
 												key={col.id}
-												checked={isVisible}
+												type="button"
+												aria-pressed={isVisible}
 												onClick={() => onColumnVisibilityChange?.(col.id, !isVisible)}
+												className={cn(
+													'inline-flex h-8 items-center rounded-full border px-3 text-xs font-medium capitalize transition-colors md:h-7',
+													isVisible
+														? 'border-brand bg-brand-subtle text-foreground'
+														: 'border-border bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
+												)}
 											>
-												<span className="capitalize">{col.label}</span>
-											</CheckRow>
+												{col.label}
+											</button>
 										)
 									})}
 								</div>
