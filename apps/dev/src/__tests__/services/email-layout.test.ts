@@ -36,22 +36,40 @@ describe('renderEmail', () => {
 		stopUrl: 'https://maskin.test/api/email/stop?token=a&b=c',
 	})
 
-	it('is table-based with the brand strip, a 560px card, a hidden preview and the stop link', () => {
+	it('is table-based with the logo, wordmark, a 600px card, a hidden preview and the stop link', () => {
 		expect(html).toContain('<table role="presentation"')
-		expect(html).toContain('>Maskin</span>')
-		expect(html).toContain('max-width: 560px')
+		expect(html).toContain('src="https://maskin.io/apple-touch-icon.png"')
+		expect(html).toContain('>Maskin</a>')
+		expect(html).toContain('max-width: 600px')
 		expect(html).toContain('Hidden &lt;preview&gt;')
 		expect(html).toContain(`href="${escapeHtml('https://maskin.test/api/email/stop?token=a&b=c')}"`)
 		expect(html).toContain('>Stop these emails</a>')
 	})
 
-	it('has no scripts, no images and no external stylesheets', () => {
-		expect(html).not.toMatch(/<script|<img|<link/i)
+	it('uses the Maskin brand colours and font, not the old app palette', () => {
+		expect(html).toContain('#F0EDE7')
+		expect(html).toContain('#2563EB')
+		expect(html).toContain("'Schibsted Grotesk'")
+		expect(html).not.toMatch(/2545c8|eef0f4/i)
+	})
+
+	it('has no scripts and only the web font stylesheet as an external link', () => {
+		expect(html).not.toMatch(/<script/i)
+		expect(html.match(/<link[^>]*>/gi)).toEqual([
+			expect.stringContaining('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk'),
+		])
 	})
 
 	it('carries dark-mode and phone-width rules', () => {
 		expect(html).toContain('prefers-color-scheme: dark')
-		expect(html).toContain('max-width: 480px')
+		expect(html).toContain('#141412')
+		expect(html).toContain('max-width: 620px')
 		expect(html).toContain('<meta name="color-scheme" content="light dark">')
+	})
+
+	it('leaves the stop link out when there is no stopUrl', () => {
+		const account = renderEmail({ preheader: 'x', blocks: ['<p>block</p>'] })
+		expect(account).not.toContain('Stop these emails')
+		expect(account).toContain('>maskin.io</a>')
 	})
 })
