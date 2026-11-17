@@ -64,6 +64,27 @@ export function scrubAuthorizeUrls<
 	return event
 }
 
+// Which half of maskin.io an event came from: the public pages (home, docs, marketplace, sign-in and
+// sign-up) or the signed-in app. They share one host and one PostHog project, so the path decides.
+// The app is a workspace id first (/<workspace id>/chats and so on) or one of the signed-in routes
+// below. Everything else is public, including login and signup. Dashboards derive the same split
+// from $pathname for events captured before this property existed (see the tracking plan page).
+export type SiteArea = 'landing' | 'app'
+
+const WORKSPACE_PATH = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i
+const APP_PATH = /^\/(workspaces|start-trial|invite|oauth|connect|tv|prototypes)(\/|$)/
+
+export function siteAreaForPath(pathname: string): SiteArea {
+	return WORKSPACE_PATH.test(pathname) || APP_PATH.test(pathname) ? 'app' : 'landing'
+}
+
+// The path the event happened on: the one posthog-js stamped on it, else the page's own.
+function eventPathname(properties: Record<string, unknown>): string {
+	const stamped = properties.$pathname
+	if (typeof stamped === 'string') return stamped
+	return typeof window === 'undefined' ? '/' : window.location.pathname
+}
+
 // Every web event says where it came from and who acted. The web is only ever
 // used by a signed-in or signing-up person, so an event with no actor_type yet
 // (pageviews before the workspace mounts, sign-up events) is a human's. The
@@ -89,6 +110,7 @@ export function withSharedProperties<
 			...(area ? { feature_area: area } : {}),
 			...properties,
 			surface: 'web',
+			site_area: siteAreaForPath(eventPathname(properties)),
 		},
 	} as T
 }
