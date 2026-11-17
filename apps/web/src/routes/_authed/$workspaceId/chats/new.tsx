@@ -21,6 +21,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { PERSON_MESSAGE_SOURCES, type PersonMessageSource } from '@/lib/person-message-link'
 import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
@@ -50,6 +51,8 @@ interface NewChatSearch {
 	notificationTitle?: string
 	/** Text that fills the message box. Nothing is sent until the viewer sends it. */
 	text?: string
+	/** Which Message button (member row or person page) opened this chat with a person picked. */
+	from?: PersonMessageSource
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
@@ -65,6 +68,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 		notificationTitle:
 			typeof search.notificationTitle === 'string' ? search.notificationTitle : undefined,
 		text: typeof search.text === 'string' ? search.text : undefined,
+		from: PERSON_MESSAGE_SOURCES.find((source) => source === search.from),
 	}),
 })
 
@@ -228,14 +232,19 @@ function NewChatRoute() {
 		const extra: Recipient[] = []
 		for (const id of pickedIds) {
 			if (known.has(id)) continue
+			// A Message button seeds a person; until the members load, that row must not read as an agent.
 			if (id === search.agentId)
-				extra.push({ id, name: search.agentName ?? 'Agent', type: 'agent' })
+				extra.push({
+					id,
+					name: search.agentName ?? (search.from ? 'Person' : 'Agent'),
+					type: search.from ? 'human' : 'agent',
+				})
 			else if (defaultAgent && id === defaultAgent.id) {
 				extra.push({ id, name: defaultAgent.name, type: 'agent' })
 			}
 		}
 		return [...candidates, ...extra]
-	}, [candidates, pickedIds, search.agentId, search.agentName, defaultAgent])
+	}, [candidates, pickedIds, search.agentId, search.agentName, search.from, defaultAgent])
 
 	const picked = useMemo(() => rows.filter((r) => pickedIds.includes(r.id)), [rows, pickedIds])
 
@@ -373,10 +382,13 @@ function NewChatRoute() {
 			const conversation = await createConversation.mutateAsync(createBody)
 			const singleAgent =
 				recipients.length === 1 && recipients[0]?.type === 'agent' ? recipients[0] : null
+			// Opened from a Message button and still exactly that one person: say which button.
+			const fromMessageButton =
+				search.from && recipients.length === 1 && recipients[0]?.id === search.agentId && !singleAgent
 			trackChatSessionStarted({
 				entity_id: conversation.id,
 				entity_type: 'session',
-				entry_point: 'agent_one_shot',
+				entry_point: fromMessageButton && search.from ? search.from : 'agent_one_shot',
 				entry_agent_role: singleAgent ? deriveEntryAgentRole(singleAgent.name) : null,
 				participant_count: recipients.length,
 			})

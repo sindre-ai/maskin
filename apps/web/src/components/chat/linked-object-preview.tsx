@@ -371,7 +371,7 @@ export function LinkedObjectCard({
 			</div>
 			{expanded ? (
 				<>
-					{note && preview ? (
+					{note && preview && (delivery ?? 'draft') === 'draft' && !skipped ? (
 						<div data-linked-card-note="" className="px-3 pt-2">
 							<p className="text-[12.5px] text-foreground">{note.question}</p>
 							{note.reason ? (
@@ -468,7 +468,11 @@ export function LinkedObjectCard({
 										type="button"
 										size="sm"
 										disabled={
-											!canAct || approve.isPending || update.isPending || preview.missing.length > 0
+											!canAct ||
+											approve.isPending ||
+											update.isPending ||
+											sendMessage.isPending ||
+											preview.missing.length > 0
 										}
 										onClick={approveDraft}
 									>

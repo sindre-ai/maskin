@@ -34,6 +34,7 @@ import {
 	messages,
 	objects,
 	relationships,
+	sessionDispatchAttempts,
 	sessionLogs,
 	sessions,
 	workspaces,
@@ -227,6 +228,7 @@ import {
 	type TurnImage,
 	userTurnWithImages,
 } from './container-manager'
+import { heldNotReleased } from './daily-budget-hold'
 import { applyExtensionGuards } from './extension-guard-launch'
 import { buildGoAheadBlock } from './go-ahead-block'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
@@ -2491,7 +2493,72 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Park a session that was just created (status 'pending', `config.held` already set) because the
+	 * workspace's daily target is used up. The row goes to 'starting' / 'waiting_for_machine', the
+	 * state of a session waiting for a machine, with a dispatch-queue row that is not due until
+	 * `until`: the reconciler, boot-stall, queued-rescue and the retry scheduler leave that state
+	 * alone, and nothing is dispatched. The release pass makes the queue row due again.
+	 *
+	 * Returns false, and changes nothing that matters, when there is no dispatch queue (local
+	 * Docker) or the queue write fails: the caller then starts the session as it always did.
+	 */
+	async holdSession(sessionId: string, until: Date): Promise<boolean> {
+		if (!this.dispatchQueue) return false
+		try {
+			await this.dispatchQueue.enqueue(sessionId, { runAt: until })
+			const [parked] = await this.db
+				.update(sessions)
+				.set({
+					status: 'starting',
+					sessionState: 'waiting_for_machine',
+					stateEnteredAt: new Date(),
+					updatedAt: new Date(),
+				})
+				.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'pending')))
+				.returning({ id: sessions.id })
+			if (!parked) {
+				await this.dropHeldQueueRow(sessionId)
+				return false
+			}
+			await this.insertSystemLog(
+				sessionId,
+				'Waiting: the workspace has used its daily budget. This starts again when there is room, most important first.',
+			)
+			logger.info(`Session held at the daily limit: ${sessionId}`, { until: until.toISOString() })
+			return true
+		} catch (err) {
+			logger.warn('Failed to hold session, starting it instead', {
+				sessionId,
+				error: String(err),
+			})
+			await this.dropHeldQueueRow(sessionId)
+			return false
+		}
+	}
+
+	/** A queue row that is not due would keep the session from starting normally, so it goes. */
+	private async dropHeldQueueRow(sessionId: string): Promise<void> {
+		await this.db
+			.delete(sessionDispatchAttempts)
+			.where(eq(sessionDispatchAttempts.sessionId, sessionId))
+			.catch((err) =>
+				logger.warn('Failed to drop the queue row of a session that was not held', {
+					sessionId,
+					error: String(err),
+				}),
+			)
+	}
+
 	private async hasCapacity(workspaceId: string): Promise<boolean> {
+		return (await this.freeStartSlots(workspaceId)) > 0
+	}
+
+	/**
+	 * How many more non-chat sessions the workspace may start before it hits its limit
+	 * (`max_concurrent_sessions`, default 10). Sessions held at the daily limit do not count.
+	 */
+	async freeStartSlots(workspaceId: string): Promise<number> {
 		const [workspace] = await this.db
 			.select()
 			.from(workspaces)
@@ -2511,10 +2578,13 @@ export class SessionManager extends EventEmitter {
 					// Chat sessions don't count against the workspace's session budget —
 					// see the isChatSession bypass in startSession().
 					isNull(sessions.conversationId),
+					// A session held at the daily limit sits in 'starting' but runs nothing and
+					// holds no slot: counted, ten held sessions would block every start behind them.
+					sql`NOT ${heldNotReleased}`,
 				),
 			)
 
-		return !result || result.count < maxConcurrent
+		return maxConcurrent - Number(result?.count ?? 0)
 	}
 
 	/**
@@ -6398,6 +6468,8 @@ ${cont.continues_prompt}
 				and(
 					notInArray(sessions.status, [...TERMINAL_STATUSES]),
 					or(eq(sessions.status, 'queued'), eq(sessions.sessionState, 'waiting_for_machine')),
+					// Held at the daily limit on purpose, not stuck behind a full slot.
+					sql`NOT ${heldNotReleased}`,
 				),
 			)
 		const count = Number(row?.count ?? 0)

@@ -228,11 +228,14 @@ public final class Analytics {
 
 	/// A chat was created on the server. `participants` are the people and agents the person picked
 	/// (not themselves). The agent's name only feeds the web's kebab-cased role (`chief-of-staff`),
-	/// and only when the chat has that one agent and nobody else.
-	public func chatSessionStarted(conversationId: String, participants: [ChatParticipant]) {
+	/// and only when the chat has that one agent and nobody else. `entryPoint` says where the person
+	/// started it: `agent_one_shot` (the default) or `person_message_row` (the Message icon on a Members row).
+	public func chatSessionStarted(
+		conversationId: String, participants: [ChatParticipant], entryPoint: String = "agent_one_shot"
+	) {
 		var props: AnalyticsProperties = [
 			"entity_id": .string(conversationId), "entity_type": "session", "source": "iphone",
-			"entry_point": "agent_one_shot", "participant_count": .int(participants.count),
+			"entry_point": .string(entryPoint), "participant_count": .int(participants.count),
 		]
 		if participants.count == 1, let only = participants.first, only.kind == .agent,
 			let role = Self.agentRole(only.name)

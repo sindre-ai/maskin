@@ -11,11 +11,12 @@ const useObject = vi.fn()
 const updateMutate = vi.fn()
 const approveMutate = vi.fn()
 const sendMutate = vi.fn()
+let sendPending = false
 const chatMessages = vi.fn()
 
 vi.mock('@/hooks/use-conversation', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/hooks/use-conversation')>()),
-	useSendMessage: () => ({ mutate: sendMutate, isPending: false }),
+	useSendMessage: () => ({ mutate: sendMutate, isPending: sendPending }),
 	useConversationMessages: () => ({ data: chatMessages() }),
 }))
 vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
@@ -160,6 +161,7 @@ describe('LinkedObjectCard', () => {
 		updateMutate.mockReset()
 		approveMutate.mockReset()
 		sendMutate.mockReset()
+		sendPending = false
 		chatMessages.mockReset()
 	})
 
@@ -295,6 +297,18 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
 		})
 
+		it('cannot be approved while the skip is still being sent', async () => {
+			sendPending = true
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({ pages: [{ messages: [] }] })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			const approve = screen.getByRole('button', { name: /Approve draft/ })
+			expect(approve).toBeDisabled()
+			await userEvent.click(approve)
+			expect(approveMutate).not.toHaveBeenCalled()
+		})
+
 		it('is not offered outside a chat, where nobody can be told', async () => {
 			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
 			render(<LinkedObjectCard workspaceId={WS} objectId={ID} standalone />)
@@ -329,6 +343,38 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByText('Send this to Catja today?')).toBeInTheDocument()
 			expect(screen.getByText('She asked for it by Friday.')).toBeInTheDocument()
 			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+		})
+
+		it('is dropped once the draft is approved', async () => {
+			useObject.mockReturnValue({
+				data: objectRow({ preview: previewOf({ delivery: { state: 'approved', at: null } }) }),
+			})
+			withNote({ question: 'Send this to Catja today?' })
+			await expand()
+			expect(screen.getByText('Approved, waiting for send')).toBeInTheDocument()
+			expect(screen.queryByText('Send this to Catja today?')).not.toBeInTheDocument()
+		})
+
+		it('is dropped once the draft is skipped', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({
+				pages: [
+					{
+						messages: [
+							{
+								id: 9,
+								actorId: 'me',
+								content: SKIP_DRAFT_TEXT,
+								metadata: { hidden_from_chat: true, context_objects: [{ id: ID }] },
+							},
+						],
+					},
+				],
+			})
+			withNote({ question: 'Send this to Catja today?' })
+			await expand()
+			expect(screen.getByText('Skipped')).toBeInTheDocument()
+			expect(screen.queryByText('Send this to Catja today?')).not.toBeInTheDocument()
 		})
 
 		it('adds nothing to a draft the question is not about', async () => {

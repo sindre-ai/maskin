@@ -393,18 +393,27 @@ struct ChatDraftStoreTests {
 struct ComposerLastSlotTests {
 	@Test("empty shows the mic, content shows send, busy and empty shows stop")
 	func rule() {
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: false, showsMic: true, showsSend: true) == .mic)
-		#expect(ComposerLastSlot.resolve(hasContent: true, busy: false, showsMic: true, showsSend: true) == .send)
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: true, showsMic: true, showsSend: true) == .stop)
-		#expect(ComposerLastSlot.resolve(hasContent: true, busy: true, showsMic: true, showsSend: true) == .send, "text wins over stop")
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: false, showsMic: true, showsSend: true) == .mic)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: false, showsMic: true, showsSend: true) == .send)
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: true, showsMic: true, showsSend: true) == .stop)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: true, showsMic: true, showsSend: true) == .send, "text wins over stop")
+	}
+
+	@Test("a picture with no text keeps the mic beside send")
+	func attachmentKeepsMic() {
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: false, showsMic: true, showsSend: true) == .sendWithMic)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: true, showsMic: true, showsSend: true) == .sendWithMic, "a busy agent does not change it")
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: false, showsMic: false, showsSend: true) == .send, "no mic offered, plain send")
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: false, busy: false, showsMic: true, showsSend: false) == .none)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: false, showsMic: true, showsSend: true) == .send, "once there is text, send alone")
 	}
 
 	@Test("a host without a mic or without send collapses the slot")
 	func hostOptions() {
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: false, showsMic: false, showsSend: true) == .none)
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: true, showsMic: false, showsSend: true) == .stop)
-		#expect(ComposerLastSlot.resolve(hasContent: true, busy: false, showsMic: true, showsSend: false) == .none, "Hold reason: the sheet commits")
-		#expect(ComposerLastSlot.resolve(hasContent: false, busy: false, showsMic: true, showsSend: false) == .mic)
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: false, showsMic: false, showsSend: true) == .none)
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: true, showsMic: false, showsSend: true) == .stop)
+		#expect(ComposerLastSlot.resolve(hasContent: true, hasText: true, busy: false, showsMic: true, showsSend: false) == .none, "Hold reason: the sheet commits")
+		#expect(ComposerLastSlot.resolve(hasContent: false, hasText: false, busy: false, showsMic: true, showsSend: false) == .mic)
 	}
 
 	@Test("an attachment alone counts as content")

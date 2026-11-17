@@ -13,6 +13,8 @@ struct NewChatSheet: View {
 	let currentActorID: String?
 	var prefill = ""
 	var initialRecipient: ChatParticipant?
+	/// Where the chat was started from, for `chat_session_started`.
+	var entryPoint = "agent_one_shot"
 	/// `live` is true when the person chose Live: the caller opens the conversation straight into a call.
 	let onCreated: (ConversationSummary, _ live: Bool) -> Void
 
@@ -42,13 +44,15 @@ struct NewChatSheet: View {
 
 	init(
 		store: ConversationsStore, currentActorID: String?, prefill: String = "",
-		initialRecipient: ChatParticipant? = nil, uploader: (any ChatFileUploading)? = nil,
+		initialRecipient: ChatParticipant? = nil, entryPoint: String = "agent_one_shot",
+		uploader: (any ChatFileUploading)? = nil,
 		onCreated: @escaping (ConversationSummary, _ live: Bool) -> Void
 	) {
 		self.store = store
 		self.currentActorID = currentActorID
 		self.prefill = prefill
 		self.initialRecipient = initialRecipient
+		self.entryPoint = entryPoint
 		self.onCreated = onCreated
 		_composer = State(initialValue: ChatComposerModel(uploader: uploader, selfActorID: currentActorID ?? ""))
 	}
@@ -192,7 +196,8 @@ struct NewChatSheet: View {
 				title: ThreadLayout.newChatTitle(for: people.map(\.name), startsLiveCall: live),
 				participantIDs: people.map(\.id), firstMessage: message,
 				firstMessageMetadata: metadata)
-			Analytics.shared.chatSessionStarted(conversationId: created.id, participants: people)
+			Analytics.shared.chatSessionStarted(
+				conversationId: created.id, participants: people, entryPoint: entryPoint)
 			MaskinHaptics.play(.success)
 			guard presence.onScreen else { return }
 			onCreated(created, live)

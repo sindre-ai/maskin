@@ -178,6 +178,70 @@ describe('New chat', () => {
 		expect(screen.queryByRole('button', { name: 'Remove Chief of Staff' })).not.toBeInTheDocument()
 	})
 
+	describe('opened from a Message button', () => {
+		const BENTE = { actorId: 'h-1', name: 'Bente', type: 'human', role: 'member' }
+
+		it('seeds the person as a chip that never reads as an agent, even before members load', async () => {
+			mockSearch.mockReturnValue({ agentId: 'h-1', agentName: 'Bente', from: 'person_message_row' })
+			mockMembers.mockReturnValue([])
+			render(<NewChatPage />)
+			await screen.findByRole('button', { name: 'Remove Bente' })
+			expect(screen.getByLabelText('First message')).toHaveValue('')
+		})
+
+		it.each(['person_message_row', 'person_message_page'] as const)(
+			'reports %s as the entry point for exactly that one person',
+			async (from) => {
+				const user = userEvent.setup()
+				mockSearch.mockReturnValue({ agentId: 'h-1', agentName: 'Bente', from })
+				mockMembers.mockReturnValue([BENTE])
+				render(<NewChatPage />)
+				await screen.findByRole('button', { name: 'Remove Bente' })
+				await user.type(screen.getByLabelText('First message'), 'Hi Bente')
+				await user.click(screen.getByRole('button', { name: 'Send' }))
+				await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+				expect(mockCreateConversation.mock.calls[0]?.[0].participant_actor_ids).toEqual(['h-1'])
+				expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+					expect.objectContaining({
+						entry_point: from,
+						entry_agent_role: null,
+						participant_count: 1,
+					}),
+				)
+			},
+		)
+
+		it('falls back to agent_one_shot once another recipient is added', async () => {
+			const user = userEvent.setup()
+			mockSearch.mockReturnValue({
+				agentId: 'h-1',
+				agentName: 'Bente',
+				from: 'person_message_row',
+			})
+			mockMembers.mockReturnValue([BENTE])
+			render(<NewChatPage />)
+			await screen.findByRole('button', { name: 'Remove Bente' })
+			await user.type(toField(), 'forge{Enter}')
+			await user.click(screen.getByRole('button', { name: 'Send' }))
+			await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+			expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ entry_point: 'agent_one_shot', participant_count: 2 }),
+			)
+		})
+
+		it('keeps agent_one_shot when the link carries no source', async () => {
+			const user = userEvent.setup()
+			mockSearch.mockReturnValue({ agentId: 'forge-1' })
+			render(<NewChatPage />)
+			await screen.findByRole('button', { name: 'Remove Forge' })
+			await user.click(screen.getByRole('button', { name: 'Send' }))
+			await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+			expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ entry_point: 'agent_one_shot', entry_agent_role: 'forge' }),
+			)
+		})
+	})
+
 	it('shows Suggested only while the To field is focused, A to Z, without the chips already added', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)

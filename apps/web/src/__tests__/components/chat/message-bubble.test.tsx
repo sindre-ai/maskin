@@ -959,11 +959,17 @@ describe('MessageBubble question asked with a draft', () => {
 		expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
 	})
 
-	it('keeps the question card when the draft was already approved', async () => {
-		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('approved') as never)
-		renderBubble(linkingMessage())
-		expect(await screen.findByRole('button', { name: 'Send today' })).toBeInTheDocument()
-	})
+	it.each(['approved', 'sent'] as const)(
+		'draws no second question card once the draft is %s',
+		async (state) => {
+			vi.spyOn(api.objects, 'get').mockResolvedValue(draft(state) as never)
+			renderBubble(linkingMessage())
+			await waitFor(() =>
+				expect(screen.queryByRole('button', { name: 'Send today' })).not.toBeInTheDocument(),
+			)
+			expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
+		},
+	)
 
 	it('keeps the question card when it has more than two options', async () => {
 		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
