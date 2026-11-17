@@ -170,6 +170,14 @@ struct ThreadScreen: View {
 				store.reply(
 					LinkedDraftMessage.approved(title: title, body: body), in: rootID,
 					to: message.author == .agent ? store.participant(for: message.actorID) : nil, alsoInChannel: false)
+			},
+			draftSkipped: message.author == .agent && message.serverID.map { store.isDraftSkipped(inMessage: $0) } == true,
+			onSkippedDraft: {
+				guard let rootID else { return }
+				store.reply(
+					LinkedDraftMessage.skipped, in: rootID,
+					to: message.author == .agent ? store.participant(for: message.actorID) : nil, alsoInChannel: false,
+					metadata: ChatSendMetadata(cardAnswer: message.serverID.map { ChatCardAnswer(messageID: $0, outcome: .declined) }))
 			})
 	}
 
