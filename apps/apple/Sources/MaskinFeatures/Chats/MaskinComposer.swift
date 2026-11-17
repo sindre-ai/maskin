@@ -390,6 +390,9 @@ struct MaskinComposer: View {
 		if CameraPicker.isAvailable { actions.append(.camera) }
 		#endif
 		actions += [.file, .object, .person]
+		#if os(iOS)
+		if UIPasteboard.general.hasImages { actions.append(.paste) }
+		#endif
 		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
 		return actions
 	}
@@ -432,6 +435,10 @@ struct MaskinComposer: View {
 		case .showFormatting, .hideFormatting:
 			showsFormatting = action == .showFormatting
 			ComposerFormatting.setShown(showsFormatting, actorID: model.selfActorID)
+		case .paste:
+			#if os(iOS)
+			pasteImage()
+			#endif
 		}
 	}
 
@@ -502,6 +509,15 @@ struct MaskinComposer: View {
 	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
 	#if os(iOS)
+	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field.
+	fileprivate func pasteImage() {
+		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+			model.notice = "Couldn't read an image from the clipboard."
+			return
+		}
+		addFiles([.image(data)])
+	}
+
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
@@ -589,7 +605,7 @@ struct MaskinComposer: View {
 					composer.photoItems = []
 				}
 			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone a pasted image reaches
-			// the bar through `ComposerImagePasteHook` on the field.
+			// the bar through `ComposerImagePasteHook` on the field, or the `+` menu's "Paste image" row.
 			#if os(macOS)
 			base
 				.dropDestination(for: ComposerDrop.self) { items, _ in
