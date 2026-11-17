@@ -273,78 +273,39 @@ describe('Targets extension', () => {
 			['target', { target: 20 }],
 			['deadline', { deadline: '2027-01-31' }],
 			['source', { source: 'metric:other' }],
-		])(
-			'refuses an agent changing the %s of a target, and says to use a decision card',
-			async (field, change) => {
-				const existing = target()
-				const { res, calls } = patchAs('agent', existing, {
-					metadata: { ...targetMetadata, ...change },
-				})
-
-				const response = await res
-				expect(response.status).toBe(403)
-				const body = await response.json()
-				expect(body.error.message).toContain(field)
-				expect(body.error.message).toContain('decision card')
-				expect(calls.updates).toHaveLength(0)
-				// The refusal is logged with counts and ids only: no field name, no value.
-				expect(calls.inserts).toHaveLength(1)
-				expect(calls.inserts[0]).toMatchObject({
-					action: 'agent_write_refused',
-					entityType: 'object',
-					entityId: existing.id,
-				})
-				expect(calls.inserts[0]).toHaveProperty('data', {
-					object_type: TARGET_TYPE,
-					field_count: 1,
-					session_id: null,
-				})
-			},
-		)
-
-		it('refuses an agent setting the status of a target, and says to use a decision card', async () => {
+		])('lets an agent change the %s of a target', async (_field, change) => {
 			const existing = target()
-			const { res, calls } = patchAs('agent', existing, { status: 'hit' })
-
-			const response = await res
-			expect(response.status).toBe(403)
-			const body = await response.json()
-			expect(body.error.message).toContain('status')
-			expect(body.error.message).toContain('decision card')
-			expect(calls.updates).toHaveLength(0)
-		})
-
-		it('lets an agent write the status of a target back unchanged', async () => {
-			const { res } = patchAs('agent', target(), { status: 'open' })
+			const { res, calls } = patchAs('agent', existing, {
+				metadata: { ...targetMetadata, ...change },
+			})
 
 			expect((await res).status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
 		})
 
-		it('lets a person set the status of a target', async () => {
-			const { res } = patchAs('human', target(), { status: 'hit' })
+		it('lets an agent set the status of a target', async () => {
+			const { res, calls } = patchAs('agent', target(), { status: 'hit' })
 
 			expect((await res).status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
 		})
 
-		it('refuses an agent changing the label of a target', async () => {
-			const { res } = patchAs('agent', target(), { title: '20 paying customers' })
-
-			expect((await res).status).toBe(403)
-		})
-
-		it('lets an agent write a target field back unchanged', async () => {
-			const { res } = patchAs('agent', target(), { metadata: { actual: 3 } })
+		it('lets an agent change the label of a target', async () => {
+			const { res, calls } = patchAs('agent', target(), { title: '20 paying customers' })
 
 			expect((await res).status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
 		})
 
-		it('lets a person change the fields of a target', async () => {
-			const { res } = patchAs('human', target(), { metadata: { ...targetMetadata, actual: 10 } })
+		it('lets a person set the status and change the fields of a target', async () => {
+			for (const body of [{ status: 'hit' }, { metadata: { ...targetMetadata, actual: 10 } }]) {
+				const { res } = patchAs('human', target(), body)
 
-			expect((await res).status).toBe(200)
+				expect((await res).status).toBe(200)
+			}
 		})
 
-		it('refuses an agent changing what defines done on a flow', async () => {
+		it('lets an agent change the targets, entry condition, close condition and closed statuses of a flow', async () => {
 			for (const metadata of [
 				{ targets: [{ label: 'Signups', source: 'manual', actual: 1, target: 5 }] },
 				{ close_condition: 'Never closes' },
@@ -364,24 +325,11 @@ describe('Targets extension', () => {
 						closed_when: { task: ['loop_stage=done'] },
 					},
 				})
-				const { res } = patchAs('agent', flow, { metadata })
+				const { res, calls } = patchAs('agent', flow, { metadata })
 
-				const response = await res
-				expect(response.status).toBe(403)
-				expect((await response.json()).error.message).toContain('decision card')
+				expect((await res).status).toBe(200)
+				expect(calls.updates).toHaveLength(1)
 			}
-		})
-
-		it('lets an agent change other flow fields and pause a flow', async () => {
-			const flow = buildObject({
-				workspaceId: wsId,
-				type: 'loop',
-				status: 'live',
-				metadata: { targets: [], close_condition: 'Shipped', note: 'a' },
-			})
-			const { res } = patchAs('agent', flow, { metadata: { note: 'b', targets: [] } })
-
-			expect((await res).status).toBe(200)
 		})
 
 		it('lets a person change the closed statuses and entry condition of a flow', async () => {
@@ -393,20 +341,6 @@ describe('Targets extension', () => {
 			})
 			const { res } = patchAs('human', flow, {
 				metadata: { entry_condition: 'B', closed_statuses: { task: ['todo'] } },
-			})
-
-			expect((await res).status).toBe(200)
-		})
-
-		it('lets a person change the targets of a flow', async () => {
-			const flow = buildObject({
-				workspaceId: wsId,
-				type: 'loop',
-				status: 'live',
-				metadata: { targets: [] },
-			})
-			const { res } = patchAs('human', flow, {
-				metadata: { targets: [{ label: 'Signups', source: 'manual', actual: 1, target: 5 }] },
 			})
 
 			expect((await res).status).toBe(200)
@@ -445,34 +379,17 @@ describe('Targets extension', () => {
 				metadata: { entry_condition: 'A lead is found', closed_statuses: { task: ['done'] } },
 			})
 
-		it('refuses an agent changing what defines done, per id, and logs the refusal', async () => {
-			const existing = flow()
-			const { res, calls } = bulkAs('agent', existing, {
+		it('lets an agent change the closed statuses of a flow', async () => {
+			const { res, calls } = bulkAs('agent', flow(), {
 				metadata: { closed_statuses: { task: ['todo'] } },
 			})
 
-			const response = await res
-			expect(response.status).toBe(200)
-			const { results } = await response.json()
-			expect(results[0].ok).toBe(false)
-			expect(results[0].error).toContain('decision card')
-			expect(calls.updates).toHaveLength(0)
-			expect(calls.inserts).toHaveLength(1)
-			expect(calls.inserts[0]).toMatchObject({
-				action: 'agent_write_refused',
-				entityId: existing.id,
-				data: { object_type: 'loop', field_count: 1 },
-			})
-		})
-
-		it('lets an agent change a flow field that does not define done', async () => {
-			const { res } = bulkAs('agent', flow(), { metadata: { note: 'b' } })
-
 			const { results } = await (await res).json()
 			expect(results[0].ok).toBe(true)
+			expect(calls.updates).toHaveLength(1)
 		})
 
-		it('lets a person change what defines done', async () => {
+		it('lets a person change the entry condition of a flow', async () => {
 			const { res } = bulkAs('human', flow(), { metadata: { entry_condition: 'Anything' } })
 
 			const { results } = await (await res).json()
