@@ -23,6 +23,7 @@ import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
 import { LumaRegistrationsSyncJob } from './jobs/luma-registrations-sync'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
+import { StripePaymentSyncJob } from './jobs/stripe-payment-sync'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
@@ -468,6 +469,26 @@ if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
 	})
 	telnyxRecordingSyncJob.start()
 	logger.info('Telnyx recording sync started')
+}
+
+// Stripe payments: reads paid invoices and completed checkouts from our own Stripe account and
+// writes a stripe.paid reading on the person whose email matches exactly. No model in the path.
+// Off unless STRIPE_PAYMENT_SYNC_WORKSPACE_ID, _ACTOR_ID (the agent granted the Stripe key) and
+// _LOOP_ID (where the count of unmatched payments is written) are set. Optional: _KEY_NAME
+// (Keychain name, default Stripe), _FROM (earliest payment to read, default 2026-11-01).
+const stripeSyncWorkspaceId = process.env.STRIPE_PAYMENT_SYNC_WORKSPACE_ID
+const stripeSyncActorId = process.env.STRIPE_PAYMENT_SYNC_ACTOR_ID
+const stripeSyncLoopId = process.env.STRIPE_PAYMENT_SYNC_LOOP_ID
+if (stripeSyncWorkspaceId && stripeSyncActorId && stripeSyncLoopId) {
+	const stripePaymentSyncJob = new StripePaymentSyncJob(db, {
+		workspaceId: stripeSyncWorkspaceId,
+		actorId: stripeSyncActorId,
+		loopId: stripeSyncLoopId,
+		keyName: process.env.STRIPE_PAYMENT_SYNC_KEY_NAME || 'Stripe',
+		backfillFrom: new Date(process.env.STRIPE_PAYMENT_SYNC_FROM || '2026-11-01T00:00:00Z'),
+	})
+	stripePaymentSyncJob.start()
+	logger.info('Stripe payment sync started')
 }
 
 // Luma registrations: every 30 minutes reads the guest list of each Luma event between planned
