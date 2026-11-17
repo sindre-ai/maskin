@@ -41,6 +41,7 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useCreateViewWithAgent } from '@/hooks/use-create-view-with-agent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoadFailed } from '@/hooks/use-load-failed'
 import {
@@ -58,6 +59,7 @@ import { api } from '@/lib/api'
 import type { LoopSummary } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { CREATE_VIEW_LABEL } from '@/lib/create-view-message'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { queryKeys } from '@/lib/query-keys'
@@ -72,7 +74,15 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
-import { Check, ChevronDown, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
+import {
+	Check,
+	ChevronDown,
+	LayoutDashboard,
+	MoreHorizontal,
+	Pause,
+	Play,
+	Trash2,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -126,6 +136,7 @@ function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const canWrite = useCanWrite()
+	const createView = useCreateViewWithAgent()
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -705,6 +716,19 @@ function LoopDetailRoute() {
 									</DropdownMenuTrigger>
 								</ViewerTooltip>
 								<DropdownMenuContent align="end">
+									{createView.open && (
+										<DropdownMenuItem
+											onSelect={() =>
+												createView.open?.({
+													kind: 'flow',
+													id: loop.id,
+													name: loop.name ?? 'Untitled flow',
+												})
+											}
+										>
+											<LayoutDashboard size={14} /> {CREATE_VIEW_LABEL}
+										</DropdownMenuItem>
+									)}
 									<DropdownMenuItem
 										onSelect={togglePause}
 										disabled={updateObject.isPending || !canWrite}
