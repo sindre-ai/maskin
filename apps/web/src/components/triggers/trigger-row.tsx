@@ -5,7 +5,7 @@ import { Switch } from '@/components/ui/switch'
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { describeCronExpression } from '@/lib/cron'
+import { describeCopenhagenDateTime, describeCronExpression } from '@/lib/cron'
 import { Link } from '@tanstack/react-router'
 import { Bell, ChevronRight, Clock, Zap } from 'lucide-react'
 
@@ -28,8 +28,7 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 	}
 	if (trigger.type === 'reminder') {
 		const at = config.scheduled_at ? new Date(String(config.scheduled_at)) : null
-		if (at)
-			return `Fires on ${at.toLocaleDateString()} at ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+		if (at && !Number.isNaN(at.getTime())) return `Fires on ${describeCopenhagenDateTime(at)}`
 		return 'One-time reminder'
 	}
 	return trigger.type

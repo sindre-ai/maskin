@@ -85,66 +85,189 @@ export function describeCronSchedule(parsed: ParsedCron): string {
 	}
 }
 
-/** Human-readable schedule from a raw cron expression, e.g. "0 17 * * 0" -> "every Sunday at 5:00 PM".
+const COPENHAGEN_TIME_ZONE = 'Europe/Copenhagen'
+
+const MONTH_NAMES = [
+	'Jan',
+	'Feb',
+	'Mar',
+	'Apr',
+	'May',
+	'Jun',
+	'Jul',
+	'Aug',
+	'Sep',
+	'Oct',
+	'Nov',
+	'Dec',
+]
+
+const copenhagenFormat = new Intl.DateTimeFormat('en-GB', {
+	timeZone: COPENHAGEN_TIME_ZONE,
+	hourCycle: 'h23',
+	year: 'numeric',
+	month: 'numeric',
+	day: 'numeric',
+	weekday: 'long',
+	hour: '2-digit',
+	minute: '2-digit',
+})
+
+export interface CopenhagenParts {
+	year: number
+	month: number
+	day: number
+	weekday: string
+	/** 24-hour `HH:MM`. */
+	time: string
+}
+
+/** The wall-clock parts of an instant in Copenhagen, summer and winter time included. */
+export function copenhagenParts(date: Date): CopenhagenParts {
+	const parts: Record<string, string> = {}
+	for (const part of copenhagenFormat.formatToParts(date)) parts[part.type] = part.value
+	return {
+		year: Number(parts.year),
+		month: Number(parts.month),
+		day: Number(parts.day),
+		weekday: parts.weekday ?? '',
+		time: `${parts.hour}:${parts.minute}`,
+	}
+}
+
+/** `3 Nov at 09:00` in Copenhagen time. The year is added only when it is not the current one. */
+export function describeCopenhagenDateTime(date: Date, now: Date = new Date()): string {
+	const at = copenhagenParts(date)
+	const year = at.year === copenhagenParts(now).year ? '' : ` ${at.year}`
+	return `${at.day} ${MONTH_NAMES[at.month - 1]}${year} at ${at.time}`
+}
+
+/** A fixed day and month, e.g. `0 8 3 11 *`. The app treats it as a one-time date. */
+interface OneTimeCron {
+	minute: number
+	hour: number
+	dayOfMonth: number
+	month: number
+}
+
+function parseOneTimeCron(expr: string): OneTimeCron | null {
+	const parts = expr.trim().split(/\s+/)
+	const fields = parts.length === 6 ? parts.slice(1) : parts
+	if (fields.length !== 5) return null
+	const [minute, hour, dayOfMonth, month, dayOfWeek] = fields
+	if (dayOfWeek !== '*') return null
+	if (!isFieldInRange(minute, 0, 59)) return null
+	if (!isFieldInRange(hour, 0, 23)) return null
+	if (!isFieldInRange(dayOfMonth, 1, 31)) return null
+	if (!isFieldInRange(month, 1, 12)) return null
+	return {
+		minute: Number(minute),
+		hour: Number(hour),
+		dayOfMonth: Number(dayOfMonth),
+		month: Number(month),
+	}
+}
+
+/** Next instant strictly after `from` for a one-time cron. Looks a few years ahead so
+ * 29 Feb still resolves; `null` for a date that never exists (31 Nov). */
+function nextOneTimeFire(cron: OneTimeCron, from: Date): Date | null {
+	const year = from.getUTCFullYear()
+	for (let y = year; y <= year + 8; y++) {
+		const candidate = new Date(Date.UTC(y, cron.month - 1, cron.dayOfMonth, cron.hour, cron.minute))
+		if (candidate.getUTCMonth() !== cron.month - 1) continue
+		if (candidate > from) return candidate
+	}
+	return null
+}
+
+/** Human-readable schedule from a raw cron expression, e.g. "0 17 * * 0" -> "every Sunday at 18:00".
+ * The server runs every schedule in UTC, so times are converted to Copenhagen time (24-hour),
+ * using the next firing so summer and winter time are right. A weekly or monthly schedule can
+ * land on another day after the conversion; the weekday or day number follows it.
  * Falls back to the raw expression when it uses syntax this app doesn't generate itself
  * (steps, lists, ranges, day names) rather than rendering a wrong description. */
-export function describeCronExpression(expr: string): string {
+export function describeCronExpression(expr: string, now: Date = new Date()): string {
 	const parsed = parseCronExpression(expr)
-	return parsed ? describeCronSchedule(parsed) : expr
+	if (parsed) {
+		if (parsed.frequency === 'hourly') return describeCronSchedule(parsed)
+		const next = nextCronFire(expr, now)
+		if (!next) return expr
+		const at = copenhagenParts(next)
+		switch (parsed.frequency) {
+			case 'daily':
+				return `every day at ${at.time}`
+			case 'weekly':
+				return `every ${at.weekday} at ${at.time}`
+			case 'monthly':
+				return `on day ${at.day} of each month at ${at.time}`
+		}
+	}
+	const oneTime = parseOneTimeCron(expr)
+	if (oneTime) {
+		const next = nextOneTimeFire(oneTime, now)
+		if (!next) return expr
+		return `once on ${describeCopenhagenDateTime(next, now)}`
+	}
+	return expr
 }
 
 /** Next firing instant strictly after `from` for a cron expression this app
- * generates itself. Returns `null` for any expression `parseCronExpression`
- * rejects (steps, lists, ranges, day names, out-of-range fields) so the caller
- * can fall through to a `—` rather than guessing a time. */
+ * generates itself. Fields are read in UTC, the zone the server runs every
+ * schedule in. Also handles a fixed day and month (a one-time date). Returns
+ * `null` for any other expression `parseCronExpression` rejects (steps, lists,
+ * ranges, day names, out-of-range fields) so the caller can fall through to a
+ * `—` rather than guessing a time. */
 export function nextCronFire(expr: string, from: Date = new Date()): Date | null {
 	const parsed = parseCronExpression(expr)
-	if (!parsed) return null
+	if (!parsed) {
+		const oneTime = parseOneTimeCron(expr)
+		return oneTime ? nextOneTimeFire(oneTime, from) : null
+	}
 	const minute = Number(parsed.minute === '*' ? 0 : parsed.minute)
 	const hour = Number(parsed.hour === '*' ? 0 : parsed.hour)
 
 	switch (parsed.frequency) {
 		case 'hourly': {
 			const next = new Date(from)
-			next.setSeconds(0, 0)
-			next.setMinutes(minute)
-			if (next <= from) next.setHours(next.getHours() + 1)
+			next.setUTCSeconds(0, 0)
+			next.setUTCMinutes(minute)
+			if (next <= from) next.setUTCHours(next.getUTCHours() + 1)
 			return next
 		}
 		case 'daily': {
 			const next = new Date(from)
-			next.setSeconds(0, 0)
-			next.setHours(hour, minute)
-			if (next <= from) next.setDate(next.getDate() + 1)
+			next.setUTCSeconds(0, 0)
+			next.setUTCHours(hour, minute)
+			if (next <= from) next.setUTCDate(next.getUTCDate() + 1)
 			return next
 		}
 		case 'weekly': {
 			const targetDow = Number(parsed.dayOfWeek)
 			const next = new Date(from)
-			next.setSeconds(0, 0)
-			next.setHours(hour, minute)
+			next.setUTCSeconds(0, 0)
+			next.setUTCHours(hour, minute)
 			// Positive modulo — a same-day fire that's already past pushes to
 			// next week, not today.
-			const dayGap = (targetDow - next.getDay() + 7) % 7
-			if (dayGap === 0 && next <= from) next.setDate(next.getDate() + 7)
-			else next.setDate(next.getDate() + dayGap)
+			const dayGap = (targetDow - next.getUTCDay() + 7) % 7
+			if (dayGap === 0 && next <= from) next.setUTCDate(next.getUTCDate() + 7)
+			else next.setUTCDate(next.getUTCDate() + dayGap)
 			return next
 		}
 		case 'monthly': {
 			const targetDom = Number(parsed.dayOfMonth)
 			const next = new Date(from)
-			next.setSeconds(0, 0)
-			next.setDate(targetDom)
-			next.setHours(hour, minute)
+			next.setUTCSeconds(0, 0)
+			next.setUTCDate(targetDom)
+			next.setUTCHours(hour, minute)
 			// setDate can overflow (e.g. day 31 in a 30-day month) — that's the
 			// wrong answer for the current month, so advance one calendar
 			// month and re-apply until the day sticks.
-			if (next.getDate() !== targetDom || next <= from) {
+			if (next.getUTCDate() !== targetDom || next <= from) {
 				do {
-					next.setDate(1)
-					next.setMonth(next.getMonth() + 1)
-					next.setDate(targetDom)
-				} while (next.getDate() !== targetDom)
+					next.setUTCDate(1)
+					next.setUTCMonth(next.getUTCMonth() + 1)
+					next.setUTCDate(targetDom)
+				} while (next.getUTCDate() !== targetDom)
 			}
 			return next
 		}
