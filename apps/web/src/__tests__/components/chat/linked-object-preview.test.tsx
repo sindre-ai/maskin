@@ -331,6 +331,38 @@ describe('LinkedObjectCard', () => {
 			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
 		})
 
+		it('is dropped once the draft is approved', async () => {
+			useObject.mockReturnValue({
+				data: objectRow({ preview: previewOf({ delivery: { state: 'approved', at: null } }) }),
+			})
+			withNote({ question: 'Send this to Catja today?' })
+			await expand()
+			expect(screen.getByText('Approved, waiting for send')).toBeInTheDocument()
+			expect(screen.queryByText('Send this to Catja today?')).not.toBeInTheDocument()
+		})
+
+		it('is dropped once the draft is skipped', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({
+				pages: [
+					{
+						messages: [
+							{
+								id: 9,
+								actorId: 'me',
+								content: SKIP_DRAFT_TEXT,
+								metadata: { hidden_from_chat: true, context_objects: [{ id: ID }] },
+							},
+						],
+					},
+				],
+			})
+			withNote({ question: 'Send this to Catja today?' })
+			await expand()
+			expect(screen.getByText('Skipped')).toBeInTheDocument()
+			expect(screen.queryByText('Send this to Catja today?')).not.toBeInTheDocument()
+		})
+
 		it('adds nothing to a draft the question is not about', async () => {
 			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
 			renderCard({ conversationId: CHAT, agentId: AGENT })
