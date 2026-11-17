@@ -17,7 +17,6 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { and, desc, eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../app-factory'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { logger } from '../../lib/logger'
 import { OAuthSweeper } from '../../services/oauth-sweeper'
 import { TriggerRunner } from '../../services/trigger-runner'
@@ -79,20 +78,10 @@ beforeEach(() => {
 afterEach(() => {
 	// Each test sets what it needs; the switch stays on between tests.
 	vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', 'true')
-	vi.stubEnv('FF_TESTER_FEATURES', '')
-	vi.stubEnv('FF_TESTER_ACTOR_IDS', '')
-	_resetFeatureFlagConfig()
 	vi.restoreAllMocks()
 })
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-/** Puts the people on the tester list for mcp-oauth-consent. */
-function enableFlagFor(...people: Array<{ id: string }>) {
-	vi.stubEnv('FF_TESTER_FEATURES', 'mcp-oauth-consent')
-	vi.stubEnv('FF_TESTER_ACTOR_IDS', people.map((p) => p.id).join(','))
-	_resetFeatureFlagConfig()
-}
 
 function newPkce() {
 	const verifier = randomBytes(32).toString('base64url')
@@ -247,10 +236,9 @@ async function pollFor<T>(read: () => Promise<T | null | undefined>, timeoutMs =
 	return value
 }
 
-async function seedPerson(options: { tester?: boolean } = {}) {
+async function seedPerson() {
 	const person = await insertActor(db)
 	const workspace = await insertWorkspace(db, person.id)
-	if (options.tester !== false) enableFlagFor(person)
 	return { person, workspace }
 }
 
@@ -441,8 +429,8 @@ describe('preview, approve, token, then an authenticated call', () => {
 		expect(token.status).toBe(404)
 	})
 
-	it('answers 403 access_denied when the flag is off for the person', async () => {
-		const { person } = await seedPerson({ tester: false })
+	it('lets any person through: nobody needs to be on a tester list', async () => {
+		const { person } = await seedPerson()
 		const { challenge } = newPkce()
 
 		const preview = await call('/api/oauth/authorize/preview', {
@@ -450,13 +438,11 @@ describe('preview, approve, token, then an authenticated call', () => {
 			query: authorizeParams(challenge),
 		})
 
-		expect(preview.status).toBe(403)
-		expect(preview.body.error).toBe('access_denied')
+		expect(preview.status).toBe(200)
 	})
 
 	it('answers 403 access_denied for an agent actor', async () => {
 		const agent = await insertActor(db, { type: 'agent' })
-		enableFlagFor(agent)
 		const { challenge } = newPkce()
 
 		const preview = await call('/api/oauth/authorize/preview', {
@@ -680,7 +666,6 @@ describe('refresh tokens', () => {
 describe('GET /api/oauth/grants and DELETE /api/oauth/grants/:id', () => {
 	it('agrees with the token step on live, revoked, idle past 30 days and member removed', async () => {
 		const person = await insertActor(db)
-		enableFlagFor(person)
 		const live = await insertWorkspace(db, person.id, { name: 'Live workspace' })
 		const revoked = await insertWorkspace(db, person.id, { name: 'Revoked workspace' })
 		const idle = await insertWorkspace(db, person.id, { name: 'Idle workspace' })
@@ -760,13 +745,11 @@ describe('GET /api/oauth/grants and DELETE /api/oauth/grants/:id', () => {
 		expect(after.body[0].last_used_at).toBe(stamped)
 	})
 
-	it('lists and disconnects with the flag and the env switch both off', async () => {
+	it('lists and disconnects with the env switch off', async () => {
 		const { person, workspace } = await seedPerson()
 		const { access } = await connect(person, workspace)
 		const grant = await latestGrant(person, workspace)
 		vi.stubEnv('MASKIN_MCP_OAUTH_ENABLED', '')
-		vi.stubEnv('FF_TESTER_FEATURES', '')
-		_resetFeatureFlagConfig()
 
 		const list = await call('/api/oauth/grants', { key: person.apiKey })
 		const disconnect = await call(`/api/oauth/grants/${grant.id}`, {
@@ -810,7 +793,6 @@ describe('removing a member', () => {
 		await db
 			.insert(workspaceMembers)
 			.values({ workspaceId: workspace.id, actorId: member.id, role: 'member' })
-		enableFlagFor(member)
 		const { access } = await connect(member, workspace)
 		const grant = await latestGrant(member, workspace)
 

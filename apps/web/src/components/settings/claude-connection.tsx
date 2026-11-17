@@ -12,7 +12,6 @@ import {
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useDisconnectGrant, useOauthGrants } from '@/hooks/use-oauth'
 import { trackEvent } from '@/lib/analytics'
 import type { OauthGrantRow } from '@maskin/shared'
@@ -20,10 +19,7 @@ import { ChevronDown, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
 // The Claude tab of Settings > MCP: the real "Add to Claude" link and the list of Claude connections with
-// Disconnect (docs/reference/mcp-oauth.md). The tab shows when the connector flag is on for the person or when
-// they already have a connection, so the only revoke button never disappears with the flag.
-
-export const MCP_OAUTH_FLAG = 'mcp-oauth-consent'
+// Disconnect (docs/reference/mcp-oauth.md).
 
 /** Claude's own prefilled "add custom connector" form: name and server URL filled in, no key or secret in it. */
 export function buildAddToClaudeUrl(mcpUrl: string): string {
@@ -34,12 +30,10 @@ export function buildAddToClaudeUrl(mcpUrl: string): string {
 	return url.toString()
 }
 
-/** What the tab strip needs: whether to show the Claude tab, and whether it reads Connected. */
-export function useClaudeTab() {
-	const flagOn = useFeatureFlag(MCP_OAUTH_FLAG)
+/** What the tab strip needs: whether the Claude tab reads Connected. */
+export function useClaudeConnected() {
 	const grants = useOauthGrants()
-	const connected = (grants.data?.length ?? 0) > 0
-	return { visible: flagOn || connected, connected }
+	return (grants.data?.length ?? 0) > 0
 }
 
 function formatConnectedDate(iso: string): string {
@@ -213,7 +207,6 @@ function DisconnectDialog({
 }
 
 export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
-	const flagOn = useFeatureFlag(MCP_OAUTH_FLAG)
 	const grants = useOauthGrants()
 	const [target, setTarget] = useState<OauthGrantRow | null>(null)
 
@@ -247,12 +240,6 @@ export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
 					Claude acts as you, with your access in the workspace shown. Disconnect to end it right
 					away. Removing Maskin inside Claude may not end access. Disconnect here too.
 				</p>
-				{!flagOn && (
-					<p className="text-xs text-muted-foreground">
-						Adding new Claude connections is switched off for now. Existing ones keep working until
-						you disconnect them.
-					</p>
-				)}
 				<DisconnectDialog grant={target} onClose={() => setTarget(null)} />
 			</div>
 		)

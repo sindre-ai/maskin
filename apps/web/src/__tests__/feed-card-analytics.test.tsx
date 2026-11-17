@@ -14,11 +14,12 @@ vi.mock('@/hooks/use-actors', () => ({
 
 vi.mock('@/hooks/use-events', () => ({
 	useEntityEvents: () => ({ data: undefined }),
+	useCreateComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
 // The real composer is not the SUT here; the card only cares one renders.
-vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: () => <div data-testid="comment-input" />,
+vi.mock('@/components/chat/chat', () => ({
+	Composer: () => <div data-testid="chat-composer" />,
 }))
 
 const trackForyouCardShown = vi.fn()
