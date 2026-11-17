@@ -200,6 +200,43 @@ export function buildWakePrompt(input: WakePromptInput): string {
 	return lines.join('\n')
 }
 
+export interface QueueWakePromptInput {
+	items: {
+		object: { id: string; type: string; title: string | null; status: string }
+		nextStep: { action: string; status: string; dueAt: Date } | null
+	}[]
+	/** How many are due in all. More than `items.length` when the run was capped. */
+	total: number
+}
+
+/**
+ * One run for everything an agent has due: a line per object with its stored next step, oldest due
+ * first. Nothing is invented for the agent to do. The ones left out of a capped list come with the
+ * next sweep, an hour on.
+ */
+export function buildQueueWakePrompt(input: QueueWakePromptInput): string {
+	const lines = [
+		'You are being woken because the next step on these objects you drive is overdue. No person asked for this run.',
+		'',
+		`Due now (${input.items.length}${input.total > input.items.length ? ` of ${input.total}, the rest come with the next sweep` : ''}):`,
+	]
+	for (const { object, nextStep } of input.items) {
+		lines.push(
+			`- ${object.title ?? '(untitled)'} (${object.type}, ${object.status}), ID: ${object.id}`,
+		)
+		if (nextStep) {
+			lines.push(
+				`  Stored next step (${nextStep.status}, due ${nextStep.dueAt.toISOString()}): ${nextStep.action}`,
+			)
+		}
+	}
+	lines.push(
+		'',
+		'Work through them one by one. For each, read the object, do the next safe step, and set its next step again (the date of the next touch). If one needs nothing from you, say why in its next step and move on.',
+	)
+	return lines.join('\n')
+}
+
 // ── Service ────────────────────────────────────────────────────────────────
 
 interface WakeRequest {

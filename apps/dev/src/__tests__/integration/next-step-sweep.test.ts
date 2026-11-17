@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { recordEventReturning } from '../../lib/events/record-event'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { readPrecheckFacts } from '../../lib/heartbeat-precheck'
-import { MAX_WAKES_PER_AGENT_PER_TICK, NextStepSweep } from '../../services/next-step-sweep'
+import {
+	MAX_OBJECTS_PER_QUEUE_RUN,
+	MAX_WAKES_PER_AGENT_PER_TICK,
+	NextStepSweep,
+} from '../../services/next-step-sweep'
 import { SessionNotAdmittedError } from '../../services/self-start-limits'
 import {
 	ensureWorkspaceMember,
@@ -274,6 +278,201 @@ describe('NextStepSweep', () => {
 		await sweep().sweepWorkspace(workspaceId)
 		expect(await claims()).toHaveLength(0)
 		expect(startSessionMock).not.toHaveBeenCalled()
+	})
+
+	describe('flows, contacts and other types', () => {
+		// An object of `type` the driver drives, with an open step that fell due an hour ago.
+		async function overdue(type: string, status: string, driver = driverId) {
+			const object = await insertObject(db, workspaceId, ownerId, { type, status, driver })
+			await db.insert(nextSteps).values({
+				workspaceId,
+				objectId: object.id,
+				action: `Next touch on ${type}`,
+				ownerActorId: driver,
+				dueAt: new Date(Date.now() - HOUR),
+			})
+			return object
+		}
+
+		async function wakeAfterRecording() {
+			setFlags('next-step-sweep', 'next-step-sweep-wake')
+			await sweep().sweepWorkspace(workspaceId)
+			await recordedFor(4 * DAY)
+			await sweep().sweepWorkspace(workspaceId)
+		}
+
+		it.each(['pilot', 'learning', 'supervised', 'live', 'fully_autonomous'])(
+			'sweeps a flow in %s',
+			async (status) => {
+				const loop = await insertObject(db, workspaceId, ownerId, {
+					type: 'loop',
+					status,
+					driver: driverId,
+					updatedAt: new Date(Date.now() - 3 * HOUR),
+				})
+				setFlags('next-step-sweep')
+				await sweep().sweepWorkspace(workspaceId)
+				const rows = await claims()
+				expect(rows.map((r) => r.objectId)).toContain(loop.id)
+			},
+		)
+
+		it('does not sweep a flow that is a draft or paused', async () => {
+			for (const status of ['draft', 'paused', 'archived']) {
+				await insertObject(db, workspaceId, ownerId, {
+					type: 'loop',
+					status,
+					driver: driverId,
+					updatedAt: new Date(Date.now() - 3 * HOUR),
+				})
+			}
+			setFlags('next-step-sweep')
+			await sweep().sweepWorkspace(workspaceId)
+			expect(await claims()).toHaveLength(0)
+		})
+
+		it('covers an overdue contact, but not a contact with no step', async () => {
+			const late = await overdue('contact', 'follow_up_later')
+			await insertObject(db, workspaceId, ownerId, {
+				type: 'contact',
+				status: 'messaged',
+				driver: driverId,
+				updatedAt: new Date(Date.now() - 5 * HOUR),
+			})
+			setFlags('next-step-sweep')
+			await sweep().sweepWorkspace(workspaceId)
+			expect((await claims()).map((r) => r.objectId)).toEqual([late.id])
+		})
+
+		it('leaves a closed contact and a contact driven by a person alone', async () => {
+			await overdue('contact', 'converted')
+			await overdue('contact', 'rejected')
+			await overdue('contact', 'messaged', ownerId)
+			setFlags('next-step-sweep')
+			await sweep().sweepWorkspace(workspaceId)
+			expect(await claims()).toHaveLength(0)
+		})
+
+		it('wakes the agent once for every contact that is due, not once per contact', async () => {
+			const contacts = [
+				await overdue('contact', 'messaged'),
+				await overdue('contact', 'qualified'),
+				await overdue('contact', 'follow_up_later'),
+			]
+			await wakeAfterRecording()
+
+			expect(startSessionMock).toHaveBeenCalledTimes(1)
+			const call = startSessionMock.mock.calls[0]?.[0]
+			expect(call?.actorId).toBe(driverId)
+			expect(call?.initiatedFromObjectId).toBeNull()
+			expect(call?.config).toMatchObject({
+				start_reason: 'sweep',
+				driver_wake: { source: 'sweep', reasons: ['step_overdue'], queued: true },
+			})
+			for (const c of contacts) expect(call?.actionPrompt).toContain(c.id)
+			expect(call?.actionPrompt).toContain('Next touch on contact')
+			const decided = (await claims()).filter((r) => r.mode === 'woken')
+			expect(decided.map((r) => r.objectId).sort()).toEqual(contacts.map((c) => c.id).sort())
+			const steps = await db.select().from(nextSteps).where(eq(nextSteps.workspaceId, workspaceId))
+			expect(steps.every((st) => st.wakeCount === 1)).toBe(true)
+
+			// Nothing more starts within the hour.
+			await sweep().sweepWorkspace(workspaceId)
+			expect(startSessionMock).toHaveBeenCalledTimes(1)
+		})
+
+		it('keeps one run per agent for contacts, and a separate one for each bet', async () => {
+			await overdue('contact', 'messaged')
+			await overdue('contact', 'qualified')
+			await overdueBet()
+			await overdueBet()
+			await wakeAfterRecording()
+			// Two bets alone, one queued run for the two contacts.
+			expect(startSessionMock).toHaveBeenCalledTimes(3)
+			expect(
+				startSessionMock.mock.calls.filter((c) => c[0]?.initiatedFromObjectId === null),
+			).toHaveLength(1)
+		})
+
+		it(`puts at most ${MAX_OBJECTS_PER_QUEUE_RUN} objects in one run and leaves the rest for the next sweep`, async () => {
+			for (let i = 0; i < MAX_OBJECTS_PER_QUEUE_RUN + 2; i++) await overdue('contact', 'messaged')
+			await wakeAfterRecording()
+			expect(startSessionMock).toHaveBeenCalledTimes(1)
+			const woken = (await claims()).filter((r) => r.mode === 'woken')
+			expect(woken).toHaveLength(MAX_OBJECTS_PER_QUEUE_RUN)
+		})
+
+		it('reaches the objects past the cap on the next tick, even while the first ones are still overdue', async () => {
+			for (let i = 0; i < MAX_OBJECTS_PER_QUEUE_RUN + 2; i++) await overdue('contact', 'messaged')
+			await wakeAfterRecording()
+			await sweep().sweepWorkspace(workspaceId)
+			expect(startSessionMock).toHaveBeenCalledTimes(2)
+			const woken = (await claims()).filter((r) => r.mode === 'woken')
+			expect(woken).toHaveLength(MAX_OBJECTS_PER_QUEUE_RUN + 2)
+		})
+
+		it('frees the claims of a queued run that could not start, so the next tick retries', async () => {
+			await overdue('contact', 'messaged')
+			await overdue('contact', 'qualified')
+			setFlags('next-step-sweep', 'next-step-sweep-wake')
+			await sweep().sweepWorkspace(workspaceId)
+			await recordedFor(4 * DAY)
+			startSessionMock.mockRejectedValueOnce(new Error('boom'))
+			await sweep().sweepWorkspace(workspaceId)
+			expect((await claims()).filter((r) => r.mode === 'woken')).toHaveLength(0)
+			await sweep().sweepWorkspace(workspaceId)
+			expect(startSessionMock).toHaveBeenCalledTimes(2)
+		})
+
+		it('covers an overdue step on any type that is a member of a running flow', async () => {
+			const loop = await insertObject(db, workspaceId, ownerId, {
+				type: 'loop',
+				status: 'learning',
+				driver: ownerId,
+			})
+			const inFlow = await overdue('webinar_task', 'open')
+			const outside = await overdue('webinar_task', 'open')
+			const closed = await overdue('insight', 'discarded')
+			await insertRelationship(db, ownerId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: inFlow.id,
+				type: 'in_loop',
+			})
+			await insertRelationship(db, ownerId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: closed.id,
+				type: 'in_loop',
+			})
+			setFlags('next-step-sweep')
+			await sweep().sweepWorkspace(workspaceId)
+			const ids = (await claims()).map((r) => r.objectId)
+			expect(ids).toContain(inFlow.id)
+			expect(ids).not.toContain(outside.id)
+			expect(ids).not.toContain(closed.id)
+		})
+
+		it('stops covering a flow member once its flow is a draft', async () => {
+			const loop = await insertObject(db, workspaceId, ownerId, {
+				type: 'loop',
+				status: 'draft',
+				driver: ownerId,
+			})
+			const member = await overdue('webinar_task', 'open')
+			await insertRelationship(db, ownerId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: member.id,
+				type: 'in_loop',
+			})
+			setFlags('next-step-sweep')
+			await sweep().sweepWorkspace(workspaceId)
+			expect(await claims()).toHaveLength(0)
+		})
 	})
 
 	describe('what it leaves alone', () => {

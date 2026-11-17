@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+	LIVE_FLOW_STATUSES,
+	LOOP_STATUSES,
 	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
+	TERMINAL_STATUSES_BY_TYPE,
 	createObjectSchema,
 	loopTargetSchema,
 	loopTargetSourceSchema,
@@ -206,6 +209,32 @@ describe('TERMINAL_BET_STATUSES', () => {
 		// exact behaviour the archived-status bet exists to prevent.
 		expect([...TERMINAL_BET_STATUSES]).toEqual(['succeeded', 'failed', 'paused'])
 		expect((TERMINAL_BET_STATUSES as readonly string[]).includes('archived')).toBe(false)
+	})
+})
+
+describe('LIVE_FLOW_STATUSES', () => {
+	it('holds every running status of a flow, in both spellings of the ladder', () => {
+		const running = LOOP_STATUSES.filter((s) => s !== 'draft' && s !== 'paused')
+		for (const status of running) expect(LIVE_FLOW_STATUSES).toContain(status)
+		for (const status of ['pilot', 'supervised', 'live']) {
+			expect(LIVE_FLOW_STATUSES).toContain(status)
+		}
+		for (const status of ['draft', 'paused', 'archived']) {
+			expect(LIVE_FLOW_STATUSES as readonly string[]).not.toContain(status)
+		}
+	})
+})
+
+describe('TERMINAL_STATUSES_BY_TYPE', () => {
+	it('has a closed list for the custom types a flow uses', () => {
+		expect(TERMINAL_STATUSES_BY_TYPE.event).toEqual(['wrapped_up', 'archived'])
+		expect(TERMINAL_STATUSES_BY_TYPE.contact).toEqual(['converted', 'rejected', 'not_interested'])
+		expect(TERMINAL_STATUSES_BY_TYPE.company).toEqual(['churned', 'not_a_fit'])
+		expect(TERMINAL_STATUSES_BY_TYPE.meeting).toEqual(['processed', 'cancelled', 'archived'])
+	})
+
+	it('keeps a contact in follow_up_later open, since that is where a dated next touch lives', () => {
+		expect(TERMINAL_STATUSES_BY_TYPE.contact).not.toContain('follow_up_later')
 	})
 })
 

@@ -37,11 +37,22 @@ export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
  *
  * A fallback only: a loop can override a type with its own
  * `metadata.closed_statuses`.
+ *
+ * `event`, `contact`, `company` and `meeting` are workspace-defined types that older workspaces
+ * created with the default status lists below. Without an entry here nothing that ends "when the
+ * object closes" ever ended for them. Their lists are the default statuses that end the object's
+ * story: an event after it wrapped up, a contact once converted or turned down, a company once
+ * lost, a meeting once processed or cancelled. `follow_up_later` stays open: it is where a dated
+ * next touch is wanted.
  */
 export const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	bet: [...TERMINAL_BET_STATUSES, 'archived'],
 	task: ['done', 'validated', 'discarded'],
 	insight: ['discarded'],
+	event: ['wrapped_up', 'archived'],
+	contact: ['converted', 'rejected', 'not_interested'],
+	company: ['churned', 'not_a_fit'],
+	meeting: ['processed', 'cancelled', 'archived'],
 }
 
 /**
@@ -65,6 +76,20 @@ export const LOOP_STATUSES = [
 	'fully_autonomous',
 ] as const
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
+
+/**
+ * Every status a running flow can be in. A flow's status ladder is written two ways: `pilot`,
+ * `supervised`, `live` in the MCP tools and the default workspace types, `learning`,
+ * `supervised`, `fully_autonomous` in LOOP_STATUSES above. Code that asks "is this flow running"
+ * reads this list so both spellings count, and a flow in `learning` is not skipped.
+ */
+export const LIVE_FLOW_STATUSES = [
+	'pilot',
+	'learning',
+	'supervised',
+	'live',
+	'fully_autonomous',
+] as const
 
 export {
 	loopTargetReadingSchema,

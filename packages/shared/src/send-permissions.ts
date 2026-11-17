@@ -22,7 +22,10 @@ export const SEND_PERMISSION_MODE_LABELS: Record<SendPermissionMode, string> = {
 }
 
 /**
- * The draft kinds that have a send tool, which is what a setting is keyed on. A kind an
+ * The draft kinds that have a send tool, which is what a setting is keyed on. `agent_email` is
+ * the one that is not a draft kind: it is how an agent's own maskin.io mailbox (Resend) is
+ * gated, kept apart from `email` (Gmail, in a person's name) so a level on one never opens the
+ * other. The draft behind it is still an `email` draft. A kind an
  * integration adds later is missing from here until it is added, and a send of a kind that is
  * not listed is treated as ask_first. A test keeps this list in step with the integrations.
  */
@@ -37,6 +40,7 @@ export const SEND_PERMISSION_KINDS = [
 	'linkedin_post_edit',
 	'slack_message',
 	'manual_message',
+	'agent_email',
 ] as const
 export type SendPermissionKind = (typeof SEND_PERMISSION_KINDS)[number]
 
@@ -51,10 +55,11 @@ export const SEND_PERMISSION_KIND_LABELS: Record<SendPermissionKind, string> = {
 	linkedin_post_edit: 'LinkedIn post edit',
 	slack_message: 'Slack message',
 	manual_message: 'Message sent by hand',
+	agent_email: 'Email from own address',
 }
 
 /**
- * Where a workspace starts: every kind sends directly (Sebastian, 11 Nov 2026: an agent with
+ * Where a workspace starts: every kind sends directly, except an agent's own address (Sebastian, 11 Nov 2026: an agent with
  * Read & write sends; a person turns a kind to ask first, or off, per agent or for the whole
  * workspace). This is the answer for a workspace that has no saved row. It replaces the 4 Nov
  * start (ask first for email, LinkedIn messages, invitations and InMail); the rows that
@@ -72,6 +77,8 @@ export const STARTING_SEND_MODES: Record<SendPermissionKind, SendPermissionMode>
 	linkedin_post_edit: 'always_allow',
 	slack_message: 'always_allow',
 	manual_message: 'always_allow',
+	// The one kind that asks: an agent's own address starts on a person's yes (Sebastian, 16 Nov 2026).
+	agent_email: 'ask_first',
 }
 
 export const isSendPermissionKind = (value: string): value is SendPermissionKind =>

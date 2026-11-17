@@ -39,7 +39,7 @@ import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
  * tool, the way `gmail_send_email` is behind Gmail (routes/integrations-gmail.ts), with the
  * same rules:
  *
- *  - Needs "Read & write" on Resend. An agent whose send setting for emails is ask first also
+ *  - Needs "Read & write" on Resend. An agent whose send setting for emails from its own address is ask first also
  *    needs a person's approval of this exact email; one set to always allow sends the draft at
  *    once, and deny refuses. The only input is `object_id`: the email is read from the object
  *    (`metadata.kind = "email"`), so nothing the agent passes can change what goes out.
@@ -263,10 +263,11 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 
-	// 3. The agent's send setting for emails, then exactly what is going out.
-	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	// 3. The agent's send setting for emails from its own address (its own kind, apart from
+	// Gmail's), then exactly what is going out.
+	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'agent_email' })
 	if (decision === 'denied') {
-		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
+		const f = fail(403, 'FORBIDDEN', deniedMessage('emails from your own address'))
 		return c.json(f.body, f.status)
 	}
 	const loaded = await loadObjectEmail(

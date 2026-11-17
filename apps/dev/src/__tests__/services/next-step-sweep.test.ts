@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { NEXT_STEP_COVERED_OBJECTS, isQueuedType } from '../../lib/next-steps'
 import { RECORD_ONLY_MS, bucketStart, reasonFor, sweepMode } from '../../services/next-step-sweep'
 
 const now = new Date('2026-11-12T15:30:00.000Z')
@@ -44,5 +45,31 @@ describe('reasonFor', () => {
 	it('names the reason the wake prompt and the event use', () => {
 		expect(reasonFor({ reason: 'overdue' })).toBe('step_overdue')
 		expect(reasonFor({ reason: 'missing' })).toBe('no_next_step')
+	})
+})
+
+describe('what the sweep covers', () => {
+	it('covers a flow in every running status, so one in learning is swept', () => {
+		const loop = NEXT_STEP_COVERED_OBJECTS.find((c) => c.type === 'loop')
+		for (const status of ['pilot', 'learning', 'supervised', 'live', 'fully_autonomous']) {
+			expect(loop?.statuses).toContain(status)
+		}
+		for (const status of ['draft', 'paused', 'archived']) {
+			expect(loop?.statuses).not.toContain(status)
+		}
+	})
+
+	it('covers a contact for an overdue step only, and queues it', () => {
+		const contact = NEXT_STEP_COVERED_OBJECTS.find((c) => c.type === 'contact')
+		expect(contact?.overdueOnly).toBe(true)
+		expect(isQueuedType('contact')).toBe(true)
+		for (const status of ['converted', 'rejected', 'not_interested']) {
+			expect(contact?.statuses).not.toContain(status)
+		}
+	})
+
+	it('wakes a bet, a loop and an event alone, and any other type through the queue', () => {
+		for (const type of ['bet', 'loop', 'event']) expect(isQueuedType(type)).toBe(false)
+		expect(isQueuedType('webinar_task')).toBe(true)
 	})
 })
