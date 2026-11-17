@@ -3,7 +3,7 @@ import Testing
 
 @testable import MaskinCore
 
-private final class StubSource: CallerIDContactSource, @unchecked Sendable {
+private final class CallerIDStubSource: CallerIDContactSource, @unchecked Sendable {
 	private let lock = NSLock()
 	private var contacts: [WorkObject]
 	private var error: (any Error)?
@@ -22,22 +22,22 @@ private final class StubSource: CallerIDContactSource, @unchecked Sendable {
 	}
 }
 
-private struct Boom: Error {}
+private struct CallerIDBoom: Error {}
 
 /// A clock the test moves by hand.
-private final class TestClock: @unchecked Sendable {
+private final class CallerIDTestClock: @unchecked Sendable {
 	private let lock = NSLock()
 	private var current = Date(timeIntervalSince1970: 1_000_000)
 	var now: Date { lock.withLock { current } }
 	func advance(_ seconds: TimeInterval) { lock.withLock { current = current.addingTimeInterval(seconds) } }
 }
 
-private let ada = callerIDContact("a", title: "Ada", phone: "+4512345678")
+private let callerIDAda = callerIDContact("a", title: "Ada", phone: "+4512345678")
 
 @Suite("Caller ID refresher")
 struct CallerIDRefresherTests {
 	private func makeRefresher(
-		source: any CallerIDContactSource, store: InMemoryCallerIDListStore, clock: TestClock
+		source: any CallerIDContactSource, store: InMemoryCallerIDListStore, clock: CallerIDTestClock
 	) -> CallerIDRefresher {
 		CallerIDRefresher(
 			source: source, store: store, marker: InMemoryCallerIDRefreshMarker(), now: { clock.now })
@@ -46,15 +46,15 @@ struct CallerIDRefresherTests {
 	@Test("The first open builds the file")
 	func firstOpen() async {
 		let store = InMemoryCallerIDListStore()
-		let refresher = makeRefresher(source: StubSource([ada]), store: store, clock: TestClock())
+		let refresher = makeRefresher(source: CallerIDStubSource([callerIDAda]), store: store, clock: CallerIDTestClock())
 		#expect(await refresher.refresh() == .refreshed(count: 1))
 		#expect(store.load() == [CallerIDEntry(number: 4_512_345_678, label: "Ada")])
 	}
 
 	@Test("Opening again inside 24 hours does nothing, after 24 hours it refreshes")
 	func throttled() async {
-		let source = StubSource([ada])
-		let clock = TestClock()
+		let source = CallerIDStubSource([callerIDAda])
+		let clock = CallerIDTestClock()
 		let refresher = makeRefresher(source: source, store: InMemoryCallerIDListStore(), clock: clock)
 		_ = await refresher.refresh()
 		clock.advance(CallerIDRefresher.minimumInterval - 1)
@@ -67,8 +67,8 @@ struct CallerIDRefresherTests {
 
 	@Test("A manual refresh ignores the 24 hours")
 	func manual() async {
-		let source = StubSource([ada])
-		let refresher = makeRefresher(source: source, store: InMemoryCallerIDListStore(), clock: TestClock())
+		let source = CallerIDStubSource([callerIDAda])
+		let refresher = makeRefresher(source: source, store: InMemoryCallerIDListStore(), clock: CallerIDTestClock())
 		_ = await refresher.refresh()
 		#expect(await refresher.refresh(force: true) == .refreshed(count: 1))
 		#expect(source.reads == 2)
@@ -76,13 +76,13 @@ struct CallerIDRefresherTests {
 
 	@Test("A failed read keeps the old file and tries again on the next open")
 	func failureKeepsOldFile() async {
-		let source = StubSource([ada])
+		let source = CallerIDStubSource([callerIDAda])
 		let store = InMemoryCallerIDListStore()
-		let clock = TestClock()
+		let clock = CallerIDTestClock()
 		let refresher = makeRefresher(source: source, store: store, clock: clock)
 		_ = await refresher.refresh()
 		clock.advance(CallerIDRefresher.minimumInterval)
-		source.fail(Boom())
+		source.fail(CallerIDBoom())
 		#expect(await refresher.refresh() == .failed)
 		#expect(store.load()?.count == 1)
 		source.fail(nil)
@@ -91,10 +91,10 @@ struct CallerIDRefresherTests {
 
 	@Test("A failed first read leaves no file and does not start the 24 hour wait")
 	func firstFailure() async {
-		let source = StubSource([ada])
-		source.fail(Boom())
+		let source = CallerIDStubSource([callerIDAda])
+		source.fail(CallerIDBoom())
 		let store = InMemoryCallerIDListStore()
-		let refresher = makeRefresher(source: source, store: store, clock: TestClock())
+		let refresher = makeRefresher(source: source, store: store, clock: CallerIDTestClock())
 		#expect(await refresher.refresh() == .failed)
 		#expect(store.load() == nil)
 		source.fail(nil)
@@ -104,7 +104,7 @@ struct CallerIDRefresherTests {
 	@Test("Sign-out deletes the file, and the next sign-in builds it straight away")
 	func wipe() async {
 		let store = InMemoryCallerIDListStore()
-		let refresher = makeRefresher(source: StubSource([ada]), store: store, clock: TestClock())
+		let refresher = makeRefresher(source: CallerIDStubSource([callerIDAda]), store: store, clock: CallerIDTestClock())
 		_ = await refresher.refresh()
 		await refresher.wipe()
 		#expect(store.load() == nil)
@@ -113,10 +113,10 @@ struct CallerIDRefresherTests {
 
 	@Test("A refresh that was reading when the person signed out writes nothing")
 	func wipeDuringRead() async {
-		let gate = Gate()
+		let gate = CallerIDReadGate()
 		let store = InMemoryCallerIDListStore()
 		let refresher = CallerIDRefresher(
-			source: GatedSource(gate: gate, contacts: [ada]), store: store)
+			source: CallerIDGatedSource(gate: gate, contacts: [callerIDAda]), store: store)
 		let running = Task { await refresher.refresh() }
 		await gate.waitUntilEntered()
 		await refresher.wipe()
@@ -126,7 +126,7 @@ struct CallerIDRefresherTests {
 	}
 }
 
-private actor Gate {
+private actor CallerIDReadGate {
 	private var entered = false
 	private var opened = false
 	private var waiting: CheckedContinuation<Void, Never>?
@@ -148,8 +148,8 @@ private actor Gate {
 	}
 }
 
-private struct GatedSource: CallerIDContactSource {
-	let gate: Gate
+private struct CallerIDGatedSource: CallerIDContactSource {
+	let gate: CallerIDReadGate
 	let contacts: [WorkObject]
 	func contactsWithPhone() async throws -> [WorkObject] {
 		await gate.pass()
@@ -159,7 +159,7 @@ private struct GatedSource: CallerIDContactSource {
 
 @Suite("Caller ID contact source")
 struct RemoteCallerIDContactSourceTests {
-	private final class Pages: @unchecked Sendable {
+	private final class CallerIDPages: @unchecked Sendable {
 		private let lock = NSLock()
 		private(set) var queries: [ObjectsQuery] = []
 		let rows: [WorkObject]
@@ -176,7 +176,7 @@ struct RemoteCallerIDContactSourceTests {
 		let rows = (0..<250).map {
 			callerIDContact("c\($0)", title: "Person \($0)", phone: $0 % 2 == 0 ? "+45\(10_000_000 + $0)" : nil)
 		}
-		let pages = Pages(rows)
+		let pages = CallerIDPages(rows)
 		let source = RemoteCallerIDContactSource { pages.page($0) }
 		let found = try await source.contactsWithPhone()
 		#expect(found.count == 125)
@@ -187,7 +187,7 @@ struct RemoteCallerIDContactSourceTests {
 	@Test("A full last page still asks for the next, an empty one ends the walk")
 	func exactMultiple() async throws {
 		let rows = (0..<200).map { callerIDContact("c\($0)", title: "P\($0)", phone: "+45\(10_000_000 + $0)") }
-		let pages = Pages(rows)
+		let pages = CallerIDPages(rows)
 		let found = try await RemoteCallerIDContactSource { pages.page($0) }.contactsWithPhone()
 		#expect(found.count == 200)
 		#expect(pages.queries.map(\.offset) == [0, 100, 200])
@@ -196,10 +196,10 @@ struct RemoteCallerIDContactSourceTests {
 	@Test("A failing page fails the whole read, so a half list is never saved")
 	func failure() async {
 		let source = RemoteCallerIDContactSource { query in
-			if query.offset > 0 { throw Boom() }
+			if query.offset > 0 { throw CallerIDBoom() }
 			return (0..<100).map { callerIDContact("c\($0)", title: "P\($0)", phone: "+4510000000") }
 		}
-		await #expect(throws: Boom.self) { try await source.contactsWithPhone() }
+		await #expect(throws: CallerIDBoom.self) { try await source.contactsWithPhone() }
 	}
 }
 
