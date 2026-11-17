@@ -61,6 +61,7 @@ import {
 } from './list-contract.js'
 import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
 import { buildListPayload, listPageText, listText } from './list-response.js'
+import { DEFAULT_TIMEZONE, withLocalTimes } from './local-time.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -159,6 +160,12 @@ export interface McpConfig {
 	 * on stdio and on external callers.
 	 */
 	triggeringEventId?: number
+	/**
+	 * The IANA zone to show times in for this caller: the person calling, or the person in the
+	 * calling agent's chat. Set by `routes/mcp.ts` on HTTP and looked up only when a tool asks.
+	 * Unset (stdio) reads as Europe/Copenhagen, the zone the agent containers run in.
+	 */
+	personTimezone?: () => Promise<string>
 	/**
 	 * The caller's own session id, as sent in X-Maskin-Session-Id by the agent
 	 * container. Over HTTP the MCP server runs inside apps/dev, so
@@ -606,6 +613,24 @@ async function apiFetch(
 	}
 
 	return response
+}
+
+/** The zone times are shown in for this caller; the default when none is known or the lookup fails. */
+async function callerTimezone(config: McpConfig): Promise<string> {
+	try {
+		return (await config.personTimezone?.()) ?? DEFAULT_TIMEZONE
+	} catch {
+		return DEFAULT_TIMEZONE
+	}
+}
+
+/** A next step with its due time also in the caller's zone. */
+function withLocalDue(step: unknown, timezone: string): unknown {
+	return isPlainObject(step) ? withLocalTimes(step, ['due_at'], timezone) : step
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 async function apiCall(
@@ -3015,6 +3040,9 @@ function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<strin
  * enabled triggers are read after the save; if that read fails the similar
  * check is skipped and the rest still ships.
  */
+/** The compact trigger fields that hold a UTC time; each gets a local twin. */
+const TRIGGER_TIME_KEYS = ['next_run', 'last_run'] as const
+
 async function triggerWriteResult(
 	config: McpConfig,
 	workspaceId: string | undefined,
@@ -3041,7 +3069,11 @@ async function triggerWriteResult(
 	}
 	const warnings = detectTriggerWarnings({ id: saved.id, trigger: saved, others, checks })
 	const wsId = saved.workspaceId ?? workspaceId ?? config.defaultWorkspaceId
-	const row: Record<string, unknown> = { ...compactTrigger(saved, triggerAgent(saved, actors)) }
+	const row: Record<string, unknown> = withLocalTimes(
+		compactTrigger(saved, triggerAgent(saved, actors)),
+		TRIGGER_TIME_KEYS,
+		await callerTimezone(config),
+	)
 	return {
 		trigger: wsId ? addUrl(row, config, wsId, { kind: 'trigger', id: saved.id }) : row,
 		warnings,
@@ -4481,9 +4513,10 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/next-step`, body, {
 				workspaceId: workspace_id,
 			})
+			const timezone = await callerTimezone(config)
 			return {
 				_meta: meta('set_next_step', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withLocalDue(result, timezone)) }],
 			}
 		},
 	)
@@ -4505,9 +4538,19 @@ export function createMcpServer(config: McpConfig) {
 				body,
 				{ workspaceId: workspace_id },
 			)
+			const timezone = await callerTimezone(config)
+			const scheduled = isPlainObject(result)
+				? {
+						...result,
+						next_step: withLocalDue(result.next_step, timezone),
+						wake_up: isPlainObject(result.wake_up)
+							? withLocalTimes(result.wake_up, ['at'], timezone)
+							: result.wake_up,
+					}
+				: result
 			return {
 				_meta: meta('schedule_next_step', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(scheduled) }],
 			}
 		},
 	)
@@ -4525,9 +4568,10 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'PATCH', `/api/objects/${object_id}/next-step`, body, {
 				workspaceId: workspace_id,
 			})
+			const timezone = await callerTimezone(config)
 			return {
 				_meta: meta('update_next_step', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withLocalDue(result, timezone)) }],
 			}
 		},
 	)
@@ -7430,9 +7474,14 @@ export function createMcpServer(config: McpConfig) {
 			const actors = await resolveActors(config, ownerIds, args.workspace_id)
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const now = new Date()
+			const timezone = await callerTimezone(config)
 			const shapeRow = (t: RawTrigger): Record<string, unknown> => {
 				const row: Record<string, unknown> = compact
-					? { ...compactTrigger(t, triggerAgent(t, actors), now) }
+					? withLocalTimes(
+							compactTrigger(t, triggerAgent(t, actors), now),
+							TRIGGER_TIME_KEYS,
+							timezone,
+						)
 					: { ...t }
 				return wsId
 					? addUrl(row, config, t.workspaceId ?? wsId, { kind: 'trigger', id: t.id })
@@ -7536,7 +7585,11 @@ export function createMcpServer(config: McpConfig) {
 				trigger.targetActorId ? [trigger.targetActorId] : [],
 				workspace_id,
 			)
-			const summary = compactTrigger(trigger, triggerAgent(trigger, actors))
+			const summary = withLocalTimes(
+				compactTrigger(trigger, triggerAgent(trigger, actors)),
+				TRIGGER_TIME_KEYS,
+				await callerTimezone(config),
+			)
 			// The short fields lead, then the full prompt and config, so a cut text still
 			// carries what the trigger is and when it runs.
 			const full = {
