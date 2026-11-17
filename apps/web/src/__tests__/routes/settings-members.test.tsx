@@ -46,6 +46,10 @@ vi.mock('@/components/settings/invite-member-dialog', () => ({
 	InviteMemberDialog: ({ open }: { open: boolean }) => (open ? <p>Invite member dialog</p> : null),
 }))
 
+vi.mock('@/lib/auth', () => ({
+	getStoredActor: () => ({ id: 'me-1', name: 'You', type: 'human' }),
+}))
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/components/shared/actor-avatar', () => ({
@@ -161,6 +165,30 @@ describe('MembersPage', () => {
 		expect(mockNavigate).toHaveBeenCalledWith({
 			to: '/$workspaceId/agents/$agentId',
 			params: { workspaceId: 'ws-1', agentId: 'a2' },
+		})
+	})
+
+	it('offers a Message icon on other people only, and opens New chat with that person', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [
+				{ actorId: 'me-1', name: 'You', type: 'human', role: 'owner', joinedAt: null },
+				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'member', joinedAt: null },
+				{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null },
+			],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+
+		expect(screen.getAllByRole('button', { name: /^Message / })).toHaveLength(1)
+		expect(screen.queryByRole('button', { name: 'Message You' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Message Bot One' })).not.toBeInTheDocument()
+
+		fireEvent.click(screen.getByRole('button', { name: 'Message Alice' }))
+
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId: 'ws-1' },
+			search: { agentId: 'a1', agentName: 'Alice', from: 'person_message_row' },
 		})
 	})
 
@@ -334,6 +362,7 @@ describe('MembersPage write controls by workspace role', () => {
 		expect(screen.getByRole('button', { name: /Add member/ })).toBeDisabled()
 		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toBeDisabled()
 		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Message Alice' })).toBeDisabled()
 	})
 
 	it('leaves add, role change and remove enabled for a member', () => {
@@ -341,5 +370,6 @@ describe('MembersPage write controls by workspace role', () => {
 		expect(screen.getByRole('button', { name: /Add member/ })).toBeEnabled()
 		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toBeEnabled()
 		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeEnabled()
+		expect(screen.getByRole('button', { name: 'Message Alice' })).toBeEnabled()
 	})
 })

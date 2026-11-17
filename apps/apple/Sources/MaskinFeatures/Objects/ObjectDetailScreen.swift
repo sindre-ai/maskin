@@ -309,6 +309,14 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						} label: {
 							Label("Edit", systemImage: "pencil")
 						}
+						if let appRuntime, appRuntime.createViewAgent != nil {
+							Button {
+								appRuntime.startCreateView(
+									.object(id: object.id, title: object.displayTitle, type: object.type))
+							} label: {
+								Label(CreateViewMessage.label, systemImage: "rectangle.3.group")
+							}
+						}
 						if store.canArchive, object.status != ObjectDetailStore.archivedStatus {
 							Button {
 								MaskinHaptics.play(.light)

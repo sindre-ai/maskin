@@ -54,7 +54,7 @@ function GeneralPage() {
 							aria-label="Workspace name"
 							placeholder={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}
 							disabled={!canWrite}
-							className="w-full rounded-full border-0 bg-secondary lg:w-72"
+							className="w-full rounded-full bg-secondary lg:w-72"
 						/>
 					</ViewerTooltip>
 				</SettingsRow>
