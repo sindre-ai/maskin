@@ -8,6 +8,7 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 }))
 
 import {
+	analyticsStartReason,
 	approximatePromptTokens,
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
@@ -189,7 +190,18 @@ describe('trackSessionLaunchModel', () => {
 			model_source: 'agent',
 			route: 'claude_oauth',
 			emitted_from: 'dev_backend',
+			start_reason: null,
 		})
+	})
+
+	it('carries the start reason category on agent_session_started', async () => {
+		await trackSessionLaunchModel({ ...base, startReason: 'task' })
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started',
+			'agent-1',
+			expect.objectContaining({ start_reason: 'task' }),
+		)
 	})
 
 	it('also fires trigger_fired, with the same three properties, for a trigger-dispatched session', async () => {
@@ -246,5 +258,32 @@ describe('trackAgentSessionCompletedWithSkills', () => {
 
 		const props = capturePosthogEventMock.mock.calls[0][2]
 		expect(props.duration_ms).toBeUndefined()
+	})
+})
+
+describe('analyticsStartReason', () => {
+	it('names a ready task, a mention, the sweep and a card answer', () => {
+		expect(
+			analyticsStartReason({
+				start_reason: 'driver_wake',
+				driver_wake: { source: 'state_change', reasons: ['task_ready'] },
+			}),
+		).toBe('task')
+		expect(analyticsStartReason({ start_reason: 'agent_request' })).toBe('mention')
+		expect(
+			analyticsStartReason({
+				start_reason: 'sweep',
+				driver_wake: { source: 'sweep', reasons: ['task_ready'] },
+			}),
+		).toBe('sweep')
+		expect(
+			analyticsStartReason({ start_reason: 'person', card_answer: { by_actor_id: 'p1' } }),
+		).toBe('card_answer')
+	})
+
+	it('keeps the platform start reason for any other start, and null when there is none', () => {
+		expect(analyticsStartReason({ start_reason: 'trigger_cron' })).toBe('trigger_cron')
+		expect(analyticsStartReason({})).toBeNull()
+		expect(analyticsStartReason(null)).toBeNull()
 	})
 })

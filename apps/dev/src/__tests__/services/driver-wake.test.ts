@@ -6,6 +6,7 @@ import {
 	childrenWakeParent,
 	isClosedStatus,
 	isFailedOrDiscarded,
+	isTaskReady,
 } from '../../services/driver-wake'
 
 const task = (id: string, status: string) => ({ id, type: 'task', status })
@@ -100,6 +101,28 @@ describe('buildWakePrompt', () => {
 		})
 		expect(prompt).not.toContain('Stored next step')
 		expect(prompt).toContain('(untitled)')
+	})
+})
+
+describe('isTaskReady', () => {
+	it('is true only for a task at todo', () => {
+		expect(isTaskReady('task', 'todo')).toBe(true)
+		expect(isTaskReady('task', 'backlog')).toBe(false)
+		expect(isTaskReady('task', 'in_progress')).toBe(false)
+		expect(isTaskReady('bet', 'todo')).toBe(false)
+	})
+})
+
+describe('buildWakePrompt for a ready task', () => {
+	it('says the task is ready and names it', () => {
+		const prompt = buildWakePrompt({
+			object: { id: 't1', type: 'task', title: 'Send the newsletter', status: 'todo' },
+			reasons: [{ reason: 'task_ready', changed: [] }],
+			nextStep: null,
+		})
+		expect(prompt).toContain('This task is ready for you')
+		expect(prompt).toContain('Send the newsletter')
+		expect(prompt).toContain('t1')
 	})
 })
 

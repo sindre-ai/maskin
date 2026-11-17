@@ -223,6 +223,55 @@ describe('NextStepSweep', () => {
 		expect(woke?.data).toMatchObject({ object_id: bet.id, reason: 'step_overdue' })
 	})
 
+	describe('a backlog task that is due soon', () => {
+		// A task the driver owns, still in backlog, due in `dueInMs`.
+		const backlogTask = (dueInMs: number, status = 'backlog') =>
+			insertObject(db, workspaceId, ownerId, {
+				type: 'task',
+				status,
+				driver: driverId,
+				metadata: { due_at: new Date(Date.now() + dueInMs).toISOString() },
+			})
+
+		it('is recorded, then wakes its owner as task_ready once the wake flag has been on for 3 days', async () => {
+			const task = await backlogTask(6 * HOUR)
+			setFlags('next-step-sweep', 'next-step-sweep-wake')
+			await sweep().sweepWorkspace(workspaceId)
+			expect(await claims()).toEqual([
+				expect.objectContaining({ objectId: task.id, reason: 'task_ready', mode: 'recorded' }),
+			])
+			expect(startSessionMock).not.toHaveBeenCalled()
+			await recordedFor(4 * DAY)
+
+			await sweep().sweepWorkspace(workspaceId)
+			await sweep().sweepWorkspace(workspaceId)
+
+			expect(startSessionMock).toHaveBeenCalledTimes(1)
+			const call = startSessionMock.mock.calls[0]?.[0]
+			expect(call?.actorId).toBe(driverId)
+			expect(call?.initiatedFromObjectId).toBe(task.id)
+			expect(call?.config).toMatchObject({
+				start_reason: 'sweep',
+				driver_wake: { source: 'sweep', reasons: ['task_ready'] },
+			})
+		})
+
+		it('leaves a task due in more than 24 hours, one already in progress, and one with no date', async () => {
+			await backlogTask(3 * DAY)
+			await backlogTask(2 * HOUR, 'in_progress')
+			await insertObject(db, workspaceId, ownerId, {
+				type: 'task',
+				status: 'backlog',
+				driver: driverId,
+			})
+			setFlags('next-step-sweep')
+
+			await sweep().sweepWorkspace(workspaceId)
+
+			expect(await claims()).toHaveLength(0)
+		})
+	})
+
 	it('the wake flag alone does nothing', async () => {
 		await overdueBet()
 		setFlags('next-step-sweep-wake')

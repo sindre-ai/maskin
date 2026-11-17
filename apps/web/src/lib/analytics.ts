@@ -906,6 +906,9 @@ export function trackForyouCardAction(p: {
 		action_id: p.action_id,
 		seconds_to_action: p.seconds_to_action ?? null,
 		session_id: p.session_id ?? null,
+		// A person tapped. The card whose default was carried out at its deadline is counted
+		// server-side, as foryou_card_default_applied with this set to true.
+		answered_by_default: false,
 	})
 }
 

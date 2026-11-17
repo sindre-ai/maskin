@@ -1096,6 +1096,7 @@ describe('Events Routes', () => {
 					[], // the same card read again for a delete_agent tap: nothing stamped
 					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
+					[], // the card asker lookup: no decision card in the thread
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
 					[{ driver: null }],
@@ -1268,6 +1269,7 @@ describe('Events Routes', () => {
 					[], // the same card read again for a delete_agent tap: nothing stamped
 					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
+					[], // the card asker lookup: no decision card in the thread
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
 					// Thread comments query: only humans authored, but root @mentions agent A
@@ -1356,6 +1358,7 @@ describe('Events Routes', () => {
 					[], // the same card read again for a delete_agent tap: nothing stamped
 					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
+					[], // the card asker lookup: no decision card in the thread
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
 						{
@@ -1437,6 +1440,7 @@ describe('Events Routes', () => {
 					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					[{ id: mentionedAgentId }], // the mentioned agents
+					[], // the card asker lookup: no decision card in the thread
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
 						{
@@ -1511,6 +1515,7 @@ describe('Events Routes', () => {
 					[], // the same card read again for a delete_agent tap: nothing stamped
 					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
+					[], // the card asker lookup: no decision card in the thread
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
 					// Thread comments: new + prior agent A reply + root. Both agent rows
@@ -1595,6 +1600,7 @@ describe('Events Routes', () => {
 					[{ id: agentAId }],
 					// resolveMentionedAgentIds — the excludedAgentIds source
 					[{ id: agentAId }],
+					[], // the card asker lookup: no decision card in the thread
 					// Driver lookup for the fallback exclusion. The comment carries a
 					// mention, so the ladder never reaches case 2 and this result is
 					// unused — the exclusion here is still the mention one.

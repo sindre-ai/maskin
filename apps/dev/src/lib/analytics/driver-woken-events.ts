@@ -10,6 +10,9 @@ export type DriverWakeReason =
 	| 'decision_answered'
 	| 'decision_expired'
 	| 'status_changed'
+	// A task was moved to todo, or created at todo, by someone other than its owner; or it is still
+	// in backlog and due within 24 hours (found by the sweep).
+	| 'task_ready'
 	| 'step_overdue'
 	| 'no_next_step'
 	| 'behind_pace'

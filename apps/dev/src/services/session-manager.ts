@@ -68,6 +68,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { resolveChatIdleCloseMs } from '../config/session-idle'
 import { notHumanPaused, withoutHumanPauseMarker } from '../lib/agent-pause'
 import {
+	analyticsStartReason,
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
 	trackSessionLaunchModel,
@@ -3176,6 +3177,7 @@ ${cont.continues_prompt}
 						typeof (session.config as Record<string, unknown> | null)?.trigger_type === 'string'
 							? ((session.config as Record<string, unknown>).trigger_type as string)
 							: null,
+					startReason: analyticsStartReason(session.config),
 				})
 			}
 		}

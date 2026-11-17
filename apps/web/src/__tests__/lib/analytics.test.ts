@@ -934,6 +934,7 @@ describe('v1 taxonomy helpers', () => {
 				action_id: 'quick_reply:approved',
 				seconds_to_action: null,
 				session_id: null,
+				answered_by_default: false,
 			})
 		})
 
@@ -954,6 +955,7 @@ describe('v1 taxonomy helpers', () => {
 				action_id: 'quick_reply:approved',
 				seconds_to_action: 95,
 				session_id: 'run-1',
+				answered_by_default: false,
 			})
 		})
 

@@ -589,6 +589,8 @@ describe('CommentDispatcher', () => {
 			[{ actorId: 'driver-1' }],
 			// driver lookup
 			[{ driver: 'driver-1' }],
+			// the card asker lookup: no decision card in the thread
+			[],
 			// CoS routing prompt (fell through to case 3): title lookup
 			// workspace Chief of Staff lookup
 			COS_LOOKUP_ROWS,

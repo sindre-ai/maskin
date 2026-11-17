@@ -33,8 +33,10 @@ import {
 	claimCommentResponder,
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
+import { findDecisionCardAsker } from '../lib/decision-card-asker'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
+import { mentionStartsNoRun } from '../lib/flow-handover'
 import {
 	type PrecheckResult,
 	decidePrecheck,
@@ -2515,6 +2517,27 @@ export class CommentDispatcher {
 			.limit(1)
 		const driverId = obj?.driver ?? null
 
+		// A person's answer to a decision card starts only the agent that asked it, and the
+		// thread-reply spawn in routes/events.ts does that. The driver and the Chief of Staff
+		// stand down, so one tap does not wake two agents (the "Clark Knøsen" double reply).
+		if (ctx.parentEventId !== null) {
+			const askerId = await findDecisionCardAsker(this.db, {
+				workspaceId: ctx.workspaceId,
+				objectId: ctx.entityId,
+				threadRootEventId: ctx.parentEventId,
+			})
+			if (askerId) {
+				await this.emitResolved(
+					ctx.event,
+					ctx.eventIdNum,
+					ctx.commenterId,
+					'noop_suppressed',
+					askerId,
+				)
+				return
+			}
+		}
+
 		// Case 0 — the driver authored the comment itself. Guard-first: resolved
 		// BEFORE case 2 and case 3 so nothing downstream can claim a comment the
 		// object's own driver already wrote. Case 2 would decline this shape
@@ -2860,7 +2883,7 @@ export class CommentDispatcher {
 		// A person's Pause holds against a mention too. Like a blocked loop guard, the
 		// notification above stays, so the mention is waiting when the agent resumes.
 		const [mentionedAgent] = await this.db
-			.select({ agentState: actors.agentState, metadata: actors.metadata })
+			.select({ agentState: actors.agentState, metadata: actors.metadata, name: actors.name })
 			.from(actors)
 			.where(eq(actors.id, ctx.actor.id))
 			.limit(1)
@@ -2916,6 +2939,25 @@ export class CommentDispatcher {
 				})
 				return
 			}
+		}
+
+		// A flow can opt in to "a handover is a task, a mention starts nothing". The notification
+		// above stays; the agent that needs the work creates a task, which starts its owner.
+		if (
+			ctx.commenterIsAgent &&
+			!isHelperReturn &&
+			(await mentionStartsNoRun(this.db, {
+				workspaceId: ctx.workspaceId,
+				objectId: ctx.objectId,
+				mentionedAgentName: mentionedAgent?.name ?? null,
+			}))
+		) {
+			logger.info('Mention starts no run: the flow hands over by task', {
+				event_id: ctx.event.event_id,
+				resolved_actor_id: ctx.actor.id,
+				object_id: ctx.objectId,
+			})
+			return
 		}
 
 		// Link the mentioned agent's session to the session the author was running,
