@@ -4,6 +4,7 @@ import {
 	getSkillData,
 	getTriggerData,
 } from '../../../lib/marketplace-loops/loop-data'
+import { loopSettingsSchema } from '../../../lib/marketplace-loops/loop-settings'
 import {
 	MEETING_LOOP,
 	MEETING_LOOP_ACTOR_IDS,
@@ -11,13 +12,37 @@ import {
 	MEETING_LOOP_TRIGGER_IDS,
 } from '../../../lib/marketplace-loops/meeting-loop'
 
-describe('Meeting Flow definition', () => {
+describe('Meeting insights flow definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(MEETING_LOOP.slug).toBe('meeting-loop')
-		expect(MEETING_LOOP.name).toBe('Meeting Flow')
+		expect(MEETING_LOOP.name).toBe('Meeting insights')
 		expect(MEETING_LOOP.useCase).toBe('Operations')
-		expect(MEETING_LOOP.version).toBe('1.0.0')
+		expect(MEETING_LOOP.version).toBe('1.1.0')
 		expect(MEETING_LOOP.description.length).toBeGreaterThan(0)
+	})
+
+	it('ships entry condition, close condition and tags, with no targets', () => {
+		const settings = loopSettingsSchema.parse(MEETING_LOOP.settings)
+		expect(settings.entryCondition).toMatch(/Google Meet transcript/)
+		expect(settings.closeCondition).toMatch(/stays at happened/)
+		expect(settings.tags).toEqual(['Context'])
+		expect(settings.targets).toBeUndefined()
+	})
+
+	it('links meetings into the flow from every ingest trigger', () => {
+		const withStep = MEETING_LOOP_TRIGGER_IDS.map(getTriggerData)
+			.filter((t) => /in_loop/.test(t.actionPrompt ?? ''))
+			.map((t) => t.name)
+			.sort()
+		expect(withStep).toEqual([
+			'Catch-up ingest: meetings stuck at happened',
+			'Meeting ended: ingest Google Meet transcript on arrival',
+			'Notetaker sweep: ingest new meetings (every 2h, weekdays)',
+		])
+		for (const id of MEETING_LOOP_TRIGGER_IDS) {
+			const prompt = getTriggerData(id).actionPrompt ?? ''
+			if (/in_loop/.test(prompt)) expect(prompt).toMatch(/Meeting insights flow.*list_loops/)
+		}
 	})
 
 	it('ships one actor, six triggers and eight skills, no duplicates', () => {
@@ -114,5 +139,18 @@ describe('Meeting Flow definition', () => {
 		for (const id of MEETING_LOOP_ACTOR_IDS) {
 			expect(JSON.stringify(getActorData(id).tools)).not.toContain('mcpServers')
 		}
+	})
+
+	it('says flow, not loop, in the text a person reads', () => {
+		const texts = [
+			MEETING_LOOP.description,
+			...MEETING_LOOP_ACTOR_IDS.map((id) => {
+				const a = getActorData(id)
+				return `${a.name} ${a.description} ${a.systemPrompt}`
+			}),
+			...MEETING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? ''),
+		]
+		// Tool and object type names (list_loops, in_loop, update_loop) are one word, so they do not match.
+		for (const text of texts) expect(text).not.toMatch(/\b[Ll]oops?\b/)
 	})
 })
