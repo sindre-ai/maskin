@@ -1,4 +1,4 @@
-// Shared constants for the Market & Competitor Watch loop marketplace bundle.
+// Shared constants for the Competitor watch loop marketplace bundle.
 //
 // The bundle contains the Market Researcher, Market Strategist and Briefing
 // Owner, plus every trigger and skill attached to them. Unlike the bundles

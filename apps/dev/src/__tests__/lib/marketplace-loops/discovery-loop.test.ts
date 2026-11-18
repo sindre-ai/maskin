@@ -22,7 +22,7 @@ describe('Product Discovery Flow definition', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Flow')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.4.0')
+		expect(DISCOVERY_LOOP.version).toBe('1.5.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -167,12 +167,13 @@ describe('Product Discovery Flow definition', () => {
 		for (const id of foundIds) expect(ownIds.has(id)).toBe(true)
 	})
 
-	it('ships the loop page tabs in order: Radar, Learning, Briefing, Opportunities, Pipeline', () => {
+	it('ships the loop page tabs in order: Radar, Learning, Briefing, Opportunities, Opportunity shortlist, Pipeline', () => {
 		expect(DISCOVERY_VIEW_IDS.map((id) => getViewData(id).name)).toEqual([
 			'Radar',
 			'Learning',
 			'Briefing',
 			'Opportunities',
+			'Opportunity shortlist',
 			'Pipeline',
 		])
 		expect(new Set(DISCOVERY_VIEW_IDS).size).toBe(DISCOVERY_VIEW_IDS.length)
@@ -202,6 +203,26 @@ describe('Product Discovery Flow definition', () => {
 			text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []
 		const ownIds = new Set<string>(DISCOVERY_VIEW_IDS)
 		for (const id of foundIds) expect(ownIds.has(id)).toBe(true)
+	})
+
+	it('has the weekly briefing refresh the Opportunity shortlist view in place', () => {
+		const briefing = DISCOVERY_TRIGGER_IDS.map(getTriggerData).find((t) =>
+			t.name.startsWith('Weekly discovery briefing'),
+		)
+		expect(briefing?.actionPrompt).toMatch(/Opportunity shortlist refresh/)
+		expect(briefing?.actionPrompt).toMatch(/results-data/)
+		expect(briefing?.actionPrompt).toMatch(/up to 7/)
+	})
+
+	it('ships the Opportunity shortlist page with its data block empty', () => {
+		const shortlist = DISCOVERY_VIEW_IDS.map(getViewData).find(
+			(v) => v.name === 'Opportunity shortlist',
+		)
+		expect(shortlist?.position).toBe(4)
+		const data = shortlist?.html.match(
+			/<script id="results-data" type="application\/json">([\s\S]*?)<\/script>/,
+		)?.[1]
+		expect(JSON.parse(data ?? '{}').items).toEqual([])
 	})
 
 	it('scopes the Pipeline page to the installed loop through the loop id token', () => {
