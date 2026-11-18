@@ -43,6 +43,7 @@ import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp
 import {
 	AGENT_PUSH_DIRECTORIES,
 	HUMAN_MESSAGE_STYLE,
+	type SessionResult,
 	type SessionResultFailureReason,
 	buildSetModelRequest,
 	githubOwnerLoginToEnvKey,
@@ -209,7 +210,7 @@ import {
 } from '../lib/mcp-session-header'
 import { resolveAgentSendModes } from '../lib/send-permissions'
 import { sessionLogRedactor } from '../lib/session-log-redactor'
-import { pickRetryAt } from '../lib/subscription-limit-reset'
+import { CLAUDE_LIMIT_CODES, pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
@@ -3086,12 +3087,16 @@ ${cont.continues_prompt}
 							: 'agent',
 				}
 			: null
+		// A retry of a run that died on a Claude limit waits for a subscription login instead of
+		// falling through to the metered API key (see resolveLlmRoute).
+		const afterUsageLimit = await this.retriesUsageLimitFailure(session)
 		try {
 			// Bounded by wall-clock: the fetch timeouts inside resolution cover
 			// sockets only, so a stuck DB step would otherwise leave the row in
 			// `starting` until the 10 minute reaper.
 			const resolved = await withCredentialResolutionTimeout(
 				resolveLlmRoute({
+					afterUsageLimit,
 					db: this.db,
 					workspaceId: session.workspaceId,
 					actorId: session.actorId,
@@ -4225,6 +4230,18 @@ ${cont.continues_prompt}
 	 * container. Local-dev only — production goes through the dispatch queue
 	 * to apps/agent-server.
 	 */
+	/** True when this session is the retry of a run that died on a Claude usage limit. */
+	private async retriesUsageLimitFailure(session: typeof sessions.$inferSelect): Promise<boolean> {
+		if (!session.retryOf) return false
+		const [original] = await this.db
+			.select({ result: sessions.result })
+			.from(sessions)
+			.where(eq(sessions.id, session.retryOf))
+			.limit(1)
+		const code = (original?.result as SessionResult | null)?.failure_reason?.reason_code
+		return code !== undefined && CLAUDE_LIMIT_CODES.has(code)
+	}
+
 	private async launchContainer(
 		session: typeof sessions.$inferSelect,
 		tempDir: string,

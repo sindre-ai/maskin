@@ -957,6 +957,12 @@ export async function resolveLlmRoute(params: {
 	 * production callers omit it.
 	 */
 	env?: NodeJS.ProcessEnv
+	/**
+	 * This start is the retry of a run that died on a Claude usage limit. The workspace API key is
+	 * left out (it bills per token and is not what the run was waiting for), and when no
+	 * subscription login is usable the start fails as a limit so it is queued for a later try.
+	 */
+	afterUsageLimit?: boolean
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe, pinned } = params
 
@@ -973,6 +979,8 @@ export async function resolveLlmRoute(params: {
 
 	/** Set when route #4's key was left out because it is marked out of credit. */
 	let apiKeyOutOfCredit = false
+	/** Set when route #4's key was left out because this start retries a usage-limit failure. */
+	let apiKeySkippedAfterLimit = false
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior). The
@@ -1121,7 +1129,13 @@ export async function resolveLlmRoute(params: {
 			//    credit (see api-key-credit-mark.ts), so a key with no credit does
 			//    not take every session the other routes passed over.
 			const storedAnthropic = wsSettings.llm_keys?.anthropic
-			if (storedAnthropic) {
+			if (storedAnthropic && params.afterUsageLimit) {
+				apiKeySkippedAfterLimit = true
+				logger.info('Workspace Anthropic API key skipped: retry of a usage-limit failure', {
+					workspaceId,
+					actorId,
+				})
+			} else if (storedAnthropic) {
 				const mark = checkApiKeyCreditMark(wsSettings, storedAnthropic)
 				if (mark.stale) {
 					void clearStaleApiKeyCreditMark({ db, workspaceId, mark: mark.stale })
@@ -1169,6 +1183,18 @@ export async function resolveLlmRoute(params: {
 			modelName: maskinPlan.resolved.model,
 			modelSource: maskinPlan.resolved.source,
 		}
+	}
+
+	if (params.afterUsageLimit && (apiKeySkippedAfterLimit || oauthFailure)) {
+		// No subscription login can take the retry yet. Fail it as a limit so it is queued again,
+		// instead of running it on the API key or ending it as a dead login.
+		throw new LlmCredentialsUnavailableError(
+			oauthFailure
+				? `Claude is still at its usage limit; no subscription login is usable yet: ${oauthFailure}`
+				: 'Claude is still at its usage limit; no subscription login is usable yet.',
+			false,
+			{ usageLimitRetry: true },
+		)
 	}
 
 	if (apiKeyOutOfCredit) {
@@ -1248,6 +1274,12 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly apiKeyOutOfCredit: boolean
 
+	/**
+	 * True when this start retried a run that died on a Claude usage limit and no subscription
+	 * login was usable yet. It settles as a limit so the retry scheduler queues another try.
+	 */
+	readonly usageLimitRetry: boolean
+
 	constructor(
 		detail: string,
 		transient = false,
@@ -1256,6 +1288,7 @@ export class LlmCredentialsUnavailableError extends Error {
 			workspaceName?: string | null
 			noCredentialsConfigured?: boolean
 			apiKeyOutOfCredit?: boolean
+			usageLimitRetry?: boolean
 		},
 	) {
 		super(detail)
@@ -1266,6 +1299,7 @@ export class LlmCredentialsUnavailableError extends Error {
 		this.workspaceName = options?.workspaceName?.trim() || null
 		this.noCredentialsConfigured = options?.noCredentialsConfigured ?? false
 		this.apiKeyOutOfCredit = options?.apiKeyOutOfCredit ?? false
+		this.usageLimitRetry = options?.usageLimitRetry ?? false
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -1286,6 +1320,17 @@ export class LlmCredentialsUnavailableError extends Error {
 		'This session could not start because the LLM key saved for this workspace cannot be read. Enter the key again in Settings → Keys, then start a new session.'
 
 	toFailureReason(): SessionResultFailureReason {
+		if (this.usageLimitRetry) {
+			return {
+				provider: 'anthropic',
+				reason_code: 'session_limit',
+				human_message:
+					'Claude is still at its usage limit and no subscription login is usable yet. The run is queued to start again later.',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: this.detail,
+			}
+		}
 		if (this.apiKeyOutOfCredit) {
 			return {
 				provider: 'anthropic',

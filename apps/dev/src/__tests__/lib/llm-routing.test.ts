@@ -43,6 +43,7 @@ import {
 	resolveLlmRoute,
 	withCredentialResolutionTimeout,
 } from '../../lib/llm-routing'
+import { pickRetryAt } from '../../lib/subscription-limit-reset'
 import type { WorkspaceSettings } from '../../lib/types'
 
 const ORIGINAL_ENV = { ...process.env }
@@ -1040,6 +1041,35 @@ describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
 		settings.llm_keys = { anthropic: 'sk-ant-ws' }
 		const result = await resolveLlmRoute(paramsWithDeadOAuth(settings))
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+	})
+
+	it('a retry after a usage limit never runs on the workspace key and fails as a limit instead', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-ws' }
+		const err = await resolveLlmRoute({
+			...paramsWithDeadOAuth(settings),
+			afterUsageLimit: true,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+		expect(err.usageLimitRetry).toBe(true)
+		expect(err.toFailureReason()).toMatchObject({
+			provider: 'anthropic',
+			reason_code: 'session_limit',
+			reset_at: null,
+		})
+		// The failure reason is what settleSession turns into a queued retry.
+		expect(pickRetryAt(err.toFailureReason(), new Date('2026-11-12T06:00:00Z'))).toEqual(
+			new Date('2026-11-12T06:30:00Z'),
+		)
+	})
+
+	it('a retry after a usage limit with no API key also fails as a limit, not a dead login', async () => {
+		const err = await resolveLlmRoute({
+			...paramsWithDeadOAuth(emptySettings()),
+			afterUsageLimit: true,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+		expect(err.usageLimitRetry).toBe(true)
 	})
 
 	it('returns null (no throw) when the workspace has no OAuth configured at all', async () => {

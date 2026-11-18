@@ -24,19 +24,12 @@ import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
 import { logger } from '../lib/logger'
-import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
+import { CLAUDE_LIMIT_CODES, MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { alertOwnersOncePerDay } from './run-death-alerts'
 import { startSession } from './session-lifecycle'
 import { TaskSessionRestarter } from './task-session-restart'
 
 const TICK_MS = 30_000
-/** Reasons that mean the run died waiting on Claude's allowance. A lineage made only of these keeps the limit wording at the cap. */
-const CLAUDE_LIMIT_CODES: ReadonlySet<string> = new Set([
-	'session_limit',
-	'weekly_limit',
-	'opus_limit',
-	'max_plan_rate_limit',
-])
 export { MAX_RETRY_ATTEMPTS }
 export const KILLSWITCH_ENV_VAR = 'FEATURE_RETRY_SCHEDULER'
 

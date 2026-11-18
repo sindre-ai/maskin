@@ -32,7 +32,7 @@ import { unclassifiedFingerprint } from '../lib/credit-classifier'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
-import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
+import { MAX_RETRY_ATTEMPTS, pickRetryAt } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
@@ -976,6 +976,17 @@ export async function settleSession(
 ): Promise<SettleResult> {
 	const finalStatus = mapKindToFinalStatus(outcome.kind)
 	const eventAction = EVENT_ACTION_BY_KIND[outcome.kind]
+	// A start that never reached running and failed as a Claude limit (a retry with no usable
+	// login yet) is queued for another try, the same as a run that died on the limit.
+	const retryAt =
+		outcome.retryAt ??
+		(outcome.kind === 'fail' &&
+		(outcome.classification === 'startup_stalled' ||
+			outcome.classification === 'dispatch_failure') &&
+		outcome.failureReason?.reason_code === 'session_limit'
+			? pickRetryAt(outcome.failureReason)
+			: null) ??
+		undefined
 
 	// Step 1: SELECT the row (small, non-locking; the conditional UPDATE below
 	// is the actual concurrency guard via a CAS on `status NOT IN terminals`).
@@ -1097,7 +1108,7 @@ export async function settleSession(
 			// including pause, whose UI-side treatment is the same "not running"
 			// state a completed row has.
 			setPatch.currentActivity = null
-			if (outcome.retryAt) setPatch.retryAt = outcome.retryAt
+			if (retryAt) setPatch.retryAt = retryAt
 			if (outcome.kind === 'pause') {
 				// A paused row's container is gone — the caller stops/removes the
 				// sandbox as part of the snapshot flow, and any resume path spins
@@ -1203,7 +1214,7 @@ export async function settleSession(
 	// (the scheduler clears retry_at), so promising a retry there would be untrue.
 	if (
 		flipped &&
-		outcome.retryAt &&
+		retryAt &&
 		existing.conversationId &&
 		existing.attemptNumber < MAX_RETRY_ATTEMPTS
 	) {
@@ -1211,7 +1222,7 @@ export async function settleSession(
 			conversationId: existing.conversationId,
 			workspaceId: row.workspaceId,
 			actorId: row.actorId,
-			retryAt: outcome.retryAt,
+			retryAt,
 		})
 	}
 

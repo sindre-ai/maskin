@@ -407,6 +407,14 @@ function clamp(candidateMs: number, nowMs: number): number | null {
  */
 export const MAX_RETRY_ATTEMPTS = 5
 
+/** Reasons that mean a run died waiting on Claude's allowance. */
+export const CLAUDE_LIMIT_CODES: ReadonlySet<string> = new Set([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'max_plan_rate_limit',
+])
+
 const NO_RESET_RETRY_BACKOFF_MS = 30 * 60 * 1000
 // weekly_limit and opus_limit are left out on purpose: 5 attempts 30 minutes apart span 2.5
 // hours and cannot outlast a weekly reset, so a blind retry would only burn attempts.
