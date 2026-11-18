@@ -52,11 +52,11 @@ async function chargeRow(
 ): Promise<boolean> {
 	const clock = at ? at.toISOString() : null
 	const rows = await tx.execute(sql`
-		INSERT INTO youtube_quota_usage (quota_date, scope, units_used)
+		INSERT INTO youtube_quota_usage (quota_date, scope, bucket, units_used)
 		SELECT (COALESCE(${clock}::timestamptz, now()) AT TIME ZONE 'America/Los_Angeles')::date,
-			${scope}::text, ${units}::int
+			${scope}::text, ${bucket}::text, ${units}::int
 		WHERE ${units}::int <= ${cap}::int
-		ON CONFLICT (quota_date, scope) DO UPDATE
+		ON CONFLICT (quota_date, scope, bucket) DO UPDATE
 			SET units_used = youtube_quota_usage.units_used + ${units}::int
 			WHERE youtube_quota_usage.units_used + ${units}::int <= ${cap}::int
 		RETURNING units_used
