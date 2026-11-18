@@ -13,6 +13,20 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
+		// Resolves the route params into the href, so a test can read where a link goes.
+		Link: ({
+			children,
+			to,
+			params,
+			...rest
+		}: { children: React.ReactNode; to: string; params?: Record<string, string> }) => (
+			<a
+				href={Object.entries(params ?? {}).reduce((href, [k, v]) => href.replace(`$${k}`, v), to)}
+				{...rest}
+			>
+				{children}
+			</a>
+		),
 		useNavigate: () => mockNavigate,
 		createFileRoute: () => (options: Record<string, unknown>) => ({
 			...options,
@@ -194,6 +208,47 @@ describe('LoopDetailRoute — AskBanner wiring', () => {
 		expect(screen.getByText(/First agent asks/)).toBeInTheDocument()
 		expect(screen.getByText(/is waiting on your input\./)).toBeInTheDocument()
 		expect(screen.getByLabelText('4 pending')).toBeInTheDocument()
+	})
+})
+
+describe('LoopDetailRoute — driver pill', () => {
+	const agent = {
+		id: 'actor-driver',
+		name: 'Strategist',
+		type: 'agent',
+		email: null,
+		description: null,
+		isSystem: false,
+		agentState: 'idle',
+	}
+
+	beforeEach(() => {
+		mockUseLoops.mockReturnValue({ data: [buildLoopSummary({ id: 'loop-1' })] })
+	})
+
+	it('links an agent driver to the agent page', () => {
+		mockUseActors.mockReturnValue({ data: [agent] })
+		mockUseObject.mockReturnValue({ data: { id: 'loop-1', driver: 'actor-driver' } })
+		render(<LoopDetailRoute />)
+
+		const pill = screen.getByTestId('loop-driver')
+		expect(pill).toHaveAttribute('href', '/ws-1/agents/actor-driver')
+		expect(pill).toHaveTextContent('Strategist')
+	})
+
+	it('leaves a person driver as plain text', () => {
+		mockUseActors.mockReturnValue({ data: [{ ...agent, id: 'actor-human', type: 'human' }] })
+		mockUseObject.mockReturnValue({ data: { id: 'loop-1', driver: 'actor-human' } })
+		render(<LoopDetailRoute />)
+
+		expect(screen.getByTestId('loop-driver')).not.toHaveAttribute('href')
+	})
+
+	it('shows no pill without a driver', () => {
+		mockUseObject.mockReturnValue({ data: { id: 'loop-1', driver: null } })
+		render(<LoopDetailRoute />)
+
+		expect(screen.queryByTestId('loop-driver')).not.toBeInTheDocument()
 	})
 })
 

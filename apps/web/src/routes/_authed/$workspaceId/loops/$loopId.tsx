@@ -837,15 +837,26 @@ function LoopDetailRoute() {
 							))}
 						</DropdownMenuContent>
 					</DropdownMenu>
-					{driver && (
-						<span
-							data-testid="loop-driver"
-							className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px]"
-						>
-							<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
-							<span className="font-semibold text-foreground">{driver.name}</span>
-						</span>
-					)}
+					{driver &&
+						(driver.type === 'agent' ? (
+							<Link
+								to="/$workspaceId/agents/$agentId"
+								params={{ workspaceId, agentId: driver.id }}
+								data-testid="loop-driver"
+								className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
+								<span className="font-semibold text-foreground">{driver.name}</span>
+							</Link>
+						) : (
+							<span
+								data-testid="loop-driver"
+								className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px]"
+							>
+								<ActorAvatar id={driver.id} name={driver.name} type={driver.type} />
+								<span className="font-semibold text-foreground">{driver.name}</span>
+							</span>
+						))}
 					{needsYouRows.length > 0 && (
 						<span
 							data-testid="loop-decisions-chip"
