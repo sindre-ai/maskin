@@ -206,7 +206,7 @@ export async function evaluateAndRespond(ctx: {
 	// Auto-posted end-of-turn output is excluded. The cap exists to bound
 	// responder-triggered agent-to-agent chains, and a final_output message
 	// cannot start one — the finalizer never calls evaluateAndRespond. Every
-	// agent turn now yields up to two rows (an optional MCP heads-up plus the
+	// agent turn can yield two rows (a mid-turn MCP post plus the
 	// automatic final output), so counting both would halve the effective cap
 	// and mute a conversation after ~3 turns.
 	const recent = await db
@@ -1282,7 +1282,7 @@ function buildConversationReplyPrompt(ctx: {
 		'"""',
 		'',
 		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${HUMAN_MESSAGE_STYLE_SHORT} ${describeReplyExpectation(ctx)}`,
-		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
+		'Do not post progress notes while you work, however long this turn takes: no acknowledgement, no line on what you are about to do, no note that you are still on it. The chat already shows them that you are working, so your reply is the only message they should get. Use post_conversation_message mid-turn only when you cannot go on without something from them, or to bring another agent in.',
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
 		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
