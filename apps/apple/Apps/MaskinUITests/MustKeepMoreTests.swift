@@ -28,7 +28,11 @@ final class MustKeepMoreTests: XCTestCase {
 		app.launch()
 		XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
 		// The notification sheet covers For you once the feed shows a decision, and swallows the first taps.
-		dismissNotNow(timeout: 10)
+		let notNow = app.buttons["Not now"]
+		if notNow.waitForExistence(timeout: 10) {
+			notNow.tap()
+			_ = notNow.waitForNonExistence(timeout: 5)
+		}
 	}
 
 	// MARK: Helpers
@@ -42,14 +46,10 @@ final class MustKeepMoreTests: XCTestCase {
 		row.tap()
 	}
 
-	/// Closes the notification pre-prompt if it shows; it would swallow the first tap. It only shows once
-	/// the feed holds a decision, so setUp waits longer for it than a chat does.
-	private func dismissNotNow(timeout: TimeInterval = 3) {
+	/// Closes the notification pre-prompt if it shows over a chat; it would swallow the first tap.
+	private func dismissNotNow() {
 		let notNow = app.buttons["Not now"]
-		if notNow.waitForExistence(timeout: timeout) {
-			notNow.tap()
-			_ = notNow.waitForNonExistence(timeout: 5)
-		}
+		if notNow.waitForExistence(timeout: 3) { notNow.tap() }
 	}
 
 	/// Anything on screen whose label contains `text`.
