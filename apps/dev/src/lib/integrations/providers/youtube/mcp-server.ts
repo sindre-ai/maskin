@@ -35,6 +35,7 @@ const OUTCOME_BY_CODE: Partial<Record<YoutubeErrorCode, YoutubeOutcome>> = {
 	NOT_CONNECTED: 'not_connected',
 	RECONSENT_REQUIRED: 'not_connected',
 	INVALID_INPUT: 'invalid_input',
+	INTEGRATION_REQUIRED: 'invalid_input',
 }
 
 /** A session a flow trigger started, as opposed to a person's chat. Best-effort: false on any failure. */
@@ -97,6 +98,11 @@ export function createYoutubeMcpServer(
  * Every tool goes through this one wrapper, so anything that must happen on every youtube__ call
  * has one place to live. It emits one youtube_tool_called event per call, on a cache hit and on a
  * quota refusal too. The event never throws and carries a category, never an error string.
+ *
+ * It also gives every tool the optional integration_id argument. With several connected Google
+ * accounts a call without it is refused with the list of connections (see getYoutubeIntegrationId),
+ * so no tool can answer for a channel the caller did not name. `run` receives the client context
+ * with that id in it: pass that client on to youtubeRead.
  */
 function registerTool<Shape extends z.ZodRawShape = Record<string, never>>(
 	server: McpServer,
@@ -104,17 +110,30 @@ function registerTool<Shape extends z.ZodRawShape = Record<string, never>>(
 	name: YoutubeToolName,
 	description: string,
 	inputSchema: Shape,
-	run: (args: z.objectOutputType<Shape, z.ZodTypeAny>) => Promise<unknown>,
+	run: (
+		args: z.objectOutputType<Shape, z.ZodTypeAny>,
+		client: YoutubeClientContext,
+	) => Promise<unknown>,
 ) {
 	const toolName = `youtube__${name}`
 	server.registerTool(
 		toolName,
-		{ description, inputSchema, annotations: { readOnlyHint: true } },
-		async (args: z.objectOutputType<Shape, z.ZodTypeAny>) => {
+		{
+			description: `${description} Optional integration_id picks one connected YouTube account; needed only when several are connected.`,
+			inputSchema: { ...inputSchema, integration_id: z.string().uuid().optional() },
+			annotations: { readOnlyHint: true },
+		},
+		async (input: z.objectOutputType<Shape, z.ZodTypeAny> & { integration_id?: string }) => {
+			const { integration_id, ...args } = input
 			let outcome: YoutubeOutcome = 'ok'
 			let result: ReturnType<typeof jsonResult> | ReturnType<typeof toolError>
 			try {
-				result = jsonResult(await run(args))
+				result = jsonResult(
+					await run(args as z.objectOutputType<Shape, z.ZodTypeAny>, {
+						...ctx,
+						integrationId: integration_id,
+					}),
+				)
 			} catch (err) {
 				outcome = (isYoutubeError(err) && OUTCOME_BY_CODE[err.code]) || 'upstream_error'
 				result = toolError(toolName, err)
@@ -133,15 +152,13 @@ function registerTool<Shape extends z.ZodRawShape = Record<string, never>>(
 }
 
 function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
-	const client: YoutubeClientContext = ctx
-
 	registerTool(
 		server,
 		ctx,
 		'get_channel',
 		'Get the connected YouTube channel: title, description, subscriber, view and video counts, and the id of its uploads playlist. Returns the channel as the YouTube Data API returns it. Costs 1 quota unit; repeat reads within 15 minutes are served from a cache at no cost. If the Google account owns several channels, the one chosen at connect time is returned.',
 		{},
-		() =>
+		(_args, client) =>
 			youtubeRead(client, {
 				tool: 'youtube__get_channel',
 				path: 'channels',
@@ -161,7 +178,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 					`1 to ${MAX_VIDEO_IDS} YouTube video ids, for example from youtube__list_recent_videos.`,
 				),
 		},
-		({ video_ids }) => {
+		({ video_ids }, client) => {
 			// Checked here, not in the schema, so a bad call still emits the tool-called event, and
 			// before the client so it never costs quota.
 			if (video_ids.length === 0 || video_ids.some((id) => id.trim() === '')) {

@@ -6,6 +6,7 @@
 export type YoutubeErrorCode =
 	| 'RECONSENT_REQUIRED'
 	| 'NOT_CONNECTED'
+	| 'INTEGRATION_REQUIRED'
 	| 'QUOTA_EXHAUSTED'
 	| 'WORKSPACE_QUOTA_EXHAUSTED'
 	| 'RATE_LIMITED'
@@ -14,6 +15,13 @@ export type YoutubeErrorCode =
 	| 'INVALID_INPUT'
 	| 'PROVIDER_ERROR'
 
+/** One connected Google account, as listed when a tool call must say which one it means. */
+export interface YoutubeConnectionRef {
+	integration_id: string
+	/** The connected Google account (the integration's external id). Not channel data. */
+	account: string | null
+}
+
 export interface YoutubeErrorPayload {
 	code: YoutubeErrorCode
 	message: string
@@ -21,6 +29,8 @@ export interface YoutubeErrorPayload {
 	reason?: string
 	integration_id?: string
 	hint?: string
+	/** Set on INTEGRATION_REQUIRED: the connections the caller can pick from. */
+	connections?: YoutubeConnectionRef[]
 }
 
 export class YoutubeError extends Error {
@@ -29,6 +39,7 @@ export class YoutubeError extends Error {
 	readonly reason?: string
 	readonly integrationId?: string
 	readonly hint?: string
+	readonly connections?: YoutubeConnectionRef[]
 
 	constructor(payload: YoutubeErrorPayload) {
 		super(payload.message)
@@ -38,6 +49,7 @@ export class YoutubeError extends Error {
 		this.reason = payload.reason
 		this.integrationId = payload.integration_id
 		this.hint = payload.hint
+		this.connections = payload.connections
 	}
 
 	toPayload(): YoutubeErrorPayload {
@@ -46,6 +58,7 @@ export class YoutubeError extends Error {
 		if (this.reason !== undefined) out.reason = this.reason
 		if (this.integrationId !== undefined) out.integration_id = this.integrationId
 		if (this.hint !== undefined) out.hint = this.hint
+		if (this.connections !== undefined) out.connections = this.connections
 		return out
 	}
 }

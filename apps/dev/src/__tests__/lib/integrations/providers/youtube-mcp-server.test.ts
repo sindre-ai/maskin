@@ -60,6 +60,47 @@ describe('maskin-youtube tool server', () => {
 		})
 	})
 
+	it('gives every tool an optional integration_id and passes it to the read', async () => {
+		youtubeRead.mockResolvedValue({ items: [] })
+		const { client, ctx } = await connect()
+		const { tools } = await client.listTools()
+		for (const tool of tools) {
+			const schema = tool.inputSchema as {
+				properties?: Record<string, unknown>
+				required?: string[]
+			}
+			expect(schema.properties).toHaveProperty('integration_id')
+			expect(schema.required ?? []).not.toContain('integration_id')
+		}
+		const id = '3f0c2c1e-8a3e-4c0e-9d0e-0a1b2c3d4e5f'
+
+		await client.callTool({ name: 'youtube__get_channel', arguments: { integration_id: id } })
+
+		expect(youtubeRead).toHaveBeenCalledWith(
+			expect.objectContaining({ ...ctx, integrationId: id }),
+			expect.objectContaining({ tool: 'youtube__get_channel' }),
+		)
+	})
+
+	it('returns the connection list as a tool error when the read asks which account', async () => {
+		const connections = [
+			{ integration_id: 'int-1', account: 'a@example.com' },
+			{ integration_id: 'int-2', account: 'b@example.com' },
+		]
+		youtubeRead.mockRejectedValueOnce(
+			new YoutubeError({ code: 'INTEGRATION_REQUIRED', message: 'which one', connections }),
+		)
+		const { client } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+
+		expect(result.isError).toBe(true)
+		expect(text(result).error).toMatchObject({ code: 'INTEGRATION_REQUIRED', connections })
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ outcome: 'invalid_input' }),
+		)
+	})
+
 	it('returns a client error as a normalized tool error', async () => {
 		youtubeRead.mockRejectedValueOnce(
 			new YoutubeError({
