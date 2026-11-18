@@ -11,6 +11,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, gt, sql } from 'drizzle-orm'
 import { trackDesktopFileMoved } from '../lib/analytics/file-events'
 import { resolveDesktopAgent } from '../lib/desktop-access'
+import { buildRefreshHelperCommands } from '../lib/desktop-helper'
 import {
 	FETCH_FREE_HEADROOM_BYTES,
 	NO_ROOM_EXIT_CODE,
@@ -388,7 +389,7 @@ const NOT_A_PASSWORD_FIELD_MESSAGE =
 const NOT_A_PASSWORD_FIELD_HINT =
 	'Click the password field, take a screenshot to see it has focus, then send the reference again. If the page shows the password as plain text, switch it back to hidden first.'
 const OLD_COMPUTER_MESSAGE =
-	'This computer is an older version that cannot check which field has focus, so the saved password was not typed. Nothing was typed. Ask a person to close and reopen the computer.'
+	'This computer is an older version that cannot check which field has focus, so the saved password was not typed. Nothing was typed. Run desktop_apply_settings to bring this computer up to date without losing its saved logins, then send the reference again. If that says chromium_restart_needed, the browser has to be restarted once first, which closes its open pages.'
 
 /**
  * The session a call comes from, so a credential allowed for only this chat counts. Taken
@@ -801,7 +802,14 @@ const applySettingsResultSchema = z.object({
 	}),
 	chromium_restart_needed: z.boolean().openapi({
 		description:
-			'True when a setting only takes effect after Chromium restarts. Nothing is restarted for you: a restart closes the open pages.',
+			'True when something only takes effect after Chromium restarts: a setting, or the browser has not opened its debugging port, which typing a saved password needs. Nothing is restarted for you: a restart closes the open pages.',
+	}),
+	helper_updated: z.boolean().openapi({
+		description:
+			'True when the computer ran an older control helper and now runs the current one. False when it already did.',
+	}),
+	browser_debug_port_open: z.boolean().openapi({
+		description: 'Whether the running browser has the debugging port a saved password check reads',
 	}),
 })
 
@@ -810,9 +818,9 @@ const applySettingsRoute = createRoute({
 	path: '/apply-settings',
 	'x-viewer-policy': 'writer',
 	tags: ['Desktop'],
-	summary: "Bring a running computer's settings files up to date",
+	summary: "Bring a running computer's settings files and control helper up to date",
 	description:
-		"Rewrites a fixed list of user settings files on the computer (the file chooser's size and position) without deleting it, so saved logins and open pages stay. Nothing outside that list is touched. Running it again changes nothing. Starts the computer if needed.",
+		"Replaces the computer's control helper when it is older than the server's (so typing a saved password works on a computer made before that existed), and rewrites a fixed list of user settings files (the file chooser's size and position), without deleting the computer, so saved logins and open pages stay. The browser is never restarted: when it needs one, chromium_restart_needed says so. Nothing outside those files is touched. Running it again changes nothing. Starts the computer if needed.",
 	request: { headers: workspaceIdHeader, query: agentQuery },
 	responses: {
 		200: {
@@ -911,10 +919,76 @@ async function runSettingsCommand(
 	return exec.data
 }
 
+// After a new helper is installed it restarts a moment later. Asking it to type a secret with no
+// text is how we tell it apart without typing anything: an old helper answers 'unknown action',
+// the current one refuses for the missing text.
+const HELPER_RESTART_WAIT_MS = 20_000
+const HELPER_RESTART_POLL_MS = 500
+
+async function helperRunsCurrentCode(
+	c: Ctx,
+	scope: { workspaceId: string; agentId: string },
+): Promise<boolean> {
+	try {
+		const probe = await serviceFor(c as never).control(scope.workspaceId, scope.agentId, 'input', {
+			action: 'type_secret',
+			require: 'password_field',
+		})
+		const message = (probe?.body as { message?: string } | null)?.message
+		return probe?.status === 400 && message !== undefined && message !== 'unknown action'
+	} catch {
+		return false // the helper is between the old process and the new one
+	}
+}
+
+/**
+ * Brings the computer's control helper up to the server's copy. Writes it only when it differs,
+ * so a second run changes nothing and restarts nothing. Waits for the new helper to answer
+ * before returning. The browser is not touched: the answer says whether its debugging port is
+ * open, and the caller decides about a restart.
+ */
+async function refreshHelper(c: Ctx, scope: { workspaceId: string; agentId: string }) {
+	const commands = buildRefreshHelperCommands()
+	let ran: Awaited<ReturnType<typeof runSettingsCommand>> | undefined
+	for (const command of commands) {
+		ran = await runSettingsCommand(c, scope, command, 'refresh-helper')
+		if (ran instanceof Response) return ran
+	}
+	const out = parseKeyValueLines(ran?.stdout ?? '')
+	if (out.helper_changed === undefined || out.debug_port_open === undefined) {
+		logger.error('desktop refresh-helper gave an unexpected answer', scope)
+		return c.json(createApiError('INTERNAL_ERROR', 'Desktop gave an unexpected answer'), 502)
+	}
+	if (out.helper_restarting === '1') {
+		const deadline = Date.now() + HELPER_RESTART_WAIT_MS
+		await new Promise((r) => setTimeout(r, HELPER_RESTART_POLL_MS))
+		while (!(await helperRunsCurrentCode(c, scope))) {
+			if (Date.now() > deadline) {
+				logger.error('desktop helper did not come back after a refresh', scope)
+				return c.json(
+					createApiError(
+						'INTERNAL_ERROR',
+						'The computer got the new helper but it did not answer in time. Try again in a minute.',
+					),
+					502,
+				)
+			}
+			await new Promise((r) => setTimeout(r, HELPER_RESTART_POLL_MS))
+		}
+	}
+	return {
+		updated: out.helper_changed === '1',
+		debugPortOpen: out.debug_port_open === '1',
+	}
+}
+
 async function applySettings(c: Ctx) {
 	const gated = await gate(c)
 	if (isResponse(gated)) return gated
 	const { workspaceId, actorId, agentId } = gated
+
+	const helper = await refreshHelper(c, { workspaceId, agentId })
+	if (helper instanceof Response) return helper
 
 	const ran = await runSettingsCommand(
 		c,
@@ -934,7 +1008,8 @@ async function applySettings(c: Ctx) {
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Desktop gave an unexpected answer'), 502)
 	}
-	const changed = out.keyfile_changed === '1' || out.marker_changed === '1'
+	const changed = out.keyfile_changed === '1' || out.marker_changed === '1' || helper.updated
+	const chromiumRestartNeeded = KEYFILE_NEEDS_CHROMIUM_RESTART || !helper.debugPortOpen
 
 	await recordEvent(c.get('db') as Database, {
 		workspaceId,
@@ -947,6 +1022,8 @@ async function applySettings(c: Ctx) {
 			control: 'apply_settings',
 			settings_version: version,
 			changed,
+			helper_updated: helper.updated,
+			browser_debug_port_open: helper.debugPortOpen,
 		},
 	}).catch((err) => logger.warn('desktop apply-settings event failed', { error: String(err) }))
 	c.header('Cache-Control', 'no-store')
@@ -954,7 +1031,9 @@ async function applySettings(c: Ctx) {
 		{
 			settings_version: version,
 			changed,
-			chromium_restart_needed: KEYFILE_NEEDS_CHROMIUM_RESTART,
+			chromium_restart_needed: chromiumRestartNeeded,
+			helper_updated: helper.updated,
+			browser_debug_port_open: helper.debugPortOpen,
 		},
 		200,
 	)

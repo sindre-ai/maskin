@@ -3168,7 +3168,7 @@ export const tools = {
 	},
 	desktop_apply_settings: {
 		description:
-			"Bring YOUR computer's settings files up to date without deleting it, so your saved logins and open pages stay. A computer keeps the settings of the image it was created from, so a later fix (the file chooser's size and position) does not reach it until now. Rewrites a fixed list of user settings files on the computer and nothing else. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
+			"Bring YOUR computer up to date without deleting it, so your saved logins and open pages stay. A computer keeps the image it was created from, so a later fix does not reach it until now. Replaces the computer's control helper when it is older than the server's (run this when typing a saved password says the computer is an older version) and rewrites a fixed list of user settings files (the file chooser's size and position). Nothing else is touched, and the browser is never restarted. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, for example before a saved password can be typed; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
