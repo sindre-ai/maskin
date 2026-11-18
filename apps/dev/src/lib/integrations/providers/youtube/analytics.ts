@@ -13,9 +13,13 @@ export const ANALYTICS_METRICS = [
 	'averageViewDuration',
 	'averageViewPercentage',
 	'subscribersGained',
+	'audienceWatchRatio',
 ] as const
 
-/** elapsedVideoTimeRatio is the retention dimension and needs a single video (video_id). */
+/**
+ * Retention is elapsedVideoTimeRatio with audienceWatchRatio, on a single video (video_id). The
+ * dimension is refused without video_id.
+ */
 export const ANALYTICS_DIMENSIONS = [
 	'video',
 	'day',

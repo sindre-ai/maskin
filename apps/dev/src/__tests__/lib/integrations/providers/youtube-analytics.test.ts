@@ -46,7 +46,12 @@ describe('buildAnalyticsQuery', () => {
 	})
 
 	it('refuses a metric that is not on the allowlist, incl. revenue', () => {
-		for (const metric of ['estimatedRevenue', 'likes', 'audienceWatchRatio', 'views,likes']) {
+		for (const metric of [
+			'estimatedRevenue',
+			'likes',
+			'relativeRetentionPerformance',
+			'views,likes',
+		]) {
 			expect(refused({ ...base, metrics: ['views', metric] })).toMatchObject({
 				code: 'INVALID_INPUT',
 			})
@@ -94,14 +99,17 @@ describe('buildAnalyticsQuery', () => {
 	})
 
 	it('retention needs one video, and the video filter is fixed in shape', () => {
-		expect(refused({ ...base, dimensions: ['elapsedVideoTimeRatio'] })).toMatchObject({
+		const retention = { ...base, metrics: ['audienceWatchRatio'] }
+		expect(refused({ ...retention, dimensions: ['elapsedVideoTimeRatio'] })).toMatchObject({
 			code: 'INVALID_INPUT',
 		})
 		const out = buildAnalyticsQuery({
-			...base,
+			...retention,
 			dimensions: ['elapsedVideoTimeRatio'],
 			video_id: 'dQw4w9WgXcQ',
 		})
+		expect(out.metrics).toBe('audienceWatchRatio')
+		expect(out.dimensions).toBe('elapsedVideoTimeRatio')
 		expect(out.filters).toBe('video==dQw4w9WgXcQ')
 		// No way to smuggle another filter or another channel through the video id.
 		for (const id of ['x;channel==UC123', 'short', 'dQw4w9WgXcQ,video==abc', '']) {
