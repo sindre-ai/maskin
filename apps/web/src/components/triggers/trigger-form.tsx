@@ -31,7 +31,14 @@ import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
+import {
+	copenhagenDateAndTime,
+	copenhagenWallToInstant,
+	cronCopenhagenToUtc,
+	cronUtcToCopenhagen,
+	describeCronSchedule,
+	parseCronExpression,
+} from '@/lib/cron'
 import { isTriggerChange } from '@/lib/triggers'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
@@ -193,7 +200,7 @@ const UTTERANCE_SUGGESTIONS = [
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({
 	value: String(i),
-	label: i === 0 ? '12:00 AM' : i < 12 ? `${i}:00 AM` : i === 12 ? '12:00 PM' : `${i - 12}:00 PM`,
+	label: `${String(i).padStart(2, '0')}:00`,
 }))
 
 const MINUTES = Array.from({ length: 60 }, (_, i) => ({
@@ -423,48 +430,69 @@ export function TriggerForm({
 
 	// Parse initial config
 	const initConfig = (initialValues?.config as Record<string, unknown>) ?? {}
+	// The server runs every schedule in UTC; the form shows and takes Copenhagen time.
 	const initCron =
 		initialValues?.type === 'cron' && initConfig.expression
 			? parseCronExpression(String(initConfig.expression))
 			: null
+	const initCronCopenhagen = initCron ? cronUtcToCopenhagen(initCron) : null
 
 	const [name, setName] = useState(initialValues?.name ?? '')
 	const [type, setType] = useState<'cron' | 'event' | 'reminder'>(
 		(initialValues?.type as 'cron' | 'event' | 'reminder') ?? 'event',
 	)
 	const [frequency, setFrequency] = useState<'hourly' | 'daily' | 'weekly' | 'monthly'>(
-		initCron?.frequency ?? 'daily',
+		initCronCopenhagen?.frequency ?? 'daily',
 	)
-	const [minute, setMinute] = useState(initCron?.minute ?? '0')
-	const [hour, setHour] = useState(initCron?.hour ?? '9')
-	const [dayOfWeek, setDayOfWeek] = useState(initCron?.dayOfWeek ?? '1')
-	const [dayOfMonth, setDayOfMonth] = useState(initCron?.dayOfMonth ?? '1')
+	const [minute, setMinute] = useState(initCronCopenhagen?.minute ?? '0')
+	const [hour, setHour] = useState(initCronCopenhagen?.hour ?? '9')
+	const [dayOfWeek, setDayOfWeek] = useState(initCronCopenhagen?.dayOfWeek ?? '1')
+	const [dayOfMonth, setDayOfMonth] = useState(initCronCopenhagen?.dayOfMonth ?? '1')
 
 	const buildCronExpression = useCallback(() => {
+		// Untouched fields keep the stored expression exactly, so opening and saving a
+		// trigger never moves it (a day-31 schedule near midnight would not survive the round trip).
+		const unchanged =
+			initCron &&
+			initCronCopenhagen &&
+			frequency === initCronCopenhagen.frequency &&
+			minute === initCronCopenhagen.minute &&
+			hour === initCronCopenhagen.hour &&
+			dayOfWeek === initCronCopenhagen.dayOfWeek &&
+			dayOfMonth === initCronCopenhagen.dayOfMonth
+		if (unchanged) return String(initConfig.expression)
+		const utc = cronCopenhagenToUtc({ frequency, minute, hour, dayOfWeek, dayOfMonth })
 		switch (frequency) {
 			case 'hourly':
 				return `${minute} * * * *`
 			case 'daily':
-				return `${minute} ${hour} * * *`
+				return `${utc.minute} ${utc.hour} * * *`
 			case 'weekly':
-				return `${minute} ${hour} * * ${dayOfWeek}`
+				return `${utc.minute} ${utc.hour} * * ${utc.dayOfWeek}`
 			case 'monthly':
-				return `${minute} ${hour} ${dayOfMonth} * *`
+				return `${utc.minute} ${utc.hour} ${utc.dayOfMonth} * *`
 		}
-	}, [frequency, minute, hour, dayOfWeek, dayOfMonth])
+	}, [
+		frequency,
+		minute,
+		hour,
+		dayOfWeek,
+		dayOfMonth,
+		initCron,
+		initCronCopenhagen,
+		initConfig.expression,
+	])
 
 	const initScheduledAt =
 		initialValues?.type === 'reminder' && initConfig.scheduled_at
 			? new Date(String(initConfig.scheduled_at))
 			: null
-	const [scheduledDate, setScheduledDate] = useState(
-		initScheduledAt ? initScheduledAt.toISOString().slice(0, 10) : '',
-	)
-	const [scheduledTime, setScheduledTime] = useState(
-		initScheduledAt
-			? `${String(initScheduledAt.getHours()).padStart(2, '0')}:${String(initScheduledAt.getMinutes()).padStart(2, '0')}`
-			: '09:00',
-	)
+	const initScheduledAtCopenhagen =
+		initScheduledAt && !Number.isNaN(initScheduledAt.getTime())
+			? copenhagenDateAndTime(initScheduledAt)
+			: null
+	const [scheduledDate, setScheduledDate] = useState(initScheduledAtCopenhagen?.date ?? '')
+	const [scheduledTime, setScheduledTime] = useState(initScheduledAtCopenhagen?.time ?? '09:00')
 
 	const [entityType, setEntityType] = useState(
 		initialValues?.type === 'event' && initConfig.entity_type
@@ -702,7 +730,9 @@ export function TriggerForm({
 			type === 'cron'
 				? { expression: buildCronExpression() }
 				: type === 'reminder'
-					? { scheduled_at: new Date(`${scheduledDate}T${scheduledTime}`).toISOString() }
+					? {
+							scheduled_at: copenhagenWallToInstant(scheduledDate, scheduledTime)?.toISOString(),
+						}
 					: {
 							entity_type: effectiveEntityType,
 							action,

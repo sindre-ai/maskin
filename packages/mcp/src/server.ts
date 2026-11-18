@@ -19,6 +19,7 @@ import {
 	type WebAppTarget,
 	applyLoopView,
 	buildWebAppHref,
+	formatCopenhagenStamp,
 	normalizeLoopViewName,
 	readLoopViews,
 	resolveWebAppBaseUrl,
@@ -37,6 +38,7 @@ import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
 import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
+import { addCopenhagenTimesToResponse } from './copenhagen-times.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -96,7 +98,7 @@ import {
 } from './telemetry.js'
 import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
-import { compactTrigger } from './trigger-rows.js'
+import { compactTrigger, triggerSchedule } from './trigger-rows.js'
 import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
 
 export interface McpConfig {
@@ -3105,9 +3107,8 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 		case 'cron': {
 			const expression = typeof config.expression === 'string' ? config.expression : null
 			if (!expression) return `cron · ${enabledLabel}`
-			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
-			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
-			// label honest against the runtime; drop the suffix once timezone is plumbed through.
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts)
+			// and are shown to people in Copenhagen time.
 			let nextLabel: string | null = null
 			if (trigger.enabled) {
 				try {
@@ -3118,7 +3119,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 					// Invalid expression — skip next-run, keep the schedule line.
 				}
 			}
-			const schedule = `${expression} (UTC)`
+			const schedule = triggerSchedule(trigger, new Date(nowMs))
 			return nextLabel
 				? `${enabledLabel} · ${schedule} · ${nextLabel}`
 				: `${enabledLabel} · ${schedule}`
@@ -3128,7 +3129,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 			if (!scheduledAt) return `reminder · ${enabledLabel}`
 			const targetMs = Date.parse(scheduledAt)
 			if (!Number.isFinite(targetMs)) return `reminder · ${enabledLabel}`
-			return `${enabledLabel} · at ${scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
+			return `${enabledLabel} · at ${formatCopenhagenStamp(scheduledAt) ?? scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
 		}
 		case 'event': {
 			const action = typeof config.action === 'string' ? config.action : null
@@ -3773,8 +3774,9 @@ export function createMcpServer(config: McpConfig) {
 
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
-			// the wire response see the same, capped shape.
-			const capped = applyResponseTokenCap(name, response)
+			// the wire response see the same, capped shape. The Copenhagen times go on
+			// first, so they count toward the cap like any other field.
+			const capped = applyResponseTokenCap(name, addCopenhagenTimesToResponse(response))
 			const finalResponse = capped.response
 
 			// Response-size baseline for response-size telemetry. Measures the

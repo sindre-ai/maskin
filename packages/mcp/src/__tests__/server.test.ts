@@ -5736,7 +5736,12 @@ describe('tool handlers', () => {
 					'updatedAt',
 				]
 				for (const row of result.structuredContent.workspaces) {
-					expect(Object.keys(row).sort()).toEqual(expectedKeys)
+					// Each stored time also carries a Copenhagen sibling; copenhagen-times.test.ts covers those.
+					expect(
+						Object.keys(row)
+							.filter((key) => !key.endsWith('_copenhagen'))
+							.sort(),
+					).toEqual(expectedKeys)
 				}
 				expect(result.structuredContent.workspaces.map((r) => r.onboardingEnabled)).toEqual([
 					true,
@@ -5794,7 +5799,11 @@ describe('tool handlers', () => {
 				const result = (await getHandler('list_workspaces')({
 					include_settings: false,
 				})) as SlimResult
-				expect(Object.keys(result.structuredContent.workspaces[0])).toHaveLength(7)
+				expect(
+					Object.keys(result.structuredContent.workspaces[0]).filter(
+						(key) => !key.endsWith('_copenhagen'),
+					),
+				).toHaveLength(7)
 			})
 
 			it('include_settings true returns the full rows with secrets redacted in both channels', async () => {
