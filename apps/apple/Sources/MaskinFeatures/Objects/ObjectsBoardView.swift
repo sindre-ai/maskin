@@ -269,7 +269,8 @@ struct ObjectsBoardColumnView: View {
 extension ObjectsBoardColumnView {
 	/// The statuses an object can move to (its own is left out).
 	@ViewBuilder fileprivate func moveItems(_ object: WorkObject) -> some View {
-		ForEach(store.directory.schema.statuses(for: object.type).filter { $0 != object.status }, id: \.self) { status in
+		let statuses = store.directory.schema.statuses(for: object.type)
+		ForEach(ObjectMenuPlan.moveTargets(statuses: statuses, currentStatus: object.status), id: \.self) { status in
 			Button(MaskinStatus.sentenceLabel(for: status)) { onMove(object.id, status) }
 		}
 	}
