@@ -13,6 +13,52 @@ import { MENTION_GUARD_LIMITS, isNotifyOnComplete, resolveReturnObjectId } from 
 import type { SessionManager } from './session-manager'
 
 /**
+ * The thread a helper's result is posted in, or null for the main timeline.
+ *
+ * The result goes back to where the work was handed over, because the sender's answer follows
+ * the message that woke it: a top-level result moves a thread's follow-up into the main chat and
+ * hands it to the main-chat session, which never saw the thread. So a sender that is a thread
+ * session gets the result in its thread, and a handoff attached to a message inside a thread
+ * (`spawned_by_message_id`) gets it in that thread. A handoff attached to a top-level message
+ * stays top-level, like the reply to any top-level message.
+ *
+ * A thread only exists in the sender's own chat, so a result sent to any other chat is
+ * top-level. Best-effort: a failed lookup posts top-level instead of losing the result.
+ */
+async function resolveReturnThreadRootId(
+	db: Database,
+	ctx: {
+		conversationId: string
+		senderConversationId: string | null
+		senderThreadRootId: number | null
+		spawnedByMessageId: number | null
+	},
+): Promise<number | null> {
+	if (ctx.conversationId !== ctx.senderConversationId) return null
+	if (ctx.senderThreadRootId !== null) return ctx.senderThreadRootId
+	if (ctx.spawnedByMessageId === null) return null
+	try {
+		const [row] = await db
+			.select({ threadRootId: messages.threadRootId })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.id, ctx.spawnedByMessageId),
+					eq(messages.conversationId, ctx.conversationId),
+				),
+			)
+			.limit(1)
+		return row?.threadRootId ?? null
+	} catch (err) {
+		logger.warn('Could not resolve the thread of a helper return, posting it top-level', {
+			spawned_by_message_id: ctx.spawnedByMessageId,
+			error: String(err),
+		})
+		return null
+	}
+}
+
+/**
  * Send a finished helper's outcome back to the session that started it.
  *
  * One entry point, kept narrow on purpose: the Typed waits bet replaces the
@@ -193,6 +239,7 @@ async function doReturn(
 			retryAt: sessions.retryAt,
 			config: sessions.config,
 			spawnedBySessionId: sessions.spawnedBySessionId,
+			spawnedByMessageId: sessions.spawnedByMessageId,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
 		})
 	if (!helper?.spawnedBySessionId) return { returned: false, reason: 'no_link' }
@@ -224,6 +271,7 @@ async function doReturn(
 			status: sessions.status,
 			initiatedFromObjectId: sessions.initiatedFromObjectId,
 			conversationId: sessions.conversationId,
+			threadRootId: sessions.threadRootId,
 			interactive: sessions.interactive,
 		})
 		.from(sessions)
@@ -322,6 +370,12 @@ async function doReturn(
 		return { returned: true, destination: 'object' }
 	}
 
+	const threadRootId = await resolveReturnThreadRootId(db, {
+		conversationId: destination.conversationId,
+		senderConversationId: sender.conversationId,
+		senderThreadRootId: sender.threadRootId,
+		spawnedByMessageId: helper.spawnedByMessageId,
+	})
 	const message = await insertConversationMessage(db, {
 		conversationId: destination.conversationId,
 		workspaceId: helper.workspaceId,
@@ -331,6 +385,7 @@ async function doReturn(
 		// but is not part of the conversation the person reads (the chat hides it).
 		metadata: { helper_return: sessionId },
 		sessionId: null,
+		threadRootId,
 	})
 	if (message && opts.sessionManager) {
 		// Lazy import: conversation-responder pulls in the session lifecycle, which

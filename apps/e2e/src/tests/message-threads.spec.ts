@@ -142,6 +142,34 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			expect(page.url()).not.toContain('thread=')
 		})
 
+		test('a reply meant for the agent only is not shown in the thread or counted', async ({
+			page,
+			account,
+		}) => {
+			const { conversationId, rootId, rootText } = await seedChat(account)
+			const shownText = `Shown reply ${Date.now()}`
+			const hiddenText = `Agent only ${Date.now()}`
+			await account.api.postConversationMessage(conversationId, account.workspaceId, {
+				content: shownText,
+				thread_root_id: rootId,
+			})
+			// What a card button sends: delivered to the agent, not something to read.
+			await account.api.postConversationMessage(conversationId, account.workspaceId, {
+				content: hiddenText,
+				thread_root_id: rootId,
+				metadata: { hidden_from_chat: true },
+			})
+
+			await openChat(page, account.workspaceId, conversationId, rootId)
+			await expect(paneReply(page, shownText)).toBeVisible({ timeout: 10_000 })
+			await expect(pane(page).getByText(hiddenText)).toHaveCount(0)
+			await expect(pane(page).getByText('1 reply', { exact: true })).toBeVisible()
+
+			await pane(page).getByRole('button', { name: 'Close thread' }).click()
+			await expect(timeline(page).getByText(rootText)).toBeVisible()
+			await expect(page.getByRole('button', { name: '1 reply. Open thread' })).toBeVisible()
+		})
+
 		test('a reply sent only to the thread never appears in main, one sent to the chat does', async ({
 			page,
 			account,

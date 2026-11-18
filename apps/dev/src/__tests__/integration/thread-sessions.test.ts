@@ -196,6 +196,51 @@ describe('thread sessions (Integration)', () => {
 		expect(spawnedThreads()).toEqual([null])
 	})
 
+	describe('a helper’s result posted in a thread', () => {
+		const deliverResult = (messageId: number, rootId: number) =>
+			deliverTurnToAgent({
+				db,
+				sessionManager: manager,
+				workspaceId,
+				conversationId,
+				messageId,
+				threadRootId: rootId,
+				helperReturn: true,
+				agentId,
+				message: {
+					actorId: agentId,
+					authorName: 'A helper',
+					authorType: 'agent',
+					content: 'the helper finished',
+				},
+				conversationHistory: [],
+				isDirectConversation: false,
+				wakeReason: 'legacy',
+			})
+
+		it('goes to the live session of that thread', async () => {
+			const { rootId, replyId } = await startThread('a')
+			await respond(replyId)
+			const resultId = await post(agentId, 'the helper finished', rootId)
+
+			await deliverResult(resultId, rootId)
+
+			expect(createSession).toHaveBeenCalledTimes(1)
+			const rows = await liveSessions()
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.threadRootId).toBe(rootId)
+		})
+
+		it('goes to the main session when the thread has no live session, and starts none', async () => {
+			const { rootId } = await startThread('a')
+			const resultId = await post(agentId, 'the helper finished', rootId)
+
+			await deliverResult(resultId, rootId)
+
+			expect(spawnedThreads()).toEqual([null])
+		})
+	})
+
 	it('rejects a second live session for the same chat, agent and thread, and for the main chat', async () => {
 		const { rootId } = await startThread('a')
 		const live = {
