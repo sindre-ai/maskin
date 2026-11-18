@@ -3,6 +3,7 @@ import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, asc, eq, gt, lte, notInArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { pickRetryAt } from '../lib/subscription-limit-reset'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
 /**
@@ -638,6 +639,8 @@ export class SessionDispatchQueue {
 		// a raced write — the caller's null-return semantics are preserved by
 		// re-reading `workspaceId` from the row post-settle only when settle
 		// actually flipped it.
+		const retryAt =
+			resolvedFailureReason.provider === 'anthropic' ? pickRetryAt(resolvedFailureReason) : null
 		let settled: Awaited<ReturnType<typeof settleSession>>
 		try {
 			// settleSession only refuses the four terminal statuses, so without
@@ -664,6 +667,9 @@ export class SessionDispatchQueue {
 					reason: errorMessage,
 					exitCode: 0,
 					failureReason: resolvedFailureReason,
+					// A retry that found every Claude login still limited carries the reset time;
+					// the scheduler starts it again then. Null for every other dispatch failure.
+					...(retryAt ? { retryAt } : {}),
 				},
 				this.settleDeps,
 			)

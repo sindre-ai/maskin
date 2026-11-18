@@ -24,7 +24,10 @@ import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
 import { logger } from '../lib/logger'
-import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
+import {
+	MAX_RETRY_ATTEMPTS,
+	RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY,
+} from '../lib/subscription-limit-reset'
 import { alertOwnersOncePerDay } from './run-death-alerts'
 import { startSession } from './session-lifecycle'
 import { TaskSessionRestarter } from './task-session-restart'
@@ -246,6 +249,17 @@ export class SessionRetryScheduler {
 			retriedSessionId: newSessionId,
 			attemptNumber: row.attemptNumber + 1,
 		})
+	}
+
+	/**
+	 * A run that died on a Claude limit is retried on a subscription login or not at all. The
+	 * flag is read at launch (resolveLlmRoute's subscriptionOnly); a run that died of anything
+	 * else keeps the full route ladder.
+	 */
+	private retryConfig(row: RetryableSession): Record<string, unknown> | undefined {
+		const code = row.result?.failure_reason?.reason_code
+		if (!code || !CLAUDE_LIMIT_CODES.has(code)) return row.config ?? undefined
+		return { ...(row.config ?? {}), [RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY]: true }
 	}
 
 	private async clearRetryAtForCap(row: RetryableSession): Promise<void> {

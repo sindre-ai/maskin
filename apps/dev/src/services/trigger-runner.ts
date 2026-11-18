@@ -49,6 +49,7 @@ import {
 	CredentialResolutionTimeoutError,
 	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
+	SubscriptionStillLimitedError,
 	TrialNotStartedError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -611,7 +612,8 @@ export class TriggerRunner {
 		if (
 			err instanceof LlmCredentialsUnavailableError &&
 			!err.transient &&
-			!(err instanceof CredentialResolutionTimeoutError)
+			!(err instanceof CredentialResolutionTimeoutError) &&
+			!(err instanceof SubscriptionStillLimitedError)
 		) {
 			await this.suppressWorkspace(
 				workspaceId,
