@@ -197,7 +197,9 @@ export function ThreadComposer({
 				}
 				await hold({
 					send: async () => {
-						await sendMessage.mutateAsync(body)
+						// The chat is named here, at send time: the mutation would otherwise read
+						// whichever chat is open when the hold ends.
+						await sendMessage.mutateAsync({ ...body, target: { conversationId, workspaceId } })
 						reply?.onSent?.()
 					},
 					sendOnHide: () =>

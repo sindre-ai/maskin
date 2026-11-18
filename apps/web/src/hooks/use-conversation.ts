@@ -138,6 +138,11 @@ export function flattenMessagesOldestFirst(
 
 let tempMessageSeq = -1
 
+/** What `useSendMessage` posts: the message, plus the chat it must land in when that is not the hook's own. */
+export interface SendMessageInput extends PostMessageInput {
+	target?: { conversationId: string; workspaceId: string }
+}
+
 interface SendMessageContext {
 	tempId: number
 	snapshots: Array<[readonly unknown[], InfiniteData<MessagesListResponse> | undefined]>
@@ -147,11 +152,23 @@ interface SendMessageContext {
 // pages run newest-first) so the sender sees it immediately; reconciled with
 // the real row on success or dropped on error. Mirrors useUpdateObject's
 // optimistic-update-with-rollback recipe.
-export function useSendMessage(id: string, workspaceId: string) {
+export function useSendMessage(hookConversationId: string, hookWorkspaceId: string) {
 	const queryClient = useQueryClient()
-	return useMutation<MessageResponse, Error, PostMessageInput, SendMessageContext>({
-		mutationFn: (data) => api.conversations.postMessage(id, workspaceId, data),
+	// A mutation runs with the options of the latest render, so a send started after the chat
+	// changed would read the new chat's id. A held message names its own chat in `target`.
+	const targetOf = (data: SendMessageInput) => ({
+		id: data.target?.conversationId ?? hookConversationId,
+		workspaceId: data.target?.workspaceId ?? hookWorkspaceId,
+	})
+	return useMutation<MessageResponse, Error, SendMessageInput, SendMessageContext>({
+		mutationFn: ({ target, ...body }) =>
+			api.conversations.postMessage(
+				target?.conversationId ?? hookConversationId,
+				target?.workspaceId ?? hookWorkspaceId,
+				body,
+			),
 		onMutate: async (data) => {
+			const { id } = targetOf(data)
 			await queryClient.cancelQueries({ queryKey: queryKeys.conversations.messagesPrefix(id) })
 			const sendRoot = data.thread_root_id ?? null
 			const actor = getStoredActor()
@@ -194,7 +211,8 @@ export function useSendMessage(id: string, workspaceId: string) {
 			for (const [key, cache] of ctx.snapshots) queryClient.setQueryData(key, cache)
 			toast.error('Failed to send message')
 		},
-		onSuccess: (message, _vars, ctx) => {
+		onSuccess: (message, vars, ctx) => {
+			const { id } = targetOf(vars)
 			const snapshots = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
 				queryKey: queryKeys.conversations.messagesPrefix(id),
 			})
@@ -209,7 +227,8 @@ export function useSendMessage(id: string, workspaceId: string) {
 				})
 			}
 		},
-		onSettled: () => {
+		onSettled: (_message, _err, vars) => {
+			const { id, workspaceId } = targetOf(vars)
 			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) })
 		},
