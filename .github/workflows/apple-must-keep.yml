@@ -21,6 +21,11 @@ on:
 permissions:
   contents: read
 
+# A run is 30 to 40 Mac minutes: a newer push replaces the one still going for the same branch.
+concurrency:
+  group: apple-must-keep-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   must-keep:
     name: must-keep
