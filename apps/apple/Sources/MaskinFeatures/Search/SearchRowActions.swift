@@ -3,6 +3,31 @@ import MaskinDesign
 import Observation
 import SwiftUI
 
+/// Which long-press menu a search result gets. A chat or object whose row has not arrived in its
+/// store yet gets none until it does; agents and files never get one.
+enum SearchRowMenu: Equatable {
+	case chat, object, none
+
+	static func of(_ kind: SearchKind, rowLoaded: Bool) -> SearchRowMenu {
+		switch kind {
+		case .chat: rowLoaded ? .chat : .none
+		case .object: rowLoaded ? .object : .none
+		case .agent, .file: .none
+		}
+	}
+
+	/// The chat list's menu for a chat: Pin, Read, Archive and Delete. No Select (search has no
+	/// bulk mode), no reordering, and no "More" row.
+	static func chatActions(
+		isPinned: Bool, isUnread: Bool, pin: @escaping () -> Void, toggleRead: @escaping () -> Void,
+		archive: @escaping () -> Void, delete: @escaping () -> Void
+	) -> TeamRowActions {
+		TeamRowActions(
+			isPinned: isPinned, isUnread: isUnread, pin: pin, toggleRead: toggleRead, archive: archive,
+			delete: delete, more: {})
+	}
+}
+
 /// The long-press menu of a search result: the chat list's menu for a chat, the objects list's
 /// menu for an object or a flow. Agents and files have no menu in their own lists, so they get
 /// none here.
@@ -53,20 +78,20 @@ final class SearchRowActions {
 
 	@ViewBuilder
 	func menu(for result: SearchResult) -> some View {
-		switch result.kind {
+		let chat = result.kind == .chat ? chats.conversation(id: result.entityId) : nil
+		let object = result.kind == .object ? objects.objects.first(where: { $0.id == result.entityId }) : nil
+		switch SearchRowMenu.of(result.kind, rowLoaded: chat != nil || object != nil) {
 		case .chat:
-			if let chat = chats.conversation(id: result.entityId) {
-				TeamRowMenuItems(actions: chatActions(chat, result))
-			}
+			if let chat { TeamRowMenuItems(actions: chatActions(chat, result)) }
 		case .object:
-			if let object = objects.objects.first(where: { $0.id == result.entityId }) {
+			if let object {
 				ObjectMenuItems(
 					object: object, ask: nil, store: objects, askActions: ObjectAskActions(), onHold: { _ in },
 					offerUndo: { [self] undo, message in offerUndo(undo, message: message) },
 					deleteHeld: { [self] in deleteHeld($0, result: result) },
 					onOpen: { [self] in open(result) })
 			}
-		case .agent, .file:
+		case .none:
 			EmptyView()
 		}
 	}
@@ -75,15 +100,14 @@ final class SearchRowActions {
 
 	/// What the chat list builds for a conversation row, minus Select and the "More" swipe.
 	func chatActions(_ chat: ConversationSummary, _ result: SearchResult) -> TeamRowActions {
-		TeamRowActions(
+		SearchRowMenu.chatActions(
 			isPinned: chat.pinned, isUnread: chat.isUnread,
 			pin: { [self] in Task { await chats.setPinned(chat.id, !chat.pinned) } },
 			toggleRead: { [self] in
 				Task { if chat.isUnread { await chats.markRead([chat.id]) } else { await chats.markUnread(chat.id) } }
 			},
 			archive: { [self] in archive(result) },
-			delete: { [self] in deleteTarget = result },
-			more: {})
+			delete: { [self] in deleteTarget = result })
 	}
 
 	func archive(_ result: SearchResult) {
