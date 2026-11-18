@@ -122,6 +122,7 @@ import webPushRoutes from './routes/web-push'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
+import youtubeActionsRoutes from './routes/youtube-actions'
 import type { AgentStorageManager } from './services/agent-storage'
 import type { SessionManager } from './services/session-manager'
 
@@ -635,6 +636,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
+	app.route('/api/youtube/actions', youtubeActionsRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
 	app.route('/api/email/stop', emailStopRoutes)

@@ -109,6 +109,9 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	// The "Not useful" link under a Marketplace pick: opened signed out and authenticated by its own signed token.
 	'GET /api/email/pick-dismiss',
 	'POST /api/email/pick-dismiss',
+	// A held YouTube change is decided only by a person's own tap. A connected Claude client is a model holding a person's key, so it never decides one (and no MCP tool reads the status).
+	'GET /api/youtube/actions/:id',
+	'POST /api/youtube/actions/:id/decision',
 	'GET /api/briefing',
 	'POST /api/briefing/spoken',
 	'GET /api/conversations',
