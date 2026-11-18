@@ -12,6 +12,7 @@ import {
 	DISCOVERY_TRIGGER_IDS,
 	DISCOVERY_VIEW_IDS,
 } from '../../lib/marketplace-loops/discovery-loop'
+import { KNOWLEDGE_WIKI_LOOP } from '../../lib/marketplace-loops/knowledge-wiki-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
 import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
@@ -23,6 +24,7 @@ const ALL_PACKAGES = [
 	MEETING_LOOP,
 	PRODUCT_RELEASE_LOOP,
 	CUSTOMER_VOICE_LOOP,
+	KNOWLEDGE_WIKI_LOOP,
 ]
 
 function matchingMarketplaceRows() {

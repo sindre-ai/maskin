@@ -27,6 +27,13 @@ import {
 	DISCOVERY_VIEW_IDS,
 } from './marketplace-loops/discovery-loop'
 import {
+	KNOWLEDGE_WIKI_ACTOR_IDS,
+	KNOWLEDGE_WIKI_LOOP,
+	KNOWLEDGE_WIKI_SKILL_IDS,
+	KNOWLEDGE_WIKI_TRIGGER_IDS,
+	KNOWLEDGE_WIKI_VIEW_IDS,
+} from './marketplace-loops/knowledge-wiki-loop'
+import {
 	type MarketplaceLoopSeedConfig,
 	getActorData,
 	getSkillData,
@@ -88,6 +95,13 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		skillIds: CUSTOMER_VOICE_SKILL_IDS,
 		viewIds: CUSTOMER_VOICE_VIEW_IDS,
 	},
+	{
+		loop: KNOWLEDGE_WIKI_LOOP,
+		actorIds: KNOWLEDGE_WIKI_ACTOR_IDS,
+		triggerIds: KNOWLEDGE_WIKI_TRIGGER_IDS,
+		skillIds: KNOWLEDGE_WIKI_SKILL_IDS,
+		viewIds: KNOWLEDGE_WIKI_VIEW_IDS,
+	},
 ]
 
 export interface MarketplaceSyncResult {
@@ -100,7 +114,7 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Market & Competitor Watch, Meeting Loop, Product release), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Market & Competitor Watch, Meeting Loop, Product release, Knowledge Wiki), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
