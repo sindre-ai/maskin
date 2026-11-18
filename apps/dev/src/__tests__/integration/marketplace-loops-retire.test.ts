@@ -152,6 +152,7 @@ describe('Marketplace loop retirement', () => {
 		const slugs = body.loops.map((l) => l.slug)
 		expect(slugs).not.toContain(legacy.slug)
 		expect(slugs.sort()).toEqual([
+			'knowledge-wiki-loop',
 			'market-competitor-watch-loop',
 			'meeting-loop',
 			'product-discovery-loop',
