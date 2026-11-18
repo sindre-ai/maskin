@@ -178,6 +178,7 @@ import {
 	type ModelSource,
 	type PinnedModel,
 	PlanCapExceededError,
+	SubscriptionStillLimitedError,
 	canUseCreditBalance,
 	ceilCents,
 	checkPlanCap,
@@ -209,7 +210,7 @@ import {
 } from '../lib/mcp-session-header'
 import { resolveAgentSendModes } from '../lib/send-permissions'
 import { sessionLogRedactor } from '../lib/session-log-redactor'
-import { pickRetryAt } from '../lib/subscription-limit-reset'
+import { RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY, pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
@@ -1390,6 +1391,8 @@ export class SessionManager extends EventEmitter {
 			// internal message. Everything else keeps today's shape.
 			const launchFailureReason =
 				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
+			const launchFailureRetryAt =
+				err instanceof SubscriptionStillLimitedError ? pickRetryAt(launchFailureReason) : null
 			// settleSession is the only writer of terminal sessions.status. The
 			// container never came up, so there's nothing to stop and no /agent
 			// workspace to push — startup_stalled is the classification the
@@ -1407,6 +1410,8 @@ export class SessionManager extends EventEmitter {
 						reason: launchFailureReason?.human_message ?? message,
 						exitCode: 0,
 						...(launchFailureReason ? { failureReason: launchFailureReason } : {}),
+						// A retry that found every login still limited goes back in the queue for the reset.
+						...(launchFailureRetryAt ? { retryAt: launchFailureRetryAt } : {}),
 					},
 					this.buildSettleDeps({ skipStop: true, skipPush: true }),
 				)
@@ -3099,6 +3104,10 @@ ${cont.continues_prompt}
 					wsSettings,
 					enterprise,
 					pinned: pinnedModel,
+					subscriptionOnly:
+						(session.config as Record<string, unknown> | null)?.[
+							RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY
+						] === true,
 					agent: {
 						provider: agent.llmProvider,
 						apiKey: (llmConfig.api_key as string | undefined) ?? null,
