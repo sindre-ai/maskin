@@ -88,23 +88,13 @@ public struct SettingsScreen: View {
 	}
 
 	private var showsAppLock: Bool {
-		guard let appLock else { return false }
-		return appLock.availability != .unavailable || appLock.isEnabled
+		SettingsRowRules.showsAppLock(availability: appLock?.availability, isEnabled: appLock?.isEnabled ?? false)
 	}
 
 	private func detail(for row: SettingsPageRow) -> String? {
-		switch row {
-		case .account: environment.auth.session?.name
-		case .billing: counts?.plan
-		case .appLock: appLock.map { $0.isEnabled ? "On" : "Off" }
-		case .members: SettingsCountsStore.detail(counts?.members)
-		case .integrations: counts?.integrationsDetail
-		case .triggers: SettingsCountsStore.detail(counts?.triggers)
-		case .files: SettingsCountsStore.detail(counts?.files)
-		case .skills: SettingsCountsStore.detail(counts?.skills)
-		case .objectTypes: SettingsCountsStore.detail(counts?.itemTypes)
-		default: nil
-		}
+		SettingsRowRules.hubDetail(
+			for: row, accountName: environment.auth.session?.name, appLockEnabled: appLock?.isEnabled,
+			counts: counts)
 	}
 
 	private func loadCounts() async {
@@ -113,12 +103,7 @@ public struct SettingsScreen: View {
 	}
 
 	static func appLockFooter(_ availability: AppLockAvailability, delay: AppLockDelay = .default) -> String {
-		let how: String
-		switch availability {
-		case .biometric(let name): how = "Unlock with \(name) or your device passcode."
-		case .passcodeOnly, .unavailable: how = "Unlock with your device passcode."
-		}
-		return "\(how) Maskin locks when you open it, and \(delay == .immediately ? "as soon as you leave it" : "after \(delay.label) in the background")."
+		SettingsRowRules.appLockFooter(availability, delay: delay)
 	}
 
 	static var versionString: String {

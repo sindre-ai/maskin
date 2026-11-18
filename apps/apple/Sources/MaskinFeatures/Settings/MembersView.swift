@@ -66,7 +66,9 @@ struct MembersView: View {
 				PageGroupLabel(text: "People · \(groups.people.count)")
 				PageCard(rows: groups.people.map(row))
 			}
-			if let invitations, invitations.canManage, !invitations.pending.isEmpty {
+			if let invitations,
+				SettingsRowRules.showsInvitedGroup(canManage: invitations.canManage, pendingCount: invitations.pending.count)
+			{
 				PageGroupLabel(text: "Invited · \(invitations.pending.count)")
 				PageCard(rows: invitations.pending.map { invitationRow($0, invitations) })
 			}
@@ -122,12 +124,7 @@ struct MembersView: View {
 		return invitations?.actionError
 	}
 
-	private var footnote: String {
-		if store.canAdd {
-			return "Tap an agent to see what it is doing or pause it. To add someone, ask them for the ID on their profile."
-		}
-		return "Tap an agent to see what it is doing. Only owners and admins can add people."
-	}
+	private var footnote: String { SettingsRowRules.membersFootnote(canAdd: store.canAdd) }
 
 	private func agentRows(_ groups: MembersRoster.Groups) -> [PageRowModel] {
 		var rows: [PageRowModel] = groups.agents.map(agentRow)
@@ -136,10 +133,10 @@ struct MembersView: View {
 	}
 
 	@ViewBuilder private var addByIDButton: some View {
-		if invitations?.canManage == true {
-			Button("Add someone by ID") { showAdd = true }.buttonStyle(.secondaryAction)
-		} else {
+		if SettingsRowRules.addByIDIsPrimary(canInvite: invitations?.canManage == true) {
 			Button("Add someone by ID") { showAdd = true }.buttonStyle(.primaryAction)
+		} else {
+			Button("Add someone by ID") { showAdd = true }.buttonStyle(.secondaryAction)
 		}
 	}
 
@@ -147,8 +144,7 @@ struct MembersView: View {
 		PageRowModel(
 			id: "invite-\(invitation.id)", title: invitation.email,
 			subtitle: invitation.expiryText(),
-			accessory: invitations.busyIDs.contains(invitation.id)
-				? .state(PageState("Updating", .muted)) : .state(PageState("Invited", .muted)),
+			accessory: .state(SettingsRowRules.invitationAccessory(isBusy: invitations.busyIDs.contains(invitation.id))),
 			action: { invitationTarget = invitation })
 	}
 
@@ -160,8 +156,7 @@ struct MembersView: View {
 				isAgent: member.isAgent, role: member.role, isYou: isYou),
 			avatar: (member.name, member.isAgent),
 			accessory: .state(
-				store.busyIDs.contains(member.id)
-					? PageState("Updating", .muted) : WorkspacePageState.member(role: member.role)),
+				SettingsRowRules.memberAccessory(isBusy: store.busyIDs.contains(member.id), role: member.role)),
 			showsChevron: !member.isAgent,
 			action: member.isAgent ? nil : { memberDetail = member.id },
 			message: messageAction(for: member))
