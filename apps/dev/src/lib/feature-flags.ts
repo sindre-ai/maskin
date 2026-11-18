@@ -28,14 +28,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Gates connecting Deepdots in Integrations (bet [Connect Deepdots so agents can read the
-	 * latest customer feedback](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f24572b9-f500-496c-ba7d-4eee3af6ed7a)).
-	 * The connect route answers 404 when it is off for the caller, and the web app hides the
-	 * Deepdots row. Actor-scoped (FF_TESTER_ACTOR_IDS), because the web app only reads actor
-	 * flags. Retire once Deepdots is on for everyone.
-	 */
-	DEEPDOTS_CONNECT: 'deepdots-connect',
-	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section
@@ -44,23 +36,6 @@ export const FLAGS = {
 	 * once the daily budget is on for everyone.
 	 */
 	DAILY_BUDGET: 'daily-budget',
-	/**
-	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
-	 * between the person's clipboard and the agent's computer while they are in
-	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
-	 * once the buttons are on for everyone.
-	 */
-	COMPUTER_CLIPBOARD: 'computer-clipboard',
-	/**
-	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
-	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
-	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES
-	 * empty). Listing and disconnecting connections is NOT behind this flag: a flag that hides
-	 * the only revoke button is a trap. Discovery, the token endpoint and token acceptance act
-	 * before any person is known and sit behind the MASKIN_MCP_OAUTH_ENABLED switch instead.
-	 * See docs/reference/mcp-oauth.md. Retire when the connector ships to everyone.
-	 */
-	MCP_OAUTH_CONSENT: 'mcp-oauth-consent',
 	/**
 	 * Gates editing a draft's text in place on the web For You card, with Send saving the
 	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
@@ -94,14 +69,6 @@ export const FLAGS = {
 	 * box formatting reads the same id. Retire once it is on for everyone.
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
-	/**
-	 * Gates the simpler For You card (task [Give For You cards their context](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8ac3f27a-4f3f-4c9e-9e90-d43a03ffe71b)):
-	 * the object the card is about on its first line, the chat composer as the message box, plain
-	 * summary text, no Recommended tag on a lone answer, Open the task to decide when there are no
-	 * buttons, and Open chat on the reply receipt. UI only, read where the card draws. Off means
-	 * the card looks as it does today. Retire once it is on for everyone.
-	 */
-	FOR_YOU_CARD_CONTEXT: 'foryou-card-context',
 	/**
 	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
@@ -151,13 +118,6 @@ export const FLAGS = {
 	 * is on for everyone.
 	 */
 	LOOP_VIEW_EXPORT: 'loop-view-export',
-	/**
-	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
-	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
-	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for
-	 * everyone.
-	 */
-	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
 	/**
 	 * Gates the default on silence for decision cards (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * task [Let decision cards carry a default on silence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/bcfed848-7a51-418e-a5d0-172999385c9c)).

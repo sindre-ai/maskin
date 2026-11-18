@@ -6,7 +6,6 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { DeepdotsAuthError, signIn } from '../lib/integrations/providers/deepdots/auth'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -54,10 +53,6 @@ const connectRoute = createRoute({
 			description: 'Deepdots refused the email and password. Nothing is stored.',
 			content: { 'application/json': { schema: errorSchema } },
 		},
-		404: {
-			description: 'Deepdots is not switched on for this person',
-			content: { 'application/json': { schema: errorSchema } },
-		},
 		500: {
 			description: 'Signed in, but the connection could not be saved',
 			content: { 'application/json': { schema: errorSchema } },
@@ -74,10 +69,6 @@ app.openapi(connectRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
-
-	if (!isFlagEnabled(actorId, FLAGS.DEEPDOTS_CONNECT)) {
-		return c.json(createApiError('NOT_FOUND', 'Deepdots is not available yet'), 404)
-	}
 
 	const { email, password } = c.req.valid('json')
 

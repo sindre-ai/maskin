@@ -27,6 +27,11 @@ interface FeedItemInput {
 	body?: string
 }
 
+// The agent that wrote each comment. The card's message box is addressed to the author, so a card
+// needs one to show it; the id is not in the workspace's actor list, so the box reads "the agent".
+const SENDER_ID = '00000000-0000-4000-8000-0000000000bb'
+const MESSAGE_BOX = { name: 'Message the agent', exact: true } as const
+
 // Every card in the feed exists because an agent @-mentioned the reader, so
 // each fixture item carries that comment. `decision: true` makes it a
 // structured ask, whose options become the card's buttons.
@@ -51,7 +56,7 @@ function buildItem(workspaceId: string, input: FeedItemInput) {
 		},
 		latest_mention: {
 			event_id: 42,
-			actor_id: null,
+			actor_id: SENDER_ID,
 			created_at: new Date(Date.now() - (input.hoursAgo ?? 4) * 3_600_000).toISOString(),
 			content: input.body
 				? `${input.title}
@@ -272,11 +277,8 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			await expect(
 				cards.first().getByText(/A page 200 people use every day was rewritten/),
 			).toBeVisible()
-			// Matches the v2 composer's default placeholder (both its mobile and
-			// desktop wording). Once the Object detail split lands `placeholder`
-			// on the composer — see the TODO in feed-card.tsx — this should
-			// tighten back to /Reply to /.
-			await expect(page.getByRole('textbox', { name: 'Comment' }).first()).toBeVisible()
+			// The message box names the agent the reply goes to.
+			await expect(page.getByRole('textbox', MESSAGE_BOX).first()).toBeVisible()
 
 			// A plain mention carries its whole body on the card — nothing is held
 			// behind a "Read the rest" link any more.
@@ -288,13 +290,13 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 
 			// List view collapses them to one line each — the composer goes away.
 			await pickView(page, /View: List/)
-			await expect(page.getByRole('textbox', { name: 'Comment' })).toHaveCount(0)
+			await expect(page.getByRole('textbox', MESSAGE_BOX)).toHaveCount(0)
 			await expect(page.getByText('Merge the trigger settings rewrite?').first()).toBeVisible()
 			await assertNoHorizontalOverflow(page, `${vp.label} list`)
 
 			// A row opens back up in place.
 			await page.getByRole('button', { name: /Merge the trigger settings rewrite\?/ }).click()
-			await expect(page.getByRole('textbox', { name: 'Comment' }).first()).toBeVisible()
+			await expect(page.getByRole('textbox', MESSAGE_BOX).first()).toBeVisible()
 		})
 	}
 })
@@ -385,7 +387,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		const fyi = page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' })
-		await expect(fyi.getByRole('textbox', { name: 'Comment' })).toBeVisible()
+		await expect(fyi.getByRole('textbox', MESSAGE_BOX)).toBeVisible()
 		await expect(fyi.getByRole('button', { name: 'Merge now' })).toHaveCount(0)
 		await expect(fyi.getByRole('button', { name: 'Send back' })).toHaveCount(0)
 	})

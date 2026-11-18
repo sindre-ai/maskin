@@ -1,7 +1,7 @@
 ---
 title: MCP sign-in for Claude (OAuth)
 slug: mcp-oauth
-description: How Claude discovers and completes Maskin's MCP sign-in, what /mcp answers without a credential, the pinned Claude client record, the consent and token routes, how a connection ends, and the switch and flag that control it.
+description: How Claude discovers and completes Maskin's MCP sign-in, what /mcp answers without a credential, the pinned Claude client record, the consent and token routes, how a connection ends, and the switch that controls it.
 last_updated: 2026-11-04
 ---
 
@@ -9,20 +9,18 @@ last_updated: 2026-11-04
 
 The MCP server at `/mcp` accepts API keys (`ank_`) and, when the switch below is on, Claude connector tokens (`mat_`). This page covers what Claude needs in order to find the sign-in, the routes that complete it, and how a connection ends. Token acceptance lives in `packages/auth`.
 
-## Environment variables and the flag
+## Environment variables
 
 - `MASKIN_MCP_OAUTH_ENABLED` — the kill switch. Unset or anything other than `true` / `1` means off. Both variables are passed through `turbo.json` (`globalPassThroughEnv`) and listed on the `apps/dev` service in `docker-compose.yml` and `docker-compose.prod.yml`.
 - `MASKIN_OAUTH_ISSUER` — optional origin override, no trailing slash needed. Defaults to the web app origin (`WEB_APP_URL`, then `FRONTEND_URL`, then `https://maskin.io`). Set it in local dev, for example `http://localhost:3000`. The issuer and the `/mcp` resource in every document below follow it, per request.
-- Feature flag `mcp-oauth-consent` (`FLAGS.MCP_OAUTH_CONSENT` in `apps/dev/src/lib/feature-flags.ts`), off by default. It gates what a person does: `GET /api/oauth/authorize/preview`, `POST /api/oauth/authorize/approve` and `POST /api/oauth/authorize/deny` answer `403 access_denied` unless the actor is listed in `FF_TESTER_ACTOR_IDS` and the id is in `FF_TESTER_FEATURES`. Agent actors always get the same 403.
 
-What each control covers:
+What the switch covers:
 
 | Control | New connections (preview, approve, deny, token) | Existing tokens | List and disconnect |
 | --- | --- | --- | --- |
 | `MASKIN_MCP_OAUTH_ENABLED` off | stop (404) | stop working | still work |
-| Flag off for the person | stop for them (403) | keep working | still work |
 
-Listing and disconnecting a connection is never behind the switch or the flag: a person must always be able to see and remove what they connected.
+Listing and disconnecting a connection is never behind the switch: a person must always be able to see and remove what they connected.
 
 ## Switch off (the default)
 
@@ -61,7 +59,7 @@ All under `/api/oauth`, behind `authMiddleware` with the person's own `ank_` key
 - `GET /grants` lists the person's connections to the pinned Claude client across their workspaces, one row per workspace: `id`, `client_id`, `client_name`, `workspace_id`, `workspace_name` (joined from the workspace), `created_at`, `last_used_at`. A row appears only when the connection is not revoked, its refresh token can still be used (the same check the token endpoint runs, `isGrantRefreshable` in `apps/dev/src/lib/oauth-server/grants.ts`) and the person still belongs to the workspace. `last_used_at` is null until the first tool call.
 - `DELETE /grants/:id` ends one of the caller's own connections and every token on it at once.
 
-Preview, approve and deny answer 404 when the switch is off and 403 `access_denied` when the flag is off or the caller is not a person. They are limited to 30 calls a minute per person.
+Preview, approve and deny answer 404 when the switch is off and 403 `access_denied` when the caller is not a person. They are limited to 30 calls a minute per person.
 
 Errors from preview, approve and deny are `{ error, error_description, redirect_url? }` with one of seven codes. `client_not_allowlisted` and `bad_redirect_uri` are identity codes and never carry a link. `pkce_missing`, `invalid_request`, `unsupported_response_type`, `invalid_scope` and `invalid_target` carry `redirect_url`: built from the pinned redirect address, never from the request's, with the matching OAuth error (`pkce_missing` goes back as `invalid_request`) and `state` only if it is 8 to 512 printable characters, always as an encoded query parameter. The field is absent, not empty, when there is no verified link.
 
@@ -71,7 +69,7 @@ The consent page is a web route, `apps/web/src/routes/oauth.authorize.tsx`, at `
 
 The app answers `/oauth/authorize` with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` (middleware in `apps/dev/src/app-factory.ts`, ahead of the static files and the SPA fallback), because a page with an Allow button is a clickjacking target. PostHog page views on the consent page, and on the login detour that carries it, are sent without the query string (`scrubAuthorizeUrls` in `apps/web/src/lib/posthog.ts`).
 
-Settings > MCP has a Claude tab, in front of the other tabs. It shows when the `mcp-oauth-consent` flag is on for the person or when they have at least one live connection, so the only Disconnect button never disappears with the flag. Add to Claude is a plain link to `claude.ai/customize/connectors` with `modal=add-custom-connector`, `connectorName=Maskin` and `connectorUrl` set to the encoded server URL, which is `window.location.origin` plus `/mcp`: byte for byte the resource in the discovery documents when `MASKIN_OAUTH_ISSUER` (or the default issuer) is the web app origin. The Connected apps list is `GET /api/oauth/grants`, one row per workspace; Disconnect calls `DELETE /api/oauth/grants/:id`, works with the flag and the switch off, and does not sign the person out.
+Settings > MCP has a Claude tab, in front of the other tabs, shown to everyone and opened first. It reads Connected when the person has at least one live connection and Sign in otherwise. Add to Claude is a plain link to `claude.ai/customize/connectors` with `modal=add-custom-connector`, `connectorName=Maskin` and `connectorUrl` set to the encoded server URL, which is `window.location.origin` plus `/mcp`: byte for byte the resource in the discovery documents when `MASKIN_OAUTH_ISSUER` (or the default issuer) is the web app origin. The Connected apps list is `GET /api/oauth/grants`, one row per workspace; Disconnect calls `DELETE /api/oauth/grants/:id`, works with the flag and the switch off, and does not sign the person out.
 
 ## The token endpoint
 
@@ -92,7 +90,7 @@ Every change is an `events` row with `entity_type` `oauth_grant` through `record
 PostHog events are sent from the route that makes each decision, always after sign-in (the page sends none, and no server route sees anyone before sign-in, so drop-off before sign-in is not measured; the funnel starts at `mcp_oauth_authorize_started`). Every event carries `client` (the fixed label for the pinned client, `claude_ai`) and the distinct id is the actor id:
 
 - `mcp_oauth_authorize_started`: preview succeeded. Also `workspace_count`.
-- `mcp_oauth_preview_rejected`: preview refused. `reason` is one of the seven request codes or `rate_limited`; `client` is left out when the `client_id` did not match the pin. Flag off and switch off are not events.
+- `mcp_oauth_preview_rejected`: preview refused. `reason` is one of the seven request codes or `rate_limited`; `client` is left out when the `client_id` did not match the pin. A caller turned away by the switch or the person check is not an event.
 - `mcp_oauth_consent_approved`: `workspace_id`, `grant_id`.
 - `mcp_oauth_consent_denied`: `workspace_id` only when the person had picked one of their own.
 - `mcp_oauth_token_issued`: the code was traded. `workspace_id`, `grant_id`, `grant_type` (`authorization_code`).

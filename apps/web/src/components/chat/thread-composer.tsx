@@ -274,15 +274,14 @@ export function ThreadComposer({
 	])
 	// A reply names who it answers, which is the point of the box; the group-chat cue's wording
 	// is for starting a message, so it keeps only its hint here.
-	const editLastEnabled = useFeatureFlag('chat-edit-last-message')
 	const handleEditLast = useMemo(() => {
-		if (!editLastEnabled || !onEditLast || reply) return undefined
+		if (!onEditLast || reply) return undefined
 		return () => {
 			const messages = messagesQuery.data ? flattenMessagesOldestFirst(messagesQuery.data) : []
 			const last = findLastEditableMessage(messages, self?.id)
 			if (last) onEditLast(last.id)
 		}
-	}, [editLastEnabled, onEditLast, reply, messagesQuery.data, self?.id])
+	}, [onEditLast, reply, messagesQuery.data, self?.id])
 	const placeholder = reply ? todaysPlaceholder : (cue?.placeholder ?? todaysPlaceholder)
 
 	return (
