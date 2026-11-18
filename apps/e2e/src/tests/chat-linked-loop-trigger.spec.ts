@@ -23,7 +23,7 @@ test.describe('Chat — a linked loop and trigger draw like an object', () => {
 			const loop = await account.api.createObject(ws, {
 				type: 'loop',
 				title: 'Customer feedback',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(ws, {
@@ -52,7 +52,7 @@ test.describe('Chat — a linked loop and trigger draw like an object', () => {
 			const loopCard = thread.locator('[data-linked-card]', { hasText: 'Customer feedback' })
 			await expect(loopCard).toBeVisible({ timeout: 10_000 })
 			await expect(loopCard).toContainText('Flow')
-			await expect(loopCard).toContainText('Learning')
+			await expect(loopCard).toContainText('Pilot')
 			await expect(thread.getByText('the loop', { exact: true })).toHaveCount(0)
 
 			// The trigger card: when it fires and On, never the instruction or the raw schedule.

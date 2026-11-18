@@ -20,6 +20,7 @@ import {
 	applyLoopView,
 	buildWebAppHref,
 	formatCopenhagenStamp,
+	loopStatusTurnsTriggersOff,
 	normalizeLoopViewName,
 	readLoopViews,
 	resolveWebAppBaseUrl,
@@ -679,8 +680,7 @@ function countNonMaskinMcpServers(tools: unknown): number {
 }
 
 /**
- * The stored status of every loop in the workspace, keyed by loop id. `/api/loops` reports a
- * folded status (stored pilot, live and archived all come back as draft), so a status filter
+ * The stored status of every loop in the workspace, keyed by loop id. A status filter
  * reads the objects route, which returns the status as stored. Walks the route's own keyset to
  * the end, archived loops included.
  */
@@ -947,7 +947,7 @@ interface LoopStepInput {
 /**
  * Map an inline loop step to a `POST /api/triggers` request body. `enabled`
  * defaults to true; callers creating steps on a loop whose effective status
- * is `paused` pass `false` so a newly-authored step doesn't start firing on
+ * is `draft` or `paused` pass `false` so a newly-authored step doesn't start firing on
  * a loop that isn't supposed to be running anything yet.
  */
 function buildStepTriggerBody(step: LoopStepInput, enabled = true): Record<string, unknown> {
@@ -7699,8 +7699,8 @@ export function createMcpServer(config: McpConfig) {
 			const existingTriggerIds = args.trigger_ids ?? []
 			const memberObjectIds = args.object_ids ?? []
 			// `status` always has a value here — the schema defaults it to
-			// 'draft'. Only `paused` starts a loop's triggers disabled.
-			const startEnabled = status !== 'paused'
+			// 'draft'. Draft and paused start a loop's triggers disabled.
+			const startEnabled = !loopStatusTurnsTriggersOff(status)
 
 			// Validate everything up-front so nothing is created on a bad request.
 			await Promise.all([
@@ -7789,8 +7789,8 @@ export function createMcpServer(config: McpConfig) {
 			const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
 
 			// Pre-existing triggers attached via `trigger_ids` were created by an
-			// earlier call and default to enabled — if this loop starts paused,
-			// disable them too so "paused" is true of every step, not just the
+			// earlier call and default to enabled — if this loop starts as draft or
+			// paused, disable them too so "off" is true of every step, not just the
 			// ones authored inline in this call. Best-effort: a failure here
 			// surfaces as a warning rather than rolling back an already-created,
 			// otherwise-successful loop.
@@ -7816,7 +7816,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 			if (disableFailures.length > 0) {
-				responseBody.trigger_pause_warnings = `Loop created as paused, but these pre-existing triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+				responseBody.trigger_pause_warnings = `Loop created with its triggers off (draft or paused), but these pre-existing triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 			}
 
 			// Same setup block update_loop/get_loop return. graphResult.edges.length
@@ -7890,14 +7890,14 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// The loop's status after this call — its own PATCH if `status` was
-				// passed, else whatever it already was. Only `paused` means new
+				// passed, else whatever it already was. Draft and paused mean new
 				// steps should start disabled; an explicit status transition
-				// to/from `paused` is handled centrally by the PATCH /api/objects/:id
+				// into or out of those is handled centrally by the PATCH /api/objects/:id
 				// hook (apps/dev/src/routes/objects.ts), which also covers the
 				// frontend's pause/resume button — this only needs to handle steps
-				// being *added* to an already-paused loop in the same or a later call.
+				// being *added* to an already-off loop in the same or a later call.
 				const effectiveStatus = status ?? (existing.status as string | undefined)
-				const stepsStartEnabled = effectiveStatus !== 'paused'
+				const stepsStartEnabled = !loopStatusTurnsTriggersOff(effectiveStatus)
 
 				await Promise.all([
 					driver_id !== undefined ? assertLoopDriver(config, driver_id, workspace_id) : undefined,
@@ -7991,8 +7991,8 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// Pre-existing triggers attached via `add_trigger_ids` default to
-				// enabled — if the loop's effective status is `paused`, disable them
-				// too so pausing stays true of every step, not just ones just
+				// enabled — if the loop's effective status is `draft` or `paused`,
+				// disable them too so it stays true of every step, not just ones just
 				// authored inline. Best-effort: a failure surfaces as a warning
 				// rather than undoing an otherwise-successful update.
 				const disableFailures =
@@ -8086,7 +8086,7 @@ export function createMcpServer(config: McpConfig) {
 				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
 				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
 				if (disableFailures.length > 0) {
-					responseBody.trigger_pause_warnings = `Loop is paused, but these newly-attached triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+					responseBody.trigger_pause_warnings = `Loop has its triggers off (draft or paused), but these newly-attached triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 				}
 
 				responseBody.setup = await buildLoopSetupBlockFromApi(

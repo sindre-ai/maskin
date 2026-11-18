@@ -3,7 +3,7 @@ import Foundation
 @testable import MaskinCore
 
 func loopRow(
-	_ id: String, name: String? = "Loop", status: LoopPill = .learning, waiting: Int = 0,
+	_ id: String, name: String? = "Loop", status: LoopPill = .pilot, waiting: Int = 0,
 	agents: [String] = ["agent-1"], inProgress: Int = 2, closed: Int = 5
 ) -> LoopSummary {
 	LoopSummary(
@@ -98,7 +98,7 @@ extension FakeLoopsAPI {
 		createCalls.append((name, content, idempotencyKey))
 		if failEdit { throw AutomationError("nope") }
 		let id = "new-\(createCalls.count)"
-		rows.insert(LoopSummary(id: id, name: name, content: content, status: .learning), at: 0)
+		rows.insert(LoopSummary(id: id, name: name, content: content, status: .pilot), at: 0)
 		return id
 	}
 	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String) async throws {

@@ -12,6 +12,9 @@ import {
 } from '@maskin/db/schema'
 import { TARGET_OF_RELATIONSHIP_TYPE, TARGET_TYPE } from '@maskin/ext-targets/shared'
 import {
+	LOOP_RUNNING_STATUSES,
+	LOOP_STATUSES,
+	type LoopStatus,
 	type LoopTarget,
 	type LoopTargetView,
 	SAFE_METADATA_FIELD_NAME_RE,
@@ -690,25 +693,16 @@ app.openapi(listLoopsRoute, (async (c) => {
 		waitingByLoop.set(loopId, count > 0)
 	}
 
-	const LIVE_STATUSES = new Set(['learning', 'supervised', 'fully_autonomous'])
+	const LIVE_STATUSES = new Set<string>(LOOP_RUNNING_STATUSES)
 
 	const response = {
 		loops: loopRows.map((row) => {
 			const rawStatus = row.status
-			const status = ((): 'draft' | 'paused' | 'learning' | 'supervised' | 'fully_autonomous' => {
-				if (
-					rawStatus === 'draft' ||
-					rawStatus === 'paused' ||
-					rawStatus === 'learning' ||
-					rawStatus === 'supervised' ||
-					rawStatus === 'fully_autonomous'
-				) {
-					return rawStatus
-				}
-				// Unknown status (shouldn't happen with schema-validated statuses,
-				// but preserved so a manual UPDATE cannot 500 the endpoint).
-				return 'draft'
-			})()
+			// Unknown status (shouldn't happen with schema-validated statuses, but
+			// preserved so a manual UPDATE cannot 500 the endpoint).
+			const status: LoopStatus = (LOOP_STATUSES as readonly string[]).includes(rawStatus)
+				? (rawStatus as LoopStatus)
+				: 'draft'
 
 			const meta = (row.metadata as Record<string, unknown> | null) ?? {}
 			const entryCondition =
@@ -749,18 +743,12 @@ app.openapi(listLoopsRoute, (async (c) => {
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
 			const waitingCount = waitingCountByLoop.get(row.id) ?? 0
 
-			// Composite pill signal. `draft`/`paused` are not "live" — they render
-			// as themselves regardless of read state. The three live statuses
-			// (learning/supervised/fully_autonomous) compose with waitingOnViewer:
-			// unread activity on a member object overrides the autonomy-stage
-			// label with the amber "waiting on you" pill.
-			const pill:
-				| 'draft'
-				| 'paused'
-				| 'learning'
-				| 'supervised'
-				| 'fully_autonomous'
-				| 'waiting_on_you' =
+			// Composite pill signal. `draft`/`paused`/`archived` are not running — they
+			// render as themselves regardless of read state. The three running
+			// statuses (pilot/supervised/live) compose with waitingOnViewer: unread
+			// activity on a member object overrides the autonomy-stage label with the
+			// amber "waiting on you" pill.
+			const pill: LoopStatus | 'waiting_on_you' =
 				LIVE_STATUSES.has(status) && waitingOnViewer ? 'waiting_on_you' : status
 
 			return {

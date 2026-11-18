@@ -268,7 +268,7 @@ public final class LoopDetailStore {
 
 	public func togglePause() async { await set(status: loop.toggledStatus) }
 
-	/// Moves a running flow to another stage (Learning, Supervised, Autonomous); the Status pill
+	/// Moves a running flow to another stage (Pilot, Supervised, Live); the Status pill
 	/// follows at once and rolls back if the server refuses.
 	public func setStage(_ stage: LoopStage) async {
 		guard loop.status.isLive, loop.status != stage.status else { return }

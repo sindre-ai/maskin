@@ -5,6 +5,7 @@ import {
 	FOR_YOU_TOOL_DEFAULT_LIMIT,
 	FOR_YOU_TOOL_MAX_LIMIT,
 	HUMAN_MESSAGE_STYLE_SHORT,
+	LOOP_STATUSES,
 	MAX_CONVERSATION_PARTICIPANTS,
 	MESSAGE_MAX_LENGTH,
 	SAFE_METADATA_FIELD_NAME_RE,
@@ -26,14 +27,10 @@ import {
 } from '@maskin/shared'
 import { z } from 'zod'
 
-// Loop status enum exposed by the MCP `create_loop` / `update_loop` tools.
-// This is intentionally scoped to the MCP surface — it matches what the
-// server-side per-workspace status validator (see `apps/dev/src/routes/objects.ts`,
-// PATCH `/objects/:id`) actually accepts today, which had drifted from the
-// shared `LOOP_STATUSES` constant in `@maskin/shared`. Ladder is
-// `draft` → `pilot` → `supervised` → `live`, with `paused` reachable from any
-// live rung and `archived` a terminal retirement state.
-const MCP_LOOP_STATUSES = ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'] as const
+// Loop status enum exposed by the MCP `create_loop` / `update_loop` tools: the
+// shared ladder `draft` → `pilot` → `supervised` → `live`, with `paused`
+// reachable from any rung and `archived` a terminal retirement state.
+const MCP_LOOP_STATUSES = LOOP_STATUSES
 
 // Keep field list in sync with `notificationMetadataSchema` in
 // packages/shared/src/schemas/notifications.ts — that schema is the canonical
@@ -1938,7 +1935,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author new steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent under it. Before adding a step, check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work. Never default to an unrelated agent; if nothing fits, create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live and can be paused at any point; pausing disables every referenced trigger. `archived` is terminal. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, preferably the owner of the main target. Details: docs/reference/loops.md.",
+			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author new steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent under it. Before adding a step, check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work. Never default to an unrelated agent; if nothing fits, create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live and can be paused at any point. Draft and paused turn every referenced trigger off; pilot, supervised and live have them on. `archived` is terminal. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, preferably the owner of the main target. Details: docs/reference/loops.md.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
@@ -1951,7 +1948,7 @@ export const tools = {
 				.enum(MCP_LOOP_STATUSES)
 				.default('draft')
 				.describe(
-					'Autonomy stage. `draft` (default) — set up but not live yet. `pilot` → `supervised` → `live` is the trust ladder as the loop proves itself and earns more autonomy. `paused` can be set from any live stage and disables every trigger the loop references until it leaves paused. `archived` is a terminal retirement state — use it once the loop is no longer in service.',
+					'Autonomy stage. `draft` (default) — set up, every trigger the loop references is off. `pilot` → `supervised` → `live` is the trust ladder as the loop proves itself and earns more autonomy; the triggers are on. `paused` can be set from any stage and turns every trigger off until it moves to another stage. `archived` is a terminal retirement state — use it once the loop is no longer in service. Start the loop at `pilot` or later to have its steps fire.',
 				),
 			entry_condition: z
 				.string()
@@ -1994,7 +1991,7 @@ export const tools = {
 	},
 	update_loop: {
 		description:
-			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types (or closed_when for metadata-based done rules). A step and a trigger are the same thing — see create_loop's description for how `steps`/`trigger_ids` relate and how to pick an agent that actually fits before authoring or attaching one; the same guidance applies to add_steps/add_trigger_ids here. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Setting `status` to `paused` disables every trigger currently on the loop (including ones just added in this same call); moving off `paused` re-enables them. Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Pass driver_id to change the loop's driver (see create_loop); it cannot be cleared. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
+			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types (or closed_when for metadata-based done rules). A step and a trigger are the same thing — see create_loop's description for how `steps`/`trigger_ids` relate and how to pick an agent that actually fits before authoring or attaching one; the same guidance applies to add_steps/add_trigger_ids here. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Setting `status` to `draft` or `paused` disables every trigger currently on the loop (including ones just added in this same call); moving to any other status re-enables them. Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Pass driver_id to change the loop's driver (see create_loop); it cannot be cleared. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
@@ -2008,7 +2005,7 @@ export const tools = {
 				.enum(MCP_LOOP_STATUSES)
 				.optional()
 				.describe(
-					"New autonomy stage: draft | pilot | supervised | live | paused | archived — see create_loop for what each means. Setting `paused` disables the loop's triggers; moving off it re-enables them. `archived` is terminal.",
+					"New autonomy stage: draft | pilot | supervised | live | paused | archived — see create_loop for what each means. Setting `draft` or `paused` disables the loop's triggers; moving to another status re-enables them. `archived` is terminal.",
 				),
 			entry_condition: z
 				.string()

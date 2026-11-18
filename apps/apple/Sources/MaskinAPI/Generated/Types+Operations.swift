@@ -34889,20 +34889,22 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case draft = "draft"
-                                case paused = "paused"
-                                case learning = "learning"
+                                case pilot = "pilot"
                                 case supervised = "supervised"
-                                case fully_autonomous = "fully_autonomous"
+                                case live = "live"
+                                case paused = "paused"
+                                case archived = "archived"
                             }
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/status`.
                             public var status: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.statusPayload
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/pill`.
                             @frozen public enum pillPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case draft = "draft"
-                                case paused = "paused"
-                                case learning = "learning"
+                                case pilot = "pilot"
                                 case supervised = "supervised"
-                                case fully_autonomous = "fully_autonomous"
+                                case live = "live"
+                                case paused = "paused"
+                                case archived = "archived"
                                 case waiting_on_you = "waiting_on_you"
                             }
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/pill`.

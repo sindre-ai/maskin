@@ -36,8 +36,8 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
 		content: 'Every customer who gives feedback hears back within 30 days',
-		status: 'learning',
-		pill: 'learning',
+		status: 'pilot',
+		pill: 'pilot',
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
@@ -74,7 +74,7 @@ describe('LoopRow', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Learning')
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Pilot')
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
@@ -205,7 +205,7 @@ describe('LoopRow', () => {
 		})
 
 		it('does not render the overlay on a non-paused row even when the flag is on', () => {
-			render(<LoopRow loop={buildLoop({ pill: 'learning' })} actors={[]} showNoCreditsPill />)
+			render(<LoopRow loop={buildLoop({ pill: 'pilot' })} actors={[]} showNoCreditsPill />)
 
 			expect(screen.queryByTestId('loop-pill-no-credits')).not.toBeInTheDocument()
 		})

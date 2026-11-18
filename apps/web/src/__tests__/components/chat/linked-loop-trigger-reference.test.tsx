@@ -234,7 +234,7 @@ describe('LoopReferenceChip', () => {
 	})
 
 	it('reads kind, state and name as one link, with only the icon and name on the plate', () => {
-		useLoop.mockReturnValue(found(loopRow({ pill: 'fully_autonomous' })))
+		useLoop.mockReturnValue(found(loopRow({ pill: 'live' })))
 		renderChip()
 		const link = screen.getByRole('link', { name: 'Flow, fully autonomous: Nightly triage' })
 		expect(link).toHaveTextContent(/^\u2060?Nightly triage$/)
