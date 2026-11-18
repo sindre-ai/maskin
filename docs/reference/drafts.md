@@ -2,12 +2,12 @@
 title: Drafts and previews
 slug: drafts
 description: How an agent drafts an email, a LinkedIn message or post, or a Slack message as an ordinary object when it has to ask first, how a person previews, edits and approves it in chat, For You and Claude, how files (HTML, markdown, images) preview, and how it is sent.
-last_updated: 2026-11-11
+last_updated: 2026-11-18
 ---
 
 # Drafts and previews
 
-**Who has to ask.** An agent with Read & write access to an integration sends directly: it calls the send tool with the text and the recipient and it goes out, with no draft, card or wait. Whether an agent sends directly or asks first is a per-agent, per-kind send setting (`send_permissions`, read on every call by `decideSend` in `apps/dev/src/lib/send-gate.ts`): **always allow** sends the call as given, **ask first** needs a draft a person approved (this page), **deny** refuses. A workspace with no saved setting starts at always allow for every kind. Read, or no access, cannot send at all, whatever the setting. A draft passed as `object_id` by an agent that is set to always allow is sent without an approval and recorded on the draft like any other send.
+**Who has to ask.** An agent with Read & write access to an integration sends directly: it calls the send tool with the text and the recipient and it goes out, with no draft, card or wait. Whether an agent sends directly or asks first is a per-agent, per-kind send setting (`send_permissions`, read on every call by `decideSend` in `apps/dev/src/lib/send-gate.ts`): **always allow** sends the call as given, **ask first** needs a draft a person approved (this page), **deny** refuses. A workspace with no saved setting starts at always allow for every kind. Read, or no access, cannot send at all, whatever the setting. A draft passed as `object_id` by an agent that is set to always allow is sent without an approval and recorded on the draft like any other send. The release writes one `auto_sent` event on the draft (`recordAutoSent` in `apps/dev/src/lib/send-gate.ts`): the kind, the content hash and the setting that allowed it (`data.setting`), once per draft text and agent, so a retry after an unclear failure writes no second one. Once the send is recorded as `delivered`, the preview carries a detail line, "Sent: By the agent, no approval needed, 18 Nov 2026", which the cards in chat and For You and the object page draw. A release that then fails shows no line, and a send a person approved never has one.
 
 Anything an agent that asks first wants a person to review before it goes out (an email, a LinkedIn message, a Slack post) is an ordinary [object](./objects.md). There is no draft type and no draft tool. An object becomes a draft by carrying `metadata.kind`, and the integration that delivers that kind declares what it needs.
 

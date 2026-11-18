@@ -1,5 +1,10 @@
 import type { Database } from '@maskin/db'
+import { events } from '@maskin/db/schema'
 import type { SendPermissionMode } from '@maskin/shared'
+import { and, desc, eq, sql } from 'drizzle-orm'
+import { recordEventReturning } from './events/record-event'
+import { logger } from './logger'
+import { AUTO_SENT_ACTION } from './object-delivery'
 import { resolveSendMode } from './send-permissions'
 
 /**
@@ -44,3 +49,68 @@ export function deniedMessage(what: string): string {
  */
 export const ASK_FIRST_STEPS =
 	'This agent is set to ask first for this kind of send. Save the exact text as a task or object with the right metadata.kind, link it in the chat or put it on a decision card, and ask the person. They can edit the text on the card before approving, or just say yes in the chat (then call approve_draft_from_chat). Once it is approved, call this tool again with only object_id. Nothing was sent.'
+
+/**
+ * Logs on the draft that an agent sent it without approval, because its setting is Always allow.
+ * Call it where an object send is released with no approval to claim. One event per draft text
+ * and agent: the kind, the content hash and the setting that allowed it. A retry after a send
+ * that failed in an unclear way finds the event already there and writes nothing, and two calls
+ * at once cannot each write one (an advisory lock on the draft and text). Never throws: the
+ * record is a log, and a failure to write it must not stop or change the send.
+ *
+ * The card reads it only once a `delivered` event for the same text follows (see
+ * `withDeliveryState`), so a send that was released and then failed shows no "sent" line.
+ */
+export async function recordAutoSent(
+	db: Database,
+	params: {
+		workspaceId: string
+		agentId: string
+		object: { id: string; type: string }
+		kind: string
+		contentHash: string
+	},
+): Promise<void> {
+	const { workspaceId, agentId, object, kind, contentHash } = params
+	try {
+		const setting = await resolveSendMode(db, { workspaceId, agentId, kind })
+		await db.transaction(async (tx) => {
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtext(${`auto-sent:${object.id}:${contentHash}`}))`,
+			)
+			const [existing] = await tx
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityId, object.id),
+						eq(events.action, AUTO_SENT_ACTION),
+						eq(events.actorId, agentId),
+						sql`${events.data}->>'content_hash' = ${contentHash}`,
+					),
+				)
+				.orderBy(desc(events.id))
+				.limit(1)
+			if (existing) return
+			await recordEventReturning(tx, {
+				workspaceId,
+				actorId: agentId,
+				action: AUTO_SENT_ACTION,
+				entityType: object.type,
+				entityId: object.id,
+				data: {
+					kind,
+					content_hash: contentHash,
+					setting: { mode: setting.mode, source: setting.source, setting_id: setting.settingId },
+				},
+			})
+		})
+	} catch (err) {
+		logger.error('Could not record that a draft was sent without approval', {
+			workspaceId,
+			objectId: object.id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
