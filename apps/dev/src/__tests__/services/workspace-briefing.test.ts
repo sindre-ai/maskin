@@ -108,6 +108,15 @@ describe('buildWorkspaceStartupBlock', () => {
 		}
 	})
 
+	it('tells every session to link a skill to the Skills section and name the skill in the words', () => {
+		for (const interactive of [false, true]) {
+			const block = buildWorkspaceStartupBlock({ ...args, interactive })
+			const line = block.split('\n').find((l) => l.startsWith('- Skill'))
+			expect(line).toContain('[Skills](https://maskin.io/ws-abc/settings/skills)')
+			expect(line).toContain("say the skill's name in the words around the link")
+		}
+	})
+
 	it('strips a trailing slash from the frontend URL before embedding it', () => {
 		const block = buildWorkspaceStartupBlock({
 			workspaceId: 'ws-abc',

@@ -493,6 +493,11 @@ describe('settingsTargetOf', () => {
 	it('words the chip as Settings and the section', () => {
 		expect(settingsChipText({ path: 'mcp', label: 'MCP' })).toBe('Settings: MCP')
 	})
+
+	it('words the link to the Skills section as Settings: Skills', () => {
+		const target = settingsTargetOf(`https://maskin.io/${WS}/settings/skills`, WS)
+		expect(target && settingsChipText(target)).toBe('Settings: Skills')
+	})
 })
 
 describe('isOtherWorkspace', () => {
