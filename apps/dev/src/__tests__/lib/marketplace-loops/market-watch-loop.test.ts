@@ -1,3 +1,4 @@
+import { MARKET_WATCH_ACTOR_OWNER } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 import {
 	getActorData,
@@ -17,7 +18,7 @@ describe('Market & Competitor Watch loop definition', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
 		expect(MARKET_WATCH_LOOP.name).toBe('Market & Competitor Watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.1.0')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.1.1')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -43,6 +44,11 @@ describe('Market & Competitor Watch loop definition', () => {
 			(t.config as { expression?: string }).expression?.endsWith(' * * 1'),
 		)
 		expect(mondayChecks.map((t) => t.name)).toEqual(['Weekly briefing check'])
+	})
+
+	it('does not tell the Briefing Owner to own a second Monday check', () => {
+		const prompt = getActorData(MARKET_WATCH_ACTOR_OWNER).systemPrompt ?? ''
+		expect(prompt).not.toMatch(/later on Monday/)
 	})
 
 	it('wires every trigger to a published actor and every skill to published actors only', () => {
