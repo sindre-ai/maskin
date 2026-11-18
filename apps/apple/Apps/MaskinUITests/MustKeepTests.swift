@@ -30,16 +30,62 @@ final class MustKeepTests: XCTestCase {
 		app.launchEnvironment["MASKIN_DEMO_SESSION"] = Self.session
 		app.launch()
 		XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
+		// The notification sheet covers For you once the feed shows a decision, and swallows the first taps.
+		let notNow = app.buttons["Not now"]
+		if notNow.waitForExistence(timeout: 10) {
+			notNow.tap()
+			_ = notNow.waitForNonExistence(timeout: 5)
+		}
 	}
 
 	// MARK: Helpers
+
+	/// The Chats list row for a chat. A row is one element whose label reads "names, title, preview", so the
+	/// title is not a text of its own for group chats; a direct message row still shows its name as a text.
+	/// Lists load lazily: scroll if the row is not on screen yet. Leaves a screenshot and tree when it is missing.
+	private func chatRow(_ title: String) -> XCUIElement {
+		let byText = app.staticTexts[title].firstMatch
+		let byLabel = app.descendants(matching: .any).matching(
+			NSPredicate(format: "label BEGINSWITH %@ OR label CONTAINS %@", title + ",", ", " + title)
+		).firstMatch
+		for round in 0..<5 {
+			let deadline = Date().addingTimeInterval(round == 0 ? 10 : 2)
+			while Date() < deadline {
+				if byText.exists { return byText }
+				if byLabel.exists { return byLabel }
+				Thread.sleep(forTimeInterval: 0.5)
+			}
+			app.swipeUp()
+		}
+		dumpScreen("chats-list-missing-\(title.replacingOccurrences(of: " ", with: "-"))")
+		return byText
+	}
 
 	private func openChat(_ title: String) {
 		let tab = app.tabBars.buttons["Chats"]
 		XCTAssertTrue(tab.waitForExistence(timeout: 10), "Chats tab")
 		tab.tap()
-		let row = app.staticTexts[title].firstMatch
-		XCTAssertTrue(row.waitForExistence(timeout: 15), "chat row '\(title)' in the Chats list")
+		let row = chatRow(title)
+		XCTAssertTrue(row.exists, "chat row '\(title)' in the Chats list")
+		row.tap()
+	}
+
+	/// A chat with one other person is listed under that person's name, not its title, and more than one chat can
+	/// share the name (Chief of Staff). Find its row by the name plus the last message shown as the preview.
+	/// Scrolls if the row is not on screen yet; leaves a screenshot and tree when it is missing.
+	private func openChat(with name: String, preview: String) {
+		let tab = app.tabBars.buttons["Chats"]
+		XCTAssertTrue(tab.waitForExistence(timeout: 10), "Chats tab")
+		tab.tap()
+		let row = app.descendants(matching: .any).matching(
+			NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", name, preview)
+		).firstMatch
+		for round in 0..<5 where !row.exists {
+			_ = row.waitForExistence(timeout: round == 0 ? 10 : 2)
+			if !row.exists { app.swipeUp() }
+		}
+		if !row.exists { dumpScreen("chats-list-missing-\(preview.prefix(12).replacingOccurrences(of: " ", with: "-"))") }
+		XCTAssertTrue(row.exists, "chat row for \(name) showing '\(preview)' in the Chats list")
 		row.tap()
 	}
 
@@ -168,9 +214,12 @@ final class MustKeepTests: XCTestCase {
 	// MARK: Helpers for MK-06 to MK-09
 
 	/// Closes the notification pre-prompt if it shows over a chat; it would swallow the first tap.
+	/// The Webinars chat holds cards with their own "Not now" buttons, so the label alone matches two buttons: only
+	/// act while the notification sheet's headline shows, and tap the button that can be tapped.
 	private func dismissNotNow() {
-		let notNow = app.buttons["Not now"]
-		if notNow.waitForExistence(timeout: 3) { notNow.tap() }
+		let headline = app.staticTexts["Get told when an agent needs a decision"]
+		guard headline.waitForExistence(timeout: 3) else { return }
+		app.buttons.matching(NSPredicate(format: "label == 'Not now'")).allElementsBoundByIndex.last { $0.isHittable }?.tap()
 	}
 
 	/// The message field of the open chat (its accessibility label is the placeholder, "Message {name}").
@@ -227,10 +276,15 @@ final class MustKeepTests: XCTestCase {
 		account.tap()
 		XCTAssertTrue(app.staticTexts["Profile"].waitForExistence(timeout: 10), "the profile sheet opens")
 		// The screen under the sheet may have a Search button of its own (it is not hittable): take the sheet's.
-		let searchRow = app.buttons.matching(NSPredicate(format: "label == 'Search' AND isHittable == true")).firstMatch
-		for _ in 0..<4 where !searchRow.exists { app.swipeUp() }
-		XCTAssertTrue(searchRow.waitForExistence(timeout: 5), "the profile sheet offers Search")
-		searchRow.tap()
+		// (isHittable is not a predicate key, so filter the matches in code.)
+		func hittableSearch() -> XCUIElement? {
+			app.buttons.matching(NSPredicate(format: "label == 'Search'")).allElementsBoundByIndex.first { $0.isHittable }
+		}
+		for _ in 0..<4 where hittableSearch() == nil { app.swipeUp() }
+		if hittableSearch() == nil { dumpScreen("mk06-search-row") }
+		let searchRow = hittableSearch()
+		XCTAssertNotNil(searchRow, "the profile sheet offers Search")
+		searchRow?.tap()
 		let field = app.searchFields.firstMatch
 		XCTAssertTrue(field.waitForExistence(timeout: 10), "Search opens with a search field")
 		field.tap()
@@ -283,7 +337,7 @@ final class MustKeepTests: XCTestCase {
 	/// Webinars chat (sending changes the chat, and the other rows rely on the Priya Rao and Live chats staying
 	/// as they are): type a line, tap Send, and the line shows in the chat. The demo server keeps what it was sent.
 	func testMK08_TypeAndSendShowsMessage() throws {
-		openChat("Webinars")
+		openChat(with: "Chief of Staff", preview: "Signups are at 210")
 		dismissNotNow()
 		let field = composerField()
 		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
@@ -304,7 +358,7 @@ final class MustKeepTests: XCTestCase {
 	/// message that points at the attached file. The text is pasted because typing 8,000 characters takes minutes.
 	func testMK09_LongMessageSendsAsFile() throws {
 		UIPasteboard.general.string = String(repeating: "Long message words. ", count: 410)
-		openChat("Webinars")
+		openChat(with: "Chief of Staff", preview: "Signups are at 210")
 		dismissNotNow()
 		let field = composerField()
 		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
