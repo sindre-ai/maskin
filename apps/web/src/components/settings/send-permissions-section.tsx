@@ -45,7 +45,7 @@ const CHANGE_MESSAGE = 'Only a workspace admin or owner can change send permissi
 
 /**
  * Settings → Send permissions. For each draft kind an agent can send, one of three settings:
- * Always allow (the agent sends without asking and the send is logged on the draft), Ask first
+ * Always allow (the agent sends without asking), Ask first
  * (nothing goes out until a person approves the exact text) or Deny (the send tool refuses).
  * The top row is the workspace default; an agent's own setting beats it.
  */
@@ -62,9 +62,9 @@ export function SendPermissionsSection({ workspaceId }: { workspaceId: string })
 				</h2>
 				<p className="text-xs text-muted-foreground">
 					What each agent may send in your name or the company's. Always allow: sends without
-					asking, and the draft shows it was sent by the agent. Ask first: nothing goes out until
-					you approve the exact text. Deny: the agent cannot send it at all. An agent's own setting
-					beats the workspace default. A change applies to the next send.
+					asking. Ask first: nothing goes out until you approve the exact text. Deny: the agent
+					cannot send it at all. An agent's own setting beats the workspace default. A change
+					applies to the next send.
 				</p>
 				{!canChange && <p className="text-xs text-muted-foreground">{CHANGE_MESSAGE}.</p>}
 			</div>

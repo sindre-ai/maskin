@@ -39,6 +39,7 @@ import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authe
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
+import { Route as AuthedWorkspaceIdSettingsSendPermissionsRouteImport } from './routes/_authed/$workspaceId/settings/send-permissions'
 import { Route as AuthedWorkspaceIdSettingsNotificationsRouteImport } from './routes/_authed/$workspaceId/settings/notifications'
 import { Route as AuthedWorkspaceIdSettingsMembersRouteImport } from './routes/_authed/$workspaceId/settings/members'
 import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_authed/$workspaceId/settings/mcp'
@@ -225,6 +226,12 @@ const AuthedWorkspaceIdSettingsSkillsRoute =
   AuthedWorkspaceIdSettingsSkillsRouteImport.update({
     id: '/skills',
     path: '/skills',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
+const AuthedWorkspaceIdSettingsSendPermissionsRoute =
+  AuthedWorkspaceIdSettingsSendPermissionsRouteImport.update({
+    id: '/send-permissions',
+    path: '/send-permissions',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
 const AuthedWorkspaceIdSettingsNotificationsRoute =
@@ -415,6 +422,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
   '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  '/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -467,6 +475,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
   '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  '/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -525,6 +534,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/_authed/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
   '/_authed/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  '/_authed/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -583,6 +593,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
     | '/$workspaceId/settings/notifications'
+    | '/$workspaceId/settings/send-permissions'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
@@ -635,6 +646,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
     | '/$workspaceId/settings/notifications'
+    | '/$workspaceId/settings/send-permissions'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
@@ -692,6 +704,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/mcp'
     | '/_authed/$workspaceId/settings/members'
     | '/_authed/$workspaceId/settings/notifications'
+    | '/_authed/$workspaceId/settings/send-permissions'
     | '/_authed/$workspaceId/settings/skills'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
@@ -939,6 +952,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsSkillsRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
+    '/_authed/$workspaceId/settings/send-permissions': {
+      id: '/_authed/$workspaceId/settings/send-permissions'
+      path: '/send-permissions'
+      fullPath: '/$workspaceId/settings/send-permissions'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsSendPermissionsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
     '/_authed/$workspaceId/settings/notifications': {
       id: '/_authed/$workspaceId/settings/notifications'
       path: '/notifications'
@@ -1162,6 +1182,7 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsMcpRoute: typeof AuthedWorkspaceIdSettingsMcpRoute
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
   AuthedWorkspaceIdSettingsNotificationsRoute: typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  AuthedWorkspaceIdSettingsSendPermissionsRoute: typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
   AuthedWorkspaceIdSettingsExtensionsExtIdRoute: typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
@@ -1185,6 +1206,8 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
       AuthedWorkspaceIdSettingsMembersRoute,
     AuthedWorkspaceIdSettingsNotificationsRoute:
       AuthedWorkspaceIdSettingsNotificationsRoute,
+    AuthedWorkspaceIdSettingsSendPermissionsRoute:
+      AuthedWorkspaceIdSettingsSendPermissionsRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
     AuthedWorkspaceIdSettingsExtensionsExtIdRoute:
