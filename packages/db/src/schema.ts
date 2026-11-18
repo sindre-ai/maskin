@@ -3719,3 +3719,21 @@ export const apiRouteTimingMinutes = pgTable(
 		}),
 	],
 )
+
+// ── YouTube quota ──────────────────────────────────────────────────────────
+
+// Units charged against the YouTube Data API today. One row per (Pacific date, scope): scope is the
+// word global or a workspace id. Holds no YouTube data, only the date, the scope and a count. See
+// 0166_youtube_quota_usage.sql.
+export const youtubeQuotaUsage = pgTable(
+	'youtube_quota_usage',
+	{
+		quotaDate: date('quota_date').notNull(),
+		scope: text('scope').notNull(),
+		unitsUsed: integer('units_used').notNull().default(0),
+	},
+	(t) => [
+		primaryKey({ columns: [t.quotaDate, t.scope], name: 'youtube_quota_usage_pkey' }),
+		check('youtube_quota_usage_units_check', sql`${t.unitsUsed} >= 0`),
+	],
+)
