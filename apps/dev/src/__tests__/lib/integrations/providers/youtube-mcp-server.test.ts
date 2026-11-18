@@ -17,6 +17,18 @@ vi.mock('../../../../lib/youtube/propose', () => ({
 	proposeYoutubeWrite: (...args: unknown[]) => proposeYoutubeWrite(...args),
 }))
 
+const prepareUpload = vi.fn()
+const prepareVisibilityChange = vi.fn()
+const readUploadStatus = vi.fn()
+vi.mock('../../../../lib/integrations/providers/youtube/upload-tools', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../../lib/integrations/providers/youtube/upload-tools')
+	>()),
+	prepareUpload: (...args: unknown[]) => prepareUpload(...args),
+	prepareVisibilityChange: (...args: unknown[]) => prepareVisibilityChange(...args),
+	readUploadStatus: (...args: unknown[]) => readUploadStatus(...args),
+}))
+
 const trackYoutubeToolCalled = vi.fn()
 vi.mock('../../../../lib/analytics/youtube-events', () => ({
 	trackYoutubeToolCalled: (...args: unknown[]) => trackYoutubeToolCalled(...args),
@@ -41,22 +53,110 @@ const text = (result: Awaited<ReturnType<Client['callTool']>>) =>
 describe('maskin-youtube tool server', () => {
 	beforeEach(() => {
 		youtubeRead.mockReset()
+		prepareUpload.mockReset()
+		prepareVisibilityChange.mockReset()
+		readUploadStatus.mockReset()
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists get_channel and the seven write tools', async () => {
+	it('lists get_channel, the seven write tools and the three upload tools', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'youtube__add_to_playlist',
 			'youtube__create_playlist',
 			'youtube__get_channel',
+			'youtube__get_upload_status',
 			'youtube__like',
 			'youtube__post_comment',
+			'youtube__publish_video',
 			'youtube__reply_to_comment',
 			'youtube__set_thumbnail',
 			'youtube__update_video_metadata',
+			'youtube__upload_video',
 		])
+	})
+
+	it('treats upload and publish as writes and the status read as a read', () => {
+		expect(classifyTool('youtube', 'youtube__upload_video')).toBe('write')
+		expect(classifyTool('youtube', 'youtube__publish_video')).toBe('write')
+		expect(classifyTool('youtube', 'youtube__get_upload_status')).toBe('read')
+	})
+
+	describe('upload_video and publish_video', () => {
+		const FILE_ID = '00000000-0000-4000-8000-000000000001'
+		const OBJECT_ID = '00000000-0000-4000-8000-000000000002'
+
+		it('holds the request, returns the pending result and reports pending_approval', async () => {
+			prepareUpload.mockResolvedValue({ status: 'pending_approval', action_id: 'a1' })
+			const { client } = await connect()
+			const result = await client.callTool({
+				name: 'youtube__upload_video',
+				arguments: { file_id: FILE_ID, object_id: OBJECT_ID, title: 'Launch', ai_generated: true },
+			})
+			expect(text(result)).toEqual({ status: 'pending_approval', action_id: 'a1' })
+			expect(prepareUpload.mock.calls[0]?.[1]).toMatchObject({
+				title: 'Launch',
+				ai_generated: true,
+			})
+			expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+				expect.objectContaining({ tool: 'upload_video', outcome: 'pending_approval' }),
+			)
+		})
+
+		it('has no input that could set the privacy of an upload', async () => {
+			const { client } = await connect()
+			const { tools } = await client.listTools()
+			const upload = tools.find((t) => t.name === 'youtube__upload_video')
+			const properties = Object.keys(upload?.inputSchema.properties ?? {})
+			for (const name of ['privacy_status', 'privacyStatus', 'visibility', 'publish_at']) {
+				expect(properties).not.toContain(name)
+			}
+		})
+
+		it('rejects a call with a bad file id before any code runs', async () => {
+			const { client } = await connect()
+			const result = await client.callTool({
+				name: 'youtube__upload_video',
+				arguments: { file_id: 'not-a-uuid', object_id: OBJECT_ID, title: 'T' },
+			})
+			expect(result.isError).toBe(true)
+			expect(prepareUpload).not.toHaveBeenCalled()
+		})
+
+		it('turns a refused request into an invalid_input error the agent can act on', async () => {
+			prepareVisibilityChange.mockRejectedValue(
+				new YoutubeError({ code: 'INVALID_INPUT', message: 'That time has passed.' }),
+			)
+			const { client } = await connect()
+			const result = await client.callTool({
+				name: 'youtube__publish_video',
+				arguments: {
+					video_id: 'abcDEF12345',
+					object_id: OBJECT_ID,
+					visibility: 'public',
+					publish_at: '2020-01-01T00:00:00Z',
+				},
+			})
+			expect(result.isError).toBe(true)
+			expect(text(result).error).toMatchObject({
+				code: 'INVALID_INPUT',
+				message: 'That time has passed.',
+			})
+			expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+				expect.objectContaining({ tool: 'publish_video', outcome: 'invalid_input' }),
+			)
+		})
+
+		it('reads the status without the request', async () => {
+			readUploadStatus.mockResolvedValue({ action_id: 'a1', status: 'executed', video_id: 'vid' })
+			const { client } = await connect()
+			const result = await client.callTool({
+				name: 'youtube__get_upload_status',
+				arguments: { action_id: FILE_ID },
+			})
+			expect(text(result)).toMatchObject({ status: 'executed', video_id: 'vid' })
+		})
 	})
 
 	it('get_channel reads channels.list mine=true with the three parts, 1 unit', async () => {

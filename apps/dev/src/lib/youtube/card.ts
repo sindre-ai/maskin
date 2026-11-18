@@ -3,6 +3,7 @@ import type { youtubePendingActions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { postComment } from '../comments'
 import { sortKeys } from './hash'
+import { describeStoredRequest } from './upload'
 
 /**
  * The For You card for one pending YouTube action, drawn from the stored row. Nothing here reads
@@ -27,6 +28,19 @@ const KIND_PHRASES: Record<string, string> = {
 	post_comment: 'post a comment',
 	reply_to_comment: 'reply to a comment',
 	like: 'like a video or a comment',
+	upload_video: 'upload a video as private',
+	publish_video: 'change who can watch a video',
+}
+
+const APPROVE_CONSEQUENCES: Record<string, [string, string]> = {
+	upload_video: [
+		'The video uploads to YouTube as private',
+		'Nobody can watch it until a second approval',
+	],
+	publish_video: [
+		'The video changes visibility on YouTube',
+		'Viewers can see it once it is public',
+	],
 }
 
 const DRAFT_LABEL = 'YouTube change'
@@ -40,6 +54,8 @@ export function renderActionBody(action: ActionCardSource): string {
 		...(action.targetVideoId
 			? [`Video: https://www.youtube.com/watch?v=${encodeURIComponent(action.targetVideoId)}`]
 			: []),
+		// Read from the stored request, like the JSON below, never from what the agent wrote.
+		...describeStoredRequest(action.kind, action.payload ?? {}),
 		'Request:',
 		JSON.stringify(sortKeys(action.payload ?? {}), null, 2),
 	]
@@ -63,7 +79,10 @@ export function renderYoutubeActionCard(action: ActionCardSource): {
 				{
 					label: YOUTUBE_APPROVE_LABEL,
 					destructive: true,
-					consequences: ['The change goes to YouTube right away', 'Viewers can see it'],
+					consequences: APPROVE_CONSEQUENCES[action.kind] ?? [
+						'The change goes to YouTube right away',
+						'Viewers can see it',
+					],
 				},
 				{
 					label: YOUTUBE_REJECT_LABEL,

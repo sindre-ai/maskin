@@ -436,7 +436,7 @@ logger.info('Webhook deliveries reconciler started')
 
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
-const youtubeActionsSweepJob = new YoutubeActionsSweepJob(db)
+const youtubeActionsSweepJob = new YoutubeActionsSweepJob(db, undefined, storageProvider)
 youtubeActionsSweepJob.start()
 logger.info('Purge idempotency job started')
 

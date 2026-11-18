@@ -49,6 +49,8 @@ describe('trackYoutubeToolCalled', () => {
 		['get_analytics', 3],
 		['post_comment', 4],
 		['upload_video', 5],
+		['publish_video', 5],
+		['get_upload_status', 5],
 	] as const)('maps %s to part %i', async (tool, part) => {
 		await trackYoutubeToolCalled({
 			workspaceId: 'ws-1',

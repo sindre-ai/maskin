@@ -16,6 +16,14 @@ import {
 } from '../../../youtube/propose'
 import { type YoutubeClientContext, youtubeRead } from './client'
 import { type YoutubeErrorCode, isYoutubeError } from './errors'
+import {
+	prepareUpload,
+	prepareVisibilityChange,
+	publishVideoInput,
+	readUploadStatus,
+	uploadStatusInput,
+	uploadVideoInput,
+} from './upload-tools'
 
 /**
  * In-process MCP server for the YouTube integration, served over Streamable HTTP at
@@ -158,6 +166,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	)
 
 	registerWriteTools(server, ctx)
+	registerUploadTools(server, ctx)
 }
 
 const objectIdField = z
@@ -308,5 +317,37 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		},
 		({ object_id, note, ...args }) => propose({ object_id, note }, { tool: 'like', args }),
 		write,
+	)
+}
+
+/** Part 5. An upload is always private; making it public is a second request with its own approval. */
+function registerUploadTools(server: McpServer, ctx: YoutubeMcpContext): void {
+	registerTool(
+		server,
+		ctx,
+		'upload_video',
+		'Prepare the upload of a Maskin video file to the connected YouTube channel. Nothing is sent yet: this holds the request and puts an approval card in front of the workspace owners. When a person approves, the server uploads the video as PRIVATE, always, whatever you ask for. To make it unlisted, public or scheduled you need a second approval with youtube__publish_video. Set ai_generated when the video is AI generated or altered. Returns an action id; read the result with youtube__get_upload_status.',
+		uploadVideoInput,
+		(args) => prepareUpload(ctx, args),
+		{ write: true },
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'publish_video',
+		'Ask for a private video on the connected channel to become unlisted, public, or public at a set time (publish_at, ISO 8601 with a time zone, in the future). Nothing is sent yet: a person approves the exact change on a card that shows the time. A time that has passed is refused, because YouTube would publish at once. Returns an action id.',
+		publishVideoInput,
+		(args) => prepareVisibilityChange(ctx, args),
+		{ write: true },
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'get_upload_status',
+		'How an upload or publish request stands: pending approval, approved and uploading (with bytes sent), executed (with the YouTube video id for an upload) or failed (with a result code). Never returns the request itself.',
+		uploadStatusInput,
+		(args) => readUploadStatus(ctx, args),
 	)
 }

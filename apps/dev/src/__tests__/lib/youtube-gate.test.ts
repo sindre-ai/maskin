@@ -10,6 +10,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.turbo', '.git', '__tests__', 'drizzle'])
 const EXECUTOR = join('apps', 'dev', 'src', 'lib', 'youtube', 'executor.ts')
 const CLIENT = join('apps', 'dev', 'src', 'lib', 'youtube', 'google-write-client.ts')
+const UPLOAD_CLIENT = join('apps', 'dev', 'src', 'lib', 'youtube', 'google-upload-client.ts')
 
 function sourceFiles(dir: string): string[] {
 	return readdirSync(dir).flatMap((name) => {
@@ -31,6 +32,21 @@ describe('the YouTube write client', () => {
 		expect(importers).toEqual([EXECUTOR])
 		expect(readFileSync(join(REPO_ROOT, CLIENT), 'utf8')).toContain(
 			'export const googleWriteClient',
+		)
+	})
+})
+
+describe('the YouTube upload client', () => {
+	it('is imported by the executor and by nothing else', () => {
+		const files = ['apps', 'packages'].flatMap((top) => sourceFiles(join(REPO_ROOT, top)))
+		const reaches =
+			/(?:from|import|require)\s*\(?\s*['"][^'"]*google-upload-client(?:\.[a-z]+)?['"]/
+		const importers = files
+			.filter((file) => reaches.test(readFileSync(file, 'utf8')))
+			.map((file) => relative(REPO_ROOT, file))
+		expect(importers).toEqual([EXECUTOR])
+		expect(readFileSync(join(REPO_ROOT, UPLOAD_CLIENT), 'utf8')).toContain(
+			'export async function uploadFile',
 		)
 	})
 })
@@ -71,6 +87,29 @@ describe('YouTube action card', () => {
 		expect(shown).not.toContain('Please approve')
 		expect(content).toContain("Agent's note")
 		expect(content).toContain('Please approve, it is safe.')
+	})
+
+	it('shows an upload as private and a schedule with its exact time, from the stored request', () => {
+		const upload = renderActionBody({
+			...base,
+			kind: 'upload_video',
+			payload: {
+				fileName: 'launch.mp4',
+				sizeBytes: 5000,
+				containsSyntheticMedia: true,
+				privacyStatus: 'private',
+			},
+			targetVideoId: null,
+		})
+		expect(upload).toContain('Visibility: PRIVATE')
+		expect(upload).toContain('AI generated or altered: yes')
+		expect(upload).toContain('launch.mp4 (5000 bytes)')
+		const publish = renderActionBody({
+			...base,
+			kind: 'publish_video',
+			payload: { videoId: 'v', privacyStatus: 'private', publishAt: '2026-12-01T09:00:00.000Z' },
+		})
+		expect(publish).toContain('Goes public at exactly: 2026-12-01T09:00:00.000Z (UTC)')
 	})
 
 	it('marks Approve as the destructive option and recommends Reject', () => {

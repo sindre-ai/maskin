@@ -98,7 +98,7 @@ interface VideoRead {
 }
 
 /** The connected channel's id and public name. Same read as youtube__get_channel, so it shares its cache. */
-async function readOwnChannel(ctx: YoutubeClientContext) {
+export async function readOwnChannel(ctx: YoutubeClientContext) {
 	const channel = await youtubeRead<ChannelRead>(ctx, {
 		tool: 'youtube__get_channel',
 		path: 'channels',
@@ -268,7 +268,7 @@ function buildLike(input: LikeInput): Built {
 }
 
 /** The people who may decide a change: the human owners and admins of the workspace. */
-async function findApprovers(db: Database, workspaceId: string): Promise<string[]> {
+export async function findApprovers(db: Database, workspaceId: string): Promise<string[]> {
 	const rows = await db
 		.select({ id: actors.id })
 		.from(workspaceMembers)
@@ -283,7 +283,7 @@ async function findApprovers(db: Database, workspaceId: string): Promise<string[
 	return rows.map((row) => row.id)
 }
 
-async function assertObjectInWorkspace(db: Database, workspaceId: string, objectId: string) {
+export async function assertObjectInWorkspace(db: Database, workspaceId: string, objectId: string) {
 	const [row] = await db
 		.select({ id: objects.id })
 		.from(objects)
