@@ -38,7 +38,10 @@ async function insertFlow(
 }
 
 async function insertSession(overrides: Record<string, unknown>) {
-	const [row] = await db.insert(sessions).values(buildSession(overrides)).returning()
+	const [row] = await db
+		.insert(sessions)
+		.values(buildSession({ createdBy: getTestActorId(), ...overrides }))
+		.returning()
 	return row
 }
 
