@@ -101,7 +101,11 @@ export function MessageThreadPane({
 	}, [newestConfirmedId, rootId, markReadMutate])
 
 	// The summary counts every reply; the loaded pages only the ones fetched so far.
-	const totalReplies = Math.max(summary?.replyCount ?? 0, replyMessages.length)
+	// Replies the person does not read (see the list below) are not counted, like on the server.
+	const shownReplies = replyMessages.filter(
+		(m) => !(m.metadata?.helper_return || m.metadata?.hidden_from_chat),
+	).length
+	const totalReplies = Math.max(summary?.replyCount ?? 0, shownReplies)
 
 	const [alsoInChannel, setAlsoInChannel] = useState(false)
 	const recipient = useMemo(
@@ -252,30 +256,43 @@ export function MessageThreadPane({
 								<Spinner />
 							</div>
 						) : null}
-						{replyMessages.map((reply) => (
-							<div key={reply.id} data-message-id={reply.id} className="flex flex-col gap-1">
-								<MessageBubble
+						{replyMessages.map((reply) => {
+							const started = (byTriggerMessageId.get(reply.id) ?? []).map((turn, i) => (
+								<MessageActivity
+									key={`${turn.sessionId}-below-${i}`}
 									workspaceId={workspaceId}
-									message={reply}
-									questionAnswered={answeredQuestions.has(reply.id)}
-									activity={(byReplyMessageId.get(reply.id) ?? []).map((turn, i) => (
-										<MessageActivity
-											key={`${turn.sessionId}-above-${i}`}
-											workspaceId={workspaceId}
-											turn={turn}
-											layout="inline"
-										/>
-									))}
+									turn={turn}
 								/>
-								{(byTriggerMessageId.get(reply.id) ?? []).map((turn, i) => (
-									<MessageActivity
-										key={`${turn.sessionId}-below-${i}`}
+							))
+							// A helper's result handed back to the agent, or a card button's nudge: the
+							// agent gets it, the person does not read it (the main chat hides it too).
+							// The turn it started still shows, so the wait for the answer is visible.
+							if (reply.metadata?.helper_return || reply.metadata?.hidden_from_chat) {
+								return started.length > 0 ? (
+									<div key={reply.id} className="flex flex-col gap-1">
+										{started}
+									</div>
+								) : null
+							}
+							return (
+								<div key={reply.id} data-message-id={reply.id} className="flex flex-col gap-1">
+									<MessageBubble
 										workspaceId={workspaceId}
-										turn={turn}
+										message={reply}
+										questionAnswered={answeredQuestions.has(reply.id)}
+										activity={(byReplyMessageId.get(reply.id) ?? []).map((turn, i) => (
+											<MessageActivity
+												key={`${turn.sessionId}-above-${i}`}
+												workspaceId={workspaceId}
+												turn={turn}
+												layout="inline"
+											/>
+										))}
 									/>
-								))}
-							</div>
-						))}
+									{started}
+								</div>
+							)
+						})}
 						{fallbackHere.map((turn, i) => (
 							<MessageActivity
 								key={`${turn.sessionId}-pending-${i}`}
