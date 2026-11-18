@@ -40,12 +40,33 @@ final class MustKeepTests: XCTestCase {
 
 	// MARK: Helpers
 
+	/// The Chats list row for a chat. A row is one element whose label reads "names, title, preview", so the
+	/// title is not a text of its own for group chats; a direct message row still shows its name as a text.
+	/// Lists load lazily: scroll if the row is not on screen yet. Leaves a screenshot and tree when it is missing.
+	private func chatRow(_ title: String) -> XCUIElement {
+		let byText = app.staticTexts[title].firstMatch
+		let byLabel = app.descendants(matching: .any).matching(
+			NSPredicate(format: "label BEGINSWITH %@ OR label CONTAINS %@", title + ",", ", " + title)
+		).firstMatch
+		for round in 0..<5 {
+			let deadline = Date().addingTimeInterval(round == 0 ? 10 : 2)
+			while Date() < deadline {
+				if byText.exists { return byText }
+				if byLabel.exists { return byLabel }
+				Thread.sleep(forTimeInterval: 0.5)
+			}
+			app.swipeUp()
+		}
+		dumpScreen("chats-list-missing-\(title.replacingOccurrences(of: " ", with: "-"))")
+		return byText
+	}
+
 	private func openChat(_ title: String) {
 		let tab = app.tabBars.buttons["Chats"]
 		XCTAssertTrue(tab.waitForExistence(timeout: 10), "Chats tab")
 		tab.tap()
-		let row = app.staticTexts[title].firstMatch
-		XCTAssertTrue(row.waitForExistence(timeout: 15), "chat row '\(title)' in the Chats list")
+		let row = chatRow(title)
+		XCTAssertTrue(row.exists, "chat row '\(title)' in the Chats list")
 		row.tap()
 	}
 
@@ -233,10 +254,15 @@ final class MustKeepTests: XCTestCase {
 		account.tap()
 		XCTAssertTrue(app.staticTexts["Profile"].waitForExistence(timeout: 10), "the profile sheet opens")
 		// The screen under the sheet may have a Search button of its own (it is not hittable): take the sheet's.
-		let searchRow = app.buttons.matching(NSPredicate(format: "label == 'Search' AND isHittable == true")).firstMatch
-		for _ in 0..<4 where !searchRow.exists { app.swipeUp() }
-		XCTAssertTrue(searchRow.waitForExistence(timeout: 5), "the profile sheet offers Search")
-		searchRow.tap()
+		// (isHittable is not a predicate key, so filter the matches in code.)
+		func hittableSearch() -> XCUIElement? {
+			app.buttons.matching(NSPredicate(format: "label == 'Search'")).allElementsBoundByIndex.first { $0.isHittable }
+		}
+		for _ in 0..<4 where hittableSearch() == nil { app.swipeUp() }
+		if hittableSearch() == nil { dumpScreen("mk06-search-row") }
+		let searchRow = hittableSearch()
+		XCTAssertNotNil(searchRow, "the profile sheet offers Search")
+		searchRow?.tap()
 		let field = app.searchFields.firstMatch
 		XCTAssertTrue(field.waitForExistence(timeout: 10), "Search opens with a search field")
 		field.tap()

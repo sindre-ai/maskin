@@ -37,12 +37,33 @@ final class MustKeepMoreTests: XCTestCase {
 
 	// MARK: Helpers
 
+	/// The Chats list row for a chat. A row is one element whose label reads "names, title, preview", so the
+	/// title is not a text of its own for group chats; a direct message row still shows its name as a text.
+	/// Lists load lazily: scroll if the row is not on screen yet. Leaves a screenshot and tree when it is missing.
+	private func chatRow(_ title: String) -> XCUIElement {
+		let byText = app.staticTexts[title].firstMatch
+		let byLabel = app.descendants(matching: .any).matching(
+			NSPredicate(format: "label BEGINSWITH %@ OR label CONTAINS %@", title + ",", ", " + title)
+		).firstMatch
+		for round in 0..<5 {
+			let deadline = Date().addingTimeInterval(round == 0 ? 10 : 2)
+			while Date() < deadline {
+				if byText.exists { return byText }
+				if byLabel.exists { return byLabel }
+				Thread.sleep(forTimeInterval: 0.5)
+			}
+			app.swipeUp()
+		}
+		dumpScreen("chats-list-missing-\(title.replacingOccurrences(of: " ", with: "-"))")
+		return byText
+	}
+
 	private func openChat(_ title: String) {
 		let tab = app.tabBars.buttons["Chats"]
 		XCTAssertTrue(tab.waitForExistence(timeout: 10), "Chats tab")
 		tab.tap()
-		let row = app.staticTexts[title].firstMatch
-		XCTAssertTrue(row.waitForExistence(timeout: 15), "chat row '\(title)' in the Chats list")
+		let row = chatRow(title)
+		XCTAssertTrue(row.exists, "chat row '\(title)' in the Chats list")
 		row.tap()
 	}
 
@@ -166,7 +187,9 @@ final class MustKeepMoreTests: XCTestCase {
 		for _ in 0..<4 where !option.exists { app.swipeUp() }
 		expectExists(option, "For you shows the decision option 'Send all 7'", dump: "mk12-option")
 		option.tap()
-		XCTAssertTrue(option.waitForNonExistence(timeout: 10), "the card leaves the open list once an option is picked")
+		let left = option.waitForNonExistence(timeout: 10)
+		if !left { dumpScreen("mk12-after-pick") }
+		XCTAssertTrue(left, "the card leaves the open list once an option is picked")
 		let chosen = app.descendants(matching: .any).matching(
 			NSPredicate(format: "label CONTAINS 'Send all 7' AND NOT (label ENDSWITH 'recommended')")
 		).firstMatch
@@ -206,8 +229,16 @@ final class MustKeepMoreTests: XCTestCase {
 		expectExists(signOut, "the profile sheet offers Sign out", dump: "mk14-row", timeout: 5)
 		signOut.tap()
 		expectExists(anyLabel(containing: "Sign out of Maskin?"), "signing out asks to confirm", dump: "mk14-confirm", timeout: 8)
-		// The dialog's button has the same label as the row; the last match is the dialog's.
-		app.buttons.matching(NSPredicate(format: "label == 'Sign out'")).allElementsBoundByIndex.last?.tap()
+		// The dialog's button has the same label as the row behind it: take the one that can be tapped.
+		func confirmButton() -> XCUIElement? {
+			app.buttons.matching(NSPredicate(format: "label == 'Sign out'")).allElementsBoundByIndex.last { $0.isHittable }
+		}
+		let deadline = Date().addingTimeInterval(10)
+		while confirmButton() == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.5) }
+		if confirmButton() == nil { dumpScreen("mk14-confirm-button") }
+		let confirm = confirmButton()
+		XCTAssertNotNil(confirm, "the sign out dialog has a Sign out button to confirm with")
+		confirm?.tap()
 		let email = app.textFields.matching(NSPredicate(format: "label == 'Email' OR placeholderValue == 'you@company.com'")).firstMatch
 		expectExists(email, "after signing out, the sign-in screen asks for an email", dump: "mk14-login", timeout: 20)
 		email.tap()
@@ -327,9 +358,14 @@ final class MustKeepMoreTests: XCTestCase {
 		for _ in 0..<6 where !integrations.exists { app.swipeUp() }
 		expectExists(integrations, "Settings lists Integrations", dump: "mk17-row", timeout: 5)
 		scrollToHittable(integrations)
-		integrations.tap()
+		// The segments read "Connected 2" and "Discover 12". A tap that lands while the list is still settling
+		// highlights the row without opening it: tap again if the page did not open.
 		let discover = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Discover'")).firstMatch
-		expectExists(discover, "Integrations has a Discover tab", dump: "mk17-discover")
+		for _ in 0..<3 where !discover.exists {
+			integrations.tap()
+			_ = discover.waitForExistence(timeout: 5)
+		}
+		expectExists(discover, "Integrations has a Discover tab", dump: "mk17-discover", timeout: 5)
 		discover.tap()
 		let posthog = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'PostHog'")).firstMatch
 		expectExists(posthog, "Discover lists PostHog", dump: "mk17-posthog", timeout: 10)
