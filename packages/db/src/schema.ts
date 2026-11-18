@@ -3719,3 +3719,87 @@ export const apiRouteTimingMinutes = pgTable(
 		}),
 	],
 )
+
+// ── YouTube approval gate ──────────────────────────────────────────────────
+
+// One write an agent wants to make on YouTube, held until a person approves it. A tool call only
+// ever creates a row here; the server-side executor is the one caller of the Google write client,
+// and it runs a row only after a person approved it. payload is the exact request; it is cleared
+// when the action ends (executed, rejected, expired, failed) and never kept past 30 days.
+// requested_by_actor, requested_by_session and approved_by carry no foreign key: they are a record.
+// The person who approved is read from approved_by, never from anything an agent wrote.
+// status: pending, approved, rejected, expired, executed, failed. claimed_at is set once, by the
+// executor, in one conditional update, which is what makes an approved action run at most once.
+// See 0166_youtube_pending_actions.sql.
+export const youtubePendingActions = pgTable(
+	'youtube_pending_actions',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull(),
+		payload: jsonb('payload'),
+		payloadHash: text('payload_hash').notNull(),
+		targetVideoId: text('target_video_id'),
+		// The channel's public name, resolved by the server when the action was made, for the card.
+		channelLabel: text('channel_label'),
+		agentNote: text('agent_note'),
+		requestedByActor: uuid('requested_by_actor').notNull(),
+		requestedBySession: uuid('requested_by_session'),
+		cardEventId: bigint('card_event_id', { mode: 'number' }),
+		status: text('status').notNull().default('pending'),
+		approvedBy: uuid('approved_by'),
+		approvedPayloadHash: text('approved_payload_hash'),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+		executedAt: timestamp('executed_at', { withTimezone: true }),
+		resultCode: text('result_code'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('youtube_pending_actions_workspace_status_idx').on(t.workspaceId, t.status),
+		index('youtube_pending_actions_status_expires_idx').on(t.status, t.expiresAt),
+		check(
+			'youtube_pending_actions_status_check',
+			sql`${t.status} in ('pending', 'approved', 'rejected', 'expired', 'executed', 'failed')`,
+		),
+	],
+)
+
+// One row per decision on a YouTube action, kept 12 months. Ids, counts and codes only: never the
+// payload, a comment, a title or an error string. The safety line "no public action without
+// approval" is read from here (an executed row with no approved row for the same action). No
+// foreign key to the action or the integration, so the record outlives both.
+// decision: approved, rejected, expired, executed, failed, refused. See 0166_youtube_pending_actions.sql.
+export const youtubeActionAudit = pgTable(
+	'youtube_action_audit',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		pendingActionId: uuid('pending_action_id').notNull(),
+		integrationId: uuid('integration_id').notNull(),
+		kind: text('kind').notNull(),
+		decision: text('decision').notNull(),
+		actorId: uuid('actor_id'),
+		actorType: text('actor_type'),
+		payloadHash: text('payload_hash'),
+		resultCode: text('result_code'),
+		requestedBySession: uuid('requested_by_session'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('youtube_action_audit_action_idx').on(t.pendingActionId),
+		index('youtube_action_audit_workspace_created_idx').on(t.workspaceId, t.createdAt),
+		check(
+			'youtube_action_audit_decision_check',
+			sql`${t.decision} in ('approved', 'rejected', 'expired', 'executed', 'failed', 'refused')`,
+		),
+	],
+)
