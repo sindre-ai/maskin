@@ -61,6 +61,8 @@ import type {
 	DailyBudgetResponse,
 	NotificationPreferencesResponse,
 	ObjectPreview,
+	SendPermissionKind,
+	SendPermissionMode,
 	SessionStatsRow,
 	TeachRequest,
 	TeachResponse,
@@ -129,6 +131,8 @@ type RequestOptions = {
 	signal?: AbortSignal
 	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
 	keepServerErrorMessage?: boolean
+	/** Lets the request finish after the page is gone (tab closed, app backgrounded). */
+	keepalive?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -140,6 +144,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		credentials,
 		signal,
 		keepServerErrorMessage,
+		keepalive,
 	} = opts
 	const apiKey = getApiKey()
 
@@ -171,6 +176,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
 			...(signal ? { signal } : {}),
+			...(keepalive ? { keepalive } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -865,6 +871,20 @@ export const api = {
 			body: { name: string; server: CustomMcpServerSpec },
 		) =>
 			request<CustomMcpServerResponse>(`/custom-mcp-servers/${id}`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
+	sendPermissions: {
+		get: (workspaceId: string) =>
+			request<SendPermissionsView>('/send-permissions', { workspaceId }),
+		/** `agentId` null is the workspace default; `mode` null removes an agent's own setting. */
+		set: (
+			workspaceId: string,
+			body: { agent_id: string | null; kind: SendPermissionKind; mode: SendPermissionMode | null },
+		) =>
+			request<{ agent_id: string | null; kind: string; mode: string | null }>('/send-permissions', {
 				method: 'PUT',
 				body,
 				workspaceId,
@@ -1755,11 +1775,12 @@ export const api = {
 		},
 		get: (id: string, workspaceId: string) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
-		create: (workspaceId: string, data: CreateConversationInput) =>
+		create: (workspaceId: string, data: CreateConversationInput, opts?: { keepalive?: boolean }) =>
 			request<ConversationDetailResponse>('/conversations', {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, {
@@ -1782,11 +1803,17 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
 		},
-		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+		postMessage: (
+			id: string,
+			workspaceId: string,
+			data: PostMessageInput,
+			opts?: { keepalive?: boolean },
+		) =>
 			request<MessageResponse>(`/conversations/${id}/messages`, {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
 			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
@@ -2657,7 +2684,7 @@ export interface CreateTriggerInput {
 	type: 'cron' | 'event' | 'reminder'
 	config: Record<string, unknown>
 	action_prompt: string
-	target_actor_id: string
+	target_actor_id?: string
 	enabled?: boolean
 }
 
@@ -2718,6 +2745,26 @@ export interface IntegrationResponse {
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
 	chatGrants?: Array<{ actorId: string; conversationId: string }>
+}
+
+/** Where a send setting came from: the agent's own, the workspace default, or the starting table. */
+export type SendPermissionSource = 'agent' | 'workspace' | 'starting'
+
+export interface SendPermissionSetting {
+	mode: SendPermissionMode
+	source: SendPermissionSource
+}
+
+/** GET /api/send-permissions: the workspace default and each agent's resulting mode per kind. */
+export interface SendPermissionsView {
+	kinds: SendPermissionKind[]
+	modes: SendPermissionMode[]
+	workspace_default: Record<SendPermissionKind, SendPermissionSetting>
+	agents: Array<{
+		agent_id: string
+		name: string
+		settings: Record<SendPermissionKind, SendPermissionSetting>
+	}>
 }
 
 /** 'none' is an explicit no that beats a read default. A saved credential only uses read_write. */
@@ -3048,6 +3095,8 @@ export interface ConversationListItemResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Labels for grouping chats, for example a team name. Shared by every participant. */
+	tags?: string[]
 	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
 	directPairKey?: string | null
 	lastMessageAt: string | null
@@ -3063,6 +3112,28 @@ export interface ConversationListItemResponse {
 	participants: ConversationParticipantResponse[]
 	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
 	working_actor_ids: string[]
+	/** An agent in this chat waits on the person (a session of this chat is waiting for input).
+	 *  Absent from a server that predates the new chat list. */
+	needs_you?: boolean
+	/** Agents working in this chat, each with the session to open. Absent on an older server. */
+	working?: ChatListWorking[]
+	/** The caller's own Later flag. Cleared by the server when a new message arrives. */
+	later?: boolean
+	/** The last turn failed. `last_person_message_id` is the person's last message, the one Retry re-runs. */
+	error?: ChatListError | null
+}
+
+export interface ChatListWorking {
+	agent_id: string
+	session_id: string
+}
+
+export type ChatListErrorReason = 'usage_limit' | 'other' | 'connection'
+
+export interface ChatListError {
+	reason: ChatListErrorReason
+	/** Null when the person never wrote in the chat: there is nothing to retry. */
+	last_person_message_id: number | null
 }
 
 export interface ConversationListResponse {
@@ -3477,6 +3548,8 @@ export interface UpdateConversationInput {
 export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
+	/** The caller's own Later flag: hides the chat until a new message arrives. */
+	later?: boolean
 	last_read_message_id?: number
 	mark_unread?: boolean
 }

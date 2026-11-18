@@ -56,10 +56,7 @@ struct IntegrationsView: View {
 						.accessibilityAddTraits(.updatesFrequently)
 				}
 			}
-			PageFootnote(
-				text: store.canManage
-					? "Connecting signs you in with the provider. When you come back, this list refreshes."
-					: "Only owners and admins can connect or disconnect an integration.")
+			PageFootnote(text: SettingsRowRules.integrationsFootnote(canManage: store.canManage))
 		}
 		.searchable(text: $query, prompt: "Search integrations and tools")
 	}
@@ -81,19 +78,15 @@ struct IntegrationsView: View {
 	@ViewBuilder private var connectedContent: some View {
 		let accounts = connectedRows
 		let servers = toolServerRows
-		if accounts.isEmpty && servers.isEmpty && !isSearching {
-			switch store.phase {
-			case .failed(let message): PageStatus(text: message)
-			case .loaded: PageStatus(text: "Nothing connected yet.")
-			default: PageStatus(text: "Loading integrations")
-			}
-		} else if accounts.isEmpty && servers.isEmpty {
-			PageStatus(text: "No integration matches that search.")
+		if let empty = SettingsRowRules.connectedEmptyText(
+			hasRows: !accounts.isEmpty || !servers.isEmpty, isSearching: isSearching, phase: store.phase)
+		{
+			PageStatus(text: empty)
 		}
 		if !accounts.isEmpty { PageCard(rows: accounts) }
 		if !servers.isEmpty { PageCard(rows: servers) }
 		driveWatchesCard
-		if !isSearching, category == nil || category == .custom {
+		if SettingsRowRules.showsAddCard(isSearching: isSearching, category: category) {
 			addServerCard
 		}
 	}
@@ -101,7 +94,10 @@ struct IntegrationsView: View {
 	/// Folder watches of the connected Google Drive. Open to everyone, like the web page: only Stop
 	/// watch needs write access.
 	@ViewBuilder private var driveWatchesCard: some View {
-		if services != nil, store.hasConnectedDrive, !isSearching, category == nil || category == .files {
+		if SettingsRowRules.showsDriveWatches(
+			hasServices: services != nil, hasConnectedDrive: store.hasConnectedDrive, isSearching: isSearching,
+			category: category)
+		{
 			PageCard(rows: [
 				PageRowModel(
 					id: "drive-watches", title: DriveWatchesCopy.label,
@@ -113,8 +109,8 @@ struct IntegrationsView: View {
 
 	@ViewBuilder private var discoverContent: some View {
 		let rows = discoverRows
-		if rows.isEmpty {
-			PageStatus(text: isSearching ? "No integration matches that search." : "Nothing to discover.")
+		if let empty = SettingsRowRules.discoverEmptyText(hasRows: !rows.isEmpty, isSearching: isSearching) {
+			PageStatus(text: empty)
 		} else {
 			PageCard(rows: rows)
 		}
@@ -124,22 +120,20 @@ struct IntegrationsView: View {
 
 	/// "Add your own MCP server" and the Claude import, hidden while searching.
 	private var addRows: [PageRowModel] {
-		var rows: [PageRowModel] = []
-		if store.canManage, services != nil {
-			rows.append(
+		SettingsRowRules.addRows(canManage: store.canManage, hasServices: services != nil).map { (row) -> PageRowModel in
+			switch row {
+			case .toolServer:
 				PageRowModel(
 					id: "add-tool-server", title: "Add your own MCP server",
 					subtitle: "Paste a server URL and choose what your agents can use.",
-					showsChevron: true, action: { showAddToolServer = true }))
-		}
-		if services != nil {
-			rows.append(
+					showsChevron: true, action: { showAddToolServer = true })
+			case .importFromClaude:
 				PageRowModel(
 					id: "claude", title: "Import from Claude",
 					subtitle: "Use a Claude subscription as the model source", showsChevron: true,
-					action: { showClaude = true }))
+					action: { showClaude = true })
+			}
 		}
-		return rows
 	}
 
 	@ViewBuilder private var addServerCard: some View {
@@ -194,20 +188,20 @@ struct IntegrationsView: View {
 			isPresented: Binding(get: { actionTarget != nil }, set: { if !$0 { actionTarget = nil } }),
 			titleVisibility: .visible, presenting: actionTarget
 		) { integration in
-			if integration.provider == IntegrationsStore.toolServerProvider {
-				EmptyView()
-			} else if store.canManage, store.canStartConnect(integration.provider),
-				integration.state != .connected
-			{
-				Button("Reconnect") { startConnectFlow(integration.provider) }
+			ForEach(
+				SettingsRowRules.integrationActions(
+					isToolServer: integration.provider == IntegrationsStore.toolServerProvider,
+					canManage: store.canManage, canStartConnect: store.canStartConnect(integration.provider),
+					state: integration.state, hasServices: services != nil),
+				id: \.self
+			) { action in
+				switch action {
+				case .reconnect: Button("Reconnect") { startConnectFlow(integration.provider) }
+				case .agentAccess: Button("Agent access") { openAccess(integration) }
+				case .disconnect: Button("Disconnect", role: .destructive) { pendingDisconnect = integration }
+				case .remove: Button("Remove", role: .destructive) { pendingDisconnect = integration }
+				}
 			}
-			if services != nil, integration.state == .connected {
-				Button("Agent access") { openAccess(integration) }
-			}
-			Button(
-				integration.provider == IntegrationsStore.toolServerProvider ? "Remove" : "Disconnect",
-				role: .destructive
-			) { pendingDisconnect = integration }
 		}
 		.confirmationDialog(
 			"Choose a GitHub account",
@@ -238,17 +232,15 @@ struct IntegrationsView: View {
 		store.connectedAccounts(query: query, category: category).map { integration in
 			PageRowModel(
 				id: integration.id, title: store.displayName(for: integration),
-				subtitle: integration.state == .connected
-					? integration.note
-						?? WorkspacePageState.integrationSubtitle(
-							integration.state, account: store.accountLabel(for: integration))
-					: WorkspacePageState.integrationSubtitle(
-						integration.state, account: store.accountLabel(for: integration)),
+				subtitle: SettingsRowRules.connectedSubtitle(
+					state: integration.state, note: integration.note, account: store.accountLabel(for: integration)),
 				accessory: .state(
 					isConnecting(integration.provider)
 						? WorkspacePageState.integrationConnecting
 						: WorkspacePageState.integration(integration.state)),
-				action: store.canManage && !store.isConnectInFlight ? { actionTarget = integration } : nil)
+				action: SettingsRowRules.connectedRowIsTappable(
+					canManage: store.canManage, connectInFlight: store.isConnectInFlight)
+					? { actionTarget = integration } : nil)
 		}
 	}
 
@@ -270,9 +262,11 @@ struct IntegrationsView: View {
 		store.connectedToolServers(query: query, category: category).map { server in
 			PageRowModel(
 				id: server.id, title: store.displayName(for: server),
-				subtitle: server.state == .connected ? nil : WorkspacePageState.integrationSubtitle(server.state, account: nil),
+				subtitle: SettingsRowRules.toolServerSubtitle(state: server.state),
 				accessory: .state(WorkspacePageState.integration(server.state)),
-				action: store.canManage && !store.isConnectInFlight ? { actionTarget = server } : nil)
+				action: SettingsRowRules.connectedRowIsTappable(
+					canManage: store.canManage, connectInFlight: store.isConnectInFlight)
+					? { actionTarget = server } : nil)
 		}
 	}
 
@@ -285,8 +279,12 @@ struct IntegrationsView: View {
 	/// OAuth providers connect in the sheet (and ignore taps while one is running), key providers
 	/// open their form, and the rest explain they are set up from a computer.
 	private func availableAction(_ provider: IntegrationProvider) -> (() -> Void)? {
-		guard store.canManage, store.canStartConnect(provider.id) else { return nil }
-		return store.isConnectInFlight ? nil : { startConnectFlow(provider.id) }
+		guard
+			SettingsRowRules.availableRowIsTappable(
+				canManage: store.canManage, canStartConnect: store.canStartConnect(provider.id),
+				connectInFlight: store.isConnectInFlight)
+		else { return nil }
+		return { startConnectFlow(provider.id) }
 	}
 
 	private func startConnectFlow(_ providerID: String) {

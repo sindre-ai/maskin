@@ -1,10 +1,13 @@
 import {
 	type BudgetTarget,
+	type DayPlanInput,
 	type TriggerWindowStats,
 	bar,
 	buildBudgetCard,
+	dayPlanLines,
 	forecastLines,
 	formatPercent,
+	planDay,
 	projectMonth,
 	readBudgetSettings,
 	todayLine,
@@ -206,8 +209,14 @@ describe('readBudgetSettings', () => {
 		).toEqual({
 			target: { amount: 4 },
 			timezone: 'Europe/Oslo',
+			stopShare: 100,
 			note: null,
 		})
+	})
+
+	it('reads the stop-at share the owner chose', () => {
+		const cfg = readBudgetSettings(at({ unit: 'percent', amount: 4, stop_share: 80 }), 2000)
+		expect(cfg?.stopShare).toBe(80)
 	})
 
 	it('converts an earlier dollar target to its share of the plan limit', () => {
@@ -221,5 +230,141 @@ describe('readBudgetSettings', () => {
 		const cfg = readBudgetSettings(at({ unit: 'tokens', amount: 2_000_000 }), 2000)
 		expect(cfg?.target).toEqual({ amount: 3.3 })
 		expect(cfg?.note).toContain('earlier daily target could not be turned into a percent')
+	})
+})
+
+const quiet: DayPlanInput = {
+	running: [],
+	held: [],
+	spentToday: 0,
+	stopAt: 5,
+	stoppedYesterday: false,
+}
+
+describe('planDay', () => {
+	it('puts held work that fits under the stop point in the waiting list, in start order', () => {
+		const plan = planDay({
+			...quiet,
+			held: [
+				{ title: 'A', estimate: 2 },
+				{ title: 'B', estimate: 2 },
+			],
+		})
+		expect(plan.waiting.map((i) => i.title)).toEqual(['A', 'B'])
+		expect(plan.wontFit).toEqual([])
+		expect(plan.stoppedToday).toBe(false)
+	})
+
+	it('moves what does not fit in the room left to the will-not-fit list', () => {
+		const plan = planDay({
+			...quiet,
+			spentToday: 1,
+			held: [
+				{ title: 'A', estimate: 3 },
+				{ title: 'B', estimate: 2 },
+				{ title: 'C', estimate: 0.5 },
+			],
+		})
+		// 4% of room: A takes 3, B (2) no longer fits, C (0.5) still does.
+		expect(plan.waiting.map((i) => i.title)).toEqual(['A', 'C'])
+		expect(plan.wontFit.map((i) => i.title)).toEqual(['B'])
+	})
+
+	it('keeps an item with no estimate waiting while there is room', () => {
+		const plan = planDay({ ...quiet, held: [{ title: 'A', estimate: null }] })
+		expect(plan.waiting).toHaveLength(1)
+	})
+
+	it('has no room once today has reached the stop point', () => {
+		const plan = planDay({
+			...quiet,
+			spentToday: 5,
+			held: [
+				{ title: 'A', estimate: 1 },
+				{ title: 'B', estimate: null },
+			],
+		})
+		expect(plan.stoppedToday).toBe(true)
+		expect(plan.waiting).toEqual([])
+		expect(plan.wontFit).toHaveLength(2)
+	})
+})
+
+describe('dayPlanLines', () => {
+	it('says nothing when nothing is held, even if work is running', () => {
+		const plan = planDay({ ...quiet, running: [{ title: 'R', estimate: 1 }] })
+		expect(dayPlanLines(plan)).toEqual([])
+	})
+
+	it('lists running, waiting and will-not-fit work with an estimate or Estimate unknown', () => {
+		const text = dayPlanLines(
+			planDay({
+				...quiet,
+				running: [{ title: 'Developer, Drive the task', estimate: 1.25 }],
+				held: [
+					{ title: 'Writer, Nightly draft', estimate: 2 },
+					{ title: 'Researcher', estimate: null },
+					{ title: 'Strategist, Sweep', estimate: 4 },
+				],
+			}),
+		).join('\n\n')
+		expect(text).toContain('Running now:\n- Developer, Drive the task: about 1.3% of plan')
+		expect(text).toContain(
+			'Waiting for room:\n- Writer, Nightly draft: about 2% of plan\n- Researcher: Estimate unknown',
+		)
+		expect(text).toContain("Won't fit today:\n- Strategist, Sweep: about 4% of plan")
+		expect(text).toContain('Close to the stop point. 1 item will not fit today. Nothing failed.')
+	})
+
+	it('says it is on track when everything fits', () => {
+		const text = dayPlanLines(planDay({ ...quiet, held: [{ title: 'A', estimate: 1 }] })).join('\n')
+		expect(text).toContain('On track. 1 item waits for room and none are left out.')
+	})
+
+	it('says new work has stopped and that nothing failed when the day is used up', () => {
+		const text = dayPlanLines(
+			planDay({
+				...quiet,
+				spentToday: 6,
+				stoppedYesterday: true,
+				held: [{ title: 'A', estimate: 1 }],
+			}),
+		).join('\n')
+		expect(text).toContain('New work has stopped for today. 1 item will not run until tomorrow.')
+		expect(text).toContain('Nothing failed.')
+		expect(text).toContain('Urgent work always runs at once.')
+		expect(text).toContain('Yesterday ran up to the stop point, so this work waited.')
+	})
+
+	it('shows at most five items a list and counts the rest', () => {
+		const held = Array.from({ length: 7 }, (_, i) => ({ title: `Job ${i}`, estimate: 0.1 }))
+		const text = dayPlanLines(planDay({ ...quiet, held })).join('\n')
+		expect(text).toContain('- Job 4: about 0.1% of plan')
+		expect(text).not.toContain('- Job 5')
+		expect(text).toContain('- and 2 more')
+	})
+})
+
+describe('buildBudgetCard with a plan', () => {
+	const base = {
+		target: pct,
+		yesterday: { runs: 1, knownRuns: 1, spent: 2 },
+		today: { runs: 0, knownRuns: 0, spent: 0 },
+		forecast: projectMonth([], pct, 14, 30),
+		approximate: true,
+	}
+
+	it('reads as before when there is no plan or nothing is held', () => {
+		const before = buildBudgetCard(base)
+		expect(buildBudgetCard({ ...base, plan: planDay(quiet) })).toEqual(before)
+	})
+
+	it('adds the lists to the same card body', () => {
+		const card = buildBudgetCard({
+			...base,
+			plan: planDay({ ...quiet, held: [{ title: 'A', estimate: 1 }] }),
+		})
+		expect(card.headline).toBe(buildBudgetCard(base).headline)
+		expect(card.rationale).toContain('Waiting for room:')
 	})
 })

@@ -85,7 +85,12 @@ Dockerfile flags) which element has focus, and types only if exactly one page ha
 is an `<input type=password>`. Otherwise it answers 409 `not_a_password_field` and types
 nothing; so does a missing debugging port, a cross-origin frame, or a field showing its text.
 An image without this action answers 400 `unknown action`, so an older computer types nothing
-either.
+either. `POST /api/desktop/apply-settings` (MCP `desktop_apply_settings`) brings such a
+computer up to date in place: the server sends it the current `desktopd.py` (a copy kept in
+`apps/dev/src/lib/desktop-helper-source.ts`; after editing `desktopd.py` run
+`node apps/dev/scripts/sync-desktop-helper.mjs`, a test fails if they differ) and restarts it. A
+browser that is already running without the debugging port is not restarted for you: the
+answer says `chromium_restart_needed`.
 
 It exists because `msb exec <vm> -- <cmd>` hangs (even `echo hi`) while the
 entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the host

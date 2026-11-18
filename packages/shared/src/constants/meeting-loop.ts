@@ -7,7 +7,7 @@
 export const MEETING_LOOP_ACTOR_MEETING_MANAGER = '8941afb0-cab2-553c-8370-2e45ada99d0e'
 
 export const MEETING_LOOP_SLUG = 'meeting-loop'
-export const MEETING_LOOP_NAME = 'Meeting Loop'
+export const MEETING_LOOP_NAME = 'Meeting Flow'
 export const MEETING_LOOP_VERSION = '1.0.0'
 export const MEETING_LOOP_USE_CASE = 'Operations'
 export const MEETING_LOOP_DESCRIPTION =

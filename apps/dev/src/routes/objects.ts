@@ -13,6 +13,7 @@ import {
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
+import { TARGET_TYPE } from '@maskin/ext-targets/shared'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -76,12 +77,7 @@ import { logger } from '../lib/logger'
 import { getLiveNextStep, serializeNextStep } from '../lib/next-steps'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
-import {
-	AgentFieldWriteError,
-	applyObjectUpdate,
-	guardedFieldsChanged,
-	recordAgentWriteRefused,
-} from '../lib/object-update'
+import { BodyEditError, applyObjectUpdate } from '../lib/object-update'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -91,6 +87,7 @@ import {
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { OutcomeCheckError, holdAgentClose, requiresOutcomeCheck } from '../lib/outcome-check'
 import { runLimited } from '../lib/run-limited'
 import {
 	TITLE_COVERAGE_SCALE,
@@ -2125,11 +2122,6 @@ const updateObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
-		403: {
-			content: { 'application/json': { schema: errorSchema } },
-			description:
-				"An agent tried to change what defines done: a target's fields or status, or a flow's targets, entry condition, close condition or closed statuses",
-		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
@@ -2186,6 +2178,30 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
+	// An agent closing a job that has an approved done-when list is held for the outcome check.
+	// The check runs here, before the write, and the write refuses a close that skipped it.
+	let outcomeCheckId: string | undefined
+	if (c.get('actorType') === 'agent' && existing.type !== TARGET_TYPE) {
+		const hold = await holdAgentClose(db, {
+			existing,
+			toStatus: body.status,
+			actorId,
+			sessionId: c.get('maskinSessionId'),
+		})
+		if (hold.held) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					hold.message,
+					undefined,
+					'The job stays where it is. Fix what the message names, then ask to close it again.',
+				),
+				409,
+			)
+		}
+		outcomeCheckId = hold.checkId
+	}
+
 	// One transaction for the update, its status event and the notification fan-out.
 	let updated: typeof objects.$inferSelect | undefined
 	let staleStatus: string | null | undefined
@@ -2198,21 +2214,17 @@ app.openapi(updateObjectRoute, async (c) => {
 				sessionId: c.get('maskinSessionId'),
 				actorType: c.get('actorType'),
 				onlyIfStatus: expectedStatus,
+				outcomeCheckId,
 			}),
 		)
 		updated = result.row
 		staleStatus = result.staleStatus
 	} catch (err) {
-		if (err instanceof AgentFieldWriteError) {
-			await recordAgentWriteRefused(db, {
-				workspaceId: existing.workspaceId,
-				actorId,
-				objectId: id,
-				objectType: err.objectType,
-				fieldCount: err.fields.length,
-				sessionId: c.get('maskinSessionId'),
-			})
-			return c.json(createApiError('FORBIDDEN', err.message), 403)
+		if (err instanceof OutcomeCheckError) {
+			return c.json(createApiError('CONFLICT', err.message), 409)
+		}
+		if (err instanceof BodyEditError) {
+			return c.json(createApiError('BAD_REQUEST', err.message), 400)
 		}
 		throw err
 	}
@@ -2881,24 +2893,18 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 			}
 		}
 
-		if (c.get('actorType') === 'agent') {
-			const refused = guardedFieldsChanged(existing, patch)
-			if (refused.length > 0) {
-				results.push({
-					id,
-					ok: false,
-					error: new AgentFieldWriteError(refused, existing.type).message,
-				})
-				await recordAgentWriteRefused(db, {
-					workspaceId,
-					actorId,
-					objectId: id,
-					objectType: existing.type,
-					fieldCount: refused.length,
-					sessionId: c.get('maskinSessionId'),
-				})
-				continue
-			}
+		// A close behind the outcome check goes through the single update, where the check runs.
+		if (
+			c.get('actorType') === 'agent' &&
+			(await requiresOutcomeCheck(db, existing, patch.status))
+		) {
+			results.push({
+				id,
+				ok: false,
+				error:
+					'This job has an approved done-when list, so it only closes after the outcome check. Close it with a single update (update_objects) and the check runs.',
+			})
+			continue
 		}
 
 		const updateData: Partial<typeof objects.$inferInsert> = { updatedAt: now }

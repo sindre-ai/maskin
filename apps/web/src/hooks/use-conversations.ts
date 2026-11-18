@@ -29,6 +29,8 @@ export interface ConversationListFilters {
 	scope?: 'priority' | 'recent'
 	/** The default list's listing rules: no empty agent DMs, retired agents or quiet topic chats. */
 	hide_quiet?: boolean
+	/** Only the chats the caller put on Later. The other lists leave them out. */
+	later?: boolean
 }
 
 export function useConversationsInfinite(
@@ -62,6 +64,7 @@ export function useConversationsInfinite(
 			if (filters?.archived) params.archived = 'true'
 			if (filters?.unread_only) params.unread_only = 'true'
 			if (filters?.hide_quiet) params.hide_quiet = 'true'
+			if (filters?.later) params.later = 'true'
 			return api.conversations.list(workspaceId, params)
 		},
 		initialPageParam: 0,
@@ -143,6 +146,7 @@ export function useUpdateConversationMe(workspaceId: string) {
 										...c,
 										...(data.pinned !== undefined ? { pinned: data.pinned } : {}),
 										...(data.archived !== undefined ? { archived: data.archived } : {}),
+										...(data.later !== undefined ? { later: data.later } : {}),
 										...(data.last_read_message_id !== undefined ? { unread_count: 0 } : {}),
 									}
 								: c,

@@ -242,7 +242,7 @@ function IntegrationsPage() {
 							}}
 							placeholder="Search integrations and tools"
 							aria-label="Search integrations and tools"
-							className="h-11 rounded-xl border-transparent bg-muted pl-10"
+							className="h-11 rounded-xl bg-muted pl-10"
 						/>
 					</div>
 					<FilterTabs

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { STATUS_GROUP_KEYS } from '../search/status-groups'
 import { objectTypeSchema } from './objects'
+import { booleanQueryParam } from './primitives'
 
 /** Cap on rows returned. The launcher passes a smaller limit. */
 export const SEARCH_MAX_LIMIT = 150
@@ -47,6 +48,13 @@ export const searchQuerySchema = z.object({
 	types: csvParam(objectTypeSchema, SEARCH_MAX_TYPES).optional(),
 	statuses: csvParam(statusGroupKeySchema, STATUS_GROUP_KEYS.length).optional(),
 	participants: csvParam(z.string().uuid(), SEARCH_MAX_PARTICIPANTS).optional(),
+	/**
+	 * The chat list's search: read agent:, from:, with:, team:, is:, "phrases" and -words out of `q`
+	 * and apply them to the chats (see search/chat-search.ts). Only chats are searched then, since the
+	 * filters mean nothing for the other sources. Off by default, so the launcher's text is never read
+	 * as filters.
+	 */
+	operators: booleanQueryParam.optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Same meaning as the objects routes. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
 	sort: z.enum(SEARCH_SORTS).default('rel'),
@@ -54,7 +62,9 @@ export const searchQuerySchema = z.object({
 	/**
 	 * Relevance sort only: at most this many rows from each source group are kept first, so a few
 	 * rows (the launcher shows six) are shared across chats, agents and people. Unused room is
-	 * filled from the groups that have more.
+	 * filled from the groups that have more. It also marks the launcher's answer: a teammate whose
+	 * name matches the words leads with their direct message (outside this cap), and CRM contacts
+	 * come last.
 	 */
 	per_group: z.coerce.number().int().min(1).max(SEARCH_MAX_LIMIT).optional(),
 })
@@ -63,10 +73,19 @@ export type SearchQuery = z.infer<typeof searchQuerySchema>
 export type SearchSort = (typeof SEARCH_SORTS)[number]
 export type SearchSourceGroup = (typeof SEARCH_SOURCE_GROUPS)[number]
 
+/** Row types of the launcher's answer: a teammate's direct message, and a teammate with no chat yet. */
+export const DIRECT_MESSAGE_ROW_TYPE = 'direct_message'
+export const START_CHAT_ROW_TYPE = 'start_chat'
+
 export const searchResultRowSchema = z.object({
 	id: z.string().uuid(),
 	group: z.enum(SEARCH_SOURCE_GROUPS),
-	/** chat, agent, person, automation, or the object type key (loop included). */
+	/**
+	 * chat, agent, person, automation, or the object type key (loop included). The launcher's
+	 * per_group answer adds two (DIRECT_MESSAGE_ROW_TYPE, START_CHAT_ROW_TYPE): direct_message (group chats, the caller's direct message with a
+	 * teammate whose name matched) and start_chat (group people, a matched teammate with no direct
+	 * message yet).
+	 */
 	type: z.string(),
 	title: z.string(),
 	sub: z.string().nullable(),

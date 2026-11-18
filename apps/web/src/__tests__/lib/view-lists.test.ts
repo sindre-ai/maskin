@@ -3,6 +3,7 @@ import {
 	LIST_REFUSED_MESSAGE,
 	MAX_LIST_ROWS,
 	declaredProposableFields,
+	deniedCountKey,
 	fetchListRows,
 	isListDeclaration,
 	parseListSource,
@@ -10,6 +11,7 @@ import {
 	projectObjectRow,
 	projectOpportunity,
 } from '@/lib/view-lists'
+import { dataQuerySpecSchema } from '@maskin/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -292,6 +294,73 @@ describe('parseListSource: objects', () => {
 		['an unknown key on the source', { list: 'objects', rows: true, params: { type: 'task' } }],
 	])('refuses %s', (_label, value) => {
 		expect(parseListSource(value)).toBeNull()
+	})
+})
+
+describe('parseListSource: CRM category fields', () => {
+	const categoryKeys = [
+		'role',
+		'category',
+		'activity',
+		'watch_status',
+		'owner',
+		'buyer_or_user',
+		'segment_query',
+		'geo_tier',
+		'icp_priority',
+		'buying_signal',
+	]
+
+	it.each(categoryKeys)('lets a view filter on, sort by and get back %s', (key) => {
+		expect(
+			parseListSource({
+				list: 'objects',
+				params: { type: 'contact', where: { [key]: 'x' }, sort: key, fields: [key] },
+			}),
+		).toMatchObject({ where: { [key]: 'x' }, sort: key, fields: [key] })
+	})
+
+	it.each([
+		'email',
+		'phone',
+		'linkedin_url',
+		'x_handle',
+		'youtube_channel_url',
+		'website_url',
+		'medium_url',
+		'github_url',
+		'sales_strategy',
+		'reach',
+		'offer_sent_at',
+	])('still refuses %s everywhere', (key) => {
+		for (const params of [
+			{ type: 'contact', where: { [key]: 'x' } },
+			{ type: 'contact', sort: key },
+			{ type: 'contact', fields: [key] },
+		]) {
+			expect(parseListSource({ list: 'objects', params })).toBeNull()
+		}
+	})
+})
+
+describe('deniedCountKey', () => {
+	const spec = (over: Record<string, unknown>) =>
+		dataQuerySpecSchema.parse({ type: 'contact', ...over })
+
+	it.each([
+		['group_by', { group_by: 'metadata.email' }],
+		['a metadata filter', { filters: { metadata: { phone: '1' } } }],
+		['an aggregate field', { aggregate: { op: 'sum', field: 'reach' } }],
+	])('names the denied key in %s', (_label, over) => {
+		expect(deniedCountKey(spec(over))).not.toBeNull()
+	})
+
+	it('lets category fields and plain counts through', () => {
+		expect(deniedCountKey(spec({ group_by: 'metadata.owner' }))).toBeNull()
+		expect(
+			deniedCountKey(spec({ filters: { metadata: { region: 'x', role: 'buyer' } } })),
+		).toBeNull()
+		expect(deniedCountKey(spec({ group_by: 'status' }))).toBeNull()
 	})
 })
 

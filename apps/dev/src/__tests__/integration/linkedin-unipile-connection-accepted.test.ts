@@ -3,6 +3,7 @@ import {
 	events,
 	INTEGRATION_STATUS_ACTIVE,
 	integrations,
+	linkedinActions,
 	objects,
 	webhookDeliveries,
 } from '@maskin/db/schema'
@@ -19,7 +20,7 @@ import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 /**
  * Route-level coverage for relation.new on POST
  * /api/integrations/linkedin-unipile/webhook against real Postgres: a new
- * connection from someone with a connection_requested contact becomes accepted
+ * connection from someone first reached by a LinkedIn invite becomes accepted
  * (entity id = the contact), every other connection becomes new (entity id =
  * the integration), and the handler never writes to contacts or calls getProfile.
  */
@@ -160,12 +161,17 @@ async function deliveries() {
 
 async function insertContact(
 	linkedinUrl: string | null,
-	overrides: { status?: string; driver?: string | null } = {},
+	overrides: { status?: string; driver?: string | null; channel?: string | null } = {},
 ) {
+	// Default: a contact whose first contact was a LinkedIn invite sent before the action log.
+	const channel = overrides.channel === undefined ? 'linkedin' : overrides.channel
 	const row = await insertObject(db, workspaceId, getTestActorId(), {
 		type: 'contact',
-		status: overrides.status ?? 'connection_requested',
-		metadata: linkedinUrl === null ? {} : { linkedin_url: linkedinUrl },
+		status: overrides.status ?? 'initial_contact',
+		metadata:
+			linkedinUrl === null
+				? {}
+				: { linkedin_url: linkedinUrl, ...(channel ? { first_contact_channel: channel } : {}) },
 		driver: overrides.driver ?? null,
 	})
 	if (!row) throw new Error('contact insert returned no row')
@@ -175,7 +181,7 @@ async function insertContact(
 // ── Classification ─────────────────────────────────────────────────────────
 
 describe('relation.new classification', () => {
-	it('records accepted against the contact for a connection_requested invitee', async () => {
+	it('records accepted against the contact for an invitee reached by LinkedIn invite', async () => {
 		const driver = await insertActor(db)
 		const contact = await insertContact('https://www.linkedin.com/in/Jane-Doe/?utm=x', {
 			driver: driver.id,
@@ -202,7 +208,7 @@ describe('relation.new classification', () => {
 			other_provider_id: OTHER_ID,
 			other_public_identifier: 'jane-doe',
 			contact_id: contact.id,
-			contact_status: 'connection_requested',
+			contact_status: 'initial_contact',
 			contact_driver_id: driver.id,
 		})
 		expect(JSON.stringify(row?.data)).not.toContain('Secret')
@@ -228,9 +234,9 @@ describe('relation.new classification', () => {
 		expect(getProfile).not.toHaveBeenCalled()
 	})
 
-	it('records new, not accepted, for a contact already in messaged', async () => {
+	it('records new, not accepted, for a contact already in conversation', async () => {
 		const contact = await insertContact('https://www.linkedin.com/in/jane-doe', {
-			status: 'messaged',
+			status: 'in_conversation',
 		})
 
 		await deliver(relationNew())
@@ -241,7 +247,68 @@ describe('relation.new classification', () => {
 		expect(rows[0]?.entityId).toBe(integrationId)
 		const data = rows[0]?.data as Record<string, unknown>
 		expect(data.contact_id).toBe(contact.id)
-		expect(data.contact_status).toBe('messaged')
+		expect(data.contact_status).toBe('in_conversation')
+	})
+
+	it.each([
+		['email', 'email'],
+		['no channel set', null],
+	])(
+		'records new, not accepted, for an initial_contact person first reached by %s',
+		async (_label, channel) => {
+			const contact = await insertContact('https://www.linkedin.com/in/jane-doe', { channel })
+
+			await deliver(relationNew())
+
+			const rows = await connectionEvents()
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.action).toBe('new')
+			expect(rows[0]?.entityId).toBe(integrationId)
+			expect((rows[0]?.data as Record<string, unknown>).contact_id).toBe(contact.id)
+		},
+	)
+
+	it('records accepted for a person with no channel when the action log shows an invite to them', async () => {
+		const contact = await insertContact('https://www.linkedin.com/in/jane-doe', { channel: null })
+		await db.insert(linkedinActions).values({
+			workspaceId,
+			integrationId,
+			actorId: ownerActorId,
+			tool: 'send_connection_request',
+			kind: 'send',
+			targetProviderId: OTHER_ID,
+			outcome: 'ok',
+		})
+
+		await deliver(relationNew())
+
+		const rows = await connectionEvents()
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.action).toBe('accepted')
+		expect(rows[0]?.entityId).toBe(contact.id)
+	})
+
+	it('ignores a logged invite that failed or went to someone else', async () => {
+		await insertContact('https://www.linkedin.com/in/jane-doe', { channel: null })
+		for (const row of [
+			{ targetProviderId: OTHER_ID, outcome: 'error' },
+			{ targetProviderId: 'ACoAAESomeoneElse', outcome: 'ok' },
+		]) {
+			await db.insert(linkedinActions).values({
+				workspaceId,
+				integrationId,
+				actorId: ownerActorId,
+				tool: 'send_connection_request',
+				kind: 'send',
+				...row,
+			})
+		}
+
+		await deliver(relationNew())
+
+		const rows = await connectionEvents()
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.action).toBe('new')
 	})
 
 	it('does not match martin against martin-emil-sloth-55a6655', async () => {
@@ -285,7 +352,7 @@ describe('relation.new classification', () => {
 describe('relation.new writes nothing to the objects table', () => {
 	it('leaves every object row untouched for an accepted delivery', async () => {
 		await insertContact('https://www.linkedin.com/in/jane-doe')
-		await insertContact('https://www.linkedin.com/in/other-person', { status: 'messaged' })
+		await insertContact('https://www.linkedin.com/in/other-person', { status: 'in_conversation' })
 		const before = await db.select().from(objects).where(eq(objects.workspaceId, workspaceId))
 
 		const res = await deliver(relationNew())

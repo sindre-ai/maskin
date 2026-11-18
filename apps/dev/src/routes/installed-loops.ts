@@ -303,12 +303,12 @@ app.openapi(installLoopRoute, async (c) => {
 		.limit(1)
 
 	if (!loop) {
-		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Marketplace flow not found'), 404)
 	}
 
 	// A retired loop is no longer offered; existing installs of it keep working.
 	if (loop.retiredAt) {
-		return c.json(createApiError('NOT_FOUND', 'Marketplace loop is no longer available'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Marketplace flow is no longer available'), 404)
 	}
 
 	const items = await db
@@ -327,7 +327,7 @@ app.openapi(installLoopRoute, async (c) => {
 		)
 		.limit(1)
 	if (existing[0]) {
-		return c.json(createApiError('CONFLICT', 'Loop is already installed in this workspace'), 409)
+		return c.json(createApiError('CONFLICT', 'Flow is already installed in this workspace'), 409)
 	}
 
 	const provisioned = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
@@ -764,7 +764,7 @@ app.openapi(forkLoopRoute, async (c) => {
 	const [install] = await db.select().from(installedLoops).where(eq(installedLoops.id, id)).limit(1)
 
 	if (!install) {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 
 	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
@@ -966,7 +966,7 @@ app.openapi(updateInstalledLoopRoute, async (c) => {
 		.where(eq(installedLoops.id, id))
 		.limit(1)
 	if (!install) {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
@@ -993,13 +993,13 @@ app.openapi(updateInstalledLoopRoute, async (c) => {
 	}
 
 	if (result.status === 'not_found') {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 	if (result.status === 'forked') {
 		return c.json(
 			createApiError(
 				'CONFLICT',
-				'This loop was forked, so your workspace owns it and it does not follow the catalog. There is nothing to update.',
+				'This flow was forked, so your workspace owns it and it does not follow the catalog. There is nothing to update.',
 			),
 			409,
 		)
@@ -1130,7 +1130,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	const [install] = await db.select().from(installedLoops).where(eq(installedLoops.id, id)).limit(1)
 
 	if (!install) {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 
 	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {

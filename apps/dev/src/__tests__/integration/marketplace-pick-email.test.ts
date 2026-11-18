@@ -133,7 +133,7 @@ describe('Marketplace pick in the summary email', () => {
 
 		expect(sentTo(p.email)).toHaveLength(1)
 		const mail = sentTo(p.email)[0]?.[0]
-		expect(mail.subject).toBe('1 thing needs you')
+		expect(mail.subject).toBe('1 needs you')
 		expect(mail.text).toContain('Marketplace pick')
 		expect(mail.text).toContain('Beta Watch')
 		expect(mail.text).toContain('Why you see this: you already use Alpha Watch')
@@ -142,7 +142,7 @@ describe('Marketplace pick in the summary email', () => {
 		)
 		expect(mail.text).toContain(`l=${offer.id}`)
 		expect(mail.text).toContain('Setup and cost are on its Marketplace page.')
-		expect(mail.text.indexOf('Open it')).toBeLessThan(mail.text.indexOf('Marketplace pick'))
+		expect(mail.text.indexOf('Open Maskin')).toBeLessThan(mail.text.indexOf('Marketplace pick'))
 		expect(mail.text).toContain('block=summary')
 		expect(await prefsRow(p.actorId)).toMatchObject({ marketplacePickLastSentOn: '2026-03-10' })
 	})

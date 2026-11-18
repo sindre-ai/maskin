@@ -49,6 +49,7 @@ import {
 	trackMessageSentTagged,
 } from '../lib/analytics/chat-tag-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { maybeTrackOnboardingSecondMessage } from '../lib/analytics/onboarding-events'
 import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -73,6 +74,13 @@ import { serialize } from '../lib/serialize'
 import { serializeMessage } from '../lib/serialize-message'
 import { forgetConversationParticipants } from '../lib/session-frame-cache'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import {
+	type ChatErrorReason,
+	loadChatsWithOpenAsk,
+	loadLastPersonMessageIds,
+	readFailedTurn,
+} from '../services/chat-attention'
+import { loadLatestSnippets, loadWorkingByConversation } from '../services/chat-list-rows'
 import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
 import { shareReplyDigest } from '../services/chat-session-context'
@@ -88,7 +96,6 @@ import {
 	ensureHumanDirectChats,
 	findOrCreateDirectChat,
 } from '../services/direct-chat'
-import { LIVE_STATUSES, openInteractiveTurnsByLog } from '../services/live-activity-push'
 import { loadReactionsByMessage } from '../services/message-reactions'
 import { listCallerThreadRootIds, loadThreadSummaries } from '../services/message-threads'
 import { importObjectComments } from '../services/object-chat-sync'
@@ -140,120 +147,11 @@ type ParticipantRow = {
 	addedBy: string | null
 }
 
-/** The row preview: the words, or the file name(s) when the message is only attachments. */
-function snippetText(content: string, metadata: unknown) {
-	if (content.length > 0) return content
-	const attachments =
-		(metadata as { attachments?: Array<{ name?: string }> } | null)?.attachments ?? []
-	if (attachments.length === 0) return content
-	const first = attachments[0]?.name?.trim() || 'Attachment'
-	return attachments.length === 1 ? first : `${first} and ${attachments.length - 1} more`
-}
-
 /**
- * Which agents are answering in each chat right now. A chat session stays `running` between turns,
- * so a live status alone would keep the row "working" until the container dies; an interactive
- * session only counts while its turn is open (see `isInteractiveTurnOpenByLog`).
+ * True while the caller has the chat on Later: they set it, and no message has arrived since.
+ * Reads the caller's own participant row (the joined one), so another person's mark is never seen.
  */
-async function loadWorkingActorsByConversation(
-	db: Database,
-	conversationIds: string[],
-): Promise<Map<string, string[]>> {
-	const byConversation = new Map<string, string[]>()
-	if (conversationIds.length === 0) return byConversation
-	const live = await db
-		.select({
-			id: sessions.id,
-			actorId: sessions.actorId,
-			conversationId: sessions.conversationId,
-			interactive: sessions.interactive,
-			status: sessions.status,
-		})
-		.from(sessions)
-		.where(
-			and(
-				inArray(sessions.conversationId, conversationIds),
-				inArray(sessions.status, LIVE_STATUSES),
-			),
-		)
-	// A session still booting has no logs yet but is on its way to answering; only a running
-	// chat session can be sitting idle between turns. One lookup covers all of them.
-	const openTurns = await openInteractiveTurnsByLog(
-		db,
-		live.filter((s) => s.interactive && s.status === 'running').map((s) => s.id),
-		Date.now(),
-	)
-	for (const s of live) {
-		if (!s.conversationId) continue
-		if (s.interactive && s.status === 'running' && !openTurns.has(s.id)) continue
-		const actors = byConversation.get(s.conversationId) ?? []
-		if (!actors.includes(s.actorId)) actors.push(s.actorId)
-		byConversation.set(s.conversationId, actors)
-	}
-	return byConversation
-}
-
-type SnippetRow = {
-	conversationId: string
-	snippet: string
-	snippetActorId: string
-	snippetActorName: string | null
-}
-
-/**
- * The newest message the thread shows in each conversation, with its author, in one statement
- * (a lateral lookup per id, each an index walk down `messages` for that conversation).
- *
- * Only what the thread itself shows: a helper's result handed to the agent that started it, and a
- * card button's nudge (`helper_return`, `hidden_from_chat`), are delivered to the agent but hidden
- * from the chat, so they must not be the row's preview either. Mirrors the filter in apps/web
- * `thread-messages.tsx`. The sender comes back with the preview so the row can say who is talking.
- * Left-joined: a message from an actor that has since been deleted still yields its text rather
- * than dropping the snippet. A conversation with no visible message has no entry.
- */
-async function loadLatestSnippets(
-	db: Database,
-	conversationIds: string[],
-): Promise<Map<string, SnippetRow>> {
-	const byConversation = new Map<string, SnippetRow>()
-	if (conversationIds.length === 0) return byConversation
-	const rows = (await db.execute(sql`
-		SELECT ids.conversation_id AS conversation_id,
-			latest.content AS content,
-			latest.metadata AS metadata,
-			latest.actor_id AS actor_id,
-			latest.actor_name AS actor_name
-		FROM unnest(ARRAY[${sql.join(
-			conversationIds.map((id) => sql`${id}::uuid`),
-			sql`, `,
-		)}]) AS ids(conversation_id)
-		CROSS JOIN LATERAL (
-			SELECT m.content, m.metadata, m.actor_id, a.name AS actor_name
-			FROM messages m
-			LEFT JOIN actors a ON a.id = m.actor_id
-			WHERE m.conversation_id = ids.conversation_id
-				AND (m.metadata->>'helper_return') IS NULL
-				AND coalesce(m.metadata->>'hidden_from_chat', 'false') <> 'true'
-			ORDER BY m.id DESC
-			LIMIT 1
-		) latest
-	`)) as unknown as Array<{
-		conversation_id: string
-		content: string
-		metadata: unknown
-		actor_id: string
-		actor_name: string | null
-	}>
-	for (const row of rows) {
-		byConversation.set(row.conversation_id, {
-			conversationId: row.conversation_id,
-			snippet: snippetText(row.content, row.metadata),
-			snippetActorId: row.actor_id,
-			snippetActorName: row.actor_name,
-		})
-	}
-	return byConversation
-}
+const laterActive = sql`(${conversationParticipants.laterAt} IS NOT NULL AND ${conversationParticipants.laterAt} >= ${conversations.lastMessageAt})`
 
 async function loadParticipantsByConversation(
 	db: Database,
@@ -877,6 +775,13 @@ app.openapi(listConversationsRoute, (async (c) => {
 			AND m.actor_id != ${callerId}
 			AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
 	)`
+	// Later: ended by the next message, which moves last_message_at past the mark. Compared in SQL so
+	// the filter and the flag on each row can never disagree. Only the caller's own row is read.
+	if (query.later) {
+		conditions.push(laterActive)
+	} else if (!query.archived && !query.subject_type && !query.subject_id) {
+		conditions.push(not(laterActive))
+	}
 	if (query.unread_only) conditions.push(hasUnread)
 	if (query.hide_quiet) conditions.push(visibleInDefaultListCondition(hasUnread))
 	if (query.scope) {
@@ -889,7 +794,11 @@ app.openapi(listConversationsRoute, (async (c) => {
 	}
 
 	const rows = await db
-		.select({ conversation: conversations, participant: conversationParticipants })
+		.select({
+			conversation: conversations,
+			participant: conversationParticipants,
+			onLater: sql<boolean>`${laterActive}`.mapWith(Boolean),
+		})
 		.from(conversations)
 		.innerJoin(
 			conversationParticipants,
@@ -908,35 +817,55 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const page = rows.slice(0, query.limit)
 	const conversationIds = page.map((r) => r.conversation.id)
 
-	const [participantsByConversation, unreadRows, snippetByConversation, workingByConversation] =
-		await Promise.all([
-			loadParticipantsByConversation(db, conversationIds),
-			conversationIds.length === 0
-				? Promise.resolve([])
-				: db
-						.select({
-							conversationId: messages.conversationId,
-							unreadCount: sql<number>`count(*)::int`,
-						})
-						.from(messages)
-						.innerJoin(
-							conversationParticipants,
-							and(
-								eq(conversationParticipants.conversationId, messages.conversationId),
-								eq(conversationParticipants.actorId, callerId),
-							),
-						)
-						.where(
-							and(
-								inArray(messages.conversationId, conversationIds),
-								ne(messages.actorId, callerId),
-								sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
-							),
-						)
-						.groupBy(messages.conversationId),
-			loadLatestSnippets(db, conversationIds),
-			loadWorkingActorsByConversation(db, conversationIds),
-		])
+	// Done (archived) and Later chats never need the caller, so their messages are not read for it.
+	const attentionIds = page
+		.filter((r) => !r.participant.archived && !r.onLater)
+		.map((r) => r.conversation.id)
+
+	const [
+		participantsByConversation,
+		unreadRows,
+		snippetByConversation,
+		workingByConversation,
+		openAskChats,
+	] = await Promise.all([
+		loadParticipantsByConversation(db, conversationIds),
+		conversationIds.length === 0
+			? Promise.resolve([])
+			: db
+					.select({
+						conversationId: messages.conversationId,
+						unreadCount: sql<number>`count(*)::int`,
+					})
+					.from(messages)
+					.innerJoin(
+						conversationParticipants,
+						and(
+							eq(conversationParticipants.conversationId, messages.conversationId),
+							eq(conversationParticipants.actorId, callerId),
+						),
+					)
+					.where(
+						and(
+							inArray(messages.conversationId, conversationIds),
+							ne(messages.actorId, callerId),
+							sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
+						),
+					)
+					.groupBy(messages.conversationId),
+		loadLatestSnippets(db, conversationIds),
+		loadWorkingByConversation(db, conversationIds),
+		loadChatsWithOpenAsk(db, callerId, attentionIds),
+	])
+
+	// A last turn that failed: the reason from the notice itself, and the caller's last message so
+	// Retry can run the retry route on it. Only chats whose newest message is such a notice.
+	const failedByConversation = new Map<string, { reason: ChatErrorReason }>()
+	for (const id of conversationIds) {
+		const failed = readFailedTurn(snippetByConversation.get(id))
+		if (failed) failedByConversation.set(id, failed)
+	}
+	const lastPersonMessageIds = await loadLastPersonMessageIds(db, [...failedByConversation.keys()])
 
 	const unreadByConversation = new Map(unreadRows.map((r) => [r.conversationId, r.unreadCount]))
 
@@ -956,7 +885,21 @@ app.openapi(listConversationsRoute, (async (c) => {
 			snippet_actor_name: snippetByConversation.get(r.conversation.id)?.snippetActorName ?? null,
 			snippet_is_caller: snippetByConversation.get(r.conversation.id)?.snippetActorId === callerId,
 			participants: participantsByConversation.get(r.conversation.id) ?? [],
-			working_actor_ids: workingByConversation.get(r.conversation.id) ?? [],
+			working_actor_ids: (workingByConversation.get(r.conversation.id) ?? []).map(
+				(w) => w.agent_id,
+			),
+			working: workingByConversation.get(r.conversation.id) ?? [],
+			needs_you:
+				!r.participant.archived &&
+				!r.onLater &&
+				(openAskChats.has(r.conversation.id) || failedByConversation.has(r.conversation.id)),
+			later: r.onLater,
+			error: failedByConversation.has(r.conversation.id)
+				? {
+						reason: failedByConversation.get(r.conversation.id)?.reason ?? 'other',
+						last_person_message_id: lastPersonMessageIds.get(r.conversation.id) ?? null,
+					}
+				: null,
 		})) as z.infer<typeof conversationListItemResponseSchema>[],
 		has_more: hasMore,
 	})
@@ -1811,6 +1754,14 @@ app.openapi(postMessageRoute, (async (c) => {
 		})
 	}
 
+	if (callerType === 'human') {
+		void maybeTrackOnboardingSecondMessage(db, {
+			workspaceId,
+			conversationId: id,
+			actorId: callerId,
+		})
+	}
+
 	// A reply under a message that a sub-chat hangs from goes to that sub-chat's agent too,
 	// as the thread's own composer would send it. Best effort: the reply is already posted.
 	let delivery: ThreadReplyDelivery | null = null
@@ -2326,7 +2277,7 @@ const updateMeRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/me',
 	tags: ['Conversations'],
-	summary: "Update the caller's own pin/archive/read state for a conversation",
+	summary: "Update the caller's own pin/archive/later/read state for a conversation",
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -2356,6 +2307,9 @@ app.openapi(updateMeRoute, (async (c) => {
 	const setValues: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.pinned !== undefined) setValues.pinned = body.pinned
 	if (body.archived !== undefined) setValues.archived = body.archived
+	// Later is the caller's own mark, stamped with the database clock so it compares with
+	// last_message_at on the same clock. false takes it back.
+	if (body.later !== undefined) setValues.laterAt = body.later ? sql`now()` : null
 	// mark_unread is a reset, so it must bypass the GREATEST guard below — that
 	// guard is advance-only by design and would clamp any reset straight back up
 	// to the existing cursor, turning the write into a silent no-op. Null is the
@@ -2392,12 +2346,27 @@ app.openapi(updateMeRoute, (async (c) => {
 			archived: body.archived,
 			last_read_message_id: body.last_read_message_id,
 			mark_unread: body.mark_unread,
+			later: body.later,
 		},
 	})
+
+	// Whether the chat is on Later now, on the same rule as the list (no message since the mark).
+	const [laterRow] = await db
+		.select({ onLater: sql<boolean>`${laterActive}`.mapWith(Boolean) })
+		.from(conversationParticipants)
+		.innerJoin(conversations, eq(conversations.id, conversationParticipants.conversationId))
+		.where(
+			and(
+				eq(conversationParticipants.conversationId, id),
+				eq(conversationParticipants.actorId, callerId),
+			),
+		)
+		.limit(1)
 
 	return c.json({
 		pinned: updated.pinned,
 		archived: updated.archived,
+		later: laterRow?.onLater ?? false,
 		last_read_message_id: updated.lastReadMessageId ?? null,
 	} as z.infer<typeof conversationParticipantStateResponseSchema>)
 }) as RouteHandler<typeof updateMeRoute, Env>)

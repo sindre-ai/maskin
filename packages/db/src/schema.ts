@@ -928,6 +928,12 @@ export const sessions = pgTable(
 		index('sessions_spawned_by_message_id_idx')
 			.on(t.spawnedByMessageId)
 			.where(sql`${t.spawnedByMessageId} IS NOT NULL`),
+		// Self-reference FKs. Without these every session deleted by an agent delete scans all of
+		// sessions. Built CONCURRENTLY in migrations 0160 and 0161.
+		index('sessions_retried_session_id_idx')
+			.on(t.retriedSessionId)
+			.where(sql`${t.retriedSessionId} IS NOT NULL`),
+		index('sessions_retry_of_idx').on(t.retryOf).where(sql`${t.retryOf} IS NOT NULL`),
 		// "Does this agent have another live session?" on every completion. Built
 		// CONCURRENTLY in migration 0087.
 		index('sessions_actor_status_idx').on(t.actorId, t.status),
@@ -1226,6 +1232,30 @@ export const readings = pgTable(
 	],
 )
 
+// ── Plan Limit Emails ──────────────────────────────────────────────────────
+
+// One row per workspace, billing period and kind of mail sent when a workspace uses up its plan.
+// Inserting the row is the claim: the unique constraint lets exactly one server instance (and one
+// run of the process) send the mail for a period, so a restart never sends it twice. A failed send
+// deletes its claim so the next refusal can try again. period_end is the end of the period the plan
+// was used up in. See 0163_plan_limit_emails.sql.
+export const planLimitEmails = pgTable(
+	'plan_limit_emails',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
+		kind: text('kind').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('plan_limit_emails_ws_period_kind_uniq').on(t.workspaceId, t.periodEnd, t.kind),
+		check('plan_limit_emails_kind_check', sql`${t.kind} in ('plan_used_up')`),
+	],
+)
+
 // ── Next Step Sweep Claims ─────────────────────────────────────────────────
 
 // What the sweep for overdue or missing next steps decided about an object in a time bucket.
@@ -1370,6 +1400,73 @@ export const doneWhenSkips = pgTable(
 	],
 )
 
+// ── Outcome checks ─────────────────────────────────────────────────────────
+
+// One row per check round on a job with an approved done-when list: one mark per line, who made it,
+// the readings used, the ending and the time. Every round is kept, so a person can pick an earlier
+// one. kind blind is a person's own mark of the same lines, made without seeing the checker's, and
+// is the blind sample. Not object metadata, so no writer of the object can edit a mark. See
+// 0164_outcome_checks.sql.
+export const outcomeChecks = pgTable(
+	'outcome_checks',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		objectId: uuid('object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull().default('round'),
+		round: integer('round'),
+		marks: jsonb('marks').notNull().default([]),
+		readings: jsonb('readings').notNull().default([]),
+		ending: text('ending'),
+		flags: jsonb('flags').notNull().default([]),
+		requestedStatus: text('requested_status'),
+		checkerModel: text('checker_model'),
+		sessionId: uuid('session_id'),
+		createdBy: uuid('created_by').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('outcome_checks_object_idx').on(t.objectId, t.createdAt),
+		index('outcome_checks_workspace_idx').on(t.workspaceId),
+		uniqueIndex('outcome_checks_round_idx').on(t.objectId, t.round).where(sql`${t.kind} = 'round'`),
+		check('outcome_checks_kind_check', sql`${t.kind} in ('round', 'blind')`),
+		check(
+			'outcome_checks_ending_check',
+			sql`${t.ending} is null or ${t.ending} in ('checks_passed', 'sent_back', 'round_limit_reached', 'list_does_not_fit', 'stopped_by_person')`,
+		),
+	],
+)
+
+// How checking of a job ended, and whether a person accepted it. Two separate things: the check
+// sets the ending and never touches accepted_by / accepted_at. One row per job.
+export const jobOutcomes = pgTable(
+	'job_outcomes',
+	{
+		objectId: uuid('object_id')
+			.primaryKey()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		ending: text('ending'),
+		endedAt: timestamp('ended_at', { withTimezone: true }),
+		acceptedBy: uuid('accepted_by').references(() => actors.id, { onDelete: 'set null' }),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('job_outcomes_workspace_idx').on(t.workspaceId),
+		check(
+			'job_outcomes_ending_check',
+			sql`${t.ending} is null or ${t.ending} in ('checks_passed', 'sent_back', 'round_limit_reached', 'list_does_not_fit', 'stopped_by_person')`,
+		),
+	],
+)
+
 // ── Session Logs ───────────────────────────────────────────────────────────
 
 export const sessionLogs = pgTable(
@@ -1480,6 +1577,11 @@ export const conversationParticipants = pgTable(
 		leftAt: timestamp('left_at', { withTimezone: true }),
 		pinned: boolean('pinned').notNull().default(false),
 		archived: boolean('archived').notNull().default(false),
+		// When this person put the chat on Later; null when they have not. The chat counts as Later
+		// only while no message has arrived since (later_at is not before conversations.last_message_at),
+		// so a new message brings it back without writing to anyone's row. Set from the database
+		// clock so it compares with last_message_at on the same clock. See migration 0165.
+		laterAt: timestamp('later_at', { withTimezone: true }),
 		// High-water mark into messages.id (bigserial, monotonic).
 		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -2032,6 +2134,10 @@ export const notifications = pgTable(
 	(t) => [
 		index('notifications_ws_status_idx').on(t.workspaceId, t.status),
 		index('notifications_target_actor_idx').on(t.targetActorId, t.status),
+		// ON DELETE SET NULL FK to sessions. Built CONCURRENTLY in migration 0162.
+		index('notifications_session_id_idx')
+			.on(t.sessionId)
+			.where(sql`${t.sessionId} IS NOT NULL`),
 	],
 )
 

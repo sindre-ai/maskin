@@ -15,7 +15,7 @@ struct ThreadScreen: View {
 	@State private var draft = ""
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
-	@State private var selectingText: ChatMessage?
+	@State private var listening = false
 	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -78,9 +78,6 @@ struct ThreadScreen: View {
 		}
 		.background(MaskinSurface.grouped)
 		.linkedItems(runtime)
-		.sheet(item: $selectingText) { message in
-			SelectTextSheet(text: ChatPreviewText.selectable(message.content))
-		}
 		.navigationTitle("Thread")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
@@ -133,7 +130,6 @@ struct ThreadScreen: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
-			actions.onSelectText = { selectingText = message }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
@@ -170,6 +166,14 @@ struct ThreadScreen: View {
 				store.reply(
 					LinkedDraftMessage.approved(title: title, body: body), in: rootID,
 					to: message.author == .agent ? store.participant(for: message.actorID) : nil, alsoInChannel: false)
+			},
+			draftSkipped: message.author == .agent && message.serverID.map { store.isDraftSkipped(inMessage: $0) } == true,
+			onSkippedDraft: {
+				guard let rootID else { return }
+				store.reply(
+					LinkedDraftMessage.skipped, in: rootID,
+					to: message.author == .agent ? store.participant(for: message.actorID) : nil, alsoInChannel: false,
+					metadata: ChatSendMetadata(cardAnswer: message.serverID.map { ChatCardAnswer(messageID: $0, outcome: .declined) }))
 			})
 	}
 
@@ -191,17 +195,21 @@ struct ThreadScreen: View {
 					.onSubmit(send)
 					.padding(.leading, MaskinSpace.s10)
 					.padding(.vertical, MaskinSpace.s6)
-				Button(action: send) {
-					Image(systemName: "arrow.up")
-						.maskinSymbol(MaskinFontSize.t18, weight: .bold)
-						.foregroundStyle(canSend ? MaskinSurface.onInverse : MaskinColor.inkPlaceholder)
-						.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-						.background(canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
+				DictationButton(text: $draft, listening: $listening)
+				// While the mic is open it keeps the send slot, as in the chat composer.
+				if !listening {
+					Button(action: send) {
+						Image(systemName: "arrow.up")
+							.maskinSymbol(MaskinFontSize.t18, weight: .bold)
+							.foregroundStyle(canSend ? MaskinSurface.onInverse : MaskinColor.inkPlaceholder)
+							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+							.background(canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
+					}
+					.buttonStyle(.maskinPressed)
+					.disabled(!canSend)
+					.padding(.trailing, MaskinSpace.s2)
+					.accessibilityLabel("Send reply")
 				}
-				.buttonStyle(.maskinPressed)
-				.disabled(!canSend)
-				.padding(.trailing, MaskinSpace.s2)
-				.accessibilityLabel("Send reply")
 			}
 			.background(MaskinSurface.card, in: Capsule())
 			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))

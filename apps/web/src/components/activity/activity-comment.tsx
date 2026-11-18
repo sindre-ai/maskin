@@ -1,6 +1,5 @@
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import type { TagInputHandle } from '@/components/chat/tag-input'
-import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
@@ -106,8 +105,10 @@ function CommentRow({
 	const { data: attachedFiles, isPending: attachmentsPending } = useFiles(workspaceId, {
 		ids: attachmentFileIds,
 	})
-	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
+
+	const openPerson = (actorId: string) =>
+		navigate({ to: '/$workspaceId/people/$actorId', params: { workspaceId, actorId } })
 
 	const handleMentionClick = (mentioned: ActorListItem) => {
 		if (mentioned.type === 'agent') {
@@ -116,7 +117,7 @@ function CommentRow({
 				params: { workspaceId, agentId: mentioned.id },
 			})
 		} else {
-			setHumanDialogActorId(mentioned.id)
+			openPerson(mentioned.id)
 		}
 	}
 
@@ -148,7 +149,7 @@ function CommentRow({
 				type={actor.type}
 				size="sm"
 				className={avatarClass}
-				onClick={() => setHumanDialogActorId(actor.id)}
+				onClick={() => openPerson(actor.id)}
 			/>
 		)
 	) : null
@@ -166,7 +167,7 @@ function CommentRow({
 	) : (
 		<button
 			type="button"
-			onClick={() => setHumanDialogActorId(actor.id)}
+			onClick={() => openPerson(actor.id)}
 			className={cn(
 				'text-sm font-medium text-foreground cursor-pointer hover:underline transition-colors',
 			)}
@@ -320,16 +321,6 @@ function CommentRow({
 					</ViewerTooltip>
 				)}
 			</div>
-			{humanDialogActorId && (
-				<HumanDetailDialog
-					actorId={humanDialogActorId}
-					workspaceId={workspaceId}
-					open={true}
-					onOpenChange={(open) => {
-						if (!open) setHumanDialogActorId(null)
-					}}
-				/>
-			)}
 		</>
 	)
 }
@@ -468,7 +459,21 @@ export function ActivityComment({
 								actors={actorList}
 								workspaceId={workspaceId}
 								onReply={idx === replies.length - 1 ? handleReply : undefined}
+								isDecisionPoint={hasDecision(reply)}
 								variant={variant}
+								footer={
+									// The server stores every reply against the thread root, so an
+									// answer to this ask is a later reply in the same thread. Replies
+									// before it cannot have answered it.
+									hasDecision(reply) ? (
+										<CommentDecisionBlock
+											event={reply}
+											workspaceId={workspaceId}
+											objectId={objectId}
+											replies={replies.slice(idx + 1)}
+										/>
+									) : undefined
+								}
 							/>
 						</div>
 					))}

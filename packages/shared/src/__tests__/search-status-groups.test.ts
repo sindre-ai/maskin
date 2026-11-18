@@ -69,8 +69,7 @@ const TABLE: Array<[type: string, status: string, group: StatusGroupKey]> = [
 
 	['contact', 'new_lead', 'new'],
 	['contact', 'qualified', 'in_progress'],
-	['contact', 'connection_requested', 'in_progress'],
-	['contact', 'messaged', 'in_progress'],
+	['contact', 'initial_contact', 'in_progress'],
 	['contact', 'in_conversation', 'in_progress'],
 	['contact', 'meeting_booked', 'in_progress'],
 	['contact', 'follow_up_later', 'in_progress'],

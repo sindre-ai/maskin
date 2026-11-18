@@ -17,6 +17,8 @@ const themeRef = vi.hoisted(() => ({
 	setTheme: vi.fn(),
 }))
 const toastMock = vi.hoisted(() => vi.fn())
+const toastErrorMock = vi.hoisted(() => vi.fn())
+const createChatMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => navigateMock,
@@ -36,7 +38,7 @@ vi.mock('@/lib/theme', () => ({
 	}),
 }))
 
-vi.mock('sonner', () => ({ toast: toastMock }))
+vi.mock('sonner', () => ({ toast: Object.assign(toastMock, { error: toastErrorMock }) }))
 
 vi.mock('@/lib/api', () => ({
 	api: { search: { query: vi.fn() } },
@@ -46,6 +48,7 @@ vi.mock('@/hooks/use-objects', () => ({ useObjects: () => ({ data: objectsRef.cu
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: actorsRef.current }) }))
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: { pages: [{ conversations: chatsRef.current }] } }),
+	useCreateConversation: () => ({ mutateAsync: createChatMock }),
 }))
 vi.mock('@/hooks/use-for-you', () => ({
 	useForYou: () => ({
@@ -153,6 +156,8 @@ beforeEach(() => {
 	themeRef.resolved = 'light'
 	themeRef.setTheme.mockClear()
 	toastMock.mockClear()
+	toastErrorMock.mockClear()
+	createChatMock.mockReset()
 	pathnameRef.current = '/ws-1/objects'
 	openRef.current = true
 	objectsRef.current = []
@@ -683,5 +688,162 @@ describe('⌘F', () => {
 			input.remove()
 			unmount()
 		}
+	})
+})
+
+describe('launcher: a teammate first', () => {
+	const MAGNUS = '00000000-0000-4000-8000-0000000000a1'
+	const DM = '00000000-0000-4000-8000-0000000000a2'
+	const CONTACT = '00000000-0000-4000-8000-0000000000a3'
+
+	const dmRow = row({
+		id: DM,
+		type: 'direct_message',
+		title: 'Magnus Nodegard',
+		snippet: 'You: Booked the room',
+		updatedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+	})
+	const startRow = row({
+		id: MAGNUS,
+		group: 'people',
+		type: 'start_chat',
+		title: 'Magnus Nodegard',
+		sub: 'magnus@omega.test',
+		status: 'member',
+	})
+	const contactRow = row({
+		id: CONTACT,
+		group: 'objects',
+		type: 'contact',
+		title: 'Magnus Hansen',
+		status: 'active',
+	})
+
+	it('lists the direct message first with its last message and age, and Enter opens it', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () =>
+			response([row({ title: 'Magnus sync' }), dmRow]),
+		)
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'magnus')
+
+		// The Search row is there before the answer is, so wait for the teammate's row.
+		const first = await screen.findByRole('option', { name: /Magnus Nodegard/ })
+		expect((await screen.findAllByRole('option'))[0]).toBe(first)
+		expect(first).toHaveTextContent('Magnus Nodegard')
+		expect(first).toHaveTextContent('You: Booked the room · 2h')
+		expect(first).toHaveTextContent('DIRECT MESSAGE')
+		expect(first).toHaveTextContent('DM')
+		expect(first).toHaveAttribute('aria-selected', 'true')
+
+		await user.keyboard('{Enter}')
+		expect(trackSearchResultOpened).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_type: 'direct_message', entity_id: DM, position: 1 }),
+		)
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/$conversationId',
+			params: { workspaceId: 'ws-1', conversationId: DM },
+		})
+		expect(setOpenMock).toHaveBeenCalledWith(false)
+	})
+
+	it('shows Start a chat for a teammate with no chat, and Enter creates the chat and opens it', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () => response([startRow]))
+		createChatMock.mockResolvedValue({ id: DM })
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'magnus')
+
+		// The Search row is there before the answer is, so wait for the teammate's row.
+		const first = await screen.findByRole('option', { name: /Magnus Nodegard/ })
+		expect((await screen.findAllByRole('option'))[0]).toBe(first)
+		expect(first).toHaveTextContent('Magnus Nodegard')
+		expect(first).toHaveTextContent('Start a chat')
+		expect(first).toHaveTextContent('PERSON')
+
+		await user.keyboard('{Enter}')
+		await waitFor(() =>
+			expect(createChatMock).toHaveBeenCalledWith({
+				title: 'Magnus Nodegard',
+				participant_actor_ids: [MAGNUS],
+				direct: true,
+			}),
+		)
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId: 'ws-1', conversationId: DM },
+			}),
+		)
+		expect(setOpenMock).toHaveBeenCalledWith(false)
+		expect(trackSearchResultOpened).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_type: 'direct_message', entity_id: DM }),
+		)
+	})
+
+	it('dims the row and ignores a second Enter while the chat is being created', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () => response([startRow]))
+		let finish: (value: { id: string }) => void = () => {}
+		createChatMock.mockImplementation(
+			() =>
+				new Promise<{ id: string }>((resolve) => {
+					finish = resolve
+				}),
+		)
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'magnus')
+		await screen.findByRole('option', { name: /Start a chat/ })
+
+		await user.keyboard('{Enter}')
+		const starting = await screen.findByRole('option', { name: /Starting chat…/ })
+		expect(starting).toHaveClass('opacity-60')
+		await user.keyboard('{Enter}')
+		expect(createChatMock).toHaveBeenCalledTimes(1)
+		expect(navigateMock).not.toHaveBeenCalled()
+
+		finish({ id: DM })
+		await waitFor(() => expect(navigateMock).toHaveBeenCalledTimes(1))
+	})
+
+	it('keeps the palette open, restores the row and toasts when the chat cannot be started', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () => response([startRow]))
+		createChatMock.mockRejectedValue(new Error('boom'))
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'magnus')
+		await screen.findByRole('option', { name: /Start a chat/ })
+
+		await user.keyboard('{Enter}')
+		await waitFor(() =>
+			expect(toastErrorMock).toHaveBeenCalledWith("Couldn't start the chat. Try again."),
+		)
+		expect(await screen.findByRole('option', { name: /Start a chat/ })).toBeInTheDocument()
+		expect(navigateMock).not.toHaveBeenCalled()
+		expect(setOpenMock).not.toHaveBeenCalledWith(false)
+	})
+
+	it('lists CRM contacts last under a Contacts heading', async () => {
+		vi.mocked(api.search.query).mockImplementation(async () =>
+			response([
+				contactRow,
+				row({ id: IDS.loop, group: 'loops', type: 'loop', title: 'Magnus flow' }),
+				dmRow,
+			]),
+		)
+		const user = userEvent.setup()
+		renderLauncher()
+		await user.type(field(), 'magnus')
+
+		await screen.findByRole('option', { name: /Magnus Hansen/ })
+		expect(groupLabels()).toEqual(['Jump to', 'Contacts', 'Search'])
+		const jumpTo = within(screen.getByRole('group', { name: 'Jump to' })).getAllByRole('option')
+		expect(jumpTo.map((option) => option.textContent)).toEqual([
+			expect.stringContaining('Magnus Nodegard'),
+			expect.stringContaining('Magnus flow'),
+		])
+		expect(
+			within(screen.getByRole('group', { name: 'Contacts' })).getByRole('option'),
+		).toHaveTextContent('Magnus Hansen')
 	})
 })

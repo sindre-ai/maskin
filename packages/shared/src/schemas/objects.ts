@@ -90,6 +90,16 @@ export const createObjectSchema = z.object({
 export const updateObjectSchema = z.object({
 	title: z.string().optional(),
 	content: z.string().optional(),
+	/** Text added to the end of the stored body. Not sent together with content or replace. */
+	append: z.string().min(1).optional(),
+	/** Swap one exact piece of the stored body. Not sent together with content or append. */
+	replace: z
+		.object({
+			find: z.string().min(1),
+			with: z.string(),
+			all: z.boolean().optional(),
+		})
+		.optional(),
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
 	driver: z.string().uuid().nullable().optional(),

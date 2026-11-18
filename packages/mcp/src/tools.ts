@@ -475,7 +475,7 @@ export const tools = {
 	},
 	update_objects: {
 		description:
-			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. To attach or detach files on an object, pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry — attached files appear under the object in the UI and are returned by get_objects. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. When referring to objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. When you move a draft or task to done because something was sent, also update every page that lists it (a drafts page, a target list, a contact) in the same turn, so no copy still says "unsent" or "on hold". When a human tells you they sent something themselves (their own mail or LinkedIn), log it on the contact and the task.',
+			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. To edit part of a long body, send `append` (text added to the end) or `replace` ({find, with, all?}: one exact piece swapped) instead of `content`; a `replace` that is missing or ambiguous writes nothing and says why. To attach or detach files on an object, pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry — attached files appear under the object in the UI and are returned by get_objects. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. In human-facing output (comments, summaries, notifications, descriptions) use the object\'s title, not its UUID; add a short id suffix only when two titles collide (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. When you move a draft or task to done because something was sent, also update every page that lists it (a drafts page, a target list, a contact) in the same turn, so no copy still says "unsent" or "on hold". When a human tells you they sent something themselves (their own mail or LinkedIn), log it on the contact and the task.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			updates: z
@@ -484,6 +484,33 @@ export const tools = {
 						id: z.string().uuid(),
 						title: z.string().optional(),
 						content: z.string().optional(),
+						append: z
+							.string()
+							.min(1)
+							.optional()
+							.describe(
+								'Text added to the end of the stored body, exactly as sent (start it with a newline to begin a new line). Use it instead of content to add to a long page without sending the page back. Not together with content or replace.',
+							),
+						replace: z
+							.object({
+								find: z
+									.string()
+									.min(1)
+									.describe(
+										'The exact piece of the stored body to change, character for character.',
+									),
+								with: z
+									.string()
+									.describe('What to put in its place. An empty string removes the piece.'),
+								all: z
+									.boolean()
+									.optional()
+									.describe('Replace every match instead of refusing when there is more than one.'),
+							})
+							.optional()
+							.describe(
+								'Change one piece of the stored body without sending the rest. If find is not in the body, or is in it more than once and all is not true, nothing is written and the error says which. Not together with content or append.',
+							),
 						status: z.string().optional(),
 						metadata: z
 							.record(z.unknown())
@@ -1789,7 +1816,7 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The target_actor_id must be an agent actor. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
+			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events, and the trigger form shows it as Driver. To start whoever drives the item, put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it). For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. Otherwise target_actor_id is required and must be an agent. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
@@ -1811,13 +1838,19 @@ export const tools = {
 					'Run once at this time (ISO 8601, for example 2026-11-12T09:00:00Z), then disable the trigger. Must be in the future. Use it instead of type and config.',
 				),
 			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
-			target_actor_id: z.string().uuid(),
+			target_actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The agent to start. Required, except when the event config has "target": "item_driver".',
+				),
 			enabled: z.boolean().default(true),
 		}),
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
+			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. To start the driver of the item instead of a fixed agent, put "target": "item_driver" in the event config (created, updated, status_changed and commented events only); to go back to a fixed agent, send a config without it and a target_actor_id. To filter an event trigger by the driver of the item, put { "field": "driver", "operator": "equals" (or not_equals, is_set, is_not_set), "value": "<actor UUID>" } in config.conditions. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -2184,7 +2217,7 @@ export const tools = {
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead. Set `wait: true` to hold until the session has finished, however long that takes, and get back the session with the first 500 lines of its output; the wait ends early if the session is waiting for input or is paused (`settled: false`). To talk to a running session use send_session_message; to carry on with one that has ended or is paused use resume_session.',
+			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead. Set `wait: true` to hold until the session has finished, and get back the session with the first 500 lines of its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (it has not failed); it also ends early with `settled: false` if the session is waiting for input or is paused. To talk to a running session use send_session_message; to carry on with one that has ended or is paused use resume_session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -2205,7 +2238,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until the session has finished, however long that takes, then return the session with the first 500 lines of its output (oldest first) and `settled`. Ends early, with settled false, if the session is waiting for input or is paused. Ignores include_logs.',
+					'Hold until the session has finished, then return the session with the first 500 lines of its output (oldest first) and `settled`. Stops waiting after 2 hours: then `settled` is false and the session is still running. Ends early, with settled false, if the session is waiting for input or is paused. Ignores include_logs.',
 				),
 		}),
 	},
@@ -2320,7 +2353,7 @@ export const tools = {
 	},
 	resume_session: {
 		description:
-			"Carry on with a sub-chat that is not running (for an ordinary chat, @mention the agent with post_conversation_message instead, which wakes it whatever state it was in): one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished, however long that takes, and get its output; the wait ends early if it is waiting for input or paused (`settled: false`). For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
+			"Carry on with a sub-chat that is not running (for an ordinary chat, @mention the agent with post_conversation_message instead, which wakes it whatever state it was in): one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished and get its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (it has not failed); it also ends early with `settled: false` if the agent is waiting for input or paused. For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The session to carry on with'),
@@ -2335,13 +2368,13 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Wait for the agent to finish, however long that takes, and return the session with the first 500 lines of its output. Ends early, with settled false, if it is waiting for input or paused.',
+					'Wait for the agent to finish and return the session with the first 500 lines of its output. Stops waiting after 2 hours: then settled is false and the session is still running. Ends early, with settled false, if it is waiting for input or paused.',
 				),
 		}),
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403 (session started by a different actor): comment on the task or start your own with create_sub_chat instead.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (not failed); it also ends early with `settled: false` if the session is waiting for input or paused. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403 (session started by a different actor): comment on the task or start your own with create_sub_chat instead.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
@@ -2350,7 +2383,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until the session has finished, however long that takes, and return the session with the first 500 lines of its output. Ignored, with a note in the response, if the session stays open after replying.',
+					'Hold until the session has finished and return the session with the first 500 lines of its output. Stops waiting after 2 hours: then settled is false and the session is still running. Ignored, with a note in the response, if the session stays open after replying.',
 				),
 		}),
 	},
@@ -3135,7 +3168,7 @@ export const tools = {
 	},
 	desktop_apply_settings: {
 		description:
-			"Bring YOUR computer's settings files up to date without deleting it, so your saved logins and open pages stay. A computer keeps the settings of the image it was created from, so a later fix (the file chooser's size and position) does not reach it until now. Rewrites a fixed list of user settings files on the computer and nothing else. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
+			"Bring YOUR computer up to date without deleting it, so your saved logins and open pages stay. A computer keeps the image it was created from, so a later fix does not reach it until now. Replaces the computer's control helper when it is older than the server's (run this when typing a saved password says the computer is an older version) and rewrites a fixed list of user settings files (the file chooser's size and position). Nothing else is touched, and the browser is never restarted. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, for example before a saved password can be typed; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

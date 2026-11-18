@@ -138,7 +138,9 @@ describe('GET /api/conversations query count', () => {
 
 		expect(largeRun.queries).toBe(smallRun.queries)
 		// Was about 3 + one per row + one per running chat session; now a fixed handful.
-		// One more than before for the lookup that makes sure people have their direct messages.
+		// One more than before for the lookup that makes sure people have their direct messages, and one
+		// more for the open question and card check (it reads questions, picks and replies only for
+		// chats that have a question, so a chat with none adds nothing).
 		expect(largeRun.queries).toBeLessThanOrEqual(9)
 
 		expect(largeRun.rows).toHaveLength(12)

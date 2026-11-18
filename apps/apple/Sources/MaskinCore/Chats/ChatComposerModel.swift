@@ -198,6 +198,33 @@ public final class ChatComposerModel {
 		return result
 	}
 
+	/// Everything in the bar, kept so an undone send can put it back.
+	public struct Snapshot: Sendable {
+		var text: String
+		var mentions: [ChatMention]
+		var attachments: [ChatAttachmentDraft]
+		var quote: Quote?
+	}
+
+	public func snapshot() -> Snapshot {
+		Snapshot(text: text, mentions: mentions, attachments: attachments.filter { $0.ref != nil }, quote: quote)
+	}
+
+	/// Puts a snapshot back after an undone send. Anything typed since stays, after the restored text.
+	public func restore(_ snapshot: Snapshot) {
+		let typed = trimmedText
+		if quote == nil { quote = snapshot.quote }
+		text = typed.isEmpty ? snapshot.text : snapshot.text + "\n" + typed
+		for mention in snapshot.mentions { addMention(mention) }
+		for attachment in snapshot.attachments
+		where !attachments.contains(where: { $0.id == attachment.id }) && attachments.count < ChatLimits.maxAttachments
+		{
+			attachments.append(attachment)
+		}
+		selection = nil
+		requestFocus()
+	}
+
 	/// `take()` for a message that fits, `takeLong()` for one that goes as a file.
 	public func takeForSend() async -> (text: String, metadata: ChatSendMetadata?)? {
 		isOverLength ? await takeLong() : take()
@@ -294,6 +321,13 @@ public final class ChatComposerModel {
 		chars.replaceSubrange(lower..<upper, with: Array(string))
 		let end = lower + string.count
 		setText(String(chars), selecting: end..<end)
+	}
+
+	/// Put a trigger (`@` for a person, `/` for an item) at the caret, with a space before it unless the
+	/// text is empty or already ends in whitespace, so the trigger starts a word and opens its picker.
+	public func insertTrigger(_ trigger: String) {
+		let needsSpace = !(text.isEmpty || text.last?.isWhitespace == true)
+		insert(needsSpace ? " \(trigger)" : trigger)
 	}
 
 	/// Complete the `:query` being typed with the chosen emoji.
@@ -561,18 +595,25 @@ public enum DictationText {
 }
 
 /// What the composer's last slot shows. One rule, shared by every variant, so the swap is the
-/// same everywhere: nothing to send → mic; text or an attachment → send; an agent working while
-/// the field is empty → stop (the composer keeps the mic beside it so dictation is never blocked).
+/// same everywhere: nothing to send → mic; text → send; an attachment with no text → send with the
+/// mic beside it (so a picture can still get a spoken caption); an agent working while the field is
+/// empty → stop (the composer keeps the mic beside it so dictation is never blocked).
 public enum ComposerLastSlot: Equatable, Sendable {
-	case mic, send, stop, none
+	case mic, send, sendWithMic, stop, none
 
 	/// - Parameters:
 	///   - hasContent: text or an attachment is in the bar.
+	///   - hasText: the field itself has text, so a mic beside Send has nothing to add.
 	///   - busy: an agent is typing, streaming or working, and `onStop` exists.
 	///   - showsMic: the host offers dictation.
 	///   - showsSend: false for a field whose sheet commits (Hold reason).
-	public static func resolve(hasContent: Bool, busy: Bool, showsMic: Bool, showsSend: Bool) -> ComposerLastSlot {
-		if hasContent { return showsSend ? .send : .none }
+	public static func resolve(
+		hasContent: Bool, hasText: Bool, busy: Bool, showsMic: Bool, showsSend: Bool
+	) -> ComposerLastSlot {
+		if hasContent {
+			guard showsSend else { return .none }
+			return showsMic && !hasText ? .sendWithMic : .send
+		}
 		if busy { return .stop }
 		return showsMic ? .mic : .none
 	}

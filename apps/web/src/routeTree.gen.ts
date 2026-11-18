@@ -39,6 +39,7 @@ import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authe
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
+import { Route as AuthedWorkspaceIdSettingsSendPermissionsRouteImport } from './routes/_authed/$workspaceId/settings/send-permissions'
 import { Route as AuthedWorkspaceIdSettingsNotificationsRouteImport } from './routes/_authed/$workspaceId/settings/notifications'
 import { Route as AuthedWorkspaceIdSettingsMembersRouteImport } from './routes/_authed/$workspaceId/settings/members'
 import { Route as AuthedWorkspaceIdSettingsMcpRouteImport } from './routes/_authed/$workspaceId/settings/mcp'
@@ -47,6 +48,7 @@ import { Route as AuthedWorkspaceIdSettingsKeychainRouteImport } from './routes/
 import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './routes/_authed/$workspaceId/settings/integrations'
 import { Route as AuthedWorkspaceIdSettingsBillingRouteImport } from './routes/_authed/$workspaceId/settings/billing'
 import { Route as AuthedWorkspaceIdSessionsSessionIdRouteImport } from './routes/_authed/$workspaceId/sessions/$sessionId'
+import { Route as AuthedWorkspaceIdPeopleActorIdRouteImport } from './routes/_authed/$workspaceId/people.$actorId'
 import { Route as AuthedWorkspaceIdObjectsObjectIdRouteImport } from './routes/_authed/$workspaceId/objects/$objectId'
 import { Route as AuthedWorkspaceIdLoopsNewRouteImport } from './routes/_authed/$workspaceId/loops/new'
 import { Route as AuthedWorkspaceIdLoopsLoopIdRouteImport } from './routes/_authed/$workspaceId/loops/$loopId'
@@ -226,6 +228,12 @@ const AuthedWorkspaceIdSettingsSkillsRoute =
     path: '/skills',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
+const AuthedWorkspaceIdSettingsSendPermissionsRoute =
+  AuthedWorkspaceIdSettingsSendPermissionsRouteImport.update({
+    id: '/send-permissions',
+    path: '/send-permissions',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
 const AuthedWorkspaceIdSettingsNotificationsRoute =
   AuthedWorkspaceIdSettingsNotificationsRouteImport.update({
     id: '/notifications',
@@ -272,6 +280,12 @@ const AuthedWorkspaceIdSessionsSessionIdRoute =
   AuthedWorkspaceIdSessionsSessionIdRouteImport.update({
     id: '/sessions/$sessionId',
     path: '/sessions/$sessionId',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
+const AuthedWorkspaceIdPeopleActorIdRoute =
+  AuthedWorkspaceIdPeopleActorIdRouteImport.update({
+    id: '/people/$actorId',
+    path: '/people/$actorId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
 const AuthedWorkspaceIdObjectsObjectIdRoute =
@@ -399,6 +413,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/$workspaceId/loops/new': typeof AuthedWorkspaceIdLoopsNewRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  '/$workspaceId/people/$actorId': typeof AuthedWorkspaceIdPeopleActorIdRoute
   '/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
@@ -407,6 +422,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
   '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  '/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -451,6 +467,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/$workspaceId/loops/new': typeof AuthedWorkspaceIdLoopsNewRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  '/$workspaceId/people/$actorId': typeof AuthedWorkspaceIdPeopleActorIdRoute
   '/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
   '/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
@@ -458,6 +475,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
   '/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  '/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -507,6 +525,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/_authed/$workspaceId/loops/new': typeof AuthedWorkspaceIdLoopsNewRoute
   '/_authed/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  '/_authed/$workspaceId/people/$actorId': typeof AuthedWorkspaceIdPeopleActorIdRoute
   '/_authed/$workspaceId/sessions/$sessionId': typeof AuthedWorkspaceIdSessionsSessionIdRoute
   '/_authed/$workspaceId/settings/billing': typeof AuthedWorkspaceIdSettingsBillingRoute
   '/_authed/$workspaceId/settings/integrations': typeof AuthedWorkspaceIdSettingsIntegrationsRoute
@@ -515,6 +534,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/mcp': typeof AuthedWorkspaceIdSettingsMcpRoute
   '/_authed/$workspaceId/settings/members': typeof AuthedWorkspaceIdSettingsMembersRoute
   '/_authed/$workspaceId/settings/notifications': typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  '/_authed/$workspaceId/settings/send-permissions': typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -564,6 +584,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/loops/$loopId'
     | '/$workspaceId/loops/new'
     | '/$workspaceId/objects/$objectId'
+    | '/$workspaceId/people/$actorId'
     | '/$workspaceId/sessions/$sessionId'
     | '/$workspaceId/settings/billing'
     | '/$workspaceId/settings/integrations'
@@ -572,6 +593,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
     | '/$workspaceId/settings/notifications'
+    | '/$workspaceId/settings/send-permissions'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
@@ -616,6 +638,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/loops/$loopId'
     | '/$workspaceId/loops/new'
     | '/$workspaceId/objects/$objectId'
+    | '/$workspaceId/people/$actorId'
     | '/$workspaceId/sessions/$sessionId'
     | '/$workspaceId/settings/billing'
     | '/$workspaceId/settings/integrations'
@@ -623,6 +646,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/mcp'
     | '/$workspaceId/settings/members'
     | '/$workspaceId/settings/notifications'
+    | '/$workspaceId/settings/send-permissions'
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
@@ -671,6 +695,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/loops/$loopId'
     | '/_authed/$workspaceId/loops/new'
     | '/_authed/$workspaceId/objects/$objectId'
+    | '/_authed/$workspaceId/people/$actorId'
     | '/_authed/$workspaceId/sessions/$sessionId'
     | '/_authed/$workspaceId/settings/billing'
     | '/_authed/$workspaceId/settings/integrations'
@@ -679,6 +704,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/mcp'
     | '/_authed/$workspaceId/settings/members'
     | '/_authed/$workspaceId/settings/notifications'
+    | '/_authed/$workspaceId/settings/send-permissions'
     | '/_authed/$workspaceId/settings/skills'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
@@ -926,6 +952,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsSkillsRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
+    '/_authed/$workspaceId/settings/send-permissions': {
+      id: '/_authed/$workspaceId/settings/send-permissions'
+      path: '/send-permissions'
+      fullPath: '/$workspaceId/settings/send-permissions'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsSendPermissionsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
     '/_authed/$workspaceId/settings/notifications': {
       id: '/_authed/$workspaceId/settings/notifications'
       path: '/notifications'
@@ -980,6 +1013,13 @@ declare module '@tanstack/react-router' {
       path: '/sessions/$sessionId'
       fullPath: '/$workspaceId/sessions/$sessionId'
       preLoaderRoute: typeof AuthedWorkspaceIdSessionsSessionIdRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/people/$actorId': {
+      id: '/_authed/$workspaceId/people/$actorId'
+      path: '/people/$actorId'
+      fullPath: '/$workspaceId/people/$actorId'
+      preLoaderRoute: typeof AuthedWorkspaceIdPeopleActorIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/objects/$objectId': {
@@ -1142,6 +1182,7 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsMcpRoute: typeof AuthedWorkspaceIdSettingsMcpRoute
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
   AuthedWorkspaceIdSettingsNotificationsRoute: typeof AuthedWorkspaceIdSettingsNotificationsRoute
+  AuthedWorkspaceIdSettingsSendPermissionsRoute: typeof AuthedWorkspaceIdSettingsSendPermissionsRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
   AuthedWorkspaceIdSettingsExtensionsExtIdRoute: typeof AuthedWorkspaceIdSettingsExtensionsExtIdRoute
@@ -1165,6 +1206,8 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
       AuthedWorkspaceIdSettingsMembersRoute,
     AuthedWorkspaceIdSettingsNotificationsRoute:
       AuthedWorkspaceIdSettingsNotificationsRoute,
+    AuthedWorkspaceIdSettingsSendPermissionsRoute:
+      AuthedWorkspaceIdSettingsSendPermissionsRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
     AuthedWorkspaceIdSettingsExtensionsExtIdRoute:
@@ -1195,6 +1238,7 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdLoopsLoopIdRoute: typeof AuthedWorkspaceIdLoopsLoopIdRoute
   AuthedWorkspaceIdLoopsNewRoute: typeof AuthedWorkspaceIdLoopsNewRoute
   AuthedWorkspaceIdObjectsObjectIdRoute: typeof AuthedWorkspaceIdObjectsObjectIdRoute
+  AuthedWorkspaceIdPeopleActorIdRoute: typeof AuthedWorkspaceIdPeopleActorIdRoute
   AuthedWorkspaceIdSessionsSessionIdRoute: typeof AuthedWorkspaceIdSessionsSessionIdRoute
   AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
@@ -1217,6 +1261,7 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdLoopsLoopIdRoute: AuthedWorkspaceIdLoopsLoopIdRoute,
   AuthedWorkspaceIdLoopsNewRoute: AuthedWorkspaceIdLoopsNewRoute,
   AuthedWorkspaceIdObjectsObjectIdRoute: AuthedWorkspaceIdObjectsObjectIdRoute,
+  AuthedWorkspaceIdPeopleActorIdRoute: AuthedWorkspaceIdPeopleActorIdRoute,
   AuthedWorkspaceIdSessionsSessionIdRoute:
     AuthedWorkspaceIdSessionsSessionIdRoute,
   AuthedWorkspaceIdTriggersTriggerIdRoute:

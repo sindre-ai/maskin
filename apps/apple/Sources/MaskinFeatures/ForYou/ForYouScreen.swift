@@ -52,6 +52,9 @@ public struct ForYouScreen: View {
 		.shellToolbar(
 			environment: environment,
 			actions: ShellActions(
+				// iPad: the "+" that sat on the tab bar moved here; it starts the same chat with the Chief of Staff.
+				new: ShellIdiom.isPad ? { appRuntime.requestChiefChat() } : nil,
+				newLabel: "New chat with Chief of Staff",
 				live: true, displaySymbol: ShellActions.slidersSymbol,
 				displayActive: !runtime.store.options.isDefaultDisplay,
 				displayToggle: { showDisplay = true })
@@ -149,7 +152,7 @@ struct ForYouFeedView: View {
 	private var rowWidth: CGFloat { wide ? .infinity : readableWidth }
 	/// Row side padding: 16 on iPhone, 36 in the wide feed (spec: 36 to 40).
 	private var rowInset: CGFloat { wide ? MaskinSpace.s14 + MaskinSpace.s2 : MaskinSpace.s9 }
-	/// Below this feed width the sidebar is taking room: briefing cards shrink to 150.
+	/// Below this feed width the Mac's sidebar is taking room: briefing cards shrink to 150.
 	private let sidebarFeedWidth: CGFloat = 780
 
 	private static let topId = "forYou.top"
@@ -262,9 +265,11 @@ struct ForYouFeedView: View {
 		}
 	}
 
-	/// Briefing cards: 128 wide on compact, 204 on iPad, 150 when the sidebar takes room (4-iPad.md).
+	/// Briefing cards: 128 wide on compact, 204 on iPad, 150 on the Mac when the sidebar takes room.
+	/// The iPad has no sidebar, so it always gets 204, even in portrait (about 744 wide).
 	private var storyMetrics: StoryCardMetrics {
 		guard wide else { return .forYou }
+		if ShellIdiom.isPad { return .regular }
 		return feedWidth > 0 && feedWidth < sidebarFeedWidth ? .regularWithSidebar : .regular
 	}
 
@@ -564,24 +569,26 @@ struct ForYouFeedView: View {
 				// kept "accept recommended"). Options that can't be undone are never one swipe
 				// away: they keep their confirmation on the card. A plain mention has no options,
 				// so there the swipe is Done (mark read).
-				if entry.record == nil {
-					if let option = entry.card.decision?.recommended, !option.destructive,
-						!store.isSendHeldBack(option, on: entry.card)
-					{
-						Button {
-							liveActions(entry).choose(option)
-						} label: {
-							Label(option.label, systemImage: "checkmark")
-						}
-						.tint(MaskinColor.doneFg)
-					} else if entry.card.kind == .thread {
-						Button {
-							liveActions(entry).dismiss()
-						} label: {
-							Label("Done", systemImage: "checkmark")
-						}
-						.tint(MaskinColor.doneFg)
+				switch DecisionCardActions.leadingSwipe(
+					for: entry.card, answered: entry.record != nil,
+					isHeldBack: { store.isSendHeldBack($0, on: entry.card) })
+				{
+				case .take(let option):
+					Button {
+						liveActions(entry).choose(option)
+					} label: {
+						Label(option.label, systemImage: "checkmark")
 					}
+					.tint(MaskinColor.doneFg)
+				case .done:
+					Button {
+						liveActions(entry).dismiss()
+					} label: {
+						Label("Done", systemImage: "checkmark")
+					}
+					.tint(MaskinColor.doneFg)
+				case nil:
+					EmptyView()
 				}
 			}
 	}

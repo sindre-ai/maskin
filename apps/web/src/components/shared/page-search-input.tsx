@@ -116,7 +116,7 @@ export function PageSearchInput({
 				}}
 				placeholder={label}
 				aria-label={label}
-				className="h-8 rounded-full border-transparent bg-muted pl-9"
+				className="h-8 rounded-full bg-muted pl-9"
 			/>
 		</div>
 	)
@@ -127,7 +127,7 @@ export function PageSearchInput({
 			    collapsed; the 32px clip box is what animates. */}
 			<div
 				className={cn(
-					'relative hidden h-8 shrink-0 cursor-text overflow-hidden rounded-full bg-muted transition-[width] duration-300 ease-out xl:block',
+					'relative hidden h-8 shrink-0 cursor-text overflow-hidden rounded-full border border-control bg-muted transition-[width] duration-300 ease-out xl:block',
 					wideOpen || text ? 'w-56' : 'w-8 cursor-pointer',
 					className,
 				)}
@@ -152,7 +152,7 @@ export function PageSearchInput({
 					}}
 					placeholder={label}
 					aria-label={label}
-					className="h-8 w-56 rounded-full border-transparent bg-transparent pl-9"
+					className="-mt-px -ml-px h-8 w-56 rounded-full border-transparent bg-transparent pl-9"
 				/>
 			</div>
 			<Button
@@ -164,7 +164,7 @@ export function PageSearchInput({
 				ref={iconRef}
 				onClick={(e) => openCollapsed(e.currentTarget.closest('header'))}
 				className={cn(
-					'touch-hit relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
+					'touch-hit relative size-8 shrink-0 rounded-full border border-control bg-muted text-muted-foreground hover:bg-muted xl:hidden',
 					text && 'text-foreground',
 				)}
 			>

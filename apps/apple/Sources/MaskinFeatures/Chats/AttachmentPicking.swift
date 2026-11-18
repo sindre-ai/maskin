@@ -51,6 +51,23 @@ enum ComposerDrop: Transferable {
 	}
 }
 
+extension ChatComposerModel {
+	/// Chips for what was pasted into or dropped on the bar: a picture, or any file.
+	func attach(_ drops: [ComposerDrop]) {
+		for drop in drops {
+			switch drop {
+			case .image(let data):
+				let name = "Pasted image.jpg"
+				attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
+			case .file(let url):
+				attach(
+					name: url.lastPathComponent, mimeType: AttachmentLoading.mimeType(for: url),
+					prepare: AttachmentLoading.file(at: url, deleteAfter: true))
+			}
+		}
+	}
+}
+
 /// PhotosPickerItem is not declared Sendable; it is only ever used from the one loading task.
 private struct ItemBox: @unchecked Sendable { let item: PhotosPickerItem }
 

@@ -1,4 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
+import { Composer } from '@/components/chat/chat'
+import { typeIconOf } from '@/components/chat/linked-card-face'
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
 import { DoneWhenCardLines } from '@/components/objects/done-when-lines'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
@@ -10,7 +12,7 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
-import { useEntityEvents } from '@/hooks/use-events'
+import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	secondsSince,
@@ -24,6 +26,7 @@ import type {
 	LatestMentionDecisionDraft,
 	UnreadItem,
 } from '@/lib/api'
+import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { defaultOnSilenceLine } from '@/lib/comment-decision'
 import {
@@ -39,7 +42,7 @@ import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
 
@@ -61,9 +64,12 @@ interface FeedCardProps {
 	onDraftAction?: (draft: LatestMentionDecisionDraft, action: DraftAction) => Promise<unknown>
 	/** Every stacked message has been dealt with, so the card settles. */
 	onDraftsDone?: () => void
-	/** The reader answered in this sitting — the card flips to "Waiting on …". */
+	/** The reader answered in this sitting — the card flips to a receipt of what they sent. */
 	replied: boolean
-	onReplied: () => void
+	/** What the reader sent, for the receipt. Empty if the card was rebuilt after the reply. */
+	repliedText?: string | null
+	/** Called once the reply is on the server, with the text that was sent. */
+	onReplied: (text: string) => void
 	onMarkRead: () => void
 }
 
@@ -84,6 +90,7 @@ export function FeedCard({
 	decided,
 	onDecide,
 	replied,
+	repliedText,
 	onReplied,
 	onMarkRead,
 	onDraftAction,
@@ -95,7 +102,7 @@ export function FeedCard({
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
-	const doneWhenOn = useFeatureFlag('done-when-list')
+	const contextOn = useFeatureFlag('foryou-card-context')
 	// The ask leads, not the object. `cardHeadline` falls back through the
 	// comment's first line to the object title, so a card still reads sensibly
 	// for a mention with no decision and for an item with no mention payload.
@@ -121,7 +128,6 @@ export function FeedCard({
 		() => (senderId ? actors?.find((actor) => actor.id === senderId) : undefined),
 		[actors, senderId],
 	)
-	const who = sender?.name ?? 'the agent'
 
 	// A card counts as shown once it is at least half on screen, not when it renders:
 	// the feed mounts every card, including the ones far below the fold. Dedup lives
@@ -158,12 +164,19 @@ export function FeedCard({
 	// decide and shows only the composer.
 	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
 
+	// A card with nothing to tap still gives the reader a way to act on it.
+	const openTheTask = contextOn && !objectless && options.length === 0
+	// The message box names who a reply goes to, so it needs an author. Without one it would say
+	// "the agent", which is not an answer.
+	const showComposer = !objectless && (!contextOn || Boolean(senderId))
+
 	// The card is waiting on an agent once the reader has answered it.
 	const waiting = !decided && replied
 	const held = decided || waiting ? '' : heldNote(item.latest_activity_at)
 
-	// The object the card is about, named once: under the message, not in the header.
-	const objectLine = objectless ? null : (
+	// The object the card is about, named once. With the context flag on it is the first line of
+	// the card; off, it sits under the message as it always has.
+	const objectLink = objectless ? null : (
 		<Link
 			to="/$workspaceId/objects/$objectId"
 			params={{ workspaceId, objectId }}
@@ -173,6 +186,8 @@ export function FeedCard({
 			<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
 		</Link>
 	)
+	const objectLine = contextOn ? null : objectLink
+	const ObjectIcon = typeIconOf(object?.type ?? '')
 
 	const [pendingId, setPendingId] = useState<string | null>(null)
 	// The acknowledgement beat below posts a real reply when it fires, so the
@@ -214,7 +229,36 @@ export function FeedCard({
 	if (decided) {
 		return (
 			<CardShell expanded={false} shellRef={shellRef}>
-				<DecisionReceipt decided={decided} who={sender?.name} />
+				<Receipt testId="decision-receipt" label={decided.label} who={sender?.name} />
+			</CardShell>
+		)
+	}
+
+	// A typed reply settles the card the same way: the strip says who got it and shows the words.
+	if (waiting) {
+		return (
+			<CardShell expanded={false} shellRef={shellRef}>
+				<Receipt
+					testId="reply-receipt"
+					label={repliedText || 'Reply sent'}
+					who={sender?.name}
+					multiline
+					chat={
+						contextOn && senderId && !objectless
+							? {
+									workspaceId,
+									agentId: senderId,
+									agentName: sender?.name,
+									object: {
+										id: objectId,
+										title: object?.title ?? null,
+										type: object?.type ?? null,
+									},
+									text: repliedText ?? '',
+								}
+							: undefined
+					}
+				/>
 			</CardShell>
 		)
 	}
@@ -233,13 +277,7 @@ export function FeedCard({
 							{title}
 						</span>
 						<span className="mt-[3px] flex w-full items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] text-muted-foreground">
-							{waiting ? (
-								<span className="shrink-0 font-medium text-status-clustered-text">
-									Waiting on {who}
-								</span>
-							) : (
-								status && <StatusBadge status={status} variant="word" />
-							)}
+							{status && <StatusBadge status={status} variant="word" />}
 							<span className="min-w-0 truncate">{bylineName(sender?.name)}</span>
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
@@ -259,6 +297,16 @@ export function FeedCard({
 	return (
 		<CardShell expanded shellRef={shellRef}>
 			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
+				{contextOn && objectLink && (
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId }}
+						className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:underline"
+					>
+						<ObjectIcon size={13} aria-hidden className="shrink-0" />
+						<span className="min-w-0 truncate">{object?.title?.trim() || 'Open'}</span>
+					</Link>
+				)}
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
 					<ActorAvatar
 						id={senderId ?? undefined}
@@ -272,13 +320,7 @@ export function FeedCard({
 					{!objectless && (
 						<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
 					)}
-					{waiting ? (
-						<span className="shrink-0 text-[11px] font-medium text-status-clustered-text">
-							Waiting on {who}
-						</span>
-					) : (
-						status && <StatusBadge status={status} variant="word" className="text-[11px]" />
-					)}
+					{status && <StatusBadge status={status} variant="word" className="text-[11px]" />}
 					<RelativeTime
 						date={item.latest_activity_at}
 						compact
@@ -328,15 +370,23 @@ export function FeedCard({
 				    the comment as written. */}
 				{decision ? (
 					<div className="flex flex-col gap-3">
-						<div className="flex flex-col gap-1.5 rounded-xl bg-muted/60 px-4 py-3">
-							<p className="text-[15px] leading-[1.5] text-pretty text-foreground">
+						<div
+							className={cn(
+								'flex flex-col gap-1.5',
+								!contextOn && 'rounded-xl bg-muted/60 px-4 py-3',
+							)}
+						>
+							<p
+								className={cn(
+									'text-[15px] leading-[1.5] text-pretty text-foreground',
+									contextOn && 'max-w-[62ch]',
+								)}
+							>
 								{decision.summary}
 							</p>
 							{objectLine}
 						</div>
-						{decision.done_when && doneWhenOn ? (
-							<DoneWhenCardLines block={decision.done_when} />
-						) : null}
+						{decision.done_when ? <DoneWhenCardLines block={decision.done_when} /> : null}
 						{decision.draft ? (
 							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
 						) : null}
@@ -370,6 +420,7 @@ export function FeedCard({
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
+						hideTagWhenAlone={contextOn}
 						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
@@ -377,20 +428,105 @@ export function FeedCard({
 					/>
 				)}
 
-				{!objectless && (
-					<CommentInput
-						workspaceId={workspaceId}
-						objectId={objectId}
-						// The composer answers the comment that put this card in the feed,
-						// so a typed reply threads under it exactly as a taken option does.
-						parentEventId={item.latest_mention?.event_id}
-						variant="bar"
-						placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
-						onSubmitted={onReplied}
-					/>
+				{openTheTask && (
+					<Button
+						asChild
+						className="h-auto min-h-12 w-full rounded-xl px-4 py-3 text-[14px] font-bold"
+					>
+						<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
+							{object?.type === 'task' ? 'Open the task to decide' : 'Open the item to decide'}
+						</Link>
+					</Button>
 				)}
+
+				{showComposer &&
+					(contextOn ? (
+						<CardReply
+							workspaceId={workspaceId}
+							objectId={objectId}
+							parentEventId={item.latest_mention?.event_id}
+							agentName={sender?.name}
+							onSubmitted={onReplied}
+						/>
+					) : (
+						<CommentInput
+							workspaceId={workspaceId}
+							objectId={objectId}
+							// The composer answers the comment that put this card in the feed,
+							// so a typed reply threads under it exactly as a taken option does.
+							parentEventId={item.latest_mention?.event_id}
+							variant="bar"
+							placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
+							onSubmitted={onReplied}
+						/>
+					))}
 			</div>
 		</CardShell>
+	)
+}
+
+// The card's message box: the chat composer, answering the comment that raised the card. It does
+// what the comment box did here (post under the card's thread, then tell the card it was sent, so
+// the card settles into its receipt) and nothing more.
+function CardReply({
+	workspaceId,
+	objectId,
+	parentEventId,
+	agentName,
+	onSubmitted,
+}: {
+	workspaceId: string
+	objectId: string
+	parentEventId?: number
+	agentName?: string
+	onSubmitted: (text: string) => void
+}) {
+	const createComment = useCreateComment(workspaceId, objectId)
+	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
+	const [error, setError] = useState<string | null>(null)
+
+	const send = useCallback(
+		async (content: string) => {
+			setError(null)
+			try {
+				await createComment.mutateAsync({
+					entity_id: objectId,
+					content,
+					parent_event_id: parentEventId,
+					...(selection.agents.length > 0 ? { mentions: selection.agents } : {}),
+					...(selection.files.length > 0
+						? { attachment_file_ids: selection.files.map((file) => file.fileId) }
+						: {}),
+				})
+			} catch (err) {
+				// The composer keeps the text when this rejects; say why under the box.
+				setError(err instanceof Error ? err.message : 'Could not send your reply')
+				throw err
+			}
+			dispatchSelection({ type: 'clear_all' })
+			onSubmitted(content)
+		},
+		[createComment, objectId, parentEventId, selection, onSubmitted],
+	)
+
+	return (
+		<Composer
+			workspaceId={workspaceId}
+			onSend={send}
+			disabled={false}
+			pending={createComment.isPending}
+			surface="pulse-bar"
+			placeholder={`Message ${agentName ?? 'the agent'}`}
+			textareaLabel={`Message ${agentName ?? 'the agent'}`}
+			selection={selection}
+			onDispatchSelection={dispatchSelection}
+			onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
+			onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
+			onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
+			onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
+			externalError={error}
+			onDismissExternalError={() => setError(null)}
+		/>
 	)
 }
 
@@ -419,26 +555,66 @@ function CardShell({
 	)
 }
 
-// The green strip a decided card collapses to (mockup's `isDone`), minus the
-// mockup's Undo — the reply is posted the moment the option is taken and the
-// comment API has no delete, so there is nothing honest to take back.
-function DecisionReceipt({ decided, who }: { decided: DecidedOption; who?: string }) {
+// The green strip a settled card collapses to (mockup's `isDone`), minus the
+// mockup's Undo — the reply is posted the moment the option is taken or the text
+// is sent and the comment API has no delete, so there is nothing honest to take
+// back. `label` is the option taken, or the words the reader typed (`multiline`).
+function Receipt({
+	testId,
+	label,
+	who,
+	multiline = false,
+	chat,
+}: {
+	testId: string
+	label: string
+	who?: string
+	multiline?: boolean
+	/** A reply receipt offers to carry on in a chat, with the typed message already in the box. */
+	chat?: {
+		workspaceId: string
+		agentId: string
+		agentName?: string
+		object: { id: string; title: string | null; type: string | null }
+		text: string
+	}
+}) {
 	return (
-		<div
-			data-testid="decision-receipt"
-			className="flex items-center gap-2.5 bg-status-done-bg px-4 py-3"
-		>
+		<div data-testid={testId} className="flex items-center gap-2.5 bg-status-done-bg px-4 py-3">
 			<span className="grid size-[19px] shrink-0 place-items-center rounded-full bg-success text-background">
 				<Check size={11} aria-hidden />
 			</span>
 			<div className="min-w-0 flex-1">
-				<div className="truncate text-[12.5px] font-bold leading-[1.35] text-status-done-text">
-					{decided.label}
+				<div
+					className={cn(
+						'text-[12.5px] font-bold leading-[1.35] text-status-done-text',
+						multiline ? 'line-clamp-3 whitespace-pre-wrap break-words' : 'truncate',
+					)}
+				>
+					{label}
 				</div>
 				<div className="mt-px truncate text-[10.5px] text-status-done-text/70">
 					{who ? `Sent to ${who}` : 'Reply sent'}
 				</div>
 			</div>
+			{chat && (
+				<Button asChild variant="secondary" size="sm" className="shrink-0 rounded-full">
+					<Link
+						to="/$workspaceId/chats/new"
+						params={{ workspaceId: chat.workspaceId }}
+						search={{
+							agentId: chat.agentId,
+							agentName: chat.agentName,
+							objectId: chat.object.id,
+							objectTitle: chat.object.title ?? undefined,
+							objectType: chat.object.type ?? undefined,
+							text: chat.text || undefined,
+						}}
+					>
+						{chat.agentName ? `Open chat with ${chat.agentName}` : 'Open chat'}
+					</Link>
+				</Button>
+			)}
 		</div>
 	)
 }

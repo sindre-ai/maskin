@@ -17,6 +17,7 @@ import {
 import { DisplayPanel, type DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { ItemsMoreMenu } from '@/components/objects/items-more-menu'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
@@ -1926,6 +1927,7 @@ function ObjectsRoute() {
 							debounceMs={250}
 						/>
 						{!filesTab && <DisplayPanel {...displayPanelProps} />}
+						{!filesTab && <ItemsMoreMenu filters={filterModel} />}
 					</>
 				}
 				scrollLocked

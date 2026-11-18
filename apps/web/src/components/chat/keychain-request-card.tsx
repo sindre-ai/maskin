@@ -383,9 +383,14 @@ export function KeychainRequestCard({
 				icon={Lock}
 				title={isLogin ? 'Add a login to your Keychain' : 'Add an API key to your Keychain'}
 			>
-				{request.hint ? `${request.hint} ` : ''}Goes straight to your encrypted vault. The agent
-				never sees it.
+				{request.hint ? `${request.hint} ` : ''}Goes straight to your encrypted vault.
+				{isLogin ? ' The agent never sees it.' : ''}
 			</RequestCardHeader>
+			{isLogin ? null : (
+				<p className="text-[12.5px] text-muted-foreground">
+					Once saved, the agent can read this key. If it ever leaks, replace the key.
+				</p>
+			)}
 
 			<div className="space-y-1.5">
 				<Label htmlFor={`kr-name-${request.session_id}`}>Name</Label>

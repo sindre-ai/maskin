@@ -122,6 +122,13 @@ public struct DecisionPrompt: Sendable, Equatable, Codable {
 	}
 
 	public var recommended: DecisionOption? { options.first(where: \.recommended) }
+
+	/// The question the card puts to the person: the ask, else the title, when it reads as a
+	/// question. An ask that says why the card came to them ("I will not send this alone.") is not one.
+	public var question: String? {
+		[ask, title].map(\.trimmed).first { $0.hasSuffix("?") }
+	}
+
 	/// What happens if nobody answers, when the card names a default.
 	public var silenceLine: String? { SilenceDefault.line(options: options, expiresAt: expiresAt) }
 }

@@ -411,6 +411,10 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 export const MarkdownComposer = forwardRef<MarkdownComposerHandle, MarkdownComposerProps>(
 	function MarkdownComposer(props, ref) {
 		const handlers = useRef<Handlers>({ props, editor: null })
+		// The editor reads `value` once, as its first content; later text goes in through
+		// `setMarkdown`. Handing it the live value would let its empty-document check run on a
+		// value the editor does not hold yet, and swap the box for plain text for good.
+		const initialValue = useRef(props.value).current
 		handlers.current.props = props
 
 		// Built once: the editor is rebuilt when the list changes, and the box would lose its text.
@@ -499,7 +503,7 @@ export const MarkdownComposer = forwardRef<MarkdownComposerHandle, MarkdownCompo
 
 		return (
 			<MarkdownEditor
-				value={props.value}
+				value={initialValue}
 				// The box reports on every change through the extension; the blur emit has nothing to add.
 				onChange={noop}
 				variant="notification"

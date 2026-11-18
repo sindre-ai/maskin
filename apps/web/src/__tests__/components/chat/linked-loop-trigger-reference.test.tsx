@@ -196,7 +196,8 @@ describe('TriggerReferenceCard', () => {
 	it('describes a schedule the app can put into words', () => {
 		useTrigger.mockReturnValue(found(triggerRow({ config: { expression: '0 9 * * *' } })))
 		renderCard()
-		expect(screen.getByText(/^Runs every day at 9:00/i)).toBeInTheDocument()
+		// 09:00 UTC is 10:00 or 11:00 in Copenhagen, depending on the season.
+		expect(screen.getByText(/^Runs every day at 1[01]:00$/)).toBeInTheDocument()
 	})
 
 	it('reads Off muted for a trigger that is off', () => {

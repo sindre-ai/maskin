@@ -579,7 +579,7 @@ test.describe('For You v4 — the briefing cards', () => {
 
 		// The side buttons sit outside the frame: they must be on screen and hit-testable (an
 		// ancestor with overflow:hidden would clip them while Playwright still calls them visible).
-		const next = viewer.getByRole('button', { name: 'Next briefing' })
+		const next = viewer.getByRole('button', { name: 'Next', exact: true })
 		await expect(next).toBeVisible()
 		const reachable = await next.evaluate((el) => {
 			const r = el.getBoundingClientRect()
@@ -588,11 +588,17 @@ test.describe('For You v4 — the briefing cards', () => {
 		})
 		expect(reachable).toBe(true)
 		await next.click()
-		await expect(viewer.getByText(/2 of 2/)).toBeVisible()
+		await expect(viewer.getByRole('button', { name: /^Briefing 2:/ })).toHaveAttribute(
+			'aria-current',
+			'true',
+		)
 
-		await viewer.getByRole('button', { name: 'Previous briefing' }).click()
-		await expect(viewer.getByText(/1 of 2/)).toBeVisible()
-		await viewer.getByRole('button', { name: 'Next briefing' }).click()
+		await viewer.getByRole('button', { name: 'Previous', exact: true }).click()
+		await expect(viewer.getByRole('button', { name: /^Briefing 1:/ })).toHaveAttribute(
+			'aria-current',
+			'true',
+		)
+		await viewer.getByRole('button', { name: 'Next', exact: true }).click()
 
 		// Clicking the scrim beside the frame closes it, like the X.
 		await page.mouse.click(8, 8)
@@ -682,7 +688,7 @@ test.describe('For You v4 — the briefing viewer', () => {
 			}
 
 			// Previous and Next are on screen and hit-testable.
-			const next = viewer.getByRole('button', { name: 'Next briefing' })
+			const next = viewer.getByRole('button', { name: 'Next', exact: true })
 			await expect(next).toBeVisible()
 			expect(
 				await next.evaluate((el) => {
@@ -700,18 +706,27 @@ test.describe('For You v4 — the briefing viewer', () => {
 		await page.goto(`/${account.workspaceId}`)
 		await page.getByTestId('briefing-card').first().click()
 		const viewer = page.getByTestId('briefing-viewer')
-		await expect(viewer.getByText('1 of 2')).toBeVisible()
+		await expect(viewer.getByRole('button', { name: /^Briefing 1:/ })).toHaveAttribute(
+			'aria-current',
+			'true',
+		)
 
 		const box = viewer.getByRole('textbox', { name: 'Talk about this briefing' })
 		await box.click()
 		await page.keyboard.type('jjk ')
 		await expect(box).toHaveValue('jjk ')
-		await expect(viewer.getByText('1 of 2')).toBeVisible()
+		await expect(viewer.getByRole('button', { name: /^Briefing 1:/ })).toHaveAttribute(
+			'aria-current',
+			'true',
+		)
 
 		// With the focus off the box, J still moves on.
 		await box.blur()
 		await page.keyboard.press('j')
-		await expect(viewer.getByText('2 of 2')).toBeVisible()
+		await expect(viewer.getByRole('button', { name: /^Briefing 2:/ })).toHaveAttribute(
+			'aria-current',
+			'true',
+		)
 	})
 
 	test('a message starts a chat with the agent that wrote the page, and the page goes along', async ({
@@ -814,13 +829,140 @@ test.describe('For You v16 - Ask about this slide', () => {
 			await expect(box).toBeFocused()
 
 			// On the next slide the same control names that slide.
-			await viewer.getByRole('button', { name: 'Next briefing' }).click()
+			await viewer.getByRole('button', { name: 'Next', exact: true }).click()
 			await viewer.getByRole('button', { name: 'Ask about this slide' }).click()
 			await expect(box).toHaveValue(`About "${BRIEFING_PAGES[1].title}" (briefing 2 of 2): `)
 
 			// Nothing was sent, and the sandbox is untouched.
 			expect(posted).toHaveLength(0)
 			await expect(viewer.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
+			await assertNoHorizontalOverflow(page, vp.label)
+		})
+	}
+})
+
+// Decks the way the Chief of Staff files them: a slide is shown through `.slide.active`, with the
+// deck's own previous / next pager inside each slide and its own keys. The story viewer has to
+// hide that pager and walk every slide itself.
+const DECK_PAGES = [
+	{ id: '0b1f6c1e-0000-4000-8000-0000000000d1', title: 'First deck', slides: 3 },
+	{ id: '0b1f6c1e-0000-4000-8000-0000000000d2', title: 'Second deck', slides: 2 },
+] as const
+
+function deckHtml(title: string, slides: number) {
+	const sections = Array.from({ length: slides }, (_, n) => {
+		return `<section class="slide${n === 0 ? ' active' : ''}"><h2>${title} slide ${n + 1}</h2><div class="foot"><span class="nav"><button class="pv">Prev</button><span class="n">${n + 1} / ${slides}</span><button class="nx">Next</button></span></div></section>`
+	}).join('')
+	const script =
+		"<script>(function(){var s=[].slice.call(document.querySelectorAll('.slide')),i=0;function show(n){i=Math.max(0,Math.min(s.length-1,n));s.forEach(function(e,k){e.classList.toggle('active',k===i)})}addEventListener('keydown',function(e){if(e.key==='ArrowRight')show(i+1);if(e.key==='ArrowLeft')show(i-1)});[].forEach.call(document.querySelectorAll('.nx'),function(b){b.addEventListener('click',function(){show(i+1)})})})()</script>"
+	return `<!doctype html><html><head><title>${title}</title><style>html,body{margin:0;height:100%}.slide{position:absolute;inset:0;opacity:0;visibility:hidden}.slide.active{opacity:1;visibility:visible}</style></head><body>${sections}${script}</body></html>`
+}
+
+async function mockDecks(page: Page, workspaceId: string) {
+	await page.route('**/api/files**', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		const url = new URL(route.request().url())
+		const file = (deck: (typeof DECK_PAGES)[number], index: number) => {
+			const stamp = new Date(Date.UTC(2026, 9, 21 - index, 5)).toISOString()
+			return {
+				id: deck.id,
+				workspaceId,
+				name: `${deck.title}.html`,
+				description: null,
+				kind: 'briefing',
+				mimeType: 'text/html',
+				sizeBytes: 400,
+				storageKey: `files/${deck.id}`,
+				createdBy: '00000000-0000-4000-8000-0000000000aa',
+				createdAt: stamp,
+				updatedAt: stamp,
+			}
+		}
+		if (url.pathname.endsWith('/api/files')) {
+			if (url.searchParams.get('kind') !== 'briefing') return route.fallback()
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(DECK_PAGES.map(file)),
+			})
+		}
+		const index = DECK_PAGES.findIndex((deck) => url.pathname.endsWith(`/api/files/${deck.id}`))
+		const deck = DECK_PAGES[index]
+		if (!deck) return route.fallback()
+		return route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				...file(deck, index),
+				content: deckHtml(deck.title, deck.slides),
+				encoding: 'utf8',
+				url: '',
+			}),
+		})
+	})
+	await page.route('**/api/for-you*', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback()
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ items: [] }),
+		})
+	})
+}
+
+test.describe('For You v4 — the story-style briefing viewer', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`one pager walks every slide of every briefing @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await mockDecks(page, account.workspaceId)
+			await page.goto(`/${account.workspaceId}`)
+			await page.getByTestId('briefing-card').first().click()
+			const viewer = page.getByTestId('briefing-viewer')
+			const deck = viewer.frameLocator('iframe')
+			const next = viewer.getByRole('button', { name: 'Next', exact: true })
+			const previous = viewer.getByRole('button', { name: 'Previous', exact: true })
+
+			// The deck's own pager is gone: the viewer's is the only one.
+			await expect(deck.locator('.slide.active h2')).toHaveText('First deck slide 1')
+			await expect(deck.locator('.foot .nav:visible')).toHaveCount(0)
+			await expect(viewer.getByText('1 / 3')).toBeVisible()
+			await expect(previous).toBeDisabled()
+
+			// Slide two is visible, not blank (the page is shown through the class active).
+			await next.click()
+			await expect(deck.locator('.slide.active h2')).toHaveText('First deck slide 2')
+			await expect(deck.locator('.slide.active h2')).toBeVisible()
+			await expect(viewer.getByText('2 / 3')).toBeVisible()
+
+			// A key inside the frame moves one slide, not two (the deck's own keys are off).
+			await deck.locator('body').click({ position: { x: 4, y: 4 } })
+			await page.keyboard.press('ArrowRight')
+			await expect(deck.locator('.slide.active h2')).toHaveText('First deck slide 3')
+			await expect(viewer.getByText('3 / 3')).toBeVisible()
+
+			// Past the last slide: the first slide of the next briefing.
+			await next.click()
+			await expect(deck.locator('.slide.active h2')).toHaveText('Second deck slide 1')
+			await expect(viewer.getByText('1 / 2')).toBeVisible()
+			await expect(viewer.getByRole('button', { name: /^Briefing 2:/ })).toHaveAttribute(
+				'aria-current',
+				'true',
+			)
+
+			// And back: the last slide of the briefing before.
+			await previous.click()
+			await expect(deck.locator('.slide.active h2')).toHaveText('First deck slide 3')
+
+			// A click on a far segment opens that briefing on its first slide.
+			await viewer.getByRole('button', { name: /^Briefing 2:/ }).click()
+			await expect(deck.locator('.slide.active h2')).toHaveText('Second deck slide 1')
+			await expect(next).toBeEnabled()
+			await next.click()
+			await expect(next).toBeDisabled()
+
 			await assertNoHorizontalOverflow(page, vp.label)
 		})
 	}

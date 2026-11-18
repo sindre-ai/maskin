@@ -154,6 +154,77 @@ describe('Triggers Routes', () => {
 			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
 		})
 
+		describe("starting the item's driver", () => {
+			const itemDriverBody = (overrides?: Record<string, unknown>) => {
+				const { target_actor_id: _omitted, ...body } = buildCreateTriggerBody({
+					config: { entity_type: 'task', action: 'status_changed', target: 'item_driver' },
+					...overrides,
+				})
+				return body
+			}
+
+			it('saves without a target agent and keeps the caller as the placeholder', async () => {
+				const trigger = buildTrigger({ workspaceId: wsId })
+				const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+				mockResults.insert = [trigger]
+				mockResults.select = [{ id: testerActorId }]
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/triggers', itemDriverBody(), { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(201)
+				expect(calls.inserts[0]).toMatchObject({
+					targetActorId: testerActorId,
+					config: { target: 'item_driver' },
+				})
+			})
+
+			it.each([
+				[
+					'a schedule',
+					{
+						type: 'cron',
+						config: { expression: '*/5 * * * *', target: 'item_driver' },
+						target_actor_id: targetActorId,
+					},
+				],
+				[
+					'an event that is not on an item',
+					{
+						config: {
+							entity_type: 'slack.channel_message',
+							action: 'received',
+							target: 'item_driver',
+						},
+					},
+				],
+			])('returns 400 for %s, and writes nothing', async (_name, overrides) => {
+				const { app, calls } = createTestApp(triggersRoutes, '/api/triggers')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/triggers', itemDriverBody(overrides), {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			})
+
+			it('returns 400 when an event trigger has neither an agent nor the item driver', async () => {
+				const { app, calls } = createTestApp(triggersRoutes, '/api/triggers')
+				const { target_actor_id: _omitted, ...body } = buildCreateTriggerBody()
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/triggers', body, { 'x-workspace-id': wsId }),
+				)
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			})
+		})
+
 		it('returns 404 and writes nothing when the target agent is not a member of the workspace', async () => {
 			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
 			// The membership lookup finds no row for the target agent in this workspace.
@@ -239,6 +310,41 @@ describe('Triggers Routes', () => {
 
 			expect(res.status).toBe(404)
 			expect(calls.updates).toHaveLength(0)
+		})
+
+		it("moves a trigger onto the item's driver and back", async () => {
+			const trigger = buildTrigger({
+				type: 'event',
+				config: { entity_type: 'task', action: 'created' },
+			})
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [trigger]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+					config: { entity_type: 'task', action: 'created', target: 'item_driver' },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.updates[0]).toMatchObject({ targetActorId: testerActorId })
+
+			// Back to a fixed agent: the agent has to be named, since the column only held a placeholder.
+			const onDriver = buildTrigger({
+				type: 'event',
+				config: { entity_type: 'task', action: 'created', target: 'item_driver' },
+			})
+			const back = createTestApp(triggersRoutes, '/api/triggers')
+			back.mockResults.selectQueue = [[onDriver], [buildWorkspaceMember()]]
+			const backRes = await back.app.request(
+				jsonRequest('PATCH', `/api/triggers/${onDriver.id}`, {
+					config: { entity_type: 'task', action: 'created' },
+				}),
+			)
+
+			expect(backRes.status).toBe(400)
+			expect(back.calls.updates).toHaveLength(0)
 		})
 
 		it('returns 404 when trigger not found', async () => {

@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// MUST-KEEP features of the iPhone app: things a person does that must keep working through any
@@ -116,7 +117,7 @@ final class MustKeepTests: XCTestCase {
 
 	// MARK: MK-03 Reply in a thread
 
-	/// Long-press a message → Reply in thread → the thread opens with a reply field.
+	/// Tap a message's More button → Reply in thread → the thread opens with a reply field.
 	///
 	/// Uses the Priya Rao chat, not an agent chat: the Live tests leave call records on the device that
 	/// wrap an agent chat's messages in a call card, and a card's menu is only Copy and Share.
@@ -131,7 +132,9 @@ final class MustKeepTests: XCTestCase {
 			try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/mk03.png"))
 			XCTFail("the chat's messages load (screen dumped to \(dir))")
 		}
-		message.press(forDuration: 1.0)
+		// A long-press now selects words; the menu is behind the More button beside the message.
+		let inRow = message.buttons["More"].firstMatch
+		(inRow.exists ? inRow : app.buttons["More"].firstMatch).tap()
 		let item = app.buttons["Reply in thread"].firstMatch
 		if !item.waitForExistence(timeout: 5) { dumpScreen("mk03-menu") }
 		XCTAssertTrue(item.exists, "a message's menu offers 'Reply in thread'")
@@ -160,5 +163,161 @@ final class MustKeepTests: XCTestCase {
 		XCTAssertTrue(
 			any("the pricing page looks right").waitForExistence(timeout: 10), "the thread shows the first reply")
 		XCTAssertTrue(any("I will ship it today").waitForExistence(timeout: 5), "the thread shows the second reply")
+	}
+
+	// MARK: Helpers for MK-06 to MK-09
+
+	/// Closes the notification pre-prompt if it shows over a chat; it would swallow the first tap.
+	private func dismissNotNow() {
+		let notNow = app.buttons["Not now"]
+		if notNow.waitForExistence(timeout: 3) { notNow.tap() }
+	}
+
+	/// The message field of the open chat (its accessibility label is the placeholder, "Message {name}").
+	private func composerField() -> XCUIElement {
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		return app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Message'", kinds[0], kinds[1])
+		).firstMatch
+	}
+
+	/// Anything on screen with exactly this label (a menu row can be a button or a menu item).
+	private func element(labelled label: String) -> XCUIElement {
+		app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+	}
+
+	/// A picture on the system clipboard, made here so the tests need no fixture file.
+	private func putImageOnClipboard() {
+		let size = CGSize(width: 40, height: 40)
+		UIPasteboard.general.image = UIGraphicsImageRenderer(size: size).image { context in
+			UIColor.systemOrange.setFill()
+			context.fill(CGRect(origin: .zero, size: size))
+		}
+	}
+
+	/// Long-presses the message field until its edit menu shows Paste (the first press can only focus the
+	/// field, so it tries a few times). Returns the Paste item; it may not exist, the caller asserts.
+	private func fieldMenuPaste(_ field: XCUIElement, dump name: String) -> XCUIElement {
+		let paste = element(labelled: "Paste")
+		for _ in 0..<3 where !paste.exists {
+			field.press(forDuration: 1.0)
+			_ = paste.waitForExistence(timeout: 3)
+		}
+		if !paste.exists { dumpScreen(name) }
+		return paste
+	}
+
+	/// Taps Paste in the field's edit menu. Paste from another process (the test) makes iOS ask "Allow
+	/// Paste": answer it.
+	private func pasteIntoField(_ field: XCUIElement) {
+		let paste = fieldMenuPaste(field, dump: "mk09-paste-menu")
+		XCTAssertTrue(paste.exists, "the message field's menu offers Paste")
+		paste.tap()
+		let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow Paste"]
+		if allow.waitForExistence(timeout: 3) { allow.tap() }
+	}
+
+	// MARK: MK-06 Search finds a chat, and a long-press on the result shows its menu
+
+	/// For you → Account → Search, type a chat's name, long-press the chat in the results: the same menu
+	/// as the Chats list (Pin to top, Archive, Delete). A result that shows no menu is the bug this row keeps out.
+	func testMK06_SearchResultLongPressMenu() throws {
+		let account = app.buttons["Account"].firstMatch
+		XCTAssertTrue(account.waitForExistence(timeout: 10), "For you shows the Account button")
+		account.tap()
+		XCTAssertTrue(app.staticTexts["Profile"].waitForExistence(timeout: 10), "the profile sheet opens")
+		// The screen under the sheet may have a Search button of its own (it is not hittable): take the sheet's.
+		let searchRow = app.buttons.matching(NSPredicate(format: "label == 'Search' AND isHittable == true")).firstMatch
+		for _ in 0..<4 where !searchRow.exists { app.swipeUp() }
+		XCTAssertTrue(searchRow.waitForExistence(timeout: 5), "the profile sheet offers Search")
+		searchRow.tap()
+		let field = app.searchFields.firstMatch
+		XCTAssertTrue(field.waitForExistence(timeout: 10), "Search opens with a search field")
+		field.tap()
+		field.typeText("Priya")
+		let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Priya Rao'")).firstMatch
+		if !result.waitForExistence(timeout: 15) { dumpScreen("mk06-results") }
+		XCTAssertTrue(result.exists, "searching 'Priya' finds the Priya Rao chat")
+		// The menu needs the chat list behind it, which loads after the results show: press again if it is not there yet.
+		let pin = element(labelled: "Pin to top")
+		for _ in 0..<4 where !pin.exists {
+			result.press(forDuration: 1.2)
+			_ = pin.waitForExistence(timeout: 3)
+		}
+		if !pin.exists { dumpScreen("mk06-menu") }
+		XCTAssertTrue(pin.exists, "a long-press on the chat result shows its menu (Pin to top)")
+		XCTAssertTrue(element(labelled: "Archive").exists, "the menu offers Archive")
+		XCTAssertTrue(element(labelled: "Delete").exists, "the menu offers Delete")
+	}
+
+	// MARK: MK-07 The composer offers Paste when a picture is on the clipboard
+
+	/// MK-07a: long-press in the message field: the system menu offers Paste. Keyboard paste of a screenshot
+	/// is the same path.
+	func testMK07a_FieldMenuOffersPasteForImage() throws {
+		putImageOnClipboard()
+		openChat("Priya Rao")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		let paste = fieldMenuPaste(field, dump: "mk07a-menu")
+		XCTAssertTrue(paste.exists, "with a picture on the clipboard, the message field's menu offers Paste")
+	}
+
+	/// MK-07b: the + menu lists "Paste image" while the clipboard holds a picture.
+	func testMK07b_AttachMenuOffersPasteImage() throws {
+		putImageOnClipboard()
+		openChat("Priya Rao")
+		dismissNotNow()
+		let attach = app.buttons["Attach"].firstMatch
+		XCTAssertTrue(attach.waitForExistence(timeout: 15), "the chat shows the Attach (+) button")
+		attach.tap()
+		let row = element(labelled: "Paste image")
+		if !row.waitForExistence(timeout: 5) { dumpScreen("mk07b-menu") }
+		XCTAssertTrue(row.exists, "with a picture on the clipboard, the + menu offers 'Paste image'")
+	}
+
+	// MARK: MK-08 Type a message and send it
+
+	/// Webinars chat (sending changes the chat, and the other rows rely on the Priya Rao and Live chats staying
+	/// as they are): type a line, tap Send, and the line shows in the chat. The demo server keeps what it was sent.
+	func testMK08_TypeAndSendShowsMessage() throws {
+		openChat("Webinars")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		let line = "Sent by the must keep test \(Int(Date().timeIntervalSince1970) % 100_000)"
+		field.typeText(line)
+		let send = app.buttons["Send"].firstMatch
+		XCTAssertTrue(send.waitForExistence(timeout: 5), "typing a line shows the Send button")
+		send.tap()
+		let sent = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", line)).firstMatch
+		if !sent.waitForExistence(timeout: 20) { dumpScreen("mk08-sent") }
+		XCTAssertTrue(sent.exists, "the sent line shows in the chat")
+	}
+
+	// MARK: MK-09 A message over 8000 characters goes as a file
+
+	/// Paste 8,200 characters, see the notice that it will go as a file, send it: the chat shows the short
+	/// message that points at the attached file. The text is pasted because typing 8,000 characters takes minutes.
+	func testMK09_LongMessageSendsAsFile() throws {
+		UIPasteboard.general.string = String(repeating: "Long message words. ", count: 410)
+		openChat("Webinars")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		pasteIntoField(field)
+		let notice = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Over 8,000 characters'")).firstMatch
+		if !notice.waitForExistence(timeout: 10) { dumpScreen("mk09-notice") }
+		XCTAssertTrue(notice.exists, "over 8,000 characters the composer says the message will be attached as a file")
+		let send = app.buttons["Send"].firstMatch
+		XCTAssertTrue(send.waitForExistence(timeout: 5), "Send is on for a long message")
+		send.tap()
+		let sent = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'is attached as message-'")).firstMatch
+		if !sent.waitForExistence(timeout: 30) { dumpScreen("mk09-sent") }
+		XCTAssertTrue(sent.exists, "the chat shows the short message that points at the attached file")
 	}
 }

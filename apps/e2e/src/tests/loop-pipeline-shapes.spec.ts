@@ -88,7 +88,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			expect(await pageOverflow(page)).toBeLessThanOrEqual(0)
 		})
 
-		test(`many agents scroll inside the card and long names stay inside it @ ${vp.label}`, async ({
+		test(`many triggers wrap inside the card and long names stay inside it @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -113,9 +113,6 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			const pipeline = page.getByTestId('loop-pipeline')
 			await expect(pipeline).toBeVisible({ timeout: 15_000 })
 			await expect(pipeline.getByRole('switch')).toHaveCount(7)
-			// The card carries the overflow; the page does not.
-			const [scroll, client] = await pipeline.evaluate((el) => [el.scrollWidth, el.clientWidth])
-			expect(scroll).toBeGreaterThan(client)
 			expect(await pageOverflow(page)).toBeLessThanOrEqual(0)
 			// The long name's switch stays inside its own card.
 			const longSwitch = pipeline.getByRole('switch', { name: /A very long trigger name/ })
@@ -123,8 +120,6 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			const sw = await longSwitch.boundingBox()
 			const box = await pipeline.boundingBox()
 			expect(sw && box && sw.x + sw.width <= box.x + box.width + 1).toBe(true)
-			// Chips never grow past the page either.
-			await expect(page.getByRole('button', { name: /^All steps/ })).toBeVisible()
 		})
 	}
 

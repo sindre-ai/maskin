@@ -1,8 +1,10 @@
 import { EditableTitle } from '@/components/shared/editable-title'
 import { Button } from '@/components/ui/button'
+import { useCreateViewWithAgent } from '@/hooks/use-create-view-with-agent'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor, getTypeColor, statusLabel, typeIcons, typeLabel } from '@/lib/constants'
+import { createViewRequest } from '@/lib/create-view-message'
 import { Link } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
@@ -36,6 +38,7 @@ export function ObjectDetailBarActions({
 	propertiesOpen,
 }: ObjectDetailBarActionsProps) {
 	const [menuOpen, setMenuOpen] = useState(false)
+	const createView = useCreateViewWithAgent()
 
 	return (
 		// Mockup order (919–950): the overflow menu, then the drawer toggle. The
@@ -46,6 +49,7 @@ export function ObjectDetailBarActions({
 				object={object}
 				onDeleteRequest={onDeleteRequest}
 				onArchiveRequest={onArchiveRequest}
+				onCreateViewRequest={createViewRequest(createView.open, object)}
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}

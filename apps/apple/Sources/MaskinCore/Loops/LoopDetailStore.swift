@@ -17,7 +17,7 @@ public final class LoopDetailStore {
 	/// The newest runs of the flow's steps; empty until read, and when the read fails.
 	public private(set) var runs: [LoopRun] = []
 	/// The loop's custom views, in tab order; empty until read, and when the loop has none. A failed
-	/// read keeps the views already shown.
+	/// read keeps the views already shown and says so (see `Block.views`).
 	public private(set) var views: [LoopView] = []
 	/// The phase the viewer tapped; nil follows the busiest one.
 	public var selectedStatus: String?
@@ -25,14 +25,16 @@ public final class LoopDetailStore {
 	/// The parts of the screen that load on their own. One that fails, or stays unanswered for
 	/// `giveUpAfter`, says so with Try again while the rest of the screen stays.
 	public enum Block: Sendable, Hashable {
-		case description, steps, activity
+		case description, steps, activity, views
 
-		/// What the block says in place of its content. Same words as the web loop page.
+		/// What the block says in place of its content. Same words as the web loop page; `views` has
+		/// no web twin (the web page reads the views from the loop object it already has).
 		public var message: String {
 			switch self {
 			case .description: "Couldn't load the description and activity. The server may be busy."
 			case .steps: "Couldn't load the steps of this loop. The server may be busy."
 			case .activity: "Couldn't load the loop's recent activity. The server may be busy."
+			case .views: "Couldn't load this flow's views. The server may be busy."
 			}
 		}
 	}
@@ -200,7 +202,6 @@ public final class LoopDetailStore {
 			if let fresh = try? await extra.get() { overview = fresh }
 			// A failed read keeps the runs already on screen; the stuck check just has less to go on.
 			if let fresh = try? await runRows.get() { runs = fresh }
-			if let fresh = try? await viewRows.get() { views = fresh }
 
 			// Each block keeps what it already shows when its own read fails.
 			var blocks: Set<Block> = []
@@ -227,6 +228,11 @@ public final class LoopDetailStore {
 			case .failure(let error):
 				blocks.insert(.activity)
 				firstError = firstError ?? error
+			}
+			// A failed views read says so, but never turns the whole screen into an error page.
+			switch await viewRows {
+			case .success(let rows): views = rows
+			case .failure: blocks.insert(.views)
 			}
 			failedBlocks = blocks
 			if let firstError, !hadContent {

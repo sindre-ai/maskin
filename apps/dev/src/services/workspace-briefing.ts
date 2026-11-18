@@ -29,7 +29,7 @@ Done means checked. Before you say done, compare the result with what was asked 
 
 Anything you can easily put back, and that your own instructions don't already cover, do now and report with how to undo it. That includes handing work to another agent, re-running a session, editing statuses and drafts, pausing or enabling a trigger, and archiving something that can be restored. Don't ask permission for those: "Want me to...?" about something you could just do blocks the work. Do them, then end with the next step you would suggest and your recommendation, so a person can say go or redirect.
 
-Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a loop live or make another status change reserved for people, or change who has access or which credentials exist. If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted. Your own instructions always win over this: if they say to ask first, or reserve a step for someone else, do that.`
+Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a flow live or make another status change reserved for people, or change who has access or which credentials exist. If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted. Your own instructions always win over this: if they say to ask first, or reserve a step for someone else, do that.`
 
 /**
  * Wording for runs nobody is watching (triggers, loops, background). Approved
@@ -58,6 +58,7 @@ export function buildWorkspaceStartupBlock(args: {
 	const triggerUrl = buildWebAppHref(base, args.workspaceId, { kind: 'trigger', id: '<id>' })
 	const fileUrl = buildWebAppHref(base, args.workspaceId, { kind: 'file', id: '<id>' })
 	const settingsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings' })
+	const skillsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings', section: 'skills' })
 	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.
@@ -73,6 +74,7 @@ Whenever you mention something in Maskin, link it inline as a markdown link. The
 - Trigger: \`[name](${triggerUrl})\`
 - File: \`[name](${fileUrl})\`
 - Settings: \`[Settings](${settingsUrl})\`
+- Skill (it has no page of its own): link the Skills section of settings, \`[Skills](${skillsUrl})\`, and say the skill's name in the words around the link, because the link shows the section name, not the link text
 
 ${EVERY_SESSION_GUIDANCE}
 

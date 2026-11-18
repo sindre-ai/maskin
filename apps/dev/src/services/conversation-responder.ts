@@ -18,6 +18,12 @@ import {
 } from '../lib/analytics/group-chat-routing-events'
 import { logger } from '../lib/logger'
 import {
+	DEFAULT_AGENT_TIMEZONE,
+	findChatPersonId,
+	formatPersonClockLine,
+	resolvePersonTimezone,
+} from '../lib/person-timezone'
+import {
 	loadChatFilesList,
 	loadSiblingSessionsNote,
 	loadThreadSeed,
@@ -932,6 +938,23 @@ async function spawnOrJoinConversationSession(params: {
 	// text only, so an upload from an early message would otherwise be out of sight.
 	const chatFiles = await loadChatFilesList(db, { conversationId, workspaceId })
 
+	// The person's local time, so the agent speaks in their zone and not in UTC. A lookup that
+	// fails costs the line, not the session: the default zone is used.
+	let timezone = DEFAULT_AGENT_TIMEZONE
+	try {
+		const personId = await findChatPersonId(db, {
+			conversationId,
+			authorActorId: message.actorId,
+			authorType: message.authorType,
+		})
+		timezone = await resolvePersonTimezone(db, personId)
+	} catch (err) {
+		logger.warn('Could not resolve the chat person timezone — using the default', {
+			conversationId,
+			error: String(err),
+		})
+	}
+
 	try {
 		await startSession({
 			workspaceId,
@@ -949,6 +972,7 @@ async function spawnOrJoinConversationSession(params: {
 				activeSessionsNote,
 				siblingSessionsNote,
 				filesNote: chatFiles.note,
+				clockLine: formatPersonClockLine(new Date(), timezone),
 				threadRootId,
 			}),
 			config: {
@@ -1244,6 +1268,8 @@ function buildConversationReplyPrompt(ctx: {
 	siblingSessionsNote: string
 	/** The chat's files from loadChatFilesList; '' for none. */
 	filesNote: string
+	/** The person's local date, time and zone, from formatPersonClockLine. */
+	clockLine: string
 	threadRootId: number | null
 }): string {
 	return [
@@ -1261,6 +1287,8 @@ function buildConversationReplyPrompt(ctx: {
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
 		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
 		...(ctx.filesNote ? ['', ctx.filesNote] : []),
+		'',
+		ctx.clockLine,
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,

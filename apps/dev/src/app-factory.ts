@@ -100,6 +100,7 @@ import objectApprovalsRoutes from './routes/object-approvals'
 import objectDoneWhenRoutes from './routes/object-done-when'
 import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
+import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -548,6 +549,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectDoneWhenRoutes)
+	app.route('/api/objects', objectOutcomeRoutes)
 	app.route('/api/objects', objectGoAheadRoutes)
 	app.route('/api/objects', objectNextStepRoutes)
 	app.route('/api/objects', objectsRoutes)
