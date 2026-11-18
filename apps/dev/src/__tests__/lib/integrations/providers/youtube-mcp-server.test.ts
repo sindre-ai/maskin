@@ -73,6 +73,7 @@ describe('maskin-youtube tool server', () => {
 			'youtube__get_video_stats',
 			'youtube__like',
 			'youtube__list_comments',
+			'youtube__list_recent_videos',
 			'youtube__post_comment',
 			'youtube__publish_video',
 			'youtube__reply_to_comment',
@@ -364,6 +365,93 @@ describe('maskin-youtube tool server', () => {
 	})
 })
 
+describe('youtube__list_recent_videos', () => {
+	const CHANNEL = { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU1' } } }] }
+	const PLAYLIST = { items: [{ contentDetails: { videoId: 'v1' } }], nextPageToken: 'tok2' }
+
+	beforeEach(() => {
+		youtubeRead.mockReset()
+		trackYoutubeToolCalled.mockReset()
+	})
+
+	it('resolves the uploads playlist from the channel and reads playlistItems, 1 unit', async () => {
+		youtubeRead.mockResolvedValueOnce(CHANNEL).mockResolvedValueOnce(PLAYLIST)
+		const { client, ctx } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__list_recent_videos', arguments: {} })
+
+		expect(text(result)).toEqual(PLAYLIST)
+		expect(youtubeRead).toHaveBeenNthCalledWith(1, ctx, {
+			tool: 'youtube__get_channel',
+			path: 'channels',
+			params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
+			units: 1,
+		})
+		expect(youtubeRead).toHaveBeenNthCalledWith(2, ctx, {
+			tool: 'youtube__list_recent_videos',
+			path: 'playlistItems',
+			params: { part: 'snippet,contentDetails', playlistId: 'UU1', maxResults: '50' },
+			units: 1,
+		})
+	})
+
+	it('passes the page size and page token through', async () => {
+		youtubeRead.mockResolvedValueOnce(CHANNEL).mockResolvedValueOnce(PLAYLIST)
+		const { client } = await connect()
+
+		await client.callTool({
+			name: 'youtube__list_recent_videos',
+			arguments: { max_results: 10, page_token: 'tok1' },
+		})
+
+		expect(youtubeRead).toHaveBeenLastCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				params: {
+					part: 'snippet,contentDetails',
+					playlistId: 'UU1',
+					maxResults: '10',
+					pageToken: 'tok1',
+				},
+			}),
+		)
+	})
+
+	it.each([0, 51])('refuses a page size of %i without calling YouTube', async (max_results) => {
+		const { client } = await connect()
+
+		const result = await client.callTool({
+			name: 'youtube__list_recent_videos',
+			arguments: { max_results },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(youtubeRead).not.toHaveBeenCalled()
+	})
+
+	it('returns a normalized error when the channel has no uploads playlist', async () => {
+		youtubeRead.mockResolvedValueOnce({ items: [] })
+		const { client } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__list_recent_videos', arguments: {} })
+
+		expect(result.isError).toBe(true)
+		expect(text(result).error.code).toBe('PROVIDER_ERROR')
+		expect(youtubeRead).toHaveBeenCalledTimes(1)
+	})
+
+	it('emits the tool-called event under its short name', async () => {
+		youtubeRead.mockResolvedValueOnce(CHANNEL).mockResolvedValueOnce(PLAYLIST)
+		const { client } = await connect()
+
+		await client.callTool({ name: 'youtube__list_recent_videos', arguments: {} })
+
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ tool: 'list_recent_videos', outcome: 'ok' }),
+		)
+	})
+})
+
 describe('youtube_tool_called event', () => {
 	beforeEach(() => {
 		youtubeRead.mockReset()
@@ -468,6 +556,10 @@ describe('youtube tool kinds', () => {
 		'youtube__get_public_videos',
 	])('classifies %s as a read, so a read-only agent may call it', (tool) => {
 		expect(classifyTool('youtube', tool)).toBe('read')
+	})
+
+	it('classifies list_recent_videos as a read', () => {
+		expect(classifyTool('youtube', 'youtube__list_recent_videos')).toBe('read')
 	})
 
 	it('treats a youtube tool nobody classified as a write', () => {
