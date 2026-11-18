@@ -489,7 +489,8 @@ export type LoopViewCardAction = 'open' | 'status_change' | 'approve' | 'date_ch
 export function trackLoopViewCardAction(p: {
 	entity_id: string
 	object_type: string
-	loop_id: string
+	/** Absent when the view is a tab on a list or an item page, not on a flow. */
+	loop_id?: string
 	action: LoopViewCardAction
 }): void {
 	trackEvent('loop_view_card_action', {
@@ -498,7 +499,7 @@ export function trackLoopViewCardAction(p: {
 		actor_type: getStoredActor()?.type ?? 'human',
 		action: p.action,
 		object_type: p.object_type,
-		loop_id: p.loop_id,
+		loop_id: p.loop_id ?? null,
 	})
 }
 

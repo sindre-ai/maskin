@@ -69,7 +69,8 @@ export function LoopViewTab({
 	busy = false,
 }: {
 	workspaceId: string
-	loopId: string
+	/** Absent for a view on a list or an item page, which belongs to no flow. */
+	loopId?: string
 	fileId: string
 	name?: string
 	/** Resolves true once saved; the rename field stays open on false. */

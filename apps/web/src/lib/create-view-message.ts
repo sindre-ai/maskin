@@ -1,10 +1,14 @@
 import type { ObjectsFilterModel } from '@/lib/objects-filter-model'
+import { LIST_VIEWS_ALL_KEY } from '@/lib/page-views'
 
 // The first message of the chat that "Create view with agent" opens. The person
 // sees it in the message box and can send, edit or clear it: nothing is built
 // until they send. Each place says where the view comes from, then the same
 // two rules: the page is one self-contained HTML file, and the view shows names,
 // status, driver and dates (the data bridge refuses the rest, see view-lists.ts).
+
+const PIN_TO_FAVORITES =
+	'Also pin it to Favorites in the left nav: read the workspace pinned_files setting first, then write it back with the file id added (the write replaces the whole list).'
 
 export type CreateViewScope =
 	| { kind: 'list'; filters: ObjectsFilterModel }
@@ -40,7 +44,8 @@ export function createViewMessage(scope: CreateViewScope): string {
 		return [
 			`Create a custom view for the ${scope.type} "${scope.title}" (id ${scope.id}).`,
 			HOW_TO_BUILD,
-			'Then pin it to Favorites in the left nav by adding the file id to the workspace pinned_files setting.',
+			`Then attach it as a tab on this ${scope.type}: read its metadata with get_objects (include metadata), then update_objects with metadata.views set to the rows already there plus { "name": "<1 to 30 characters>", "file_id": "<the file id>" }. The write replaces the whole list, so keep the existing rows.`,
+			PIN_TO_FAVORITES,
 		].join('\n\n')
 	}
 	const type = scope.filters.type
@@ -53,7 +58,8 @@ export function createViewMessage(scope: CreateViewScope): string {
 		`Create a custom view of ${type ? `the ${type} items` : 'the items'} in this workspace, like the Items list I am looking at.`,
 		filterLine,
 		HOW_TO_BUILD,
-		'Then pin it to Favorites in the left nav by adding the file id to the workspace pinned_files setting.',
+		`Then attach it as a tab on this list: read the workspace settings with list_workspaces (include_settings true), then update_workspace with settings.list_views set to the whole map already there, with the key "${type ?? LIST_VIEWS_ALL_KEY}" holding its existing rows plus { "name": "<1 to 30 characters>", "file_id": "<the file id>" }. The write replaces the whole map, so keep the other keys.`,
+		PIN_TO_FAVORITES,
 	].join('\n\n')
 }
 
