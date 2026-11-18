@@ -6,7 +6,7 @@ import { recordEventReturning } from './events/record-event'
 import { logger } from './logger'
 import { AUTO_SENT_ACTION } from './object-delivery'
 import { resolveSendMode } from './send-permissions'
-import { PILOT_FLOW_STATUS, flowsOfSession } from './session-flow'
+import { PILOT_FLOW_STATUSES, flowsOfSession } from './session-flow'
 
 /**
  * What a send tool does with a call, once the integration level has let it through (Read and
@@ -58,7 +58,7 @@ async function heldByPilotFlow(
 ): Promise<boolean> {
 	try {
 		const flows = await flowsOfSession(db, params)
-		return flows.some((flow) => flow.status === PILOT_FLOW_STATUS)
+		return flows.some((flow) => PILOT_FLOW_STATUSES.includes(flow.status))
 	} catch (err) {
 		logger.error('Could not read the flow of a session, holding the send', {
 			workspaceId: params.workspaceId,

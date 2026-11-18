@@ -78,6 +78,24 @@ describe('a flow in pilot holds sends', () => {
 		}
 	})
 
+	it('holds under the old stored name of pilot too, until the rename lands', async () => {
+		const { ws, agent, trigger } = await setup()
+		await insertFlow(ws.id, 'learning', [trigger.id])
+		const session = await insertSession({
+			workspaceId: ws.id,
+			actorId: agent.id,
+			triggerId: trigger.id,
+		})
+		expect(
+			await decideSend(db, {
+				workspaceId: ws.id,
+				agentId: agent.id,
+				kind: 'email',
+				sessionId: session.id,
+			}),
+		).toBe('needs_approval')
+	})
+
 	it('sends as before under a supervised or live flow, and for a call with no session', async () => {
 		const { ws, agent, trigger } = await setup()
 		const flow = await insertFlow(ws.id, 'supervised', [trigger.id])

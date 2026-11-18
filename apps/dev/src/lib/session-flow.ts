@@ -88,8 +88,12 @@ export async function loadFlowLookup(
 	}
 }
 
-/** The stored status of a flow in pilot: agents run, but nothing leaves the company unasked. */
-export const PILOT_FLOW_STATUS = 'pilot'
+/**
+ * The stored statuses of a flow in pilot: agents run, but nothing leaves the company unasked.
+ * 'learning' is the old name of pilot, still stored until the status ladder rename lands (the
+ * flow status ladder task, migration 0166). Drop it with that change.
+ */
+export const PILOT_FLOW_STATUSES: readonly string[] = ['pilot', 'learning']
 
 /** How far up the helper chain a session inherits its flow from. */
 const MAX_SPAWN_HOPS = 5
