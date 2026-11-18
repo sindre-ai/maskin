@@ -49,17 +49,23 @@ struct ObjectMenuItems: View {
 	var onOpen: (() -> Void)?
 	var onSelect: (() -> Void)?
 
+	private var menuPlan: ObjectMenuPlan {
+		ObjectMenuPlan(
+			object: object, ask: ask, store: store, showsOpen: onOpen != nil, showsSelect: onSelect != nil)
+	}
+
 	var body: some View {
-		if let onOpen {
+		let plan = menuPlan
+		if plan.showsOpen, let onOpen {
 			Button { onOpen() } label: { Label("Open", systemImage: "arrow.up.right.square") }
 		}
-		if let ask {
+		if let ask, let planAsk = plan.ask {
 			Section("Needs you") {
 				Button {
 					MaskinHaptics.play(.success)
 					askActions.approve(ask)
 				} label: {
-					Label(ask.approveOption?.label ?? "Approve", systemImage: "checkmark")
+					Label(planAsk.approveLabel, systemImage: "checkmark")
 				}
 				Button {
 					onHold(ask)
@@ -67,7 +73,7 @@ struct ObjectMenuItems: View {
 					Label("Hold", systemImage: "pause")
 				}
 			}
-		} else if let target = store.approveTarget(for: object) {
+		} else if let target = plan.approveTarget {
 			Button {
 				MaskinHaptics.play(.success)
 				Task {
@@ -80,7 +86,7 @@ struct ObjectMenuItems: View {
 			}
 		}
 		Menu {
-			ForEach(store.directory.schema.statuses(for: object.type), id: \.self) { status in
+			ForEach(plan.statuses, id: \.self) { status in
 				Button {
 					MaskinHaptics.play(.selection)
 					Task {
@@ -90,7 +96,7 @@ struct ObjectMenuItems: View {
 						}
 					}
 				} label: {
-					if status == object.status {
+					if status == plan.currentStatus {
 						Label(MaskinStatus.sentenceLabel(for: status), systemImage: "checkmark")
 					} else {
 						Text(MaskinStatus.sentenceLabel(for: status))
@@ -104,9 +110,9 @@ struct ObjectMenuItems: View {
 			MaskinHaptics.play(.selection)
 			Task { await store.toggleStar(object.id) }
 		} label: {
-			Label(object.isStarred ? "Remove from favourites" : "Add to favourites", systemImage: object.isStarred ? "star.slash" : "star")
+			Label(plan.starTitle, systemImage: plan.isStarred ? "star.slash" : "star")
 		}
-		if ask == nil, store.doneTarget(for: object) != nil {
+		if plan.showsDone {
 			Button {
 				Task {
 					if let undo = await store.markDone(object.id) { offerUndo(undo, "Marked done. Undo.") }
@@ -115,7 +121,7 @@ struct ObjectMenuItems: View {
 				Label("Done", systemImage: "checkmark.circle")
 			}
 		}
-		if store.canArchive([object.id]) {
+		if plan.showsArchive {
 			Button {
 				Task {
 					if let undo = await store.archive(object.id) { offerUndo(undo, "Archived. Undo.") }
@@ -129,7 +135,7 @@ struct ObjectMenuItems: View {
 		} label: {
 			Label("Delete", systemImage: "trash")
 		}
-		if let onSelect {
+		if plan.showsSelect, let onSelect {
 			Divider()
 			Button { onSelect() } label: { Label("Select", systemImage: "checkmark.circle") }
 		}
