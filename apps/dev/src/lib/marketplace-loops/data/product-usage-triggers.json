@@ -1,0 +1,26 @@
+{
+	"15c3edf8-b487-48a2-ad71-9a8996f540d6": {
+		"id": "15c3edf8-b487-48a2-ad71-9a8996f540d6",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Weekly usage read (Mon 07:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * 1"
+		},
+		"actionPrompt": "First step, before anything else: find the flow named Product Usage with list_loops. Make sure every insight you file in this run is linked into it with an in_loop relationship (source the flow, target the insight). Check with list_relationships (source_id the flow, type in_loop) and create any missing edge via update_objects.edges. This is what surfaces the insight in the flow's counters and status list. Only skip when the edge is already there.\n\nWeekly usage read. Outcome: the last 7 days of real human product usage (internal and test accounts excluded) are read, and each real finding is filed once as an insight.\nStep 0: check which product analytics tool is connected (look at the tools you have, and at list_integrations). If none is connected, read the flow's latest comment. If it does not already say so, post one line on the flow: \"No product analytics tool is connected, so there is no usage read. Connect one under integrations.\" Then stop. File nothing and read no other source in its place.\nStep 1: check the analytics feed is healthy: this week's daily event volume is in line with the weeks before (compare, do not use a fixed number) and there is no gap over 24 hours. If it is not, post one line on the flow saying so and stop, filing nothing.\nStep 2: read activation (sign-up to first meaningful action, a second person invited), repeat use, drop-off per area of the tracking plan or event list, and any events from mobile apps.\nStep 3: file one insight per finding that changed or contradicts what the team believes, with the count behind every number, and link it with informs to the feature or bet it concerns.\nStep 4: if a gap in tracking blocked a question, file one insight tagged gap.\nLeave alone: events, dashboards and bets (whoever owns tracking owns them). If access to the analytics tool is refused for your account, say so once on the flow and name who can grant it (a workspace admin, under integrations), then stop. Silence when nothing moved.",
+		"targetActorId": "beaa6cc3-8c50-424c-a129-4d529dee4e15",
+		"enabled": true
+	},
+	"f809d92f-b122-46f9-a3c2-776451105fdd": {
+		"id": "f809d92f-b122-46f9-a3c2-776451105fdd",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Owner heartbeat (Tue to Fri 07:56 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "56 7 * * 2-5"
+		},
+		"actionPrompt": "Purpose: you are the accountable owner of the flow named Product Usage (find it with list_loops). Load the skill drive-to-outcome first. Each run:\n(1) Read the flow's targets and compare each with its actual and today's pace. Write the gap in one line.\n(2) If this week's Monday read did not run or failed, run it now using the steps of the Weekly usage read trigger (list_triggers, then get_trigger).\n(3) If no product analytics tool is connected, say so once on the flow (skip if the latest comment already says it) and stop. Otherwise check that the analytics feed is healthy. If it is not, say so once on the flow and name whoever owns tracking as the owner of the fix.\n(4) Update the target Usage reads with the number of weekly reads completed this week (update_loop targets, keep every other field).\n(5) If a tracking gap blocks the read for the third check in a row, state the blocker once with the person who can clear it and stop polling.\n(6) Results view: this heartbeat runs Tuesday to Friday, so on the first run after each Monday read, if the Results tab shows data older than that read, refresh it from the findings of the last 7 days. Find the tab's file (named Results, linked to the flow). Load the skill results-view-refresh first and follow it exactly. Domain types to look for: learning or evidence update, emerging signal, behaviour problem, adoption change. Reviewers are product, design and engineering. A brief goes on the page only if you have read its linked evidence and it would change what a person decides. Never invent a finding.\nAct inside your remit: read, file insights, never change events or dashboards, never send anything. Silence when fine: post one short comment on the flow only if something moved or a person is needed, at most one a day. Late start: nothing here is date-bound, so a late run is fine. Plain words, no backticks, no em dashes.",
+		"targetActorId": "beaa6cc3-8c50-424c-a129-4d529dee4e15",
+		"enabled": true
+	}
+}
