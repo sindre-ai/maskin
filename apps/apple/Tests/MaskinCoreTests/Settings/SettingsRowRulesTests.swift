@@ -201,8 +201,8 @@ struct SettingsIntegrationsRulesTests {
 	}
 
 	private func actions(
-		toolServer: Bool = false, canManage: Bool = true, canStart: Bool = true,
-		state: ConnectedIntegration.State, services: Bool = true
+		_ state: ConnectedIntegration.State, toolServer: Bool = false, canManage: Bool = true,
+		canStart: Bool = true, services: Bool = true
 	) -> [SettingsRowRules.IntegrationAction] {
 		SettingsRowRules.integrationActions(
 			isToolServer: toolServer, canManage: canManage, canStartConnect: canStart, state: state,
@@ -211,24 +211,24 @@ struct SettingsIntegrationsRulesTests {
 
 	@Test("a connected account offers Agent access and Disconnect")
 	func connectedMenu() {
-		#expect(actions(state: .connected) == [.agentAccess, .disconnect])
+		#expect(actions(.connected) == [.agentAccess, .disconnect])
 		// No page services (a preview) means no Agent access.
-		#expect(actions(state: .connected, services: false) == [.disconnect])
+		#expect(actions(.connected, services: false) == [.disconnect])
 	}
 
 	@Test("an account that needs sign-in offers Reconnect first, for managers who can start it here")
 	func reconnectMenu() {
-		#expect(actions(state: .needsReconnect(missingScopes: 1)) == [.reconnect, .disconnect])
-		#expect(actions(state: .disconnected) == [.reconnect, .disconnect])
-		#expect(actions(state: .incomplete) == [.reconnect, .disconnect])
-		#expect(actions(state: .disconnected, canManage: false) == [.disconnect])
-		#expect(actions(state: .disconnected, canStart: false) == [.disconnect])
+		#expect(actions(.needsReconnect(missingScopes: 1)) == [.reconnect, .disconnect])
+		#expect(actions(.disconnected) == [.reconnect, .disconnect])
+		#expect(actions(.incomplete) == [.reconnect, .disconnect])
+		#expect(actions(.disconnected, canManage: false) == [.disconnect])
+		#expect(actions(.disconnected, canStart: false) == [.disconnect])
 	}
 
 	@Test("a tool server offers Remove and nothing to reconnect")
 	func toolServerMenu() {
-		#expect(actions(toolServer: true, state: .connected) == [.agentAccess, .remove])
-		#expect(actions(toolServer: true, state: .disconnected) == [.remove])
+		#expect(actions(.connected, toolServer: true) == [.agentAccess, .remove])
+		#expect(actions(.disconnected, toolServer: true) == [.remove])
 	}
 
 	@Test("the Connected tab says why it is empty, and nothing when there are rows")
