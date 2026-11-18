@@ -16,7 +16,8 @@ struct ObjectMenuPlanTests {
 		let done = StatusFlow.doneTarget(in: statuses)
 		return ObjectMenuPlan(
 			showsOpen: showsOpen, ask: ask, approveTarget: StatusFlow.approveTarget(from: status, in: statuses),
-			statuses: statuses, currentStatus: status, isStarred: starred, doneTarget: done == status ? nil : done,
+			statuses: statuses, currentStatus: status, isStarred: starred,
+			doneTarget: StatusCategory.of(status) == .done ? nil : done,
 			canArchive: StatusFlow.archiveTarget(in: statuses) != nil, showsSelect: showsSelect)
 	}
 
@@ -51,11 +52,19 @@ struct ObjectMenuPlanTests {
 		#expect(plan.showsDone)
 	}
 
-	@Test("a task already at its first finished status hides Done and Approve")
-	func taskValidated() {
-		let plan = makePlan("task", "validated")
-		#expect(plan.approveTarget == nil)
-		#expect(!plan.showsDone)
+	@Test("a task in any finished status hides Done and Approve")
+	func taskFinished() {
+		for status in ["validated", "done"] {
+			let plan = makePlan("task", status)
+			#expect(plan.approveTarget == nil, "\(status)")
+			#expect(!plan.showsDone, "\(status)")
+		}
+	}
+
+	@Test("a bet or insight in its finished status hides Done")
+	func betAndInsightFinished() {
+		#expect(!makePlan("bet", "succeeded").showsDone)
+		#expect(!makePlan("insight", "scored").showsDone)
 	}
 
 	@Test("a live bet approves to succeeded; an opportunity does not approve")

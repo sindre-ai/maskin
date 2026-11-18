@@ -14,7 +14,7 @@ struct ObjectMenuPlan: Equatable {
 	var statuses: [String]
 	var currentStatus: String
 	var isStarred: Bool
-	/// "Done": only with no ask, and only while the object is not already in its done status.
+	/// "Done": only with no ask, and only while the object is not already in a finished status.
 	var showsDone: Bool
 	var showsArchive: Bool
 	/// "Delete" is always there.
