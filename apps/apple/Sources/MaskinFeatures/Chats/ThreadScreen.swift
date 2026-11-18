@@ -16,6 +16,7 @@ struct ThreadScreen: View {
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
 	@State private var listening = false
+	@State private var selectingText: ChatMessage?
 	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -78,6 +79,9 @@ struct ThreadScreen: View {
 		}
 		.background(MaskinSurface.grouped)
 		.linkedItems(runtime)
+		.sheet(item: $selectingText) { message in
+			SelectTextSheet(text: ChatPreviewText.selectable(message.content))
+		}
 		.navigationTitle("Thread")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
@@ -130,6 +134,7 @@ struct ThreadScreen: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { selectingText = message }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))

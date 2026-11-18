@@ -163,7 +163,7 @@ final class MustKeepTests: XCTestCase {
 
 	// MARK: MK-03 Reply in a thread
 
-	/// Tap a message's More button → Reply in thread → the thread opens with a reply field.
+	/// Long-press a message → Reply in thread → the thread opens with a reply field.
 	///
 	/// Uses the Priya Rao chat, not an agent chat: the Live tests leave call records on the device that
 	/// wrap an agent chat's messages in a call card, and a card's menu is only Copy and Share.
@@ -178,15 +178,29 @@ final class MustKeepTests: XCTestCase {
 			try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/mk03.png"))
 			XCTFail("the chat's messages load (screen dumped to \(dir))")
 		}
-		// A long-press now selects words; the menu is behind the More button beside the message.
-		let inRow = message.buttons["More"].firstMatch
-		(inRow.exists ? inRow : app.buttons["More"].firstMatch).tap()
+		message.press(forDuration: 1.0)
 		let item = app.buttons["Reply in thread"].firstMatch
 		if !item.waitForExistence(timeout: 5) { dumpScreen("mk03-menu") }
 		XCTAssertTrue(item.exists, "a message's menu offers 'Reply in thread'")
 		item.tap()
 		let field = app.textFields.matching(NSPredicate(format: "label == 'Reply' OR placeholderValue == 'Reply'")).firstMatch
 		XCTAssertTrue(field.waitForExistence(timeout: 10), "the thread screen opens with a Reply field")
+	}
+
+	// MARK: MK-03b Select text from the message menu
+
+	/// Long-press a message → Select text → the sheet with the words opens.
+	func testMK03b_SelectText() throws {
+		openChat("Priya Rao")
+		let message = app.descendants(matching: .any)
+			.matching(NSPredicate(format: "label CONTAINS 'I can review the Northwind draft'")).firstMatch
+		XCTAssertTrue(message.waitForExistence(timeout: 15), "the chat's messages load")
+		message.press(forDuration: 1.0)
+		let item = app.buttons["Select text"].firstMatch
+		if !item.waitForExistence(timeout: 5) { dumpScreen("mk03b-menu") }
+		XCTAssertTrue(item.exists, "a message's menu offers 'Select text'")
+		item.tap()
+		XCTAssertTrue(app.buttons["Done"].firstMatch.waitForExistence(timeout: 5), "the Select text sheet opens")
 	}
 
 	// MARK: MK-04 A thread with replies
