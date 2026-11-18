@@ -76,6 +76,7 @@ import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as youtubeConfig } from './providers/youtube/config'
+import { revokeYoutubeGrant } from './providers/youtube/disconnect'
 import { resolveExternalId as youtubeResolveExternalId } from './providers/youtube/resolve-id'
 import { config as zapierConfig } from './providers/zapier/config'
 
@@ -251,11 +252,12 @@ providers.set('zapier', {
 })
 
 // youtube — read-only, own channel. Workspace-scoped like Meet (deliberately NOT in
-// `actorScopedProviders`). No webhook, postInstall or watch hooks: reads are on demand. The
-// revoke-and-purge `preDisconnect` hook is added by the disconnect task.
+// `actorScopedProviders`). No webhook, postInstall or watch hooks: reads are on demand.
+// `preDisconnect` revokes the Google grant and purges cached reads and session logs.
 providers.set('youtube', {
 	config: youtubeConfig,
 	resolveExternalId: youtubeResolveExternalId,
+	preDisconnect: revokeYoutubeGrant,
 })
 
 providers.set('stripe', {

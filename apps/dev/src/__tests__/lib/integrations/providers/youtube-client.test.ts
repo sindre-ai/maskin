@@ -4,6 +4,7 @@ const getIntegrationCredential = vi.fn()
 const getValidToken = vi.fn()
 const markRevoked = vi.fn()
 const chargeYoutubeQuota = vi.fn()
+const purgeYoutubeData = vi.fn()
 
 vi.mock('../../../../lib/integrations/lookup', () => ({
 	getIntegrationCredential: (...args: unknown[]) => getIntegrationCredential(...args),
@@ -13,6 +14,9 @@ vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
 		getValidToken = getValidToken
 		markRevoked = markRevoked
 	},
+}))
+vi.mock('../../../../lib/integrations/providers/youtube/purge', () => ({
+	purgeYoutubeData: (...args: unknown[]) => purgeYoutubeData(...args),
 }))
 vi.mock('../../../../lib/integrations/providers/youtube/quota', () => ({
 	chargeYoutubeQuota: (...args: unknown[]) => chargeYoutubeQuota(...args),
@@ -43,6 +47,7 @@ describe('youtubeRead', () => {
 		getValidToken.mockReset().mockResolvedValue('ya29.token')
 		markRevoked.mockReset().mockResolvedValue(undefined)
 		chargeYoutubeQuota.mockReset().mockResolvedValue(undefined)
+		purgeYoutubeData.mockReset().mockResolvedValue(undefined)
 	})
 	afterEach(() => vi.restoreAllMocks())
 
@@ -101,6 +106,10 @@ describe('youtubeRead', () => {
 			integrationId: 'int-1',
 		})
 		expect(markRevoked).toHaveBeenCalledWith(ctx.db, 'int-1')
+		expect(purgeYoutubeData).toHaveBeenCalledWith(ctx.db, {
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+		})
 	})
 
 	it('still throws RECONSENT_REQUIRED when marking the row fails', async () => {
@@ -109,14 +118,34 @@ describe('youtubeRead', () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ error: {} }, 401))
 
 		await expect(youtubeRead(ctx, read)).rejects.toMatchObject({ code: 'RECONSENT_REQUIRED' })
+		expect(purgeYoutubeData).toHaveBeenCalledTimes(1)
 	})
 
-	it('maps a refresh that Google rejects (invalid_grant) to RECONSENT_REQUIRED', async () => {
+	it('maps a refresh that Google rejects (invalid_grant) to RECONSENT_REQUIRED and purges', async () => {
 		getValidToken.mockRejectedValueOnce(new IntegrationAuthRevokedError('int-1'))
 		const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
 		await expect(youtubeRead(ctx, read)).rejects.toMatchObject({ code: 'RECONSENT_REQUIRED' })
 		expect(fetchSpy).not.toHaveBeenCalled()
+		expect(purgeYoutubeData).toHaveBeenCalledWith(ctx.db, {
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+		})
+	})
+
+	it('does not cache a read that was in flight when a purge ran', async () => {
+		const { purgeYoutubeCache } = await import(
+			'../../../../lib/integrations/providers/youtube/cache'
+		)
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			purgeYoutubeCache('int-1')
+			return jsonResponse(CHANNEL)
+		})
+
+		await youtubeRead(ctx, read)
+		await youtubeRead(ctx, read)
+
+		expect(fetchSpy).toHaveBeenCalledTimes(2)
 	})
 
 	it('does not call Google when the quota guard refuses', async () => {
