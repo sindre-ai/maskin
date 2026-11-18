@@ -24,6 +24,9 @@ public final class AppRuntime {
 	/// The signed-in actor's push preferences; nil while signed out.
 	public private(set) var notificationPreferences: NotificationPreferencesStore?
 	@ObservationIgnored private let preferencesAPI: (any NotificationPreferencesAPI)?
+	/// Keeps the contact names and numbers file for the phone's caller ID current. Nil when this
+	/// build isn't signed with the App Group.
+	@ObservationIgnored private let callerID: CallerIDRefresher?
 
 	/// The tab on screen. (Notification permission is NOT asked on a tab change: it waits for a
 	/// moment of value, see `valueMomentSeen()`.)
@@ -251,6 +254,12 @@ public final class AppRuntime {
 			NotificationPromptCoordinator(policy: NotificationPromptPolicy(storage: promptStorage), push: $0)
 		}
 		self.environment = environment
+		self.callerID = FileCallerIDListStore.shared().map { store in
+			CallerIDRefresher(
+				source: RemoteCallerIDContactSource(
+					remote: APIObjectsRemote(client: environment.client, credentials: environment.auth.credentialsProvider)),
+				store: store, marker: UserDefaultsCallerIDRefreshMarker())
+		}
 		self.featureFlags = FeatureFlagStore(api: APIFeatureFlagsSource(client: environment.client))
 		self.createView = CreateViewStore(source: APICreateViewSource(client: environment.client))
 		self.push = push
@@ -408,6 +417,8 @@ public final class AppRuntime {
 			Task { await syncTimezone() }
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
 			drainShareQueue(apiKey: session.apiKey)
+			// Needs a workspace to read contacts from. Skips itself when it ran in the last 24 hours.
+			if session.workspaceId?.isEmpty == false { Task { await callerID?.refresh() } }
 		}
 	}
 
@@ -445,6 +456,8 @@ public final class AppRuntime {
 		forYouSelection = nil
 		selectedTab = .forYou
 		FileStore.clearExports()
+		// Other people's numbers must not outlive the session.
+		Task { await callerID?.wipe() }
 	}
 
 	/// The signed-in actor changed (`nil` = signed out): keep the push token registered for them.
@@ -673,6 +686,8 @@ public final class AppRuntime {
 		ChatsRuntime.signOut(actorId: actorId)
 		// Shares parked by the share extension live in the App Group container; same rule.
 		ShareQueue.shared()?.removeAll()
+		// The names and numbers loaded for the phone's caller ID are this account's too.
+		await callerID?.wipe()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
