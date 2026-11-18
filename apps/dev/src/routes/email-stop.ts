@@ -67,9 +67,22 @@ function refusal(reason: 'unconfigured' | 'invalid' | 'expired') {
 /** What the link stops, in the words of the confirm page. A kind-scoped link names only that kind. */
 const KIND_WORDS: Record<string, { what: string; title: string }> = {
 	flow_activity: { what: 'flow activity emails', title: 'Stop flow activity emails?' },
-	needs_you: { what: 'emails about things that need you', title: 'Stop these emails?' },
-	conversation: { what: 'emails about chat replies', title: 'Stop chat reply emails?' },
-	tips: { what: 'tips and updates emails', title: 'Stop tips emails?' },
+}
+
+/**
+ * Kinds whose per-notification email no longer exists. A link sent for one of them (11 to 17 Nov
+ * 2026) still verifies and says it is done, but changes nothing: there is nothing left to stop.
+ */
+const RETIRED_KINDS = new Set(['needs_you', 'conversation', 'tips'])
+
+function retiredPage(): Response {
+	return html(
+		200,
+		page(
+			'Emails stopped',
+			'<p>Maskin no longer sends an email for each notification, so there is nothing left to stop. Your summary email is separate: you can change it in Settings, then Notifications.</p>',
+		),
+	)
 }
 
 app.get('/', (c) => {
@@ -79,6 +92,7 @@ app.get('/', (c) => {
 		const r = refusal(verdict.reason)
 		return html(r.status, page(r.title, `<p>${escapeHtml(r.text)}</p>`))
 	}
+	if (verdict.kind && RETIRED_KINDS.has(verdict.kind)) return retiredPage()
 	const words = verdict.kind ? KIND_WORDS[verdict.kind] : null
 	if (verdict.kind && !words) {
 		const r = refusal('invalid')
@@ -104,6 +118,8 @@ app.post('/', async (c) => {
 		const r = refusal(verdict.reason)
 		return html(r.status, page(r.title, `<p>${escapeHtml(r.text)}</p>`))
 	}
+
+	if (verdict.kind && RETIRED_KINDS.has(verdict.kind)) return retiredPage()
 
 	const db = c.get('db')
 	const [actor] = await db

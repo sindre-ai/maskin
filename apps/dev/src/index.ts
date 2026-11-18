@@ -77,7 +77,6 @@ import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NextStepSweep } from './services/next-step-sweep'
-import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -334,9 +333,6 @@ notificationPush.start()
 
 const flowActivity = new FlowActivityNotifier(db, notifyBridge)
 flowActivity.start()
-
-const notificationEmail = new NotificationEmailFanout(db, notifyBridge)
-notificationEmail.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
@@ -701,7 +697,6 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	chainSnapshotJob.stop()
 	notificationPush.stop()
 	flowActivity.stop()
-	notificationEmail.stop()
 	briefingPushScheduler.stop()
 	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()

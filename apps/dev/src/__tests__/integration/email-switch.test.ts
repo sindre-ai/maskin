@@ -224,6 +224,32 @@ describe('email switch (Integration)', () => {
 		expect((await savedRow(actor))?.emailDigestEnabled).toBe(false)
 	})
 
+	it('an old per-notification stop link still says it is done and changes nothing', async () => {
+		const actor = (await insertActor(db))?.id as string
+		await db
+			.insert(notificationPreferences)
+			.values({ actorId: actor, emailDigestEnabled: true, emailCategories: { needs_you: true } })
+		const app = stopApp()
+
+		for (const kind of ['needs_you', 'conversation', 'tips']) {
+			const token = signEmailStopToken(actor, Date.now(), kind)
+			const page = await app.request(`/api/email/stop?token=${token}`)
+			expect(page.status).toBe(200)
+			expect(await page.text()).toContain('Emails stopped')
+			const done = await app.request(`/api/email/stop?token=${token}`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: 'List-Unsubscribe=One-Click',
+			})
+			expect(done.status).toBe(200)
+			expect(await done.text()).toContain('Emails stopped')
+		}
+
+		const saved = await savedRow(actor)
+		expect(saved?.emailDigestEnabled).toBe(true)
+		expect(saved?.emailCategories).toEqual({ needs_you: true })
+	})
+
 	it('a changed link changes nothing', async () => {
 		const actor = (await insertActor(db))?.id as string
 		const other = (await insertActor(db))?.id as string
