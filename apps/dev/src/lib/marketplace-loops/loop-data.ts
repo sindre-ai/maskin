@@ -18,6 +18,10 @@ import discoveryActorsData from './data/discovery-actors.json'
 import discoverySkillsData from './data/discovery-skills.json'
 import discoveryTriggersData from './data/discovery-triggers.json'
 import discoveryViewsData from './data/discovery-views.json'
+import knowledgeWikiActorsData from './data/knowledge-wiki-actors.json'
+import knowledgeWikiSkillsData from './data/knowledge-wiki-skills.json'
+import knowledgeWikiTriggersData from './data/knowledge-wiki-triggers.json'
+import knowledgeWikiViewsData from './data/knowledge-wiki-views.json'
 import marketWatchActorsData from './data/market-watch-actors.json'
 import marketWatchSkillsData from './data/market-watch-skills.json'
 import marketWatchTriggersData from './data/market-watch-triggers.json'
@@ -84,6 +88,7 @@ const actorsById: Record<string, ActorData> = {
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
 	...(productReleaseActorsData as Record<string, ActorData>),
+	...(knowledgeWikiActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
@@ -91,6 +96,7 @@ const triggersById: Record<string, TriggerData> = {
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
 	...(productReleaseTriggersData as Record<string, TriggerData>),
+	...(knowledgeWikiTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
@@ -98,10 +104,12 @@ const skillsById: Record<string, SkillData> = {
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
 	...(productReleaseSkillsData as Record<string, SkillData>),
+	...(knowledgeWikiSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {
 	...(discoveryViewsData as Record<string, ViewData>),
+	...(knowledgeWikiViewsData as Record<string, ViewData>),
 }
 
 export function getActorData(id: string): ActorData {
