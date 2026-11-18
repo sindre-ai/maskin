@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, files, objects, sessions, workspaceMembers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import {
@@ -67,6 +68,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: SessionManager
 		maskinSessionId?: string
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -619,7 +621,7 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	// The approval has committed: run the approved change from the server, once.
 	if (youtubeTap && youtubeDecision?.ok && youtubeDecision.decision === 'approve') {
-		scheduleYoutubeExecution(db, youtubeTap.actionId)
+		scheduleYoutubeExecution(db, youtubeTap.actionId, c.get('storageProvider'))
 	}
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of

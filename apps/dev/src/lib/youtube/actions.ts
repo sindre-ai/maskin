@@ -64,6 +64,13 @@ export interface CreatePendingActionInput {
 	channelLabel?: string | null
 	/** Free text from the agent. Shown on the card in its own labelled place, never in place of the payload. */
 	agentNote?: string | null
+	/** For a comment: the hash of its normalized text, kept after the payload is cleared. */
+	textHash?: string | null
+	/**
+	 * Runs inside the transaction, before the row is stored. The write tools check their caps
+	 * here, so two parallel calls cannot both pass a check that only one of them should.
+	 */
+	beforeInsert?: (tx: Transaction) => Promise<void>
 	requestedByActor: string
 	requestedBySession?: string | null
 	/** The object the card sits on (the task or flow the change is for). */
@@ -110,6 +117,8 @@ export async function createPendingAction(db: Database, input: CreatePendingActi
 			)
 		}
 
+		await input.beforeInsert?.(tx)
+
 		const [row] = await tx
 			.insert(youtubePendingActions)
 			.values({
@@ -121,6 +130,7 @@ export async function createPendingAction(db: Database, input: CreatePendingActi
 				targetVideoId: input.targetVideoId ?? null,
 				channelLabel: input.channelLabel ?? null,
 				agentNote: input.agentNote?.trim() || null,
+				textHash: input.textHash ?? null,
 				requestedByActor: input.requestedByActor,
 				requestedBySession: input.requestedBySession ?? null,
 				expiresAt: new Date(Date.now() + YOUTUBE_ACTION_TTL_MS),

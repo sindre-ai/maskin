@@ -12,6 +12,11 @@ vi.mock('../../../../lib/integrations/providers/youtube/client', () => ({
 	youtubeRead: (...args: unknown[]) => youtubeRead(...args),
 }))
 
+const proposeYoutubeWrite = vi.fn()
+vi.mock('../../../../lib/youtube/propose', () => ({
+	proposeYoutubeWrite: (...args: unknown[]) => proposeYoutubeWrite(...args),
+}))
+
 const trackYoutubeToolCalled = vi.fn()
 vi.mock('../../../../lib/analytics/youtube-events', () => ({
 	trackYoutubeToolCalled: (...args: unknown[]) => trackYoutubeToolCalled(...args),
@@ -39,10 +44,19 @@ describe('maskin-youtube tool server', () => {
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists exactly youtube__get_channel', async () => {
+	it('lists get_channel and the seven write tools', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
-		expect(tools.map((t) => t.name)).toEqual(['youtube__get_channel'])
+		expect(tools.map((t) => t.name).sort()).toEqual([
+			'youtube__add_to_playlist',
+			'youtube__create_playlist',
+			'youtube__get_channel',
+			'youtube__like',
+			'youtube__post_comment',
+			'youtube__reply_to_comment',
+			'youtube__set_thumbnail',
+			'youtube__update_video_metadata',
+		])
 	})
 
 	it('get_channel reads channels.list mine=true with the three parts, 1 unit', async () => {
@@ -199,5 +213,115 @@ describe('youtube tool kinds', () => {
 
 	it('treats a youtube tool nobody classified as a write', () => {
 		expect(classifyTool('youtube', 'youtube__upload_video')).toBe('write')
+	})
+})
+
+describe('youtube write tools', () => {
+	const OBJECT_ID = '11111111-1111-4111-8111-111111111111'
+	const HELD = {
+		action_id: 'action-1',
+		status: 'pending',
+		expires_at: '2026-11-25T00:00:00.000Z',
+		message: 'Held for a person to approve.',
+	}
+
+	beforeEach(() => {
+		youtubeRead.mockReset()
+		proposeYoutubeWrite.mockReset()
+		trackYoutubeToolCalled.mockReset()
+	})
+
+	it.each([
+		['update_video_metadata', { video_id: 'v1', title: 'New' }],
+		['set_thumbnail', { video_id: 'v1', file_id: '22222222-2222-4222-8222-222222222222' }],
+		['create_playlist', { title: 'Best of', privacy_status: 'private' }],
+		['add_to_playlist', { playlist_id: 'PL1', video_id: 'v1' }],
+		['post_comment', { video_id: 'v1', text: 'Nice one' }],
+		['reply_to_comment', { video_id: 'v1', comment_id: 'c1', text: 'Thanks' }],
+		['like', { video_id: 'v1' }],
+	] as const)('%s holds the change and returns the action id', async (tool, args) => {
+		proposeYoutubeWrite.mockResolvedValueOnce(HELD)
+		const { client, ctx } = await connect()
+
+		const result = await client.callTool({
+			name: `youtube__${tool}`,
+			arguments: { object_id: OBJECT_ID, note: 'why', ...args },
+		})
+
+		expect(result.isError).toBeUndefined()
+		expect(text(result)).toEqual(HELD)
+		expect(proposeYoutubeWrite).toHaveBeenCalledWith(
+			ctx,
+			{ object_id: OBJECT_ID, note: 'why' },
+			{ tool, args },
+		)
+		// A write tool never reads through the Google client itself.
+		expect(youtubeRead).not.toHaveBeenCalled()
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ tool, outcome: 'pending_approval' }),
+		)
+	})
+
+	it('marks the write tools as not read-only and the read tool as read-only', async () => {
+		const { client } = await connect()
+		const { tools } = await client.listTools()
+		const byName = new Map(tools.map((t) => [t.name, t]))
+		expect(byName.get('youtube__get_channel')?.annotations?.readOnlyHint).toBe(true)
+		for (const [name, tool] of byName) {
+			if (name !== 'youtube__get_channel') expect(tool.annotations?.readOnlyHint).toBe(false)
+		}
+	})
+
+	it('defaults a new playlist to private', async () => {
+		proposeYoutubeWrite.mockResolvedValueOnce(HELD)
+		const { client } = await connect()
+		await client.callTool({
+			name: 'youtube__create_playlist',
+			arguments: { object_id: OBJECT_ID, title: 'Best of' },
+		})
+		expect(proposeYoutubeWrite).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+			tool: 'create_playlist',
+			args: { title: 'Best of', privacy_status: 'private' },
+		})
+	})
+
+	it('refuses a call with no object to put the card on', async () => {
+		const { client } = await connect()
+		const result = await client.callTool({
+			name: 'youtube__like',
+			arguments: { video_id: 'v1' },
+		})
+		expect(result.isError).toBe(true)
+		expect(proposeYoutubeWrite).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['CAP_REACHED', 'quota_blocked'],
+		['INVALID_INPUT', 'invalid_input'],
+		['NOT_CONNECTED', 'not_connected'],
+	] as const)('reports %s as outcome %s', async (code, outcome) => {
+		proposeYoutubeWrite.mockRejectedValueOnce(new YoutubeError({ code, message: 'x' }))
+		const { client } = await connect()
+		const result = await client.callTool({
+			name: 'youtube__like',
+			arguments: { object_id: OBJECT_ID, video_id: 'v1' },
+		})
+		expect(result.isError).toBe(true)
+		expect(text(result).error.code).toBe(code)
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(expect.objectContaining({ outcome }))
+	})
+
+	it('classifies every write tool as a write, so a read-only agent cannot call it', () => {
+		for (const tool of [
+			'update_video_metadata',
+			'set_thumbnail',
+			'create_playlist',
+			'add_to_playlist',
+			'post_comment',
+			'reply_to_comment',
+			'like',
+		]) {
+			expect(classifyTool('youtube', `youtube__${tool}`)).toBe('write')
+		}
 	})
 })

@@ -3748,6 +3748,9 @@ export const youtubePendingActions = pgTable(
 		// The channel's public name, resolved by the server when the action was made, for the card.
 		channelLabel: text('channel_label'),
 		agentNote: text('agent_note'),
+		// sha256 of a comment's normalized text, so "no identical comment twice" holds after the
+		// payload is cleared. Null for every other kind. See 0168_youtube_action_text_hash.sql.
+		textHash: text('text_hash'),
 		requestedByActor: uuid('requested_by_actor').notNull(),
 		requestedBySession: uuid('requested_by_session'),
 		cardEventId: bigint('card_event_id', { mode: 'number' }),
@@ -3764,6 +3767,9 @@ export const youtubePendingActions = pgTable(
 	(t) => [
 		index('youtube_pending_actions_workspace_status_idx').on(t.workspaceId, t.status),
 		index('youtube_pending_actions_status_expires_idx').on(t.status, t.expiresAt),
+		index('youtube_pending_actions_text_hash_idx')
+			.on(t.workspaceId, t.textHash)
+			.where(sql`${t.textHash} is not null`),
 		check(
 			'youtube_pending_actions_status_check',
 			sql`${t.status} in ('pending', 'approved', 'rejected', 'expired', 'executed', 'failed')`,

@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { youtubePendingActions } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -13,6 +14,7 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -162,7 +164,7 @@ app.openapi(decisionRoute, async (c) => {
 				)
 		}
 	}
-	if (result.decision === 'approve') scheduleYoutubeExecution(db, id)
+	if (result.decision === 'approve') scheduleYoutubeExecution(db, id, c.get('storageProvider'))
 	const a = result.action
 	return c.json(
 		{
