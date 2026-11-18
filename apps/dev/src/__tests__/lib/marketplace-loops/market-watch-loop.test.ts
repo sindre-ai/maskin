@@ -1,3 +1,4 @@
+import { MARKET_WATCH_ACTOR_OWNER } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 import {
 	getActorData,
@@ -7,7 +8,6 @@ import {
 import { loopSettingsSchema } from '../../../lib/marketplace-loops/loop-settings'
 import {
 	MARKET_WATCH_ACTOR_IDS,
-	MARKET_WATCH_ACTOR_OWNER,
 	MARKET_WATCH_LOOP,
 	MARKET_WATCH_SKILL_IDS,
 	MARKET_WATCH_TRIGGER_IDS,
