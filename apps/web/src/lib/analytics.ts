@@ -569,8 +569,39 @@ export function trackChatLeft(p: { entity_id: string; outcome: ChatLeftOutcome }
 // and `search` for a row opened from the list search's results (then `section` is `search` too).
 // `section` is the list section the row sat in. The values agent and room are set by the rows that
 // add them; until then direct messages and every dated group read as `recent`.
-export type ChatListSection = 'pinned' | 'unread' | 'agent' | 'recent' | 'room' | 'search'
+export type ChatListSection =
+	| 'pinned'
+	| 'unread'
+	| 'agent'
+	| 'recent'
+	| 'room'
+	| 'search'
+	| 'today'
+	| 'yesterday'
+	| 'earlier'
+	| 'needs_you'
+	| 'working'
+	| 'tag'
+	| 'type_direct'
+	| 'type_topic'
+	| 'type_group'
 export type ChatListOpenSource = 'list' | 'search'
+// What the row's preview-line marker said when it was opened. At most one, error first.
+export type ChatListMarker = 'none' | 'unread' | 'needs_you' | 'working' | 'later' | 'error'
+export type ChatListFilter = 'all' | 'needs_you' | 'unread' | 'working' | 'later'
+export type ChatListGroupBy = 'date' | 'status' | 'agent' | 'tag' | 'type' | 'none'
+export type ChatRowAction = 'done' | 'later' | 'undo' | 'retry'
+export type ChatRowActionVia = 'swipe' | 'hover' | 'menu'
+// The search operators a query used, as a fixed list. Never the words typed after them.
+export type ChatListSearchOperator =
+	| 'agent'
+	| 'from'
+	| 'with'
+	| 'team'
+	| 'is'
+	| 'phrase'
+	| 'exclude'
+	| 'none'
 
 /** 1-based place of a row among the rows on screen, as a bucket so no chat can be told apart. */
 export function chatListPositionBucket(position: number): string {
@@ -593,20 +624,42 @@ export function trackChatOpenedFromList(p: {
 	source: ChatListOpenSource
 	section: ChatListSection
 	position: number
+	/** Set by the v2 list only; the old list sends the three properties above. */
+	marker?: ChatListMarker
+	filter?: ChatListFilter
+	group_by?: ChatListGroupBy
 }): void {
 	trackEvent('chat_opened_from_list', {
 		source: p.source,
 		section: p.section,
 		position_bucket: chatListPositionBucket(p.position),
+		...(p.marker ? { marker: p.marker } : {}),
+		...(p.filter ? { filter: p.filter } : {}),
+		...(p.group_by ? { group_by: p.group_by } : {}),
+		feature_area: 'chats',
+	})
+}
+
+// A row action on the chat list: Done, Later, Undo or Retry. `via` is how it was reached.
+export function trackChatRowAction(p: { action: ChatRowAction; via: ChatRowActionVia }): void {
+	trackEvent('chat_row_action', {
+		action: p.action,
+		via: p.via,
 		feature_area: 'chats',
 	})
 }
 
 // A search typed into the chat list's own box and left alone long enough to settle. Not the global
 // search, which has its own events.
-export function trackChatListSearchUsed(p: { result_count: number }): void {
+export function trackChatListSearchUsed(p: {
+	result_count: number
+	/** Set by the v2 list only. */
+	operators?: ChatListSearchOperator[]
+}): void {
 	trackEvent('chat_list_search_used', {
 		result_count_bucket: chatListResultCountBucket(p.result_count),
+		// One string so web and iPhone send the same value: the operators in order, joined by a comma.
+		...(p.operators ? { operators: p.operators.join(',') } : {}),
 		feature_area: 'chats',
 	})
 }

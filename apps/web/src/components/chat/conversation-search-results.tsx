@@ -25,6 +25,8 @@ interface ConversationSearchResultsProps {
 	loaded: LoadedList | null
 	/** A person opened a hit; the position is its 1-based place among the hits. */
 	onOpen: (position: number) => void
+	/** Replaces the empty result's wording (the new chat list's own copy). */
+	emptyTitle?: string
 }
 
 /**
@@ -39,6 +41,7 @@ export function ConversationSearchResults({
 	known,
 	loaded,
 	onOpen,
+	emptyTitle,
 }: ConversationSearchResultsProps) {
 	const rows = search.data?.results ?? []
 	if (search.isError && !search.data) {
@@ -60,8 +63,10 @@ export function ConversationSearchResults({
 		return (
 			<EmptyState
 				icon={<SearchX size={24} aria-hidden="true" />}
-				title="No chats found"
-				description="No chat has that in its title, its people or its messages."
+				title={emptyTitle ?? 'No chats found'}
+				description={
+					emptyTitle ? undefined : 'No chat has that in its title, its people or its messages.'
+				}
 			/>
 		)
 	}

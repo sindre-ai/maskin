@@ -33,6 +33,9 @@ struct ConversationListView: View {
 	var pillPlacement: TeamPillPlacement = .top
 	/// The shell's bottom pill, told how many are unread and when row selection is running.
 	var pill: TeamPillModel?
+	/// The new chat list (flag chat-list-v2): three-line rows with attention markers, day groups,
+	/// filter pills, and Done, Later and Retry actions. Off keeps the list as it was.
+	var chatListV2 = false
 
 	@State private var picking = SelectionModel()
 	@State private var undoOffer: UndoOffer?
@@ -52,6 +55,7 @@ struct ConversationListView: View {
 		let layout = store.layout(
 			query: search, currentActorID: currentActorID, expandedSectionIDs: expandedSections, now: now)
 		let allIDs = layout.conversationIDs
+		let v2Groups = chatListV2 ? store.chatListGroups(currentActorID: currentActorID, now: now) : []
 		// While selecting, a tap toggles the row instead of opening it.
 		let rowSelection = Binding<String?>(
 			get: { picking.isActive ? nil : selection },
@@ -60,7 +64,11 @@ struct ConversationListView: View {
 					if let id, !id.hasPrefix(TeamLayout.flowPinKey("")) { picking.toggle(id) }
 				} else {
 					selection = id
-					trackOpened(id, layout: layout)
+					if chatListV2 {
+						trackOpenedV2(id, groups: v2Groups)
+					} else {
+						trackOpened(id, layout: layout)
+					}
 				}
 			})
 		List(selection: rowSelection) {
@@ -71,6 +79,8 @@ struct ConversationListView: View {
 				searchResults(serverSearch)
 			} else if store.showsArchivedList {
 				archivedSection
+			} else if chatListV2 {
+				v2Content(groups: v2Groups, now: now)
 			} else {
 				activeContent(layout: layout, now: now)
 			}
@@ -105,13 +115,13 @@ struct ConversationListView: View {
 			guard !query.isEmpty, (try? await Task.sleep(for: .seconds(1))) != nil else { return }
 			if let serverSearch {
 				guard serverSearch.phase == .loaded else { return }
-				Analytics.shared.chatListSearchUsed(resultCount: serverSearch.hits.count)
+				Analytics.shared.chatListSearchUsed(resultCount: serverSearch.hits.count, operators: searchOperators(query))
 				return
 			}
 			// Read again after the wait, so pages that arrived meanwhile are counted.
 			let settled = store.layout(
 				query: query, currentActorID: currentActorID, expandedSectionIDs: expandedSections, now: Date())
-			Analytics.shared.chatListSearchUsed(resultCount: settled.shownChatCount)
+			Analytics.shared.chatListSearchUsed(resultCount: settled.shownChatCount, operators: searchOperators(query))
 		}
 		.task(id: store.showsArchivedList) {
 			if store.showsArchivedList {
@@ -125,7 +135,7 @@ struct ConversationListView: View {
 		.selectionToolbar(picking, allIDs: allIDs, noun: "chat") { bulkActions(allIDs: allIDs) }
 		.undoToast($undoOffer)
 		.safeAreaInset(edge: .bottom, spacing: MaskinSpace.s4) {
-			if pillPlacement == .floating, store.displayOptions.showsFilterChips, !picking.isActive {
+			if !chatListV2, pillPlacement == .floating, store.displayOptions.showsFilterChips, !picking.isActive {
 				TeamFloatingPill(
 					chip: $store.chip, unreadCount: layout.unreadCount,
 					threadsUnread: store.threadSections.unreadCount, onThreads: onThreads)
@@ -168,10 +178,14 @@ struct ConversationListView: View {
 				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 				.plainRow(insets: EdgeInsets(top: MaskinSpace.s9, leading: MaskinSpace.s9, bottom: MaskinSpace.s4, trailing: MaskinSpace.s9))
 		} else if model.phase == .loaded, model.hits.isEmpty {
-			EmptyState(
-				symbol: "magnifyingglass", title: "No chats found",
-				message: "No chat has that in its title, its people or its messages.")
-				.plainRow()
+			if chatListV2 {
+				EmptyState(symbol: "magnifyingglass", title: ChatListCopy.noMatches).plainRow()
+			} else {
+				EmptyState(
+					symbol: "magnifyingglass", title: "No chats found",
+					message: "No chat has that in its title, its people or its messages.")
+					.plainRow()
+			}
 		} else {
 			Section {
 				ForEach(model.hits) { hit in
@@ -257,6 +271,147 @@ struct ConversationListView: View {
 			: layout.chatListPlace(of: id, searching: searching)
 		guard let place else { return }
 		Analytics.shared.chatOpenedFromList(place)
+	}
+
+	// MARK: New chat list (flag chat-list-v2)
+
+	/// The pills, then the groups with one row per chat. Done, Later and Retry are swipe actions and
+	/// sit in the row's menu too, so every action has a way in without a swipe.
+	@ViewBuilder
+	private func v2Content(groups: [ChatListGroup], now: Date) -> some View {
+		ChatListPills(filter: $store.listFilter, counts: store.chatListCounts)
+			.plainRow(insets: EdgeInsets(top: 0, leading: 0, bottom: MaskinSpace.s4, trailing: 0))
+		if store.phase != .loaded, store.conversations.isEmpty {
+			ChatListSkeleton().plainRow()
+		}
+		ForEach(groups) { group in
+			Section {
+				ForEach(group.items) { c in
+					v2Row(c, isLast: c.id == groups.last?.items.last?.id, now: now)
+				}
+			} header: {
+				if !group.label.isEmpty { ChatListGroupHeader(label: group.label) }
+			}
+		}
+		if groups.isEmpty, store.phase == .loaded {
+			EmptyState(symbol: "tray", title: store.listFilter.emptyText).plainRow()
+		}
+	}
+
+	private func v2Row(_ c: ConversationSummary, isLast: Bool, now: Date) -> some View {
+		ChatListRowV2(conversation: c, currentActorID: currentActorID, now: now)
+			.rowChrome()
+			.tag(c.id)
+			// Swipe right: Retry on a chat that stopped.
+			.swipeActions(edge: .leading, allowsFullSwipe: false) {
+				if c.stopReason != nil {
+					Button { retryStopped(c, via: .swipe) } label: {
+						Label(ChatListCopy.retry, systemImage: "arrow.clockwise")
+					}
+					.tint(MaskinSurface.inverse)
+				}
+			}
+			// Swipe left: Later, Pin, Read or Unread, Done (Done is the one at the edge).
+			.swipeActions(edge: .trailing, allowsFullSwipe: false) {
+				Button { markDone(c, via: .swipe) } label: { Label("Done", systemImage: "checkmark") }
+					.tint(MaskinSurface.inverse)
+				Button { toggleRead(c) } label: {
+					Label(c.isUnread ? "Read" : "Unread", systemImage: c.isUnread ? "envelope.open" : "envelope.badge")
+				}
+				.tint(MaskinColor.sig)
+				Button { Task { await store.setPinned(c.id, !c.pinned) } } label: {
+					Label(c.pinned ? "Unpin" : "Pin", systemImage: c.pinned ? "pin.slash" : "pin")
+				}
+				.tint(MaskinColor.ink4)
+				if !c.later {
+					Button { moveToLater(c, via: .swipe) } label: { Label("Later", systemImage: "clock") }
+						.tint(MaskinColor.ink3)
+				}
+			}
+			.contextMenu {
+				if c.stopReason != nil {
+					Button { retryStopped(c, via: .menu) } label: {
+						Label(ChatListCopy.retry, systemImage: "arrow.clockwise")
+					}
+				}
+				Button { markDone(c, via: .menu) } label: { Label("Done", systemImage: "checkmark") }
+				if !c.later {
+					Button { moveToLater(c, via: .menu) } label: { Label("Later", systemImage: "clock") }
+				}
+				Button { Task { await store.setPinned(c.id, !c.pinned) } } label: {
+					Label(c.pinned ? "Unpin" : "Pin to top", systemImage: c.pinned ? "pin.slash" : "pin")
+				}
+				Button { toggleRead(c) } label: {
+					Label(
+						c.isUnread ? "Mark as read" : "Mark as unread",
+						systemImage: c.isUnread ? "envelope.open" : "envelope.badge")
+				}
+			}
+			.onAppear { if isLast { Task { await store.loadMore() } } }
+	}
+
+	/// Done: the existing archive. The toast offers Undo for six seconds.
+	private func markDone(_ c: ConversationSummary, via: ChatListTracking.RowActionVia) {
+		Analytics.shared.chatRowAction(.done, via: via)
+		MaskinHaptics.play(.selection)
+		Task {
+			guard await store.markDone(c.id) else { return }
+			undoOffer = UndoOffer(message: ChatListCopy.markedDone) {
+				Analytics.shared.chatRowAction(.undo, via: via)
+				_ = await store.setArchived(c.id, false)
+			}
+		}
+	}
+
+	/// Later: out of All until a new message arrives. The toast offers Undo for six seconds.
+	private func moveToLater(_ c: ConversationSummary, via: ChatListTracking.RowActionVia) {
+		Analytics.shared.chatRowAction(.later, via: via)
+		MaskinHaptics.play(.selection)
+		Task {
+			guard await store.setLater(c.id, true) else { return }
+			undoOffer = UndoOffer(message: ChatListCopy.movedToLater) {
+				Analytics.shared.chatRowAction(.undo, via: via)
+				_ = await store.setLater(c.id, false)
+			}
+		}
+	}
+
+	/// Retry: the same retry as in the thread. The marker clears at once; if the turn fails again the
+	/// next list update brings it back with its new reason.
+	private func retryStopped(_ c: ConversationSummary, via: ChatListTracking.RowActionVia) {
+		Analytics.shared.chatRowAction(.retry, via: via)
+		MaskinHaptics.play(.selection)
+		undoOffer = UndoOffer(message: ChatListCopy.retrying, undo: nil)
+		Task { await store.retryStopped(c.id) }
+	}
+
+	private func toggleRead(_ c: ConversationSummary) {
+		Task { if c.isUnread { await store.markRead([c.id]) } else { await store.markUnread(c.id) } }
+	}
+
+	/// Where a row opened from the new list sat, and what it carried. A hit of the server search
+	/// reads as a search open.
+	private func trackOpenedV2(_ id: String?, groups: [ChatListGroup]) {
+		guard let id else { return }
+		if isSearching, serverSearch != nil {
+			guard var place = ChatListTracking.searchPlace(of: id, among: serverSearch?.hits ?? []) else { return }
+			place.filter = store.listFilter
+			place.groupBy = store.listGroupBy
+			Analytics.shared.chatOpenedFromList(place)
+			return
+		}
+		guard let found = ChatListLayout.place(of: id, in: groups),
+			let chat = groups.flatMap(\.items).first(where: { $0.id == id })
+		else { return }
+		Analytics.shared.chatOpenedFromList(
+			.init(
+				source: .list, section: found.section, position: found.position,
+				marker: ChatListTracking.marker(of: chat), filter: store.listFilter, groupBy: store.listGroupBy))
+	}
+
+	/// The operators a typed search used, for the event. Only the new list reads them.
+	private func searchOperators(_ query: String) -> [ChatListTracking.SearchOperator] {
+		chatListV2 ? ChatListSearchOperators.used(in: query) : []
 	}
 
 	private func selectionID(of row: TeamLayout.Row) -> String? {
@@ -527,11 +682,18 @@ struct ConversationListView: View {
 	private var overlay: some View {
 		switch store.phase {
 		case .idle, .loading:
-			if store.conversations.isEmpty { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
+			// The new list draws its own six skeleton rows under the pills.
+			if store.conversations.isEmpty, !chatListV2 { LoadingSkeleton(rows: 4).padding(MaskinSpace.s9) }
 		case .failed(let reason):
-			EmptyState(
-				symbol: "wifi.exclamationmark", title: "Couldn't load chats", message: Self.failureMessage(reason)) {
-				Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
+			if chatListV2 {
+				EmptyState(symbol: "wifi.exclamationmark", title: ChatListCopy.listFailed) {
+					Button(ChatListCopy.retry) { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
+				}
+			} else {
+				EmptyState(
+					symbol: "wifi.exclamationmark", title: "Couldn't load chats", message: Self.failureMessage(reason)) {
+					Button("Try again") { Task { await store.refresh() } }.buttonStyle(.secondaryAction)
+				}
 			}
 		case .loaded:
 			EmptyView()
@@ -543,8 +705,30 @@ struct ConversationListView: View {
 /// the Preview and Working line properties. The store persists the choice per user.
 struct ChatsDisplaySheet: View {
 	@Bindable var store: ConversationsStore
+	/// The new chat list (flag chat-list-v2): Group by offers the six groupings, and the preview and
+	/// quick-filter choices of the old list go.
+	var chatListV2 = false
 
 	var body: some View {
+		if chatListV2 {
+			DisplaySheet(canReset: store.listGroupBy != .date, onReset: { store.listGroupBy = .date }) {
+				DisplaySection(title: "Grouping", showsDivider: false) {
+					DisplayChoice(
+						label: "Group by", options: ChatListGroupBy.allCases.map { ($0, $0.label) },
+						selection: $store.listGroupBy)
+				}
+				DisplaySection(title: "Filters") {
+					DisplayChoice(
+						label: "Chats", options: [(false, "Active"), (true, "Archived")],
+						selection: $store.showsArchivedList)
+				}
+			}
+		} else {
+			legacySheet
+		}
+	}
+
+	private var legacySheet: some View {
 		DisplaySheet(canReset: store.displayOptions.isCustomised, onReset: { store.displayOptions = .default }) {
 			DisplaySection(title: "Grouping", showsDivider: false) {
 				DisplayChoice(

@@ -10,11 +10,43 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	/// Where a file over the JSON route's cap goes (straight to storage). Without it only files up to
 	/// that cap can be attached.
 	private let largeUploads: LargeFileUploadTransport?
+	/// The list's attention fields, Later and the Later flag (flag chat-list-v2). Without it the
+	/// source reads the plain list.
+	private let attention: APIChatAttention?
 
-	public init(client: Client, workspaceID: String, largeUploads: LargeFileUploadTransport? = nil) {
+	public init(
+		client: Client, workspaceID: String, largeUploads: LargeFileUploadTransport? = nil,
+		attention: APIChatAttention? = nil
+	) {
 		self.client = client
 		self.workspaceID = workspaceID
 		self.largeUploads = largeUploads
+		self.attention = attention
+	}
+
+	public func listWithAttention(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		guard let attention else {
+			return try await list(
+				archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+				limit: limit, offset: offset)
+		}
+		return try await attention.page(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+			later: false, limit: limit, offset: offset)
+	}
+
+	public func listLater(limit: Int, offset: Int) async throws -> ConversationPage {
+		guard let attention else { return ConversationPage(conversations: [], hasMore: false) }
+		return try await attention.page(
+			archived: false, pinnedOnly: false, unreadOnly: false, hideQuiet: false, later: true, limit: limit,
+			offset: offset)
+	}
+
+	public func setLater(conversationID: String, later: Bool) async throws {
+		guard let attention else { throw ChatsError("Later isn't available here.") }
+		try await attention.setLater(conversationID: conversationID, later: later)
 	}
 
 	// MARK: - List

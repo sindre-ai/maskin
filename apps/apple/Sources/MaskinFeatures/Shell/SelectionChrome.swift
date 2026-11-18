@@ -42,7 +42,8 @@ extension View {
 struct UndoOffer: Identifiable {
 	let id = UUID()
 	let message: String
-	let undo: @MainActor () async -> Void
+	/// Nil shows the message alone, with no Undo (the chat list's "Retrying").
+	let undo: (@MainActor () async -> Void)?
 }
 
 private struct UndoToastModifier: ViewModifier {
@@ -58,14 +59,15 @@ private struct UndoToastModifier: ViewModifier {
 							.maskinText(.subhead)
 							.foregroundStyle(MaskinColor.ink)
 							.lineLimit(2)
-						Button("Undo") {
-							let action = offer.undo
-							self.offer = nil
-							Task { await action() }
+						if let action = offer.undo {
+							Button("Undo") {
+								self.offer = nil
+								Task { await action() }
+							}
+							.maskinText(.subhead).fontWeight(.semibold)
+							.foregroundStyle(MaskinColor.ink)
+							.frame(minHeight: MaskinSpace.touchMin)
 						}
-						.maskinText(.subhead).fontWeight(.semibold)
-						.foregroundStyle(MaskinColor.ink)
-						.frame(minHeight: MaskinSpace.touchMin)
 					}
 					.padding(.horizontal, MaskinSpace.s9)
 					.maskinGlass(in: Capsule())
