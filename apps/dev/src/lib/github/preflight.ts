@@ -63,7 +63,7 @@ export const GITHUB_PREFLIGHT_SLACK_CHANNEL = 'C075JBZ65RT'
 
 /** Fallback write-scope probe repo, used only for non-installation (PAT/OAuth)
  *  tokens that have no installation to scope `/installation/repositories` to. */
-export const GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO = 'sindre-ai/maskin'
+export const GITHUB_PREFLIGHT_DEFAULT_PROBE_REPO = 'vaerksted-ai/maskin'
 
 /** Names of the four MCP identities this bet is provisioning. Preflight
  *  runs against every discovered github-like identity, not just these — the
