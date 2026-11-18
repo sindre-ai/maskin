@@ -125,17 +125,9 @@ final class MustKeepMoreTests: XCTestCase {
 		return element
 	}
 
-	/// Taps the More button beside the message that `row` finds, or the lowest More on screen when the
-	/// button is not inside the row's element (the newest message sits at the bottom of the chat).
-	private func tapMore(on row: XCUIElement) {
-		let inRow = row.buttons["More"].firstMatch
-		if inRow.exists {
-			inRow.tap()
-		} else {
-			let all = app.buttons.matching(NSPredicate(format: "label == 'More'")).allElementsBoundByIndex
-			XCTAssertFalse(all.isEmpty, "the chat shows a More button on its messages")
-			all.last?.tap()
-		}
+	/// Long-presses the message that `row` finds, which opens the message menu sheet.
+	private func openMessageMenu(on row: XCUIElement) {
+		row.press(forDuration: 1.0)
 	}
 
 	/// Opens the profile sheet from For you.
@@ -296,7 +288,7 @@ final class MustKeepMoreTests: XCTestCase {
 		dismissNotNow()
 		let mine = anyLabel(containing: "Draft the counter offer for Contoso")
 		expectExists(mine, "the chat shows your newest message", dump: "mk15a-message")
-		tapMore(on: mine)
+		openMessageMenu(on: mine)
 		let edit = element(labelled: "Edit")
 		expectExists(edit, "your newest message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
 		edit.tap()
@@ -315,24 +307,17 @@ final class MustKeepMoreTests: XCTestCase {
 			timeout: 15)
 	}
 
-	/// MK-15b: a message's menu offers React; picking an emoji puts a count chip under the message.
+	/// MK-15b: a message's menu offers quick reactions; picking an emoji puts a count chip under the message.
 	func testMK15b_ReactToMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
 		let message = anyLabel(containing: "Contoso asked for a 12-month term")
 		expectExists(message, "the chat shows the Chief of Staff's first message", dump: "mk15b-message")
-		tapMore(on: message)
-		let react = element(labelled: "React")
-		expectExists(react, "a message's menu offers React", dump: "mk15b-menu", timeout: 5)
-		react.tap()
-		// The emoji row reads "👍" (or "👍  ✓" once used). The chip reads "👍, 1", so it is left out by the comma.
-		let thumbs = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH '👍' AND NOT (label CONTAINS ',')")).firstMatch
-		expectExists(thumbs, "React offers the thumbs-up emoji", dump: "mk15b-emoji", timeout: 5)
+		openMessageMenu(on: message)
+		// The sheet's quick reactions are buttons labelled "React 👍".
+		let thumbs = app.buttons["React 👍"].firstMatch
+		expectExists(thumbs, "a message's menu offers the thumbs-up reaction", dump: "mk15b-menu", timeout: 5)
 		thumbs.tap()
-		// The menu is still open if the tap did not land: tap the emoji's middle by coordinate.
-		if thumbs.waitForNonExistence(timeout: 3) == false {
-			thumbs.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-		}
 		expectExists(element(labelled: "👍, 1"), "the message shows a 👍 chip with a count of 1", dump: "mk15b-chip", timeout: 10)
 	}
 
@@ -353,7 +338,7 @@ final class MustKeepMoreTests: XCTestCase {
 		let notSent = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Not sent'")).firstMatch
 		expectExists(notSent, "a refused message shows 'Not sent'", dump: "mk15c-notsent", timeout: 45)
 		let row = anyLabel(containing: line)
-		tapMore(on: row)
+		openMessageMenu(on: row)
 		let delete = element(labelled: "Delete")
 		expectExists(delete, "an unsent message's menu offers Delete", dump: "mk15c-menu", timeout: 5)
 		delete.tap()
