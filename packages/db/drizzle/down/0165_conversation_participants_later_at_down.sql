@@ -1,4 +1,4 @@
--- Rollback for 0164_conversation_participants_later_at.sql. Drops everyone's Later marks, which
+-- Rollback for 0165_conversation_participants_later_at.sql. Drops everyone's Later marks, which
 -- cannot be rebuilt: the chats go back to the normal list. Roll back the code that reads the
 -- column first.
 --

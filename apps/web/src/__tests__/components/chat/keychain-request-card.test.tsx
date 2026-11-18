@@ -156,6 +156,13 @@ describe('KeychainRequestCard', () => {
 		expect(screen.getByRole('form', { name: 'Add an API key to the Keychain' })).toBeInTheDocument()
 		expect(screen.getByLabelText('Secret')).toBeInTheDocument()
 		expect(screen.queryByLabelText('Username or email')).not.toBeInTheDocument()
+		expect(screen.getByText(/the agent can read this key/i)).toBeInTheDocument()
+	})
+
+	it('does not say the agent can read a login: it types it without seeing it', () => {
+		renderCard(request())
+
+		expect(screen.queryByText(/the agent can read this key/i)).not.toBeInTheDocument()
 	})
 
 	it('cannot save until the name and every value are there', async () => {

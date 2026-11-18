@@ -5,18 +5,30 @@ import { RouteError } from '@/components/shared/route-error'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useUpdateActor } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
+import {
+	useNotificationPreferences,
+	useUpdateNotificationPreferences,
+} from '@/hooks/use-notification-preferences'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
+import { browserTimezone, timezoneOptions } from '@/lib/timezones'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { createFileRoute } from '@tanstack/react-router'
 import { ChevronRight, Monitor, Moon, Sun } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
@@ -54,7 +66,7 @@ function GeneralPage() {
 							aria-label="Workspace name"
 							placeholder={canWrite ? undefined : VIEWER_READ_ONLY_MESSAGE}
 							disabled={!canWrite}
-							className="w-full rounded-full border-0 bg-secondary lg:w-72"
+							className="w-full rounded-full bg-secondary lg:w-72"
 						/>
 					</ViewerTooltip>
 				</SettingsRow>
@@ -72,6 +84,7 @@ function GeneralPage() {
 			</SettingsSection>
 
 			<DefaultWorkspaceSection />
+			{getStoredActor()?.type === 'human' && <TimezoneSection />}
 			<ThemePicker />
 			<PrivacySection />
 			<WorkspaceToolsSection />
@@ -232,6 +245,64 @@ function DefaultWorkspaceSection() {
 					onCheckedChange={(checked) => handleChange(!!checked)}
 					aria-label="Make this my default workspace"
 				/>
+			</SettingsRow>
+		</SettingsSection>
+	)
+}
+
+/**
+ * The person's own timezone, stored with their notification preferences. Agents give times in it.
+ * The first time Settings opens with none saved, this browser's zone is saved for them. Saving a
+ * zone is what arms the daily briefing push, so that save also leaves the briefing switch off: a
+ * person who never chose a zone must not start getting a morning push because they opened Settings.
+ */
+function TimezoneSection() {
+	const prefs = useNotificationPreferences()
+	const { mutate, isPending } = useUpdateNotificationPreferences()
+	const saved = prefs.data?.timezone ?? null
+	const loaded = prefs.isSuccess
+	const prefilled = useRef(false)
+
+	useEffect(() => {
+		if (!loaded || saved !== null || prefilled.current) return
+		prefilled.current = true
+		const zone = browserTimezone()
+		if (zone) mutate({ timezone: zone, briefing_enabled: false })
+	}, [loaded, saved, mutate])
+
+	const value = saved ?? browserTimezone()
+	const options = useMemo(() => timezoneOptions(value), [value])
+
+	return (
+		<SettingsSection title="Timezone">
+			<SettingsRow
+				title="Your timezone"
+				description="Agents give you times in this zone, like 'in 15 minutes' or 'at 16:30'."
+			>
+				<Select
+					value={value ?? undefined}
+					onValueChange={(next) =>
+						mutate(
+							{ timezone: next },
+							{
+								onSuccess: () => toast.success('Timezone saved'),
+								onError: () => toast.error('Failed to save your timezone'),
+							},
+						)
+					}
+					disabled={!loaded || isPending}
+				>
+					<SelectTrigger aria-label="Your timezone" className="w-full lg:w-72">
+						<SelectValue placeholder="Choose a timezone" />
+					</SelectTrigger>
+					<SelectContent>
+						{options.map((zone) => (
+							<SelectItem key={zone} value={zone}>
+								{zone}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			</SettingsRow>
 		</SettingsSection>
 	)

@@ -44,6 +44,37 @@ describe('DecisionOptions', () => {
 	})
 })
 
+describe('DecisionOptions with one option', () => {
+	const lone = [
+		{ id: 'send', label: 'Send to Alan', recommended: true, consequences: ['Goes out'] },
+	]
+
+	it('keeps the Recommended tag by default', () => {
+		render(<DecisionOptions options={lone} pendingId={null} onChoose={() => {}} />)
+		expect(screen.getByRole('button').textContent).toContain('Recommended')
+	})
+
+	it('leaves the tag off a lone option when asked', () => {
+		render(<DecisionOptions options={lone} pendingId={null} onChoose={() => {}} hideTagWhenAlone />)
+		expect(screen.getByRole('button').textContent).toBe('Send to Alan')
+	})
+
+	it('draws a lone option that is not marked recommended as the bar', () => {
+		const unmarked = [{ id: 'send', label: 'Send to Alan', consequences: [] }]
+		render(
+			<DecisionOptions options={unmarked} pendingId={null} onChoose={() => {}} hideTagWhenAlone />,
+		)
+		expect(screen.getByRole('button').className).toContain('bg-primary')
+	})
+
+	it('still tags the recommended option when there are several', () => {
+		render(
+			<DecisionOptions options={OPTIONS} pendingId={null} onChoose={() => {}} hideTagWhenAlone />,
+		)
+		expect(screen.getByRole('button', { name: 'Ship' }).textContent).toContain('Recommended')
+	})
+})
+
 describe('suggestedLine', () => {
 	it('is null when nothing is recommended', () => {
 		expect(suggestedLine([{ id: 'a', label: 'A', consequences: ['x'] }])).toBeNull()

@@ -5,7 +5,7 @@ export const VOICE_SKILLS_TOTAL_MAX_CHARS = 12_000
 
 export type VoiceSkill = { name: string; content: string }
 
-function formatMoment(at: Date, timeZone: string): string {
+export function formatMoment(at: Date, timeZone: string): string {
 	const parts = new Intl.DateTimeFormat('en-GB', {
 		timeZone,
 		weekday: 'long',

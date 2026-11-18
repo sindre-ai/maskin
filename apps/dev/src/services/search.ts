@@ -1,7 +1,9 @@
 import type { Database } from '@maskin/db'
 import {
 	type ChatSearchIsValue,
+	DIRECT_MESSAGE_ROW_TYPE,
 	SEARCH_SOURCE_GROUPS,
+	START_CHAT_ROW_TYPE,
 	STATUS_GROUP_KEYS,
 	type SearchQuery,
 	type SearchResponse,
@@ -22,6 +24,7 @@ import {
 	tokenRegexEscape,
 } from '../lib/search-rank'
 import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
+import { directPairKey } from './direct-chat'
 
 /** A source that takes longer than this is reported as partial instead of failing the request. */
 const SOURCE_TIMEOUT_MS = 5000
@@ -436,6 +439,12 @@ const TIER_WHOLE_WORD = 0
 const TIER_WORD_START = 1
 const TIER_CONTAINS = 2
 const TIER_BODY_ONLY = 3
+
+/** A teammate's name must match at the start of a word (tier 0 or 1) to put their direct message first. */
+const TEAMMATE_MAX_TIER = TIER_WORD_START
+const YOU_PREFIX = 'You: '
+/** The most a snippet may hold (the row schema cuts it at 160). */
+const SNIPPET_MAX_LENGTH = 160
 
 /** Regexes for a token at the start of a word, and for a whole word, in a title or a list of names. */
 function wordPatterns(token: string) {
@@ -974,6 +983,11 @@ async function runTypoPass(
 	return truncated
 }
 
+/** A CRM contact: an object of type contact. */
+function isContact(row: SearchResultRow): boolean {
+	return row.group === 'objects' && row.type === 'contact'
+}
+
 function compareRows(sort: 'recent' | 'az') {
 	return (a: SearchResultRow, b: SearchResultRow): number => {
 		if (sort === 'az') {
@@ -1033,6 +1047,105 @@ async function addTypoHits(
 		})
 	})
 	return true
+}
+
+interface DirectChatRow {
+	id: string
+	pair_key: string
+	last_content: string | null
+	last_actor_id: string | null
+	updated_iso: string | null
+}
+
+interface RankedRow {
+	row: SearchResultRow
+	rank: { tier: number; score: number }
+}
+
+/**
+ * The launcher puts a teammate's direct message (DM) first when the words match their name.
+ * `ranked` is the answer so far, best first. Returns the rows to lead with, and the ids of the
+ * rows they replace (the person row of a teammate, and the chat itself when it was already listed),
+ * so nobody shows twice. A teammate with no DM yet leads as a person row of type START_CHAT.
+ * A failed lookup leaves the answer as it was.
+ */
+async function teammateLeadRows(
+	db: Database,
+	ctx: SearchContext,
+	ranked: RankedRow[],
+): Promise<{ lead: SearchResultRow[]; replaced: Set<string> }> {
+	const teammates = ranked.filter(
+		({ row, rank }) =>
+			row.group === 'people' && rank.tier <= TEAMMATE_MAX_TIER && row.id !== ctx.callerId,
+	)
+	const none = { lead: [], replaced: new Set<string>() }
+	if (teammates.length === 0) return none
+
+	let chats: DirectChatRow[]
+	try {
+		// The DM is the stored one per pair (direct_pair_key), never a topical chat with the same two
+		// people, and only while both are still in it and nobody else is.
+		const keys = sql.join(
+			teammates.map(({ row }) => sql`${directPairKey(ctx.callerId, row.id)}`),
+			sql`, `,
+		)
+		chats = await rowsOf<DirectChatRow>(
+			db,
+			sql`SELECT c.id AS id, c.direct_pair_key AS pair_key, lm.content AS last_content,
+					lm.actor_id AS last_actor_id,
+					to_char(c.last_message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso
+				FROM conversations c
+				INNER JOIN conversation_participants me
+					ON me.conversation_id = c.id AND me.actor_id = ${ctx.callerId} AND me.left_at IS NULL
+				LEFT JOIN LATERAL (
+					SELECT m.content, m.actor_id FROM messages m
+					WHERE m.conversation_id = c.id
+					ORDER BY m.id DESC
+					LIMIT 1
+				) lm ON true
+				WHERE c.workspace_id = ${ctx.workspaceId}
+					AND c.direct_pair_key IN (${keys})
+					AND (
+						SELECT count(*) FROM conversation_participants p
+						WHERE p.conversation_id = c.id AND p.left_at IS NULL
+					) = 2`,
+		)
+	} catch (error) {
+		logger.warn('Search direct message lookup failed', {
+			workspaceId: ctx.workspaceId,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return none
+	}
+
+	const byKey = new Map(chats.map((chat) => [chat.pair_key, chat]))
+	const lead: SearchResultRow[] = []
+	const replaced = new Set<string>()
+	for (const { row } of teammates) {
+		replaced.add(row.id)
+		const chat = byKey.get(directPairKey(ctx.callerId, row.id))
+		if (!chat) {
+			lead.push({ ...row, type: START_CHAT_ROW_TYPE })
+			continue
+		}
+		replaced.add(chat.id)
+		const sent = chat.last_actor_id === ctx.callerId ? YOU_PREFIX : ''
+		const text = chat.last_content
+			? `${sent}${chat.last_content}`.slice(0, SNIPPET_MAX_LENGTH)
+			: null
+		lead.push({
+			id: chat.id,
+			group: 'chats',
+			type: DIRECT_MESSAGE_ROW_TYPE,
+			title: row.title,
+			sub: null,
+			snippet: text,
+			status: 'read',
+			statusGroup: getStatusGroup('chat', 'read'),
+			updatedAt: chat.updated_iso,
+		})
+	}
+	return { lead, replaced }
 }
 
 /**
@@ -1118,7 +1231,7 @@ export async function runSearch(
 			.flatMap(({ result }) => result.typoRows)
 			.sort((a, b) => a.distance - b.distance)
 			.map(({ row }) => row)
-		const exactRows = byGroup
+		const exactRanked = byGroup
 			.flatMap(({ result }) =>
 				result.rows.map((row, i) => ({
 					row,
@@ -1131,9 +1244,26 @@ export async function runSearch(
 					b.rank.score - a.rank.score ||
 					STATUS_GROUP_RANK[a.row.statusGroup] - STATUS_GROUP_RANK[b.row.statusGroup],
 			)
-			.map(({ row }) => row)
-		const shown = query.per_group ? capPerGroup(exactRows, query.per_group, query.limit) : exactRows
-		results = [...shown, ...typoRows].slice(0, query.limit)
+		// The launcher (per_group) with plain words: a teammate's name leads with their direct
+		// message, kept out of the per-group cap, and CRM contacts go last.
+		const launcherWords =
+			query.per_group !== undefined &&
+			tokens.length > 0 &&
+			!query.types?.length &&
+			!query.statuses?.length &&
+			!query.participants?.length &&
+			!query.updated_after
+		const { lead, replaced } = launcherWords
+			? await teammateLeadRows(db, ctx, exactRanked)
+			: { lead: [], replaced: new Set<string>() }
+		const exactRows = exactRanked.map(({ row }) => row).filter((row) => !replaced.has(row.id))
+		const ordered = launcherWords
+			? [...exactRows.filter((row) => !isContact(row)), ...exactRows.filter(isContact)]
+			: exactRows
+		const shown = query.per_group
+			? capPerGroup(ordered, query.per_group, Math.max(query.limit - lead.length, 0))
+			: ordered
+		results = [...lead, ...shown, ...typoRows].slice(0, query.limit)
 	} else {
 		// The top N of a union is inside the union of each source's top N.
 		const sort = query.sort

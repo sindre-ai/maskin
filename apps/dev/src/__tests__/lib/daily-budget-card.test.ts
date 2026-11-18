@@ -206,8 +206,14 @@ describe('readBudgetSettings', () => {
 		).toEqual({
 			target: { amount: 4 },
 			timezone: 'Europe/Oslo',
+			stopShare: 100,
 			note: null,
 		})
+	})
+
+	it('reads the stop-at share the owner chose', () => {
+		const cfg = readBudgetSettings(at({ unit: 'percent', amount: 4, stop_share: 80 }), 2000)
+		expect(cfg?.stopShare).toBe(80)
 	})
 
 	it('converts an earlier dollar target to its share of the plan limit', () => {

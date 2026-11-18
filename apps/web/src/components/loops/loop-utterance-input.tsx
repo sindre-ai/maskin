@@ -13,7 +13,8 @@ import { forwardRef, useCallback } from 'react'
  * "Change by talking" composer, sticky at the bottom of the loop reader column
  * (mockup 1989–2036). Submitting a plain-language utterance opens a new chat
  * with this loop attached, so the operator edits the loop by describing what
- * should change rather than filling in a builder.
+ * should change rather than filling in a builder. When the flow has an agent
+ * driver, the chat opens with that agent and the typed text already in it.
  */
 export const LoopUtteranceInput = forwardRef<
 	HTMLDivElement,
@@ -23,6 +24,8 @@ export const LoopUtteranceInput = forwardRef<
 		children?: React.ReactNode
 		/** Idle prompt in the composer; defaults to the change-by-talking line. */
 		placeholder?: string
+		/** The agent the placeholder names; the chat opens with it. Omit to use the default agent. */
+		agent?: { id: string; name: string }
 		/** True while a voice capture is running — renders the listening indicator. */
 		listening?: boolean
 		/** Return true to consume the utterance in place (the PROPOSED EDIT card).
@@ -30,7 +33,7 @@ export const LoopUtteranceInput = forwardRef<
 		 *  only path for loops that carry no plan snapshot. */
 		onUtterance?: (utterance: string) => boolean
 	}
->(function LoopUtteranceInput({ loop, children, placeholder, listening, onUtterance }, ref) {
+>(function LoopUtteranceInput({ loop, children, placeholder, agent, listening, onUtterance }, ref) {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
@@ -42,10 +45,15 @@ export const LoopUtteranceInput = forwardRef<
 			navigate({
 				to: '/$workspaceId/chats/new',
 				params: { workspaceId },
-				search: { objectId: loop.id, objectTitle: loop.name ?? undefined, objectType: 'loop' },
+				search: {
+					objectId: loop.id,
+					objectTitle: loop.name ?? undefined,
+					objectType: 'loop',
+					...(agent ? { agentId: agent.id, agentName: agent.name, text: utterance } : {}),
+				},
 			})
 		},
-		[navigate, workspaceId, loop.id, loop.name, onUtterance, canWrite],
+		[navigate, workspaceId, loop.id, loop.name, agent, onUtterance, canWrite],
 	)
 
 	return (

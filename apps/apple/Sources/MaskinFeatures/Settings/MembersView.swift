@@ -14,6 +14,11 @@ struct MembersView: View {
 	let agents: AgentsStore?
 	var onOpenAgent: (String) -> Void = { _ in }
 	var onHire: () -> Void = {}
+	/// Starts a chat with a person, from `person_message_row` (the icon on a row) or `person_message_page`
+	/// (the button on their page). Nil hides the Message icon on every row and the page button.
+	var onMessage: ((ChatParticipant, _ entryPoint: String) -> Void)?
+	/// False for viewers, who cannot start chats: the icon shows, disabled.
+	var canMessage = true
 	/// Pending email invitations (v3). Nil hides the group and the Invite button.
 	let invitations: InvitationsStore?
 	@State private var invitationTarget: PendingInvitation?
@@ -23,13 +28,16 @@ struct MembersView: View {
 
 	init(
 		store: MembersStore, agents: AgentsStore? = nil, invitations: InvitationsStore? = nil,
-		onOpenAgent: @escaping (String) -> Void = { _ in }, onHire: @escaping () -> Void = {}
+		onOpenAgent: @escaping (String) -> Void = { _ in }, onHire: @escaping () -> Void = {},
+		onMessage: ((ChatParticipant, String) -> Void)? = nil, canMessage: Bool = true
 	) {
 		_store = State(initialValue: store)
 		self.invitations = invitations
 		self.agents = agents
 		self.onOpenAgent = onOpenAgent
 		self.onHire = onHire
+		self.onMessage = onMessage
+		self.canMessage = canMessage
 	}
 
 	private var roster: MembersRoster.Groups {
@@ -92,7 +100,9 @@ struct MembersView: View {
 	}
 
 	private func memberDialogs(_ view: some View) -> some View {
-		view.navigationDestination(item: $memberDetail) { MemberDetailPage(store: store, memberID: $0) }
+		view.navigationDestination(item: $memberDetail) {
+			MemberDetailPage(store: store, memberID: $0, onMessage: onMessage, canMessage: canMessage)
+		}
 	}
 
 	private func invitationDialog(_ view: some View) -> some View {
@@ -153,7 +163,20 @@ struct MembersView: View {
 				store.busyIDs.contains(member.id)
 					? PageState("Updating", .muted) : WorkspacePageState.member(role: member.role)),
 			showsChevron: !member.isAgent,
-			action: member.isAgent ? nil : { memberDetail = member.id })
+			action: member.isAgent ? nil : { memberDetail = member.id },
+			message: messageAction(for: member))
+	}
+
+	/// "Message Sam" on every person but you, once the screen knows how to start a chat.
+	private func messageAction(for member: WorkspaceMember) -> PageRowModel.MessageAction? {
+		guard let onMessage,
+			WorkspacePageState.canMessage(member, currentActorId: store.currentActorId)
+		else { return nil }
+		return PageRowModel.MessageAction(
+			label: "Message \(member.name)", isEnabled: canMessage,
+			action: {
+				onMessage(ChatParticipant(id: member.actorId, name: member.name, kind: .human), "person_message_row")
+			})
 	}
 
 	/// An agent: its role under the name, Working in Patina or Idle / Paused in grey, opens the agent.

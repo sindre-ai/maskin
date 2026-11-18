@@ -7,6 +7,9 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -14,18 +17,35 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { decodeBase64Utf8 } from '@/lib/file-utils'
 import type { ProposedChange } from '@/lib/loop-view-bridge'
+import {
+	EXPORT_FAILED_MESSAGE,
+	type ExportFormat,
+	type ExportPage,
+	exportPages,
+	exportPagesOfDocument,
+} from '@/lib/view-export'
 import { MAX_LOOP_VIEW_NAME_LENGTH } from '@maskin/shared'
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Download, MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+
+const EXPORT_CHOICES: { format: ExportFormat; label: string }[] = [
+	{ format: 'markdown', label: 'Markdown' },
+	{ format: 'pdf', label: 'PDF' },
+	{ format: 'png', label: 'PNG' },
+]
 
 /**
  * One custom view as the body of its own tab, under a row with its name and a
- * "···" menu (rename, remove). A view that cannot be shown says why in a note;
- * leaving the tab and coming back (the page remounts it) retries.
+ * "···" menu (refresh, rename, remove). A view that cannot be shown says why in a note;
+ * Refresh, or leaving the tab and coming back (the page remounts it), retries.
  *
  * `onRename` / `onRemove` are omitted for a view the flow does not own (the
- * Briefings view), which then shows no menu.
+ * Briefings view), which then shows only Refresh.
+ *
+ * With the flag loop-view-export, the menu also offers Export (Markdown, PDF, PNG): the file is
+ * built in the browser from what the view shows now, and a failure says so and saves nothing.
  *
  * A view that is a deck or briefing page shows in the same tall, fitted and paged viewer as the
  * Briefings tab, not the self-sizing frame, which shrinks a deck to a strip. Lists and dashboards
@@ -63,87 +83,147 @@ export function LoopViewTab({
 	const dateChange = useFeatureFlag('loop-view-date-change')
 	const [proposed, setProposed] = useState<ProposedChange | null>(null)
 	// Raised on each saved change so the view reloads its lists and shows the new value.
+	// Also raised by the menu's Refresh, which is the same reload run by hand.
 	const [reloadToken, setReloadToken] = useState(0)
+	const [refreshing, setRefreshing] = useState(false)
 	const isMobile = useIsMobile()
 	const [renaming, setRenaming] = useState(false)
 	const [draft, setDraft] = useState(name ?? '')
-	const hasMenu = Boolean(onRename || onRemove)
 	// Shares the file's cache entry with the frame below, so this costs no second load.
 	const { data: file } = useFile(workspaceId, fileId)
 	const isDeck = useMemo(() => (file ? isDeckView(file) : false), [file])
 	const trimmed = draft.trim()
+	const exportEnabled = useFeatureFlag('loop-view-export')
+	// Filled by the view on screen; the page asks it for its pages only when Export is chosen.
+	const exportRef = useRef<(() => Promise<ExportPage[]>) | null>(null)
+	// The slide on screen, kept by the deck viewer.
+	const deckPageRef = useRef(0)
+	const [exporting, setExporting] = useState(false)
+	const [exportFailed, setExportFailed] = useState(false)
 
-	const header =
-		name !== undefined || hasMenu ? (
-			<div className="mb-4 flex items-center gap-2.5 px-1">
-				{renaming ? (
-					<form
-						className="flex items-center gap-2"
-						onSubmit={async (e) => {
-							e.preventDefault()
-							if (!trimmed || !onRename) return
-							if (await onRename(trimmed)) setRenaming(false)
+	async function runExport(format: ExportFormat) {
+		if (!file) return
+		setExportFailed(false)
+		setExporting(true)
+		try {
+			const pages = isDeck
+				? await exportPagesOfDocument(
+						file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content),
+					)
+				: await (exportRef.current?.() ?? Promise.reject(new Error('The view is not ready.')))
+			await exportPages(format, pages, name ?? file.name, isDeck ? deckPageRef.current : 0)
+		} catch (err) {
+			console.error('[loop-view-tab] export failed', err)
+			setExportFailed(true)
+		} finally {
+			setExporting(false)
+		}
+	}
+
+	const header = (
+		<div className="mb-4 flex items-center gap-2.5 px-1">
+			{renaming ? (
+				<form
+					className="flex items-center gap-2"
+					onSubmit={async (e) => {
+						e.preventDefault()
+						if (!trimmed || !onRename) return
+						if (await onRename(trimmed)) setRenaming(false)
+					}}
+				>
+					<Input
+						autoFocus
+						value={draft}
+						maxLength={MAX_LOOP_VIEW_NAME_LENGTH}
+						aria-label="View name"
+						onChange={(e) => setDraft(e.target.value)}
+						className="w-52"
+					/>
+					<Button type="submit" size="sm" disabled={!trimmed || busy}>
+						Save
+					</Button>
+					<Button type="button" size="sm" variant="ghost" onClick={() => setRenaming(false)}>
+						Cancel
+					</Button>
+				</form>
+			) : (
+				name !== undefined && <h2 className="text-sm font-semibold text-foreground">{name}</h2>
+			)}
+			<span className="flex-1" />
+			{exportFailed && (
+				<span role="alert" className="text-xs text-error">
+					{EXPORT_FAILED_MESSAGE}
+				</span>
+			)}
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7 text-muted-foreground"
+						aria-label="View actions"
+						disabled={busy}
+					>
+						<MoreHorizontal size={15} />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					<DropdownMenuItem
+						disabled={refreshing}
+						onSelect={() => {
+							// A view that could not be shown is mounted again, which tries it again.
+							setFailure(null)
+							setReloadToken((n) => n + 1)
 						}}
 					>
-						<Input
-							autoFocus
-							value={draft}
-							maxLength={MAX_LOOP_VIEW_NAME_LENGTH}
-							aria-label="View name"
-							onChange={(e) => setDraft(e.target.value)}
-							className="w-52"
-						/>
-						<Button type="submit" size="sm" disabled={!trimmed || busy}>
-							Save
-						</Button>
-						<Button type="button" size="sm" variant="ghost" onClick={() => setRenaming(false)}>
-							Cancel
-						</Button>
-					</form>
-				) : (
-					<h2 className="text-sm font-semibold text-foreground">{name}</h2>
-				)}
-				<span className="flex-1" />
-				{hasMenu && (
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								variant="ghost"
-								size="icon"
-								className="h-7 w-7 text-muted-foreground"
-								aria-label="View actions"
-								disabled={busy}
-							>
-								<MoreHorizontal size={15} />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							{onRename && (
-								<DropdownMenuItem
-									onSelect={() => {
-										setDraft(name ?? '')
-										setRenaming(true)
-									}}
-								>
-									<Pencil size={14} /> Rename
-								</DropdownMenuItem>
-							)}
-							{onRemove && (
-								<DropdownMenuItem onSelect={onRemove} className="text-error focus:text-error">
-									<Trash2 size={14} /> Remove view
-								</DropdownMenuItem>
-							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
-				)}
-			</div>
-		) : null
+						<RefreshCw size={14} /> Refresh
+					</DropdownMenuItem>
+					{exportEnabled && (
+						<DropdownMenuSub>
+							<DropdownMenuSubTrigger disabled={!file || Boolean(failure) || exporting}>
+								<Download size={14} /> Export
+							</DropdownMenuSubTrigger>
+							<DropdownMenuSubContent>
+								{EXPORT_CHOICES.map(({ format, label }) => (
+									<DropdownMenuItem key={format} onSelect={() => void runExport(format)}>
+										{label}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuSubContent>
+						</DropdownMenuSub>
+					)}
+					{onRename && (
+						<DropdownMenuItem
+							onSelect={() => {
+								setDraft(name ?? '')
+								setRenaming(true)
+							}}
+						>
+							<Pencil size={14} /> Rename
+						</DropdownMenuItem>
+					)}
+					{onRemove && (
+						<DropdownMenuItem onSelect={onRemove} className="text-error focus:text-error">
+							<Trash2 size={14} /> Remove view
+						</DropdownMenuItem>
+					)}
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	)
 
 	if (isDeck) {
 		return (
 			<>
 				{header}
-				<LoopBriefingStage workspaceId={workspaceId} fileId={fileId} hideTitle />
+				<LoopBriefingStage
+					workspaceId={workspaceId}
+					fileId={fileId}
+					hideTitle
+					pageRef={deckPageRef}
+					reloadToken={reloadToken}
+					onRefreshingChange={setRefreshing}
+				/>
 			</>
 		)
 	}
@@ -180,7 +260,9 @@ export function LoopViewTab({
 						onFailure={setFailure}
 						onOpenItem={itemPanel ? setOpenId : undefined}
 						onProposeChange={dateChange ? setProposed : undefined}
+						onRefreshingChange={setRefreshing}
 						reloadToken={reloadToken}
+						exportRef={exportRef}
 					/>
 				</div>
 				{panel && !isMobile ? (

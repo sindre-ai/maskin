@@ -4,7 +4,7 @@ import { z } from 'zod'
 export const DONE_WHEN_CHECKERS = ['code', 'checker', 'person'] as const
 export type DoneWhenChecker = (typeof DONE_WHEN_CHECKERS)[number]
 
-/** A line's state. Until the outcome check lands only a person sets it. */
+/** A line's state. A person ticks it, or the outcome check writes it when an agent asks to close the job. */
 export const DONE_WHEN_STATES = ['true', 'false', 'cannot_tell', 'not_checked'] as const
 export type DoneWhenState = (typeof DONE_WHEN_STATES)[number]
 

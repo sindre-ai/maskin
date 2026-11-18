@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop (v19): status and stage, then the Overview, Performance, Briefings, Items, Activity and
-/// Setup tabs, then any custom views, with the flow's composer pinned at the bottom.
+/// One loop (v19): status and stage, then the Overview tab, any custom views, then the Performance,
+/// Briefings, Items, Activity and Setup tabs, with the flow's composer pinned at the bottom.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
@@ -84,6 +84,12 @@ struct LoopDetailView: View {
 					runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). ")
 				}
 				Divider().overlay(MaskinSurface.separator)
+				if let runtime, runtime.createViewAgent != nil {
+					manageRow(CreateViewMessage.label, symbol: "rectangle.3.group") {
+						runtime.startCreateView(.flow(id: store.loop.id, name: store.loop.displayName))
+					}
+					Divider().overlay(MaskinSurface.separator)
+				}
 				manageRow("Delete flow", symbol: "trash", destructive: true) { confirmDelete = true }
 			}
 			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
@@ -108,8 +114,9 @@ struct LoopDetailView: View {
 	}
 }
 
-/// The loop page's tabs. Each custom view pinned to the loop is a tab of its own, after the fixed
-/// tabs, named by whoever pinned it (same order and names as the web loop page).
+/// The loop page's tabs. Each custom view pinned to the loop is a tab of its own, right after
+/// Overview so it is on screen on a phone, named by whoever pinned it (same order and names as the
+/// web loop page).
 enum LoopDetailTab: Hashable, Identifiable {
 	case overview, performance, briefings, items, activity, setup
 	/// The index keeps two views that share a name apart.
@@ -139,13 +146,14 @@ enum LoopDetailTab: Hashable, Identifiable {
 		}
 	}
 
-	/// The fixed tabs, then the loop's views. Briefings appears only once the flow has
-	/// published one; no views means no extra tab.
+	/// Overview, the loop's views, then the other fixed tabs. Briefings appears only once the flow
+	/// has published one; no views means no extra tab.
 	static func tabs(views: [LoopView], hasBriefings: Bool) -> [LoopDetailTab] {
-		var tabs: [LoopDetailTab] = [.overview, .performance]
+		var tabs: [LoopDetailTab] = [.overview]
+		tabs += views.enumerated().map { .view(index: $0.offset, $0.element) }
+		tabs.append(.performance)
 		if hasBriefings { tabs.append(.briefings) }
 		tabs += [.items, .activity, .setup]
-		tabs += views.enumerated().map { .view(index: $0.offset, $0.element) }
 		return tabs
 	}
 }
@@ -194,6 +202,7 @@ struct LoopDetailContent: View {
 			if let problem = store.problem() {
 				LoopProblemBanner(problem: problem, loop: store.loop, directory: store.directory)
 			}
+			if store.failed(.views) { blockError(.views) }
 			FlowTabBar(tabs: tabs, selection: $tab)
 			content
 		}
@@ -335,7 +344,7 @@ struct LoopDetailContent: View {
 	}
 }
 
-/// Overview, Performance, Briefings, Items, Activity, Setup, then the loop's views: text tabs with an
+/// Overview, the loop's views, Performance, Briefings, Items, Activity, Setup: text tabs with an
 /// ink underline under the open one, scrolling sideways when they don't fit.
 struct FlowTabBar: View {
 	let tabs: [LoopDetailTab]

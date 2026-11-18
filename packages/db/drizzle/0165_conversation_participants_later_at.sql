@@ -8,6 +8,6 @@
 -- Nullable column with no default: no table rewrite, existing rows stay null (not on Later).
 -- conversation_participants is not on the hot-tables list (packages/db/MIGRATIONS.md), so a plain
 -- ALTER is fine. Nothing reads or writes it until the new routes ship.
--- Down: drizzle/down/0164_conversation_participants_later_at_down.sql.
+-- Down: drizzle/down/0165_conversation_participants_later_at_down.sql.
 
 ALTER TABLE "conversation_participants" ADD COLUMN IF NOT EXISTS "later_at" timestamp with time zone;

@@ -178,6 +178,24 @@ public final class SearchStore {
 		await run(query, generation: generation)
 	}
 
+	// MARK: Changes from a row menu
+
+	/// Takes a result out of the list and out of the cached chat and flow lists, so it stays gone
+	/// when the words change. For a chat that was archived or deleted from its menu.
+	public func remove(_ result: SearchResult) {
+		allResults.removeAll { $0.id == result.id }
+		chatsCache?.removeAll { $0.id == result.id }
+		flowsCache?.removeAll { $0.id == result.id }
+	}
+
+	/// Shows an object's new status on its row, after its status changed from the row menu.
+	public func setStatus(_ status: String, ofObject id: String) {
+		let subtitle = status.replacingOccurrences(of: "_", with: " ")
+		for index in allResults.indices where allResults[index].kind == .object && allResults[index].entityId == id {
+			allResults[index].subtitle = subtitle
+		}
+	}
+
 	// MARK: Recents
 
 	public func reloadRecents() {

@@ -217,6 +217,15 @@ public final class LinkedItemStore {
 	/// True when the target is drawn as a card in a message.
 	public func isCard(_ target: LinkedTarget) -> Bool { item(for: target)?.isCard == true }
 
+	/// True when one of the targets is a draft that can still be approved (not yet approved or
+	/// sent). The draft card then carries the yes, so a question beside it would ask it twice.
+	public func hasApprovableDraft(in targets: [LinkedTarget]) -> Bool {
+		targets.contains { target in
+			guard case .draft(_, let preview)? = item(for: target) else { return false }
+			return preview.delivery == nil || preview.delivery == .draft
+		}
+	}
+
 	/// True when the link should be a card now. An object link counts before its answer is in (the
 	/// card is a placeholder), so the message does not jump when the answer arrives; one that cannot
 	/// be shown goes back to text.
@@ -697,4 +706,7 @@ public enum LinkedDraftMessage {
 		let quoted = body.components(separatedBy: "\n").map { "> \($0)" }.joined(separator: "\n")
 		return "Approved \"\(name.isEmpty ? "Untitled" : name)\". Send it exactly as it reads:\n\n\(quoted)"
 	}
+
+	/// The words sent to the agent when a person skips a draft instead of approving it.
+	public static let skipped = "Skip: do not send this draft"
 }

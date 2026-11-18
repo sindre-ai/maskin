@@ -62,7 +62,9 @@ export const searchQuerySchema = z.object({
 	/**
 	 * Relevance sort only: at most this many rows from each source group are kept first, so a few
 	 * rows (the launcher shows six) are shared across chats, agents and people. Unused room is
-	 * filled from the groups that have more.
+	 * filled from the groups that have more. It also marks the launcher's answer: a teammate whose
+	 * name matches the words leads with their direct message (outside this cap), and CRM contacts
+	 * come last.
 	 */
 	per_group: z.coerce.number().int().min(1).max(SEARCH_MAX_LIMIT).optional(),
 })
@@ -71,10 +73,19 @@ export type SearchQuery = z.infer<typeof searchQuerySchema>
 export type SearchSort = (typeof SEARCH_SORTS)[number]
 export type SearchSourceGroup = (typeof SEARCH_SOURCE_GROUPS)[number]
 
+/** Row types of the launcher's answer: a teammate's direct message, and a teammate with no chat yet. */
+export const DIRECT_MESSAGE_ROW_TYPE = 'direct_message'
+export const START_CHAT_ROW_TYPE = 'start_chat'
+
 export const searchResultRowSchema = z.object({
 	id: z.string().uuid(),
 	group: z.enum(SEARCH_SOURCE_GROUPS),
-	/** chat, agent, person, automation, or the object type key (loop included). */
+	/**
+	 * chat, agent, person, automation, or the object type key (loop included). The launcher's
+	 * per_group answer adds two (DIRECT_MESSAGE_ROW_TYPE, START_CHAT_ROW_TYPE): direct_message (group chats, the caller's direct message with a
+	 * teammate whose name matched) and start_chat (group people, a matched teammate with no direct
+	 * message yet).
+	 */
 	type: z.string(),
 	title: z.string(),
 	sub: z.string().nullable(),

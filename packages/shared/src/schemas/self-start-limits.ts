@@ -46,6 +46,46 @@ export const SELF_STARTED_REASONS: readonly SessionStartReason[] = [
 	'sent_back',
 ]
 
+/**
+ * How important a session is when the day's budget is used up. One scale, written once, so the
+ * Admission bet can adopt it (daily token budget, task "Park work at the daily limit").
+ *
+ * `urgent`  a person started it or a person waits on it: never held, whatever the day has spent
+ * `normal`  work for an open task, an answer, a restart or a retry
+ * `low`     scheduled runs, self-set wake-ups and sweeps
+ *
+ * ASSUMED mapping (Strategist's first cut): `internal` (onboarding, bootstrap, platform-made
+ * sessions) is urgent so the platform never holds its own setup, and `sent_back` and
+ * `driver_wake` are normal because a task is open behind them.
+ */
+export const SESSION_IMPORTANCES = ['urgent', 'normal', 'low'] as const
+export type SessionImportance = (typeof SESSION_IMPORTANCES)[number]
+
+export const IMPORTANCE_BY_START_REASON: Record<SessionStartReason, SessionImportance> = {
+	person: 'urgent',
+	internal: 'urgent',
+	agent_request: 'normal',
+	trigger_event: 'normal',
+	task_restart: 'normal',
+	retry: 'normal',
+	sent_back: 'normal',
+	driver_wake: 'normal',
+	trigger_cron: 'low',
+	self_wakeup: 'low',
+	sweep: 'low',
+}
+
+/** Lower runs first. */
+export const IMPORTANCE_RANK: Record<SessionImportance, number> = { urgent: 0, normal: 1, low: 2 }
+
+/** Human-facing work (a chat turn, anything that belongs to a conversation) is urgent whatever started it. */
+export function sessionImportance(
+	reason: SessionStartReason,
+	humanFacing: boolean,
+): SessionImportance {
+	return humanFacing ? 'urgent' : IMPORTANCE_BY_START_REASON[reason]
+}
+
 /** Reasons that continue earlier work on an object and so carry a cap in a row. */
 export const CONTINUATION_REASONS: readonly SessionStartReason[] = [
 	'self_wakeup',

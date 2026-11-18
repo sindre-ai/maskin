@@ -116,7 +116,7 @@ final class MustKeepTests: XCTestCase {
 
 	// MARK: MK-03 Reply in a thread
 
-	/// Long-press a message → Reply in thread → the thread opens with a reply field.
+	/// Tap a message's More button → Reply in thread → the thread opens with a reply field.
 	///
 	/// Uses the Priya Rao chat, not an agent chat: the Live tests leave call records on the device that
 	/// wrap an agent chat's messages in a call card, and a card's menu is only Copy and Share.
@@ -131,7 +131,9 @@ final class MustKeepTests: XCTestCase {
 			try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/mk03.png"))
 			XCTFail("the chat's messages load (screen dumped to \(dir))")
 		}
-		message.press(forDuration: 1.0)
+		// A long-press now selects words; the menu is behind the More button beside the message.
+		let inRow = message.buttons["More"].firstMatch
+		(inRow.exists ? inRow : app.buttons["More"].firstMatch).tap()
 		let item = app.buttons["Reply in thread"].firstMatch
 		if !item.waitForExistence(timeout: 5) { dumpScreen("mk03-menu") }
 		XCTAssertTrue(item.exists, "a message's menu offers 'Reply in thread'")

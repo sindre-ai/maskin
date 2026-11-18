@@ -1,3 +1,4 @@
+import { formatCopenhagenStamp } from '@maskin/shared'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { type AliasHarness, startAliasHarness } from './helpers/alias-harness'
 
@@ -156,7 +157,7 @@ describe('create_trigger run_at over the real MCP transport', () => {
 		expect(result.trigger).toMatchObject({
 			kind: 'one-time',
 			next_run: RUN_AT,
-			schedule: `once at ${RUN_AT}`,
+			schedule: `once at ${formatCopenhagenStamp(RUN_AT)}`,
 		})
 	})
 

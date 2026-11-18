@@ -15,6 +15,8 @@ public final class AppRuntime {
 	}
 
 	public let environment: AppEnvironment
+	/// The flags resolved for the signed-in actor; reloaded on every sign-in and workspace change.
+	public let featureFlags: FeatureFlagStore
 	public let router: DeepLinkRouter
 	public let push: PushRegistrar?
 	/// The in-app pre-prompt before the system's notification prompt. Nil without a registrar.
@@ -179,19 +181,41 @@ public final class AppRuntime {
 		public let live: Bool
 		/// Text for the new chat's message box (item detail's Message mode).
 		public let draft: String
+		/// Where it started, for `chat_session_started`.
+		public let entryPoint: String
 	}
 	public var agentChatRequest: AgentChatRequest?
 
-	public func startChat(with agent: ChatParticipant, live: Bool = false, draft: String = "") {
+	public func startChat(
+		with agent: ChatParticipant, live: Bool = false, draft: String = "", entryPoint: String = "agent_one_shot"
+	) {
 		presentation = nil
 		selectedTab = .chats
-		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft)
+		agentChatRequest = AgentChatRequest(agent: agent, live: live, draft: draft, entryPoint: entryPoint)
 	}
 
 	public func buildInChat(_ text: String) {
 		presentation = nil
 		selectedTab = .chats
 		chatDraft = ChatDraft(text: text)
+	}
+
+	/// "Create view with agent": the Design Studio agent for the selected workspace, refreshed by
+	/// `sync()` once the flag is on.
+	public let createView: CreateViewStore
+
+	/// Design Studio, when the "Create view with agent" item should show: flag on, the person can
+	/// write (not a viewer) and the workspace has the agent. Nil hides the item.
+	public var createViewAgent: ChatParticipant? {
+		let role = environment.workspaces.workspaces.first { $0.id == environment.workspaceId }?.role
+		return createView.agent(
+			forRole: role, flagOn: featureFlags.isEnabled(FeatureFlagID.createViewWithAgent))
+	}
+
+	/// Opens a new chat with Design Studio, the first message filled in and not sent.
+	public func startCreateView(_ scope: CreateViewScope) {
+		guard let agent = createViewAgent else { return }
+		startChat(with: agent, draft: CreateViewMessage.text(for: scope), entryPoint: CreateViewMessage.entryPoint)
 	}
 
 	public private(set) var isSigningOut = false
@@ -227,6 +251,8 @@ public final class AppRuntime {
 			NotificationPromptCoordinator(policy: NotificationPromptPolicy(storage: promptStorage), push: $0)
 		}
 		self.environment = environment
+		self.featureFlags = FeatureFlagStore(api: APIFeatureFlagsSource(client: environment.client))
+		self.createView = CreateViewStore(source: APICreateViewSource(client: environment.client))
 		self.push = push
 		self.router = router ?? DeepLinkRouter(environment: environment)
 		self.signOutTimeout = signOutTimeout
@@ -337,6 +363,15 @@ public final class AppRuntime {
 			selectedTab = .forYou
 		}
 		lastSyncedWorkspaceId = environment.workspaceId
+		Task { [workspaceID = environment.workspaceId] in
+			await featureFlags.load()
+			// Design Studio is only looked up once the flag is on, so flag-off people pay nothing.
+			if featureFlags.isEnabled(FeatureFlagID.createViewWithAgent) {
+				await createView.load(workspaceID: workspaceID)
+			} else {
+				createView.reset()
+			}
+		}
 		// Start the chat runtime now (not when the Chats tab first appears) so messages queued
 		// offline, or before the app was last killed, replay as soon as the user is signed in.
 		_ = ChatsRuntime.shared(environment: environment)
@@ -395,8 +430,10 @@ public final class AppRuntime {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
 		notificationPreferences = nil
+		featureFlags.reset()
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
+		createView.reset()
 		stopSyncCoordinator()
 		router.reset()
 		environment.workspaces.reset()
@@ -621,6 +658,8 @@ public final class AppRuntime {
 		let running = forYouRuntime
 		forYouRuntime = nil
 		notificationPreferences = nil
+		featureFlags.reset()
+		createView.reset()
 		rosterProvider = nil
 		storiesProvider = StoriesProvider()
 		if let push {

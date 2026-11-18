@@ -36,18 +36,6 @@ export const FLAGS = {
 	 */
 	DEEPDOTS_CONNECT: 'deepdots-connect',
 	/**
-	 * Gates the weekly capability note that Chief of Staff sends in a person's
-	 * 1-1 (bet
-	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
-	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace at the
-	 * top of runCapabilityDigest. Off means no note is sent in that workspace and
-	 * findings stay pending, so they merge into the first note once it is on.
-	 * The scan itself is not flagged (it only writes events); its off-switch is
-	 * the env var FEATURE_CAPABILITY_SCAN=0. Retire once the notes are on for
-	 * everyone.
-	 */
-	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
-	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section
@@ -107,42 +95,13 @@ export const FLAGS = {
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
 	/**
-	 * Gates the Next step block at the top of the object page (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
-	 * rule 2). Frontend only: read once, in the object detail shell. Off means the page is drawn
-	 * exactly as before. The table, route and MCP tools behind it are additive and safe with the
-	 * flag off. Retire once the block is on for everyone.
+	 * Gates the simpler For You card (task [Give For You cards their context](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8ac3f27a-4f3f-4c9e-9e90-d43a03ffe71b)):
+	 * the object the card is about on its first line, the chat composer as the message box, plain
+	 * summary text, no Recommended tag on a lone answer, Open the task to decide when there are no
+	 * buttons, and Open chat on the reply receipt. UI only, read where the card draws. Off means
+	 * the card looks as it does today. Retire once it is on for everyone.
 	 */
-	NEXT_STEP_BLOCK: 'next-step-block',
-	/**
-	 * Gates the "Jobs you are handed" block in chat prompts (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
-	 * task [Link every job to its flow target](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/08e1e494-86ad-4a98-b085-c88c8a64c2b4)).
-	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace when a chat session
-	 * launches. Off means chat prompts are built exactly as before. Switch on only once the cap on
-	 * self-started work is live in production, because the block tells the agent to start follow-up
-	 * steps on its own. Retire once it is on for everyone.
-	 */
-	JOB_TARGET_IN_CHAT: 'job-target-in-chat',
-	/**
-	 * Gates what a stored go-ahead changes for people and sessions (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
-	 * task [Store the go-ahead on the job](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1ae8438e-a1a4-43aa-8e8f-3a575f04c0b1)):
-	 * the go-ahead line on the object page (frontend, read once in the object detail shell) and the
-	 * go-ahead block in session prompts (backend, workspace-scoped or per driver actor, read when a
-	 * session launches). Off means the page and the prompts are exactly as before. The table, route
-	 * and MCP tools behind it are additive and safe with the flag off. Switch on only once the cap on
-	 * self-started work is live in production, because with a go-ahead the agent carries on alone.
-	 * Retire once it is on for everyone.
-	 */
-	GO_AHEAD: 'go-ahead',
-	/**
-	 * Gates the done-when list (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
-	 * task [Write a done-when list before work starts](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/75cf7896-7e2f-4f28-b2bc-c7b06d621b2d)):
-	 * the done_when block on a decision card (backend, workspace-scoped: refused when off, read with
-	 * isFlagEnabledForWorkspace when the card is posted), the lines on the card and the "N of M lines
-	 * true" block on the job's Overview (frontend, read where they draw). Off means cards are
-	 * posted and drawn exactly as before and the Overview shows nothing. The tables and routes
-	 * behind it are additive and safe with the flag off. Retire once it is on for everyone.
-	 */
-	DONE_WHEN_LIST: 'done-when-list',
+	FOR_YOU_CARD_CONTEXT: 'foryou-card-context',
 	/**
 	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
@@ -154,16 +113,8 @@ export const FLAGS = {
 	 */
 	DRIVER_WAKE: 'driver-wake',
 	/**
-	 * Gates the sweep for overdue or missing next steps and the heartbeat pre-check (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
-	 * rule 4, fallback half). Backend only, workspace-scoped: read with isFlagEnabledForWorkspace
-	 * in services/next-step-sweep.ts. On means the sweep runs in RECORD-ONLY mode: it writes what
-	 * it would have woken and starts nothing, and the heartbeat pre-check logs what it would have
-	 * skipped and changes no run. Nothing here starts a run until NEXT_STEP_SWEEP_WAKE is on too.
-	 */
-	NEXT_STEP_SWEEP: 'next-step-sweep',
-	/**
-	 * Lets the sweep start runs. Needs NEXT_STEP_SWEEP on for the workspace, and the sweep must
-	 * have been recording for at least 3 days (the first-run flood guard). Turn on only after the
+	 * Lets the sweep start runs. The sweep records in every workspace and must have been recording
+	 * in this one for at least 3 days (the first-run flood guard). Turn on only after the
 	 * would-wake list was compared with what is really stuck and the self-start limits are live.
 	 */
 	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
@@ -184,6 +135,14 @@ export const FLAGS = {
 	 */
 	LOOP_VIEW_DATE_CHANGE: 'loop-view-date-change',
 	/**
+	 * Gates Export in the three-dot menu of a custom view: Markdown, PDF or PNG of what the view
+	 * shows now, built in the browser and saved by the person's click (task [Export a view as
+	 * Markdown, PDF or PNG](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5494586-905b-4845-80d8-33314a419635)).
+	 * Frontend only: read once, in `LoopViewTab`. Off means the menu has no Export. Retire once it
+	 * is on for everyone.
+	 */
+	LOOP_VIEW_EXPORT: 'loop-view-export',
+	/**
 	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
 	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
 	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for
@@ -202,6 +161,14 @@ export const FLAGS = {
 	 */
 	DECISION_DEFAULT: 'decision-default',
 	/**
+	 * Gates undo send in chat: a sent message is held in the client for a few seconds
+	 * behind an Undo bar, and nothing is posted until the window ends. Frontend only: web reads
+	 * it once, in `useUndoSend`, and iOS reads it from `GET /api/feature-flags` (`FeatureFlagID`).
+	 * Off means a send posts at once, as before. The API is untouched. Retire once undo send is
+	 * on for everyone.
+	 */
+	CHAT_UNDO_SEND: 'chat-undo-send',
+	/**
 	 * Gates the mail to the billing owner when a workspace uses up its plan (task [Email when a
 	 * workspace uses up its plan](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/456ff70b-5c4a-4e2a-80c6-fded357ea84a)).
 	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in
@@ -219,6 +186,14 @@ export const FLAGS = {
 	 * everyone without it. Retire once the new list is on for everyone.
 	 */
 	CHAT_LIST_V2: 'chat-list-v2',
+	/**
+	 * Gates the Create view with agent item in the menus on the Items list, an item's page and
+	 * a flow page (task [Add Create view with agent menu item](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/93b3749a-d33d-4d67-9513-4a79c11fc83c)).
+	 * Frontend only, actor-scoped: read with useFeatureFlag in use-create-view-with-agent. Off
+	 * means the three menus look as they do today. The chat it opens, pinned files and flow
+	 * views are existing features and are not gated. Retire once the item is on for everyone.
+	 */
+	CREATE_VIEW_WITH_AGENT: 'create-view-with-agent',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -40,6 +40,7 @@ public struct SearchScreen: View {
 
 private struct SearchScreenContent: View {
 	@State private var store: SearchStore
+	@State private var rowActions: SearchRowActions
 	@State private var path: [SearchRoute] = []
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	private let environment: AppEnvironment
@@ -51,10 +52,19 @@ private struct SearchScreenContent: View {
 		let remote = APISearchRemote(
 			client: environment.client, credentials: environment.auth.credentialsProvider)
 		let auth = environment.auth
-		_store = State(
-			initialValue: SearchStore(
-				remote: remote, recents: SearchRecents(actorId: auth.session?.actorId ?? ""),
-				workspaceId: { auth.session?.workspaceId }, currentActorId: { auth.session?.actorId }))
+		let searchStore = SearchStore(
+			remote: remote, recents: SearchRecents(actorId: auth.session?.actorId ?? ""),
+			workspaceId: { auth.session?.workspaceId }, currentActorId: { auth.session?.actorId })
+		_store = State(initialValue: searchStore)
+		// The long-press menus act on a chat list and an object list of their own (see SearchRowActions).
+		let workspaceID = environment.workspaceId ?? ""
+		let services = ObjectsServices(environment: environment)
+		let objects = ObjectsStore(remote: services.remote, directory: services.directory)
+		objects.bindWorkspace(environment.workspaceId)
+		let chats = ConversationsStore(
+			api: APIChatsSource(client: environment.client, workspaceID: workspaceID), events: nil,
+			preferences: TeamPreferences(actorID: auth.session?.actorId, workspaceID: workspaceID))
+		_rowActions = State(initialValue: SearchRowActions(search: searchStore, chats: chats, objects: objects))
 		self.environment = environment
 		self.open = open
 	}
@@ -63,8 +73,23 @@ private struct SearchScreenContent: View {
 		NavigationStack(path: $path) {
 			SearchContentView(
 				store: store, needsYou: needsYou, onOpenNeedsYou: { runtime?.openObject($0) },
-				onAskChiefOfStaff: askChiefOfStaff, onCreate: create, createKinds: onNewItem == nil ? [.flow, .chat] : [.item, .flow, .chat], onSelect: select
+				onAskChiefOfStaff: askChiefOfStaff, onCreate: create, createKinds: onNewItem == nil ? [.flow, .chat] : [.item, .flow, .chat],
+				rowMenu: { AnyView(rowActions.menu(for: $0)) }, onSelect: select
 			)
+				.undoToast(Binding(get: { rowActions.undoOffer }, set: { rowActions.undoOffer = $0 }))
+				.confirmationDialog(
+					"Delete this conversation?",
+					isPresented: Binding(
+						get: { rowActions.deleteTarget != nil }, set: { if !$0 { rowActions.deleteTarget = nil } }),
+					titleVisibility: .visible, presenting: rowActions.deleteTarget
+				) { target in
+					Button("Delete", role: .destructive) {
+						MaskinHaptics.play(.warning)
+						rowActions.delete(target)
+					}
+				} message: { _ in
+					Text("It disappears from your chats. This can't be undone.")
+				}
 				.shellToolbar(environment: environment, title: "Search")
 				.searchable(
 					text: Binding(get: { store.query }, set: { store.setQuery($0) }),
@@ -83,6 +108,12 @@ private struct SearchScreenContent: View {
 		.onAppear {
 			store.reloadRecents()
 			store.expireStaleDirectories()
+			rowActions.open = select
+		}
+		// The menus need the rows of what was found: read them once the results are in.
+		.task(id: store.phase == .results ? store.query : "") {
+			let words = store.query.trimmingCharacters(in: .whitespacesAndNewlines)
+			if store.phase == .results, !words.isEmpty { await rowActions.load(query: words) }
 		}
 	}
 

@@ -53,34 +53,3 @@ struct EditMessageSheet: View {
 		#endif
 	}
 }
-
-/// A message's text with word-level selection. In the thread a long-press opens the message
-/// menu, so selecting part of a message happens here.
-struct SelectTextSheet: View {
-	let text: String
-	@Environment(\.dismiss) private var dismiss
-
-	var body: some View {
-		NavigationStack {
-			ScrollView {
-				Text(text)
-					.maskinText(.body)
-					.foregroundStyle(MaskinColor.ink)
-					.textSelection(.enabled)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.padding(MaskinSpace.s9)
-			}
-			.ambientBackground(showsBottom: false)
-			.navigationTitle("Select text")
-			#if os(iOS)
-			.navigationBarTitleDisplayMode(.inline)
-			#endif
-			.toolbar {
-				ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-			}
-		}
-		#if os(iOS)
-		.presentationDetents([.medium, .large])
-		#endif
-	}
-}

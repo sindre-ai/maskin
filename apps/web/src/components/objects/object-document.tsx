@@ -8,6 +8,7 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useCreateViewWithAgent } from '@/hooks/use-create-view-with-agent'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useIsDesktopViewport, useIsMobile } from '@/hooks/use-mobile'
 import {
@@ -34,6 +35,7 @@ import type {
 	RelationshipResponse,
 } from '@/lib/api'
 import { classifyBetStatus } from '@/lib/bet-status'
+import { createViewRequest } from '@/lib/create-view-message'
 import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -515,6 +517,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 	}, [handleDelete])
 
 	const [menuOpen, setMenuOpen] = useState(false)
+	const createView = useCreateViewWithAgent()
 
 	// Right-side properties sidebar: transient Sheet on mobile, persisted
 	// expanded/collapsed on tablet+. State is read from and written to
@@ -676,6 +679,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				object={object}
 				onDeleteRequest={openDeleteConfirm}
 				onArchiveRequest={handleArchive}
+				onCreateViewRequest={createViewRequest(createView.open, object)}
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}

@@ -366,7 +366,7 @@ function QuietHoursRow({
 							value={formatMinuteOfDay(start)}
 							onChange={(e) => change('start', e.target.value)}
 							aria-label="Quiet hours start"
-							className="w-28 rounded-full border-0 bg-secondary"
+							className="w-28 rounded-full bg-secondary"
 						/>
 						<span className="text-[13px] text-muted-foreground">to</span>
 						<Input
@@ -374,7 +374,7 @@ function QuietHoursRow({
 							value={formatMinuteOfDay(end)}
 							onChange={(e) => change('end', e.target.value)}
 							aria-label="Quiet hours end"
-							className="w-28 rounded-full border-0 bg-secondary"
+							className="w-28 rounded-full bg-secondary"
 						/>
 					</>
 				)}

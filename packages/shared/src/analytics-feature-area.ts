@@ -42,6 +42,7 @@ const EXACT: Record<string, FeatureArea> = {
 	ask_banner_decide_clicked: 'for_you',
 	object_updated: 'objects',
 	object_created: 'objects',
+	outcome_checked: 'objects',
 	object_attached_file: 'objects',
 	knowledge_object_created: 'objects',
 	relationship_created: 'objects',

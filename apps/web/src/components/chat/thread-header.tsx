@@ -23,6 +23,7 @@ import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { copyChatLink } from '@/lib/copy-chat-link'
 import { useVoiceCallView } from '@/lib/voice-call-view'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import {
@@ -31,6 +32,7 @@ import {
 	ArrowLeft,
 	Copy,
 	EyeOff,
+	Link2,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
@@ -335,6 +337,10 @@ export function ThreadHeader({
 					<DropdownMenuItem onSelect={handleCopyConversation}>
 						<Copy size={14} />
 						<span>Copy whole conversation</span>
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => void copyChatLink()}>
+						<Link2 size={14} />
+						<span>Copy link</span>
 					</DropdownMenuItem>
 					<DropdownMenuItem
 						onSelect={() =>

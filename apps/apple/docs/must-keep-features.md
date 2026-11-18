@@ -33,7 +33,7 @@ contain renders. A row passing is necessary, not sufficient. Each row below stat
 | MK-01 | On For you, taps **Live briefing** in the top bar | The call screen opens (End call and Minimise call buttons) | The call connects (in the demo it always reads "Couldn't connect the call"), audio works, which agent it is with | `testMK01_LiveBriefingFromForYou` |
 | MK-02a | In the Chief of Staff chat, taps **Live** (chat header or composer waveform) | The call screen opens | Which agent the call is with; that it connects | `testMK02a_LiveWithChiefOfStaffFromChat` |
 | MK-02b | In the Outreach room (several agents), taps **Live** | The call screen opens | Same | `testMK02b_LiveWithAgentRoomFromChat` |
-| MK-03 | Long-presses a message and chooses **Reply in thread** | The thread opens with a Reply field | That a reply is sent | `testMK03_ReplyInThread` |
+| MK-03 | Taps the **More** button on a message and chooses **Reply in thread** | The thread opens with a Reply field | That a reply is sent | `testMK03_ReplyInThread` |
 | MK-04 | In a chat, sees a message with replies | Shows "2 replies", replies stay out of the main timeline, tapping opens both replies | Unread counts, replies by agents, "also send to chat" | `testMK04_ThreadWithRepliesOpens` |
 | MK-05 | In a chat, opens a long email draft card, then scrolls up and taps **Jump to latest** | The card opens and shows Approve (the screen stays responsive); the jump button shows and brings the end back | Editing the draft text, approving it, a draft that is already sent | `testMK05_LongDraftCardOpensInChat` |
 
