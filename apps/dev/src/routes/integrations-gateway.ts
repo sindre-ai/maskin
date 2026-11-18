@@ -25,6 +25,7 @@ import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
 import { logger } from '../lib/logger'
 import { decideSend } from '../lib/send-gate'
+import { callingSessionId } from '../lib/session-flow'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
@@ -45,7 +46,14 @@ import { isWorkspaceWriter } from '../lib/workspace-auth'
  *    stream, session end): forwarded as is.
  */
 
-type Env = { Variables: { db: Database; actorId: string; maskinSessionId?: string } }
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		apiKeySessionId?: string | null
+		maskinSessionId?: string
+	}
+}
 
 const app = new Hono<Env>()
 
@@ -239,7 +247,7 @@ export async function proxyMcp(
 				workspaceId,
 				agentId: actorId,
 				kind: 'email',
-				sessionId: c.get('maskinSessionId'),
+				sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 			})
 			if (send !== 'send_now') {
 				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }

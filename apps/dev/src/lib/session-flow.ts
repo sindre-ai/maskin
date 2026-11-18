@@ -95,6 +95,18 @@ export async function loadFlowLookup(
  */
 export const PILOT_FLOW_STATUSES: readonly string[] = ['pilot', 'learning']
 
+/**
+ * The session a send call comes from. A session key names its session and cannot be left off or
+ * forged, so it comes first; the header is only the fallback for a call whose key is not a
+ * session key (a person chatting sends none).
+ */
+export function callingSessionId(
+	apiKeySessionId: string | null | undefined,
+	headerSessionId: string | undefined,
+): string | undefined {
+	return apiKeySessionId ?? headerSessionId
+}
+
 /** How far up the helper chain a session inherits its flow from. */
 const MAX_SPAWN_HOPS = 5
 

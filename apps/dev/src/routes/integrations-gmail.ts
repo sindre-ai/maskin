@@ -45,6 +45,7 @@ import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
 import { decideSend, deniedMessage, recordAutoSent } from '../lib/send-gate'
+import { callingSessionId } from '../lib/session-flow'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -74,6 +75,7 @@ type Env = {
 		actorId: string
 		workspaceRole?: string
 		storageProvider?: StorageProvider
+		apiKeySessionId?: string | null
 		maskinSessionId?: string
 	}
 }
@@ -607,7 +609,7 @@ app.openapi(sendRoute, async (c) => {
 		workspaceId,
 		agentId: actorId,
 		kind: 'email',
-		sessionId: c.get('maskinSessionId'),
+		sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 	})
 	if (decision === 'denied') {
 		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
