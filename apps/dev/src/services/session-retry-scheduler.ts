@@ -176,7 +176,7 @@ export class SessionRetryScheduler {
 		// is not passed through — it isn't a top-level sessions column (it's
 		// folded into config.source_comment_event_id at start time), and the
 		// original session's config already carries that key, so the retry
-		// inherits it via config: row.config below.
+		// inherits it via config: this.retryConfig(row) below.
 		let newSessionId: string
 		try {
 			const handle = await startSession({
@@ -184,7 +184,7 @@ export class SessionRetryScheduler {
 				actorId: row.actorId,
 				callerKind: 'internal',
 				actionPrompt: row.actionPrompt,
-				config: row.config ?? undefined,
+				config: this.retryConfig(row),
 				conversationId: row.conversationId ?? undefined,
 				triggerId: row.triggerId ?? undefined,
 				// The retry keeps the originating object so its terminal telemetry and
