@@ -7,6 +7,9 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -14,10 +17,24 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFile } from '@/hooks/use-files'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { decodeBase64Utf8 } from '@/lib/file-utils'
 import type { ProposedChange } from '@/lib/loop-view-bridge'
+import {
+	EXPORT_FAILED_MESSAGE,
+	type ExportFormat,
+	type ExportPage,
+	exportPages,
+	exportPagesOfDocument,
+} from '@/lib/view-export'
 import { MAX_LOOP_VIEW_NAME_LENGTH } from '@maskin/shared'
-import { MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Download, MoreHorizontal, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+
+const EXPORT_CHOICES: { format: ExportFormat; label: string }[] = [
+	{ format: 'markdown', label: 'Markdown' },
+	{ format: 'pdf', label: 'PDF' },
+	{ format: 'png', label: 'PNG' },
+]
 
 /**
  * One custom view as the body of its own tab, under a row with its name and a
@@ -26,6 +43,9 @@ import { useMemo, useState } from 'react'
  *
  * `onRename` / `onRemove` are omitted for a view the flow does not own (the
  * Briefings view), which then shows only Refresh.
+ *
+ * With the flag loop-view-export, the menu also offers Export (Markdown, PDF, PNG): the file is
+ * built in the browser from what the view shows now, and a failure says so and saves nothing.
  *
  * A view that is a deck or briefing page shows in the same tall, fitted and paged viewer as the
  * Briefings tab, not the self-sizing frame, which shrinks a deck to a strip. Lists and dashboards
@@ -73,6 +93,32 @@ export function LoopViewTab({
 	const { data: file } = useFile(workspaceId, fileId)
 	const isDeck = useMemo(() => (file ? isDeckView(file) : false), [file])
 	const trimmed = draft.trim()
+	const exportEnabled = useFeatureFlag('loop-view-export')
+	// Filled by the view on screen; the page asks it for its pages only when Export is chosen.
+	const exportRef = useRef<(() => Promise<ExportPage[]>) | null>(null)
+	// The slide on screen, kept by the deck viewer.
+	const deckPageRef = useRef(0)
+	const [exporting, setExporting] = useState(false)
+	const [exportFailed, setExportFailed] = useState(false)
+
+	async function runExport(format: ExportFormat) {
+		if (!file) return
+		setExportFailed(false)
+		setExporting(true)
+		try {
+			const pages = isDeck
+				? await exportPagesOfDocument(
+						file.encoding === 'utf8' ? file.content : decodeBase64Utf8(file.content),
+					)
+				: await (exportRef.current?.() ?? Promise.reject(new Error('The view is not ready.')))
+			await exportPages(format, pages, name ?? file.name, isDeck ? deckPageRef.current : 0)
+		} catch (err) {
+			console.error('[loop-view-tab] export failed', err)
+			setExportFailed(true)
+		} finally {
+			setExporting(false)
+		}
+	}
 
 	const header = (
 		<div className="mb-4 flex items-center gap-2.5 px-1">
@@ -104,6 +150,11 @@ export function LoopViewTab({
 				name !== undefined && <h2 className="text-sm font-semibold text-foreground">{name}</h2>
 			)}
 			<span className="flex-1" />
+			{exportFailed && (
+				<span role="alert" className="text-xs text-error">
+					{EXPORT_FAILED_MESSAGE}
+				</span>
+			)}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button
@@ -127,6 +178,20 @@ export function LoopViewTab({
 					>
 						<RefreshCw size={14} /> Refresh
 					</DropdownMenuItem>
+					{exportEnabled && (
+						<DropdownMenuSub>
+							<DropdownMenuSubTrigger disabled={!file || Boolean(failure) || exporting}>
+								<Download size={14} /> Export
+							</DropdownMenuSubTrigger>
+							<DropdownMenuSubContent>
+								{EXPORT_CHOICES.map(({ format, label }) => (
+									<DropdownMenuItem key={format} onSelect={() => void runExport(format)}>
+										{label}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuSubContent>
+						</DropdownMenuSub>
+					)}
 					{onRename && (
 						<DropdownMenuItem
 							onSelect={() => {
@@ -155,6 +220,7 @@ export function LoopViewTab({
 					workspaceId={workspaceId}
 					fileId={fileId}
 					hideTitle
+					pageRef={deckPageRef}
 					reloadToken={reloadToken}
 					onRefreshingChange={setRefreshing}
 				/>
@@ -196,6 +262,7 @@ export function LoopViewTab({
 						onProposeChange={dateChange ? setProposed : undefined}
 						onRefreshingChange={setRefreshing}
 						reloadToken={reloadToken}
+						exportRef={exportRef}
 					/>
 				</div>
 				{panel && !isMobile ? (
