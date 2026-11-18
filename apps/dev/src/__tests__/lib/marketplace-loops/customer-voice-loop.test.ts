@@ -34,10 +34,10 @@ function publishedTexts() {
 			const s = getSkillData(id)
 			return `${s.name} ${s.description} ${s.content}`
 		}),
-		// The page's own script ids and query helper carry the product name; the text a person reads does not.
+		// The page's own script ids, query helper and id token carry the product name; the text a person reads does not.
 		...CUSTOMER_VOICE_VIEW_IDS.map((id) => {
 			const v = getViewData(id)
-			return `${v.name} ${v.html.replace(/maskin[-.](sources|query)/g, '')}`
+			return `${v.name} ${v.html.replace(/maskin[-.](sources|query)/g, '').replaceAll(LOOP_ID_TOKEN, '')}`
 		}),
 	]
 }
