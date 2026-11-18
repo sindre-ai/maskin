@@ -9,6 +9,7 @@ import {
 	YOUTUBE_ACTION_TTL_MS,
 	countUnapprovedYoutubeExecutions,
 	createPendingAction,
+	expireYoutubeActions,
 } from '../../lib/youtube/actions'
 import { hashYoutubePayload } from '../../lib/youtube/hash'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
@@ -28,6 +29,13 @@ vi.mock('../../lib/integrations/registry', async (importOriginal) => {
 	}
 })
 
+// Captured events are recorded, not sent.
+vi.mock('../../lib/analytics/posthog', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/analytics/posthog')>()),
+	capturePosthogEvent: vi.fn(),
+}))
+
+const { capturePosthogEvent } = await import('../../lib/analytics/posthog')
 const { googleWriteClient } = await import('../../lib/youtube/google-write-client')
 const { executeApprovedYoutubeAction } = await import('../../lib/youtube/executor')
 const { default: forYouRoutes } = await import('../../routes/for-you')
@@ -497,6 +505,46 @@ describe('YouTube approval gate', () => {
 			expect(row?.resultCode).toBe('http_403')
 			expect(row?.payload).toBeNull()
 			expect(await auditOf(created.id)).toEqual(['approved', 'failed'])
+		})
+	})
+
+	describe('the success event', () => {
+		it('is sent once for each approval, rejection and expiry, with ids and categories only', async () => {
+			vi.mocked(capturePosthogEvent).mockReset()
+			vi.mocked(capturePosthogEvent).mockResolvedValue('skipped')
+			const approved = await propose({ agentNote: 'secret note' })
+			const rejected = await propose()
+			const expired = await propose()
+			await decide(approved.id, {
+				decision: 'approve',
+				payload_hash: hashYoutubePayload(COMMENT),
+			})
+			await decide(rejected.id, { decision: 'reject' })
+			await db
+				.update(youtubePendingActions)
+				.set({ expiresAt: new Date(Date.now() - 1000) })
+				.where(eq(youtubePendingActions.id, expired.id))
+			await expireYoutubeActions(db)
+
+			await vi.waitFor(() => {
+				const decided = vi
+					.mocked(capturePosthogEvent)
+					.mock.calls.filter(([name]) => name === 'youtube_action_decided')
+				expect(
+					decided.map(([, , props]) => (props as { decision: string }).decision).sort(),
+				).toEqual(['approved', 'expired', 'rejected'])
+				expect(decided.map(([, id]) => id)).toContain(humanId)
+				expect(decided.map(([, id]) => id)).toContain(workspaceId)
+				for (const [, , props] of decided) {
+					expect(props).toMatchObject({
+						workspace_id: workspaceId,
+						kind: 'post_comment',
+						hours_to_decide: 0,
+					})
+					expect(JSON.stringify(props)).not.toContain('secret note')
+					expect(JSON.stringify(props)).not.toContain('Thanks for watching')
+				}
+			})
 		})
 	})
 

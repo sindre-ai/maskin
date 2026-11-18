@@ -1,6 +1,10 @@
 import type { Database, Transaction } from '@maskin/db'
 import { integrations, youtubeActionAudit, youtubePendingActions } from '@maskin/db/schema'
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
+import {
+	type YoutubeActionKind as TrackedActionKind,
+	trackYoutubeActionDecided,
+} from '../analytics/youtube-events'
 import { postYoutubeActionCard } from './card'
 import { canonicalJson, hashYoutubePayload } from './hash'
 
@@ -145,7 +149,13 @@ export async function writeYoutubeAudit(
 	writer: Writer,
 	row: Pick<
 		YoutubeActionRow,
-		'id' | 'workspaceId' | 'integrationId' | 'kind' | 'payloadHash' | 'requestedBySession'
+		| 'id'
+		| 'workspaceId'
+		| 'integrationId'
+		| 'kind'
+		| 'payloadHash'
+		| 'requestedBySession'
+		| 'createdAt'
 	>,
 	entry: {
 		decision: AuditDecision
@@ -166,6 +176,21 @@ export async function writeYoutubeAudit(
 		resultCode: entry.resultCode ?? null,
 		requestedBySession: row.requestedBySession,
 	})
+	// The success event is sent from here, with the row, so it cannot drift from the audit.
+	if (
+		entry.decision === 'approved' ||
+		entry.decision === 'rejected' ||
+		entry.decision === 'expired'
+	) {
+		void trackYoutubeActionDecided({
+			workspaceId: row.workspaceId,
+			decidedBy: entry.actorId ?? null,
+			kind: row.kind as TrackedActionKind,
+			decision: entry.decision,
+			requestedAt: row.createdAt,
+			decidedAt: new Date(),
+		})
+	}
 }
 
 export type YoutubeDecisionResult =
