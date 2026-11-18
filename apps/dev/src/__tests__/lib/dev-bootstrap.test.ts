@@ -5,6 +5,7 @@ import {
 	seedMarketplaceIfEmpty,
 	seedMarketplaceLoops,
 } from '../../lib/dev-bootstrap'
+import { CUSTOMER_VOICE_LOOP } from '../../lib/marketplace-loops/customer-voice-loop'
 import {
 	DISCOVERY_ACTOR_IDS,
 	DISCOVERY_LOOP,
@@ -16,7 +17,13 @@ import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
 import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
 import { createTestContext } from '../setup'
 
-const ALL_PACKAGES = [MARKET_WATCH_LOOP, DISCOVERY_LOOP, MEETING_LOOP, PRODUCT_RELEASE_LOOP]
+const ALL_PACKAGES = [
+	MARKET_WATCH_LOOP,
+	DISCOVERY_LOOP,
+	MEETING_LOOP,
+	PRODUCT_RELEASE_LOOP,
+	CUSTOMER_VOICE_LOOP,
+]
 
 function matchingMarketplaceRows() {
 	return ALL_PACKAGES.map((loop, i) => ({
