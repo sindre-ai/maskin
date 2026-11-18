@@ -9,6 +9,7 @@ import {
 import type { useChatRowActions } from '@/hooks/use-chat-row-actions'
 import type { ChatListErrorReason, ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { keepListFilter } from '@/lib/chat-list-search'
 import { previewMarker } from '@/lib/chat-list-v2'
 import { cn } from '@/lib/cn'
 import { plainPreview } from '@/lib/linked-objects'
@@ -102,6 +103,7 @@ export function ChatRow({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: conversation.id }}
+				search={keepListFilter}
 				onClick={onOpen}
 				data-chat-row-link
 				activeProps={{ className: 'bg-accent' }}
