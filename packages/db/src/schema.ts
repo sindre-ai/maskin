@@ -3817,18 +3817,27 @@ export const youtubeActionAudit = pgTable(
 
 // ── YouTube quota ──────────────────────────────────────────────────────────
 
-// Units charged against the YouTube Data API today. One row per (Pacific date, scope): scope is the
-// word global or a workspace id. Holds no YouTube data, only the date, the scope and a count. See
-// 0166_youtube_quota_usage.sql.
+// Units charged against the YouTube Data API today. One row per (Pacific date, scope, bucket):
+// scope is the word global or a workspace id, bucket is the Google quota bucket (data, search,
+// upload, analytics). Holds no YouTube data, only the date, the scope, the bucket and a count. See
+// 0166_youtube_quota_usage.sql and 0170_youtube_quota_bucket.sql.
 export const youtubeQuotaUsage = pgTable(
 	'youtube_quota_usage',
 	{
 		quotaDate: date('quota_date').notNull(),
 		scope: text('scope').notNull(),
+		bucket: text('bucket').notNull().default('data'),
 		unitsUsed: integer('units_used').notNull().default(0),
 	},
 	(t) => [
-		primaryKey({ columns: [t.quotaDate, t.scope], name: 'youtube_quota_usage_pkey' }),
+		primaryKey({
+			columns: [t.quotaDate, t.scope, t.bucket],
+			name: 'youtube_quota_usage_pkey',
+		}),
 		check('youtube_quota_usage_units_check', sql`${t.unitsUsed} >= 0`),
+		check(
+			'youtube_quota_usage_bucket_check',
+			sql`${t.bucket} IN ('data', 'search', 'upload', 'analytics')`,
+		),
 	],
 )

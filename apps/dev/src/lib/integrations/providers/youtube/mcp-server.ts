@@ -14,6 +14,7 @@ import {
 	type ProposeInput,
 	proposeYoutubeWrite,
 } from '../../../youtube/propose'
+import { parseChannelRef } from './channel-ref'
 import { type YoutubeClientContext, youtubeRead } from './client'
 import { type YoutubeErrorCode, isYoutubeError } from './errors'
 import {
@@ -39,7 +40,12 @@ export interface YoutubeMcpContext {
 	sessionId?: string | null
 }
 
+const MAX_SEARCH_RESULTS = 10
+const MAX_VIDEO_IDS = 50
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+
 const OUTCOME_BY_CODE: Partial<Record<YoutubeErrorCode, YoutubeOutcome>> = {
+	INVALID_INPUT: 'invalid_input',
 	QUOTA_EXHAUSTED: 'quota_blocked',
 	WORKSPACE_QUOTA_EXHAUSTED: 'quota_blocked',
 	CAP_REACHED: 'quota_blocked',
@@ -161,6 +167,81 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				tool: 'youtube__get_channel',
 				path: 'channels',
 				params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
+				units: 1,
+			}),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'search',
+		"Search public YouTube for videos or channels. Returns up to 10 results as the YouTube Data API returns them (ids and snippets only: read the details with get_public_videos or get_public_channel). Counts against a small daily search allowance shared by the whole product, so search sparingly and prefer a channel id or handle you already have. Repeat searches within 15 minutes are served from a cache at no cost. The results are other creators' public data: use them in this session, do not store them.",
+		{
+			q: z.string().trim().min(1).max(200).describe('What to search for.'),
+			type: z
+				.enum(['video', 'channel'])
+				.default('video')
+				.describe('Search for videos or for channels. Defaults to video.'),
+			max_results: z
+				.number()
+				.int()
+				.min(1)
+				.max(MAX_SEARCH_RESULTS)
+				.default(MAX_SEARCH_RESULTS)
+				.describe('How many results, 1 to 10. Defaults to 10.'),
+		},
+		({ q, type, max_results }) =>
+			youtubeRead(client, {
+				tool: 'youtube__search',
+				path: 'search',
+				params: { part: 'snippet', q, type, maxResults: String(max_results) },
+				units: 1,
+				bucket: 'search',
+			}),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'get_public_channel',
+		"Get the public details of any YouTube channel: title, description, and subscriber, view and video counts, as the YouTube Data API returns them. Pass a channel id (UC and 22 characters), a handle such as @name, or a channel URL (youtube.com/channel/UC..., youtube.com/@name or youtube.com/user/name). Custom youtube.com/c/ URLs cannot be resolved: search once to find the channel id. Costs 1 quota unit; repeat reads within 15 minutes are served from a cache at no cost. Other creators' data: use it in this session, do not store it.",
+		{
+			channel: z
+				.string()
+				.trim()
+				.min(1)
+				.max(300)
+				.describe('A channel id, a handle such as @name, or a channel URL.'),
+		},
+		({ channel }) =>
+			youtubeRead(client, {
+				tool: 'youtube__get_public_channel',
+				path: 'channels',
+				params: { part: 'snippet,statistics', ...parseChannelRef(channel) },
+				units: 1,
+			}),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'get_public_videos',
+		`Get the public details of up to ${MAX_VIDEO_IDS} YouTube videos in one call: title, description, publish date, and view, like and comment counts, as the YouTube Data API returns them. Pass video ids (11 characters each), not URLs. Costs 1 quota unit for the whole batch; repeat reads within 15 minutes are served from a cache at no cost. Other creators' data: use it in this session, do not store it.`,
+		{
+			ids: z
+				.array(
+					z.string().regex(VIDEO_ID, 'A video id is 11 letters, digits, dashes or underscores.'),
+				)
+				.min(1)
+				.max(MAX_VIDEO_IDS)
+				.describe(`Video ids, 1 to ${MAX_VIDEO_IDS}.`),
+		},
+		({ ids }) =>
+			youtubeRead(client, {
+				tool: 'youtube__get_public_videos',
+				path: 'videos',
+				// Sorted and de-duplicated, so the same set in any order is one cache entry.
+				params: { part: 'snippet,statistics', id: [...new Set(ids)].sort().join(',') },
 				units: 1,
 			}),
 	)
