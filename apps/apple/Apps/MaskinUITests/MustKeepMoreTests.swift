@@ -264,25 +264,29 @@ final class MustKeepMoreTests: XCTestCase {
 		expectExists(email, "after signing out, the sign-in screen asks for an email", dump: "mk14-login", timeout: 20)
 		email.tap()
 		email.typeText("sindre@northwind.example")
-		// Typing into the secure field left it empty on the hosted Mac (runs 6 and 7). The eye button turns it into a
-		// plain text field with the same focus, which takes typed text.
+		// The eye button turns the secure field into a plain text field with the same focus. It passed in run 9.
 		let reveal = app.buttons["Show password"].firstMatch
 		expectExists(reveal, "the sign-in screen offers Show password", dump: "mk14-reveal", timeout: 5)
 		reveal.tap()
 		let password = app.textFields.matching(NSPredicate(format: "label == 'Password' OR placeholderValue == 'Password'")).firstMatch
 		XCTAssertTrue(password.waitForExistence(timeout: 5), "the sign-in screen asks for a password")
-		// The mode switch above the form is also a button called "Sign in": the form's own is the last one.
-		func submitButton() -> XCUIElement? {
-			app.buttons.matching(NSPredicate(format: "label == 'Sign in'")).allElementsBoundByIndex.last
+		// Type the password once, with no condition. Run 9 never typed it: the old loop typed only while the last
+		// button labelled "Sign in" read as disabled, that button read as enabled on an empty form (it is not the
+		// form's own button, or the empty password did not disable it), so the loop body never ran.
+		password.tap()
+		password.typeText("Northwind-demo-1")
+		// A text field with no text reads its placeholder as its value, so this also fails on an empty field.
+		let typed = password.value as? String
+		if typed != "Northwind-demo-1" { dumpScreen("mk14-password") }
+		XCTAssertEqual(typed, "Northwind-demo-1", "the password field holds the typed password")
+		// Return on the password field is the keyboard's Go key: it submits the form. That avoids picking between
+		// the two buttons labelled "Sign in" (the mode switch above the form, and the form's own button).
+		password.typeText("\n")
+		// If Return did not submit, tap an enabled "Sign in" button as the last resort.
+		if !app.tabBars.buttons["For you"].waitForExistence(timeout: 8) {
+			let enabled = app.buttons.matching(NSPredicate(format: "label == 'Sign in' AND enabled == true")).allElementsBoundByIndex
+			enabled.last?.tap()
 		}
-		for _ in 0..<3 where !(submitButton()?.isEnabled ?? false) {
-			password.tap()
-			password.typeText("Northwind-demo-1")
-			Thread.sleep(forTimeInterval: 1)
-		}
-		if !(submitButton()?.isEnabled ?? false) { dumpScreen("mk14-password") }
-		XCTAssertTrue(submitButton()?.isEnabled ?? false, "the sign-in form accepts the password typed (Sign in is enabled)")
-		submitButton()?.tap()
 		if !app.tabBars.buttons["For you"].waitForExistence(timeout: 30) { dumpScreen("mk14-signedin") }
 		XCTAssertTrue(app.tabBars.buttons["For you"].exists, "signing in again opens the app on For you")
 	}
