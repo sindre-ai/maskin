@@ -60,7 +60,7 @@ describe('youtube provider config', () => {
 
 describe('youtube registry entry', () => {
 	it('is registered and listed', () => {
-		expect(listProviders().map((p) => p.name)).toContain('youtube')
+		expect(listProviders().map((p) => p.config.name)).toContain('youtube')
 		expect(getProvider('youtube').config).toBe(config)
 	})
 

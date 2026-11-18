@@ -41,6 +41,9 @@ function chainableDb(rows: unknown[]) {
 	return chain
 }
 
+// The Node server puts the raw request and response on c.env; app.request has none unless given.
+const nodeEnv = { incoming: {}, outgoing: {} }
+
 function mountedApp(db: unknown = chainableDb([])) {
 	const app = new Hono()
 	app.use('*', async (c, next) => {
@@ -85,6 +88,7 @@ describe('POST /api/integrations/youtube/mcp', () => {
 		const res = await mountedApp(db).request(
 			'/api/integrations/youtube/mcp',
 			post({ 'X-Workspace-Id': WORKSPACE }),
+			nodeEnv,
 		)
 		// The mocked transport never writes, so the route answers its sentinel response.
 		expect(res.status).toBe(200)
@@ -95,11 +99,15 @@ describe('POST /api/integrations/youtube/mcp', () => {
 	})
 
 	it('400s on a body that is not JSON', async () => {
-		const res = await mountedApp().request('/api/integrations/youtube/mcp', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': WORKSPACE },
-			body: 'not json',
-		})
+		const res = await mountedApp().request(
+			'/api/integrations/youtube/mcp',
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': WORKSPACE },
+				body: 'not json',
+			},
+			nodeEnv,
+		)
 		expect(res.status).toBe(400)
 	})
 })

@@ -80,7 +80,10 @@ describe('youtubeRead', () => {
 	})
 
 	it('does not share cache entries between integrations', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CHANNEL))
+		// A fresh Response per call: a body can only be read once.
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => jsonResponse(CHANNEL))
 		await youtubeRead(ctx, read)
 
 		getIntegrationCredential.mockResolvedValue({ id: 'int-2' })
