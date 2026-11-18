@@ -22,9 +22,11 @@ import {
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { PERSON_MESSAGE_SOURCES, type PersonMessageSource } from '@/lib/person-message-link'
+import { queryKeys } from '@/lib/query-keys'
 import { starterPromptsForAgents } from '@/lib/starter-prompts'
 import { useWorkspace } from '@/lib/workspace-context'
 import { deriveConversationTitle } from '@maskin/shared'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft, X } from 'lucide-react'
 import {
@@ -90,6 +92,7 @@ function NewChatRoute() {
 	const { workspaceId } = useWorkspace()
 	const richText = useFeatureFlag('chat-formatting')
 	const navigate = useNavigate()
+	const queryClient = useQueryClient()
 	const createConversation = useCreateConversation(workspaceId)
 	const { hold, undo, isHeld } = useUndoSend()
 	// A held first message that is posted after the person left the page must not pull them back.
@@ -378,8 +381,8 @@ function NewChatRoute() {
 				? { initial_message_metadata: metadata }
 				: {}),
 		}
-		const create = async () => {
-			const conversation = await createConversation.mutateAsync(createBody)
+		// Both ways of posting the first message end here: the chat is open, if the person is still on this page.
+		const openCreated = (conversation: { id: string }) => {
 			const singleAgent =
 				recipients.length === 1 && recipients[0]?.type === 'agent' ? recipients[0] : null
 			// Opened from a Message button and still exactly that one person: say which button.
@@ -402,11 +405,23 @@ function NewChatRoute() {
 				params: { workspaceId, conversationId: conversation.id },
 			})
 		}
+		const create = async () => openCreated(await createConversation.mutateAsync(createBody))
+		// The page is going away, so the request must outlive it and skip the mutation's own cache work;
+		// the list and the new chat's detail are refreshed here. A tab that only went to the background
+		// is still mounted, and is on the new chat when the person comes back.
+		const createOnHide = async () => {
+			const conversation = await api.conversations.create(workspaceId, createBody, {
+				keepalive: true,
+			})
+			queryClient.setQueryData(queryKeys.conversations.detail(conversation.id), conversation)
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
+			openCreated(conversation)
+		}
 
 		try {
 			await hold({
 				send: create,
-				sendOnHide: () => api.conversations.create(workspaceId, createBody, { keepalive: true }),
+				sendOnHide: createOnHide,
 				restore,
 				onError: (err) => setError(describeSendError(err)),
 			})
