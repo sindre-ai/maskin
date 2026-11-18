@@ -26,9 +26,11 @@ services:
     volumes:
       - seaweed_data:/data
 
-  # Staging for bet/dbe5-claude-oauth-connect. Differences from docker-compose.prod.yml:
-  # no /var/run/docker.sock mount (so no agent sessions here), no agent-base build,
-  # no GitHub App, no Resend, no prod PostHog. Do not add them back.
+  # Staging proof for bet/b466fa48-flows-run-like-development (task_ready wake and the sweep).
+  # Differences from docker-compose.prod.yml: no /var/run/docker.sock mount (no local agent
+  # sessions), no agent-base build, no GitHub App, no Resend, no prod PostHog. Sessions run on a
+  # separate agent-server registered through AGENT_SERVERS. Do not add the prod pieces back.
+  # Staging only, never merge.
   app:
     restart: unless-stopped
     build:
@@ -60,15 +62,23 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_REGION: ${S3_REGION:-us-east-1}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
-      APP_URL: https://staging.maskin.sindre.ai
-      # Claude sign-in (MCP OAuth) test. Listed explicitly: compose only passes
-      # what is named here.
+      APP_URL: ${SERVICE_URL_APP}
+      FRONTEND_URL: ${SERVICE_URL_APP}
+      MASKIN_BACKEND_URL: ${SERVICE_URL_APP}
       MASKIN_MCP_OAUTH_ENABLED: ${MASKIN_MCP_OAUTH_ENABLED:-true}
-      MASKIN_OAUTH_ISSUER: ${MASKIN_OAUTH_ISSUER:-https://staging.maskin.sindre.ai}
+      MASKIN_OAUTH_ISSUER: ${SERVICE_URL_APP}
       # Tester flag vars (see .claude/rules/feature-flags.md). Unregistered flag ids
-      # resolve to false. Leave actor ids empty until a staging user exists.
+      # resolve to false. Workspace flags are set after the first sign-up, then restart.
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
       FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-mcp-oauth-consent}
+      FF_WORKSPACE_FEATURES: ${FF_WORKSPACE_FEATURES:-}
+      # Agent server for woken sessions, and the model route (a new workspace is on the
+      # trial plan, so it goes through the funded OpenRouter key, capped by the trial cap).
+      AGENT_BASE_IMAGE: magnusnoeddegaard/agent-base:latest
+      AGENT_SERVERS: ${AGENT_SERVERS:-}
+      AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-}
+      MASKIN_FALLBACK_OPENROUTER_KEY: ${MASKIN_FALLBACK_OPENROUTER_KEY:-}
+      MASKIN_TRIAL_HARD_CAP_USD_CENTS: ${MASKIN_TRIAL_HARD_CAP_USD_CENTS:-}
     depends_on:
       postgres:
         condition: service_healthy
