@@ -325,7 +325,7 @@ export async function proposeYoutubeWrite(
 ): Promise<ProposeResult> {
 	const { db, workspaceId, actorId } = ctx
 	// Not connected or revoked: stop here, before anything is stored.
-	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId)
+	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId, ctx.integrationId)
 	await assertObjectInWorkspace(db, workspaceId, common.object_id)
 
 	// The channel's name is read by the server, never taken from the agent, so the card shows the

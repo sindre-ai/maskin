@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getIntegrationCredential = vi.fn()
+const getCredential = vi.fn()
+const listYoutubeConnections = vi.fn()
 const getValidToken = vi.fn()
 const markRevoked = vi.fn()
 const chargeYoutubeQuota = vi.fn()
@@ -8,6 +10,11 @@ const purgeYoutubeData = vi.fn()
 
 vi.mock('../../../../lib/integrations/lookup', () => ({
 	getIntegrationCredential: (...args: unknown[]) => getIntegrationCredential(...args),
+	getCredential: (...args: unknown[]) => getCredential(...args),
+}))
+vi.mock('../../../../lib/integrations/providers/youtube/connections', () => ({
+	YOUTUBE_PROVIDER: 'youtube',
+	listYoutubeConnections: (...args: unknown[]) => listYoutubeConnections(...args),
 }))
 vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
 	TokenManager: class {
@@ -44,6 +51,10 @@ describe('youtubeRead', () => {
 	beforeEach(() => {
 		clearYoutubeCache()
 		getIntegrationCredential.mockReset().mockResolvedValue({ id: 'int-1' })
+		getCredential.mockReset()
+		listYoutubeConnections
+			.mockReset()
+			.mockResolvedValue([{ integration_id: 'int-1', account: 'a@example.com' }])
 		getValidToken.mockReset().mockResolvedValue('ya29.token')
 		markRevoked.mockReset().mockResolvedValue(undefined)
 		chargeYoutubeQuota.mockReset().mockResolvedValue(undefined)
@@ -113,6 +124,66 @@ describe('youtubeRead', () => {
 		await youtubeRead(ctx, read)
 
 		expect(fetchSpy).toHaveBeenCalledTimes(2)
+	})
+
+	describe('several connected accounts', () => {
+		const TWO = [
+			{ integration_id: 'int-1', account: 'a@example.com' },
+			{ integration_id: 'int-2', account: 'b@example.com' },
+		]
+
+		it('refuses a call with no integration id and lists the connections', async () => {
+			listYoutubeConnections.mockResolvedValue(TWO)
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+			const err = await youtubeRead(ctx, read).catch((e) => e)
+
+			expect(err).toMatchObject({ code: 'INTEGRATION_REQUIRED', connections: TWO })
+			expect(err.toPayload().connections).toEqual(TWO)
+			expect(getIntegrationCredential).not.toHaveBeenCalled()
+			expect(getCredential).not.toHaveBeenCalled()
+			expect(chargeYoutubeQuota).not.toHaveBeenCalled()
+			expect(fetchSpy).not.toHaveBeenCalled()
+		})
+
+		it('reads the chosen connection through the Keychain and keys the cache by it', async () => {
+			listYoutubeConnections.mockResolvedValue(TWO)
+			getCredential.mockImplementation(async (_db, _ws, id: string) => ({ id }))
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CHANNEL))
+
+			await youtubeRead({ ...ctx, integrationId: 'int-2' }, read)
+			await youtubeRead({ ...ctx, integrationId: 'int-2' }, read)
+			await youtubeRead({ ...ctx, integrationId: 'int-1' }, read)
+
+			expect(getCredential).toHaveBeenCalledWith(
+				ctx.db,
+				'ws-1',
+				'int-2',
+				expect.objectContaining({ requestingActorId: 'actor-1' }),
+			)
+			expect(getValidToken).toHaveBeenCalledWith(ctx.db, 'int-2', expect.anything())
+			// int-2 twice is one Google call, int-1 is its own.
+			expect(fetchSpy).toHaveBeenCalledTimes(2)
+		})
+
+		it('refuses an id that is not an active connection of this workspace', async () => {
+			listYoutubeConnections.mockResolvedValue(TWO)
+
+			await expect(
+				youtubeRead({ ...ctx, integrationId: 'int-other-ws' }, read),
+			).rejects.toMatchObject({
+				code: 'INTEGRATION_REQUIRED',
+				connections: TWO,
+			})
+			expect(getCredential).not.toHaveBeenCalled()
+		})
+
+		it('still accepts an explicit id when only one account is connected', async () => {
+			getCredential.mockResolvedValue({ id: 'int-1' })
+			vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(CHANNEL))
+
+			await expect(youtubeRead({ ...ctx, integrationId: 'int-1' }, read)).resolves.toEqual(CHANNEL)
+		})
 	})
 
 	it('marks the row revoked on a 401 and throws RECONSENT_REQUIRED', async () => {

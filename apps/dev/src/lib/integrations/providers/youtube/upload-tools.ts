@@ -87,7 +87,7 @@ async function hold(
 	if (approverIds.length === 0) {
 		throw invalid('This workspace has no person who can approve a YouTube change.')
 	}
-	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId)
+	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId, ctx.integrationId)
 	try {
 		const held = await createPendingAction(db, {
 			workspaceId,
