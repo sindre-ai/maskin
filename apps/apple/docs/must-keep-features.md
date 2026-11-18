@@ -12,10 +12,11 @@ contain renders. A row passing is necessary, not sufficient. Each row below stat
 
 ## Rules
 
-1. **Run them by hand before opening a design PR, and paste the result in the PR body.** They do not run
-   nightly and not on PRs; nobody runs them for you:
-   `apps/apple/scripts/run-must-keep.sh` (starts the demo server on a free port, runs the tests,
-   stops it). Until CI runs them, this is the only enforcement.
+1. **Run them before opening a design PR, and paste the result in the PR body.** The "Apple must-keep UI tests"
+   workflow runs them on a hosted Mac when a PR changes the tests, the demo server or the script (it is not a
+   required check, and takes 30 to 40 minutes). Run it by hand from the Actions tab when your PR touches none of
+   those, or run `apps/apple/scripts/run-must-keep.sh` on a Mac (starts the demo server on a free port, runs the
+   tests, stops it). They do not run nightly.
 2. **A redesign PR must not make any row fail.**
 3. **Never delete or loosen a test to get a PR through.** If a feature is removed or moved on
    purpose, change its row here **and** its test in the same PR, and say so in the PR description

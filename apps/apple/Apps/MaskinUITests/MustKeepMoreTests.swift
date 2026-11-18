@@ -196,7 +196,9 @@ final class MustKeepMoreTests: XCTestCase {
 	/// is sent anywhere.
 	func testMK12_PickDecisionOptionOnForYou() throws {
 		app.tabBars.buttons["For you"].tap()
-		let option = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Send all 7'")).firstMatch
+		// The open card's option reads "Send all 7, recommended". After the pick the Handled today row also starts
+		// with "Send all 7" (the receipt), so only the ", recommended" label tells the open option apart.
+		let option = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Send all 7' AND label ENDSWITH 'recommended'")).firstMatch
 		// In the one-column feed a card shows its options once it is opened.
 		if !option.waitForExistence(timeout: 3) {
 			let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Send 7 follow-ups to Northwind?'")).firstMatch
@@ -262,10 +264,13 @@ final class MustKeepMoreTests: XCTestCase {
 		expectExists(email, "after signing out, the sign-in screen asks for an email", dump: "mk14-login", timeout: 20)
 		email.tap()
 		email.typeText("sindre@northwind.example")
-		let password = app.secureTextFields.firstMatch
+		// Typing into the secure field left it empty on the hosted Mac (runs 6 and 7). The eye button turns it into a
+		// plain text field with the same focus, which takes typed text.
+		let reveal = app.buttons["Show password"].firstMatch
+		expectExists(reveal, "the sign-in screen offers Show password", dump: "mk14-reveal", timeout: 5)
+		reveal.tap()
+		let password = app.textFields.matching(NSPredicate(format: "label == 'Password' OR placeholderValue == 'Password'")).firstMatch
 		XCTAssertTrue(password.waitForExistence(timeout: 5), "the sign-in screen asks for a password")
-		// The form's Sign in button stays disabled until a password is in: the screenshot of the last run showed
-		// the field still empty. Type until it is enabled, tapping the field again between tries.
 		// The mode switch above the form is also a button called "Sign in": the form's own is the last one.
 		func submitButton() -> XCUIElement? {
 			app.buttons.matching(NSPredicate(format: "label == 'Sign in'")).allElementsBoundByIndex.last
@@ -320,9 +325,14 @@ final class MustKeepMoreTests: XCTestCase {
 		let react = element(labelled: "React")
 		expectExists(react, "a message's menu offers React", dump: "mk15b-menu", timeout: 5)
 		react.tap()
-		let thumbs = element(labelled: "👍")
+		// The emoji row reads "👍" (or "👍  ✓" once used). The chip reads "👍, 1", so it is left out by the comma.
+		let thumbs = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH '👍' AND NOT (label CONTAINS ',')")).firstMatch
 		expectExists(thumbs, "React offers the thumbs-up emoji", dump: "mk15b-emoji", timeout: 5)
 		thumbs.tap()
+		// The menu is still open if the tap did not land: tap the emoji's middle by coordinate.
+		if thumbs.waitForNonExistence(timeout: 3) == false {
+			thumbs.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+		}
 		expectExists(element(labelled: "👍, 1"), "the message shows a 👍 chip with a count of 1", dump: "mk15b-chip", timeout: 10)
 	}
 

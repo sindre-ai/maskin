@@ -214,9 +214,12 @@ final class MustKeepTests: XCTestCase {
 	// MARK: Helpers for MK-06 to MK-09
 
 	/// Closes the notification pre-prompt if it shows over a chat; it would swallow the first tap.
+	/// The Webinars chat holds cards with their own "Not now" buttons, so the label alone matches two buttons: only
+	/// act while the notification sheet's headline shows, and tap the button that can be tapped.
 	private func dismissNotNow() {
-		let notNow = app.buttons["Not now"]
-		if notNow.waitForExistence(timeout: 3) { notNow.tap() }
+		let headline = app.staticTexts["Get told when an agent needs a decision"]
+		guard headline.waitForExistence(timeout: 3) else { return }
+		app.buttons.matching(NSPredicate(format: "label == 'Not now'")).allElementsBoundByIndex.last { $0.isHittable }?.tap()
 	}
 
 	/// The message field of the open chat (its accessibility label is the placeholder, "Message {name}").
