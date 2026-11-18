@@ -394,8 +394,8 @@ struct DecisionCardView: View {
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			// v6: the recommended option is a full-width ink button; the rest share one row beneath.
-			let others = alternateOptions(of: decision)
-			ForEach(primaryOptions(of: decision)) { option in
+			let others = DecisionCardActions.alternateOptions(of: decision)
+			ForEach(DecisionCardActions.primaryOptions(of: decision)) { option in
 				optionButton(option, tagged: !others.isEmpty)
 			}
 			if !others.isEmpty {
@@ -438,21 +438,11 @@ struct DecisionCardView: View {
 		}
 	}
 
-	private func primaryOptions(of decision: DecisionPrompt) -> [DecisionOption] {
-		decision.options.filter(\.recommended)
-	}
-
-	private func alternateOptions(of decision: DecisionPrompt) -> [DecisionOption] {
-		// For you has no Hold or Later: an agent-written one is not drawn as a pill.
-		decision.options.filter { !$0.recommended && !HoldReason.isHold($0.label) && !HoldReason.isLater($0.label) }
-	}
-
 	private func optionButton(_ option: DecisionOption, tagged: Bool = false) -> some View {
 		Button {
-			if option.destructive {
-				pendingDestructive = option
-			} else {
-				actions.choose(option)
+			switch DecisionCardActions.tap(option) {
+			case .confirmFirst: pendingDestructive = option
+			case .choose: actions.choose(option)
 			}
 		} label: {
 			OptionPill(
@@ -469,7 +459,7 @@ struct DecisionCardView: View {
 
 	/// The option would send the saved text while the reader's edit has not gone out.
 	private func isHeldBack(_ option: DecisionOption) -> Bool {
-		unsentEditNote != nil && ReviewDraft.sendsMessage(option)
+		DecisionCardActions.isHeldBack(option, unsentEditNote: unsentEditNote)
 	}
 
 	// MARK: Footer
