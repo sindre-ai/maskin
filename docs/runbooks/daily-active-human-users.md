@@ -49,6 +49,9 @@ database number to differ from app_active in both directions: app_active counts 
 non-browser clients (app_active misses them). Anonymised workspaces cannot be matched person by
 person.
 
+A person who only uses Maskin through an agent client or the API never sends app_active, including
+on sign-up day. The database count includes them.
+
 ## Sample-day comparison (2026-11-08, UTC)
 
 Run on production by Infra & DevOps on 2026-11-09. Database numbers are read-only selects.
@@ -131,9 +134,17 @@ the events, so the first is plausible and the second is not proven: if new sign-
 no heartbeat on their first day, that is a gap in the heartbeat, not a reason to distrust the
 database count. Watch for it during the week of daily samples.
 
-Result of that watch (checked 2026-11-16): five humans signed up from 2026-11-03 to 2026-11-15.
-Two sent app_active on their sign-up day (11-03 and 11-06). Three never sent it at all through
-2026-11-15 (sign-ups on 11-07, 11-08 and 11-13). Their workspaces had sharing on and were not
-anonymised, so the comparison filter does not explain it, and each wrote only 3 to 8 events in a
-workspace created the same day. The cause is not established: it could be non-browser use or a
-heartbeat that is not sent for new sign-ups. The database count is not affected.
+Result of that watch (checked 2026-11-16, cause found 2026-11-18): five humans signed up from
+2026-11-03 to 2026-11-15. Two sent app_active on their sign-up day (11-03 and 11-06). Three never
+sent it (sign-ups on 11-07, 11-08 and 11-13). Cause: those three never used the web app. In
+PostHog, server events carry the workspace id as the distinct id, so each workspace can be looked
+up by its id in the page address. For the 11-07 and 11-08 workspaces there is no browser event of
+any kind (no page view, no heartbeat) on any day. For the 11-13 workspace the only browser event is
+one page view on iPhone Safari that landed on the login page. None of the three has a
+signup_completed event, which only the web sign-up form sends, and all their activity is agent and
+tool-call events from the server. The three web sign-ups in the same period (11-01, 11-03, 11-06)
+all sent app_active, so the heartbeat works for new sign-ups who use the browser. Read: new people
+who sign up outside the web form and work through an agent client are missed by PostHog and counted
+by the database. This is not a heartbeat bug. If a person who signed up through the web form shows
+no app_active within 2 days, check for a blocker or a workspace with sharing off before suspecting
+code.
