@@ -1816,7 +1816,7 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events, and the trigger form shows it as Driver. For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The target_actor_id must be an agent actor. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
+			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events, and the trigger form shows it as Driver. To start whoever drives the item, put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it). For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. Otherwise target_actor_id is required and must be an agent. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
@@ -1838,13 +1838,19 @@ export const tools = {
 					'Run once at this time (ISO 8601, for example 2026-11-12T09:00:00Z), then disable the trigger. Must be in the future. Use it instead of type and config.',
 				),
 			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
-			target_actor_id: z.string().uuid(),
+			target_actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The agent to start. Required, except when the event config has "target": "item_driver".',
+				),
 			enabled: z.boolean().default(true),
 		}),
 	},
 	update_trigger: {
 		description:
-			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. To filter an event trigger by the driver of the item, put { "field": "driver", "operator": "equals" (or not_equals, is_set, is_not_set), "value": "<actor UUID>" } in config.conditions. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
+			'Update a trigger by ID. Can change name, schedule/event config, action_prompt, target agent, or enabled/disabled state. To start the driver of the item instead of a fixed agent, put "target": "item_driver" in the event config (created, updated, status_changed and commented events only); to go back to a fixed agent, send a config without it and a target_actor_id. To filter an event trigger by the driver of the item, put { "field": "driver", "operator": "equals" (or not_equals, is_set, is_not_set), "value": "<actor UUID>" } in config.conditions. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),

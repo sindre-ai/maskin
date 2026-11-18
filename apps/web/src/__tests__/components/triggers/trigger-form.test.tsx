@@ -490,6 +490,83 @@ describe('TriggerForm', () => {
 		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Analyst')
 	})
 
+	describe("the item's driver as the agent", () => {
+		const itemDriverTrigger = (config: Record<string, unknown>, type = 'event') =>
+			buildTriggerResponse({
+				type,
+				config,
+				// A saved item's-driver trigger keeps only a placeholder actor here.
+				targetActorId: 'human-1',
+			})
+		const savedBuildPayload = () =>
+			(
+				useAutoSave.mock.calls.at(-1)?.[0] as {
+					buildPayload: () => { target_actor_id: string; config: Record<string, unknown> } | null
+				}
+			).buildPayload()
+
+		it('reopens a saved one as the agent', () => {
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={itemDriverTrigger({
+						entity_type: 'task',
+						action: 'status_changed',
+						to_status: 'todo',
+						target: 'item_driver',
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent("The item's driver")
+			expect(savedBuildPayload()?.config).toMatchObject({ target: 'item_driver' })
+		})
+
+		it('saves the choice in the config and drops it when an agent is picked', async () => {
+			const user = userEvent.setup()
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={itemDriverTrigger({ entity_type: 'task', action: 'created' })}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(savedBuildPayload()?.config).not.toHaveProperty('target')
+
+			await user.click(screen.getByRole('combobox', { name: 'Agent' }))
+			await user.click(await screen.findByRole('option', { name: "The item's driver" }))
+			await waitFor(() =>
+				expect(savedBuildPayload()?.config).toMatchObject({ target: 'item_driver' }),
+			)
+
+			await user.click(screen.getByRole('combobox', { name: 'Agent' }))
+			await user.click(await screen.findByRole('option', { name: 'Analyst' }))
+			await waitFor(() => {
+				expect(savedBuildPayload()?.config).not.toHaveProperty('target')
+				expect(savedBuildPayload()?.target_actor_id).toBe('agent-2')
+			})
+		})
+
+		it('is not offered on a schedule', async () => {
+			const user = userEvent.setup()
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={itemDriverTrigger({ expression: '0 9 * * *' }, 'cron')}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('combobox', { name: 'Agent' }))
+			expect(await screen.findByRole('option', { name: 'Analyst' })).toBeInTheDocument()
+			expect(screen.queryByRole('option', { name: "The item's driver" })).not.toBeInTheDocument()
+		})
+	})
+
 	it('shows error message when error prop set', () => {
 		render(<TriggerForm {...defaultProps} error={new Error('Something broke')} />, {
 			wrapper: TestWrapper,

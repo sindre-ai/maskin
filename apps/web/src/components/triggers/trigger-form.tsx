@@ -41,7 +41,12 @@ import {
 } from '@/lib/cron'
 import { isTriggerChange } from '@/lib/triggers'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
-import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
+import {
+	ITEM_DRIVER_TARGET,
+	type SafeJsonValue,
+	type conditionOperatorSchema,
+	usesItemDriverTarget,
+} from '@maskin/shared'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -128,6 +133,10 @@ import { getAllWebModules } from '@maskin/module-sdk'
 const DEFAULT_ENTITY_TYPE = 'insight'
 
 const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed', 'commented'] as const
+
+/** Agent-select value for "start whoever drives the item"; saved as config.target. */
+const ITEM_DRIVER_OPTION = '__item_driver__'
+const ITEM_DRIVER_LABEL = "The item's driver"
 
 /** Human-readable label for each object action option in the "Changes to" dropdown. */
 const OBJECT_ACTION_LABEL: Record<(typeof DEFAULT_OBJECT_ACTIONS)[number], string> = {
@@ -506,6 +515,8 @@ export function TriggerForm({
 	const [targetActorId, setTargetActorId] = useState(
 		initialValues?.targetActorId ?? agents[0]?.id ?? '',
 	)
+	const savedItemDriver = initialValues?.type === 'event' && usesItemDriverTarget(initConfig)
+	const [targetsItemDriver, setTargetsItemDriver] = useState(savedItemDriver)
 	const [enabled, setEnabled] = useState(initialValues?.enabled ?? true)
 	// Read both `from_status`/`to_status` (form-written) and `filter.status`
 	// (MCP-written) so agent-created triggers don't render as "any → any".
@@ -682,6 +693,11 @@ export function TriggerForm({
 		[integrations],
 	)
 
+	// The item's driver needs an item with a driver: only object events have one.
+	const itemDriverAllowed =
+		type === 'event' && !isSlack && (DEFAULT_OBJECT_ACTIONS as readonly string[]).includes(action)
+	const usesItemDriver = targetsItemDriver && itemDriverAllowed
+
 	const isValid =
 		name.trim() && prompt.trim() && targetActorId && (type === 'reminder' ? scheduledDate : true)
 
@@ -740,6 +756,7 @@ export function TriggerForm({
 							...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
 							...(commentSerialized.filter && { filter: commentSerialized.filter }),
 							...(allConditions.length > 0 && { conditions: allConditions }),
+							...(usesItemDriver && { target: ITEM_DRIVER_TARGET }),
 						}
 
 		return {
@@ -767,6 +784,7 @@ export function TriggerForm({
 		action,
 		fromStatus,
 		toStatus,
+		usesItemDriver,
 	])
 
 	// --- Auto-create: fire once when form first becomes valid ---
@@ -815,6 +833,21 @@ export function TriggerForm({
 		adoptedTargetActorIdRef.current = savedTargetActorId
 		setTargetActorId(savedTargetActorId)
 	}, [savedTargetActorId])
+
+	// Same guard for the item's driver choice, which lives in the config. A change of
+	// action that makes it unavailable falls back to the agent in the select.
+	const adoptedItemDriverRef = useRef(savedItemDriver)
+	useEffect(() => {
+		if (savedItemDriver === adoptedItemDriverRef.current) return
+		adoptedItemDriverRef.current = savedItemDriver
+		setTargetsItemDriver(savedItemDriver)
+	}, [savedItemDriver])
+	useEffect(() => {
+		if (targetsItemDriver && !itemDriverAllowed) {
+			setTargetsItemDriver(false)
+			setTargetActorId(agents[0]?.id ?? '')
+		}
+	}, [targetsItemDriver, itemDriverAllowed, agents])
 
 	// Two rename paths coexist by decision: this field's debounced autosave, and
 	// the language bar below (which hands the utterance to an agent that may
@@ -901,7 +934,9 @@ export function TriggerForm({
 	)
 	const firedLine =
 		firedCount === 0 ? 'never fired' : `fired ${firedCount} time${firedCount === 1 ? '' : 's'}`
-	const agentName = agents.find((a) => a.id === targetActorId)?.name
+	const agentName = usesItemDriver
+		? ITEM_DRIVER_LABEL
+		: agents.find((a) => a.id === targetActorId)?.name
 	const sourceLabel = isSlack ? 'Slack' : null
 
 	// `writes` / `stops_for_you` / `skill` are open `config` fields — nothing
@@ -1026,7 +1061,7 @@ export function TriggerForm({
 				)}
 				{agentName && (
 					<span className="inline-flex shrink-0 items-center gap-1.5">
-						<ActorAvatar id={targetActorId} name={agentName} type="agent" />
+						{!usesItemDriver && <ActorAvatar id={targetActorId} name={agentName} type="agent" />}
 						<span className="text-[11.5px] font-semibold text-muted-foreground">{agentName}</span>
 					</span>
 				)}
@@ -1370,11 +1405,20 @@ export function TriggerForm({
 					<h2 className="eyebrow">USING THIS AGENT</h2>
 					<div className="mt-2.5 max-w-[280px]">
 						<FieldColumn label="Agent" htmlFor="trigger-agent">
-							<Select value={targetActorId} onValueChange={setTargetActorId}>
+							<Select
+								value={usesItemDriver ? ITEM_DRIVER_OPTION : targetActorId}
+								onValueChange={(value) => {
+									setTargetsItemDriver(value === ITEM_DRIVER_OPTION)
+									if (value !== ITEM_DRIVER_OPTION) setTargetActorId(value)
+								}}
+							>
 								<SelectTrigger id="trigger-agent" className="min-h-11 w-full sm:min-h-9">
 									<SelectValue placeholder="Select an agent..." />
 								</SelectTrigger>
 								<SelectContent>
+									{itemDriverAllowed && (
+										<SelectItem value={ITEM_DRIVER_OPTION}>{ITEM_DRIVER_LABEL}</SelectItem>
+									)}
 									{agents.map((a) => (
 										<SelectItem key={a.id} value={a.id}>
 											{a.name}
