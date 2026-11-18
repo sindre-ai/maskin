@@ -132,8 +132,11 @@ const decisions = [
 ]
 
 function unreadFeed(item) {
+	// A decision the reader answered (a comment posted to it) is no longer waiting, so a refetch drops it
+	// from the open list, as the real server does once the thread is marked read. MK-12 relies on this.
+	const waiting = decisions.filter((d) => !postedComments.has(d.obj.id))
 	return {
-		items: decisions.map((d, i) => ({
+		items: waiting.map((d, i) => ({
 			...item,
 			entity_type: 'object',
 			entity_id: d.obj.id,

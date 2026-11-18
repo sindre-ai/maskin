@@ -67,6 +67,25 @@ final class MustKeepMoreTests: XCTestCase {
 		row.tap()
 	}
 
+	/// A chat with one other person is listed under that person's name, not its title, and more than one chat can
+	/// share the name (Chief of Staff). Find its row by the name plus the last message shown as the preview.
+	/// Scrolls if the row is not on screen yet; leaves a screenshot and tree when it is missing.
+	private func openChat(with name: String, preview: String) {
+		let tab = app.tabBars.buttons["Chats"]
+		XCTAssertTrue(tab.waitForExistence(timeout: 10), "Chats tab")
+		tab.tap()
+		let row = app.descendants(matching: .any).matching(
+			NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", name, preview)
+		).firstMatch
+		for round in 0..<5 where !row.exists {
+			_ = row.waitForExistence(timeout: round == 0 ? 10 : 2)
+			if !row.exists { app.swipeUp() }
+		}
+		if !row.exists { dumpScreen("chats-list-missing-\(preview.prefix(12).replacingOccurrences(of: " ", with: "-"))") }
+		XCTAssertTrue(row.exists, "chat row for \(name) showing '\(preview)' in the Chats list")
+		row.tap()
+	}
+
 	/// Closes the notification pre-prompt if it shows over a chat; it would swallow the first tap.
 	private func dismissNotNow() {
 		let notNow = app.buttons["Not now"]
@@ -138,7 +157,7 @@ final class MustKeepMoreTests: XCTestCase {
 	/// Contoso renewal chat: a message with two replies, the first from the Chief of Staff (an agent). Opening
 	/// the thread shows the agent's words. The agent reply is the part MK-04 (a thread of people) does not cover.
 	func testMK10_AgentReplyInThreadIsReachable() throws {
-		openChat("Contoso renewal")
+		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
 		let pill = app.buttons.matching(NSPredicate(format: "label CONTAINS '2 replies'")).firstMatch
 		expectExists(pill, "the root message shows a '2 replies' pill", dump: "mk10-pill")
@@ -245,12 +264,20 @@ final class MustKeepMoreTests: XCTestCase {
 		email.typeText("sindre@northwind.example")
 		let password = app.secureTextFields.firstMatch
 		XCTAssertTrue(password.waitForExistence(timeout: 5), "the sign-in screen asks for a password")
-		password.tap()
-		password.typeText("Northwind-demo-1")
+		// The form's Sign in button stays disabled until a password is in: the screenshot of the last run showed
+		// the field still empty. Type until it is enabled, tapping the field again between tries.
 		// The mode switch above the form is also a button called "Sign in": the form's own is the last one.
-		let submit = app.buttons.matching(NSPredicate(format: "label == 'Sign in'")).allElementsBoundByIndex.last
-		XCTAssertNotNil(submit, "the sign-in form has a Sign in button")
-		submit?.tap()
+		func submitButton() -> XCUIElement? {
+			app.buttons.matching(NSPredicate(format: "label == 'Sign in'")).allElementsBoundByIndex.last
+		}
+		for _ in 0..<3 where !(submitButton()?.isEnabled ?? false) {
+			password.tap()
+			password.typeText("Northwind-demo-1")
+			Thread.sleep(forTimeInterval: 1)
+		}
+		if !(submitButton()?.isEnabled ?? false) { dumpScreen("mk14-password") }
+		XCTAssertTrue(submitButton()?.isEnabled ?? false, "the sign-in form accepts the password typed (Sign in is enabled)")
+		submitButton()?.tap()
 		if !app.tabBars.buttons["For you"].waitForExistence(timeout: 30) { dumpScreen("mk14-signedin") }
 		XCTAssertTrue(app.tabBars.buttons["For you"].exists, "signing in again opens the app on For you")
 	}
@@ -260,7 +287,7 @@ final class MustKeepMoreTests: XCTestCase {
 	/// MK-15a: your newest message offers Edit. The words go back into the field under "Editing message",
 	/// and sending the change shows the new words.
 	func testMK15a_EditOwnNewestMessage() throws {
-		openChat("Contoso renewal")
+		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
 		let mine = anyLabel(containing: "Draft the counter offer for Contoso")
 		expectExists(mine, "the chat shows your newest message", dump: "mk15a-message")
@@ -285,7 +312,7 @@ final class MustKeepMoreTests: XCTestCase {
 
 	/// MK-15b: a message's menu offers React; picking an emoji puts a count chip under the message.
 	func testMK15b_ReactToMessage() throws {
-		openChat("Contoso renewal")
+		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
 		let message = anyLabel(containing: "Contoso asked for a 12-month term")
 		expectExists(message, "the chat shows the Chief of Staff's first message", dump: "mk15b-message")
@@ -302,7 +329,7 @@ final class MustKeepMoreTests: XCTestCase {
 	/// MK-15c: a message the server refused stays in the chat as "Not sent", and its menu offers Delete. The demo
 	/// server refuses any text with REJECT in it. The app has no delete for a message that was sent.
 	func testMK15c_DeleteUnsentMessage() throws {
-		openChat("Contoso renewal")
+		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
 		let field = composerField()
 		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")

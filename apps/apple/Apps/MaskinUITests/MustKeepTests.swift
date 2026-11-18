@@ -70,6 +70,25 @@ final class MustKeepTests: XCTestCase {
 		row.tap()
 	}
 
+	/// A chat with one other person is listed under that person's name, not its title, and more than one chat can
+	/// share the name (Chief of Staff). Find its row by the name plus the last message shown as the preview.
+	/// Scrolls if the row is not on screen yet; leaves a screenshot and tree when it is missing.
+	private func openChat(with name: String, preview: String) {
+		let tab = app.tabBars.buttons["Chats"]
+		XCTAssertTrue(tab.waitForExistence(timeout: 10), "Chats tab")
+		tab.tap()
+		let row = app.descendants(matching: .any).matching(
+			NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", name, preview)
+		).firstMatch
+		for round in 0..<5 where !row.exists {
+			_ = row.waitForExistence(timeout: round == 0 ? 10 : 2)
+			if !row.exists { app.swipeUp() }
+		}
+		if !row.exists { dumpScreen("chats-list-missing-\(preview.prefix(12).replacingOccurrences(of: " ", with: "-"))") }
+		XCTAssertTrue(row.exists, "chat row for \(name) showing '\(preview)' in the Chats list")
+		row.tap()
+	}
+
 	/// The in-call screen: only a call has End call and Minimise call. In the demo the call never connects
 	/// (no microphone or voice backend: the status line reads "Couldn't connect the call"), so this proves
 	/// the call screen opens, not that a call works.
@@ -315,7 +334,7 @@ final class MustKeepTests: XCTestCase {
 	/// Webinars chat (sending changes the chat, and the other rows rely on the Priya Rao and Live chats staying
 	/// as they are): type a line, tap Send, and the line shows in the chat. The demo server keeps what it was sent.
 	func testMK08_TypeAndSendShowsMessage() throws {
-		openChat("Webinars")
+		openChat(with: "Chief of Staff", preview: "Signups are at 210")
 		dismissNotNow()
 		let field = composerField()
 		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
@@ -336,7 +355,7 @@ final class MustKeepTests: XCTestCase {
 	/// message that points at the attached file. The text is pasted because typing 8,000 characters takes minutes.
 	func testMK09_LongMessageSendsAsFile() throws {
 		UIPasteboard.general.string = String(repeating: "Long message words. ", count: 410)
-		openChat("Webinars")
+		openChat(with: "Chief of Staff", preview: "Signups are at 210")
 		dismissNotNow()
 		let field = composerField()
 		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
