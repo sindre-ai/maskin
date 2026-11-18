@@ -20,7 +20,7 @@ export type ActionCardSource = Pick<
 >
 
 const KIND_PHRASES: Record<string, string> = {
-	update_video_metadata: 'change the details of a video',
+	update_video_metadata: 'edit the details of a video',
 	set_thumbnail: 'set the thumbnail of a video',
 	create_playlist: 'create a playlist',
 	add_to_playlist: 'add a video to a playlist',
@@ -58,7 +58,7 @@ export function renderYoutubeActionCard(action: ActionCardSource): {
 			: 'A YouTube change is waiting for approval.',
 		decision: {
 			title: 'Approve this YouTube change?',
-			summary: `An agent wants to ${phrase} on ${channel}. Nothing reaches YouTube until you approve it.`,
+			summary: `An agent asked to ${phrase} on ${channel}. Nothing is sent until you say yes.`,
 			options: [
 				{
 					label: YOUTUBE_APPROVE_LABEL,
