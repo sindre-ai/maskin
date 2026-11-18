@@ -12,8 +12,12 @@ import type { ProviderConfig } from '../../types'
  *    disconnect hook would do nothing and show no error.
  *  - `include_granted_scopes` is absent. The token then carries only YouTube scopes, and a
  *    revoke does not drag the person's other Google scopes with it.
- *  - Scopes are exactly youtube.readonly, userinfo.email and openid (policy item P5: request
- *    the minimum, and no yt-analytics.readonly until the analytics tool is built).
+ *  - Scopes are exactly youtube.readonly, youtube.force-ssl, youtube, userinfo.email and openid
+ *    (policy item P5: request the minimum, and no yt-analytics.readonly until the analytics tool
+ *    is built). youtube.force-ssl and youtube are for the write tools, which only run after a
+ *    person approves (comments, playlists and video edits need force-ssl; videos.rate and
+ *    thumbnails.set need youtube). A connection made before they were added must reconnect
+ *    before an approved change can run.
  *
  * No webhook, postInstall or watch hooks: reads are on demand.
  */
@@ -30,6 +34,8 @@ export const config: ProviderConfig = {
 			revokeUrl: 'https://oauth2.googleapis.com/revoke',
 			scopes: [
 				'https://www.googleapis.com/auth/youtube.readonly',
+				'https://www.googleapis.com/auth/youtube.force-ssl',
+				'https://www.googleapis.com/auth/youtube',
 				'https://www.googleapis.com/auth/userinfo.email',
 				'openid',
 			],

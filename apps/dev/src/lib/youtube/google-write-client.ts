@@ -9,6 +9,7 @@ import type { YoutubeActionKind } from './actions'
  */
 
 const API = 'https://www.googleapis.com/youtube/v3'
+const UPLOAD_API = 'https://www.googleapis.com/upload/youtube/v3'
 const REQUEST_TIMEOUT_MS = 30_000
 const VIDEO_PARTS = ['snippet', 'status', 'localizations']
 
@@ -17,6 +18,8 @@ export interface YoutubeWriteRequest {
 	/** The exact request stored with the approved action. */
 	payload: Record<string, unknown>
 	accessToken: string
+	/** The image for set_thumbnail, read and checked by the executor. */
+	image?: { bytes: Uint8Array; mimeType: string }
 }
 
 export interface YoutubeWriteResult {
@@ -58,14 +61,30 @@ function plan(kind: YoutubeActionKind, payload: Record<string, unknown>): Planne
 			return { method: 'POST', path: '/videos/rate', query: { id: payload.id, rating } }
 		}
 		default:
-			// set_thumbnail uploads an image, which needs its own request shape.
+			// set_thumbnail uploads an image, which needs its own request shape (see execute).
 			return null
 	}
 }
 
+async function setThumbnail(request: YoutubeWriteRequest): Promise<YoutubeWriteResult> {
+	const { videoId } = request.payload
+	if (typeof videoId !== 'string' || !request.image) return { ok: false, code: 'bad_payload' }
+	const query = new URLSearchParams({ videoId, uploadType: 'media' }).toString()
+	const response = await fetch(`${UPLOAD_API}/thumbnails/set?${query}`, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${request.accessToken}`,
+			'Content-Type': request.image.mimeType,
+		},
+		body: request.image.bytes as BodyInit,
+		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+	})
+	return response.ok ? { ok: true, code: 'ok' } : { ok: false, code: `http_${response.status}` }
+}
+
 export const googleWriteClient = {
 	async execute(request: YoutubeWriteRequest): Promise<YoutubeWriteResult> {
-		if (request.kind === 'set_thumbnail') return { ok: false, code: 'unsupported_kind' }
+		if (request.kind === 'set_thumbnail') return setThumbnail(request)
 		const planned = plan(request.kind, request.payload)
 		if (!planned) return { ok: false, code: 'bad_payload' }
 		const url = `${API}${planned.path}?${new URLSearchParams(planned.query).toString()}`

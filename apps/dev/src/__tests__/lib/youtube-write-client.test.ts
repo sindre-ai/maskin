@@ -56,10 +56,29 @@ describe('googleWriteClient', () => {
 		expect(result).toEqual({ ok: false, code: 'http_403' })
 	})
 
-	it('does not call Google for a thumbnail or a request with no target', async () => {
+	it('uploads a thumbnail as the image bytes with the image type', async () => {
+		fetchMock.mockResolvedValue(new Response('{}', { status: 200 }))
+		const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+		const result = await googleWriteClient.execute({
+			kind: 'set_thumbnail',
+			payload: { videoId: 'v' },
+			accessToken: 't0k',
+			image: { bytes, mimeType: 'image/png' },
+		})
+		expect(result).toEqual({ ok: true, code: 'ok' })
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe(
+			'https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=v&uploadType=media',
+		)
+		expect(init.method).toBe('POST')
+		expect((init.headers as Record<string, string>)['Content-Type']).toBe('image/png')
+		expect(init.body).toBe(bytes)
+	})
+
+	it('does not call Google for a thumbnail with no image or a request with no target', async () => {
 		expect(await run('set_thumbnail', { videoId: 'v' })).toEqual({
 			ok: false,
-			code: 'unsupported_kind',
+			code: 'bad_payload',
 		})
 		expect(await run('update_video_metadata', { snippet: {} })).toEqual({
 			ok: false,

@@ -10,10 +10,12 @@ describe('youtube provider config', () => {
 		expect(config.displayName).toBe('YouTube')
 	})
 
-	it('requests exactly youtube.readonly, userinfo.email and openid', () => {
+	it('requests exactly the read, write, email and openid scopes', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
 		expect(config.auth.config.scopes).toEqual([
 			'https://www.googleapis.com/auth/youtube.readonly',
+			'https://www.googleapis.com/auth/youtube.force-ssl',
+			'https://www.googleapis.com/auth/youtube',
 			'https://www.googleapis.com/auth/userinfo.email',
 			'openid',
 		])
