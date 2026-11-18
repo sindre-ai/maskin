@@ -83,7 +83,17 @@ export function LoopDecisions({
 						{agent && (
 							<>
 								<ActorAvatar id={agent.id} name={agent.name} type={agent.type} />
-								<span>{agent.name}</span>
+								{agent.type === 'agent' ? (
+									<Link
+										to="/$workspaceId/agents/$agentId"
+										params={{ workspaceId, agentId: agent.id }}
+										className="rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									>
+										{agent.name}
+									</Link>
+								) : (
+									<span>{agent.name}</span>
+								)}
 							</>
 						)}
 						{oldest && (
