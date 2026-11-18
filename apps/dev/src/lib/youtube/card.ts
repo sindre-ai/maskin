@@ -55,7 +55,7 @@ export function renderActionBody(action: ActionCardSource): string {
 			? [`Video: https://www.youtube.com/watch?v=${encodeURIComponent(action.targetVideoId)}`]
 			: []),
 		// Read from the stored request, like the JSON below, never from what the agent wrote.
-		...describeStoredRequest(action.kind, action.payload ?? {}),
+		...describeStoredRequest(action.kind, (action.payload ?? {}) as Record<string, unknown>),
 		'Request:',
 		JSON.stringify(sortKeys(action.payload ?? {}), null, 2),
 	]
