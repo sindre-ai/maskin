@@ -949,10 +949,11 @@ async function helperRunsCurrentCode(
  */
 async function refreshHelper(c: Ctx, scope: { workspaceId: string; agentId: string }) {
 	const commands = buildRefreshHelperCommands()
-	let ran: Awaited<ReturnType<typeof runSettingsCommand>> | undefined
+	let ran: Exclude<Awaited<ReturnType<typeof runSettingsCommand>>, Response> | undefined
 	for (const command of commands) {
-		ran = await runSettingsCommand(c, scope, command, 'refresh-helper')
-		if (ran instanceof Response) return ran
+		const result = await runSettingsCommand(c, scope, command, 'refresh-helper')
+		if (result instanceof Response) return result
+		ran = result
 	}
 	const out = parseKeyValueLines(ran?.stdout ?? '')
 	if (out.helper_changed === undefined || out.debug_port_open === undefined) {
