@@ -115,7 +115,9 @@ function registerTool<Shape extends z.ZodRawShape>(
 	server.registerTool(
 		toolName,
 		{ description, inputSchema, annotations: { readOnlyHint: !options.write } },
-		async (args) => {
+		// The SDK types this callback from the schema shape, which is generic here, so TypeScript
+		// cannot resolve it. run() above is what keeps each tool's arguments typed.
+		(async (args: unknown) => {
 			let outcome: YoutubeOutcome = options.write ? 'pending_approval' : 'ok'
 			let result: ReturnType<typeof jsonResult> | ReturnType<typeof toolError>
 			try {
@@ -133,7 +135,7 @@ function registerTool<Shape extends z.ZodRawShape>(
 				viaLoop: await startedByTrigger(ctx.db, ctx.sessionId),
 			})
 			return result
-		},
+		}) as never,
 	)
 }
 
