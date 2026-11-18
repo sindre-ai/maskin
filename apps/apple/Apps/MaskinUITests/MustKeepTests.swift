@@ -203,6 +203,30 @@ final class MustKeepTests: XCTestCase {
 		XCTAssertTrue(app.buttons["Done"].firstMatch.waitForExistence(timeout: 5), "the Select text sheet opens")
 	}
 
+	/// Saves a picture of the open message menu in light and dark mode (into MUSTKEEP_DUMP_DIR, which the
+	/// workflow uploads), so the menu's looks can be checked without a device.
+	func testMK03c_MenuPicturesLightAndDark() throws {
+		for style in ["Light", "Dark"] {
+			if style == "Dark" {
+				app.terminate()
+				app = XCUIApplication()
+				app.launchEnvironment["MASKIN_DEMO_SESSION"] = Self.session
+				app.launchArguments = ["-AppleInterfaceStyle", "Dark"]
+				app.launch()
+				XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
+				dismissNotNow()
+			}
+			openChat("Priya Rao")
+			let message = app.descendants(matching: .any)
+				.matching(NSPredicate(format: "label CONTAINS 'I can review the Northwind draft'")).firstMatch
+			XCTAssertTrue(message.waitForExistence(timeout: 15), "the chat's messages load (\(style))")
+			message.press(forDuration: 1.0)
+			XCTAssertTrue(app.buttons["Reply in thread"].firstMatch.waitForExistence(timeout: 5), "the menu opens (\(style))")
+			sleep(1)
+			dumpScreen("mk03c-menu-\(style.lowercased())")
+		}
+	}
+
 	// MARK: MK-04 A thread with replies
 
 	/// Priya Rao chat: a message with two replies shows "2 replies", the replies stay out of the main
