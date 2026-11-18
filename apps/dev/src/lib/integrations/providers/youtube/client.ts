@@ -13,6 +13,8 @@ export interface YoutubeClientContext {
 	workspaceId: string
 	/** The authenticated caller. The Keychain read is attributed to it. */
 	actorId: string
+	/** Which connected Google account the call means. Required once several are connected. */
+	integrationId?: string
 }
 
 export interface YoutubeRead {
@@ -27,7 +29,7 @@ export interface YoutubeRead {
 
 /**
  * Thin fetch wrapper over youtube/v3. Order of operations:
- *  1. the active integration row (a revoked row never resolves),
+ *  1. the active integration row (a revoked row never resolves; several connections need an id),
  *  2. the cache, so a repeat read costs no quota,
  *  3. the quota guard, charged before the Google call and not refunded on failure,
  *  4. the call itself.
@@ -40,7 +42,7 @@ export async function youtubeRead<T = unknown>(
 	read: YoutubeRead,
 ): Promise<T> {
 	const { db, workspaceId, actorId } = ctx
-	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId)
+	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId, ctx.integrationId)
 
 	const cached = getCachedRead(integrationId, read.tool, read.params)
 	if (cached !== undefined) return cached as T
