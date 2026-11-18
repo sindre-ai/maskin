@@ -60,6 +60,9 @@ targets:
       # Notification service extension: builds per-push action buttons for decision pushes.
       - target: MaskinNotificationService
         platformFilter: iOS
+      # Caller ID: names for incoming calls from known contacts, embedded in PlugIns/.
+      - target: MaskinCallDirectory
+        platformFilter: iOS
       # Home- and lock-screen widgets (decisions that need you), embedded in PlugIns/.
       - target: MaskinWidgets
         platformFilter: iOS
@@ -301,6 +304,43 @@ targets:
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_STYLE: Automatic
+  # iOS call directory extension (Caller ID): hands the phone the numbers and names the app keeps in
+  # the shared App Group file, so a call from a known contact shows their name. Switched on by the
+  # person under Settings, Phone, Call Blocking and Identification. No network, no UI. It compiles
+  # only the file reader and links nothing, to stay far inside an extension's memory limit.
+  MaskinCallDirectory:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Apps/MaskinCallDirectory
+        excludes:
+          - Info.plist
+          - MaskinCallDirectory.entitlements
+      - path: Sources/MaskinCore/CallerID/CallerIDDirectoryReader.swift
+    info:
+      path: Apps/MaskinCallDirectory/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin Caller ID
+        CFBundleName: Maskin Caller ID
+        # Drive both from build settings so `CURRENT_PROJECT_VERSION=… xcodebuild` bumps every target.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.callkit.call-directory
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).CallDirectoryHandler
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.calldirectory
+        PRODUCT_NAME: MaskinCallDirectory
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_ENTITLEMENTS: Apps/MaskinCallDirectory/MaskinCallDirectory.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # DEVELOPMENT_TEAM comes from the optional gitignored Config/Local.xcconfig.
         CODE_SIGN_STYLE: Automatic
   # iOS WidgetKit extension: home-screen (small/medium/large) and lock-screen (circular/rectangular/
   # inline) widgets showing the decisions that need you. Separate process with tight memory/time

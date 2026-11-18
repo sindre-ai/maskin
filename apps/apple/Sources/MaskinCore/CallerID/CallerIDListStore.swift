@@ -25,12 +25,8 @@ public struct FileCallerIDListStore: CallerIDListStoring {
 
 	/// The store in the App Group container, or nil when this build isn't signed with the group.
 	public static func shared(fileManager: FileManager = .default) -> FileCallerIDListStore? {
-		fileManager.containerURL(forSecurityApplicationGroupIdentifier: ShareQueue.appGroupIdentifier)
-			.map {
-				FileCallerIDListStore(
-					fileURL: $0.appendingPathComponent("CallerID", isDirectory: true)
-						.appendingPathComponent("caller-id.json"))
-			}
+		// The path comes from the extension's reader, so the two always agree on where the file is.
+		CallerIDDirectoryReader.fileURL(fileManager: fileManager).map { FileCallerIDListStore(fileURL: $0) }
 	}
 
 	public func save(_ entries: [CallerIDEntry]) throws {

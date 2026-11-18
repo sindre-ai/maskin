@@ -17,6 +17,11 @@ type ValueRule = 'id' | 'label' | 'int' | readonly string[]
 
 const CARD_KIND = ['decision', 'thread'] as const
 
+// Caller ID from contacts: whether the phone has Maskin switched on, and how many numbers it holds
+// as a bucket. Never a number or a name.
+const CALLER_ID_STATUS = ['enabled', 'disabled', 'unknown'] as const
+const CALLER_ID_NUMBERS_BUCKET = ['0', '1_100', '101_500', '501_1000', '1000_plus'] as const
+
 const EVENT_PROPERTIES: Record<string, Record<string, ValueRule>> = {
 	app_installed: {},
 	first_sign_in: {},
@@ -49,6 +54,7 @@ const EVENT_PROPERTIES: Record<string, Record<string, ValueRule>> = {
 		bulk_batch_size: 'int',
 	},
 	object_viewed: { entity_id: 'id', entity_type: ['object'], object_type: 'id' },
+	caller_id_status: { status: CALLER_ID_STATUS, numbers_bucket: CALLER_ID_NUMBERS_BUCKET },
 	// The two generic step events from the plan, for flows with no screen of their own.
 	flow_step: { flow: 'id', step: 'id', flow_id: 'id', duration_ms: 'int' },
 	flow_error: { flow: 'id', step: 'id', error_category: 'id' },

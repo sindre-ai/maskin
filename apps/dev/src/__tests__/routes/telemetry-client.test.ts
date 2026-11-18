@@ -107,6 +107,31 @@ describe('POST /api/telemetry/client', () => {
 		expect(bodies[1]?.properties).toMatchObject({ surface: 'iphone', workspace_id: wsId })
 	})
 
+	it('accepts caller_id_status with a status and a numbers bucket, and nothing else', async () => {
+		const ok = await post([
+			event({
+				name: 'caller_id_status',
+				properties: { status: 'enabled', numbers_bucket: '1000_plus' },
+			}),
+		])
+		expect(ok.status).toBe(202)
+		expect(sent()[0]).toMatchObject({
+			event: 'caller_id_status',
+			properties: { status: 'enabled', numbers_bucket: '1000_plus', surface: 'iphone' },
+		})
+
+		fetchMock.mockClear()
+		for (const properties of [
+			{ status: 'maybe', numbers_bucket: '0' },
+			{ status: 'enabled', numbers_bucket: '1065' },
+			{ status: 'enabled', numbers_bucket: '0', phone: '+4512345678' },
+		]) {
+			const bad = await post([event({ name: 'caller_id_status', properties })])
+			expect(bad.status).toBe(400)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
 	it('rejects an unknown event name with a 400 that names it, and sends nothing', async () => {
 		const res = await post([event(), event({ name: 'secret_event', properties: {} })])
 

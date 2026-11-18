@@ -26,7 +26,8 @@ Maskin is a shared workspace where small teams and their AI agents work together
 - Apple Push Notification service — notifications.
 - Apple Speech framework — optional dictation in chat (on device where supported).
 - Workspace integrations the owner connects on the website (Slack, GitHub, LinkedIn and others) — configured on the web, not inside the app.
-- No ads, no tracking, no third-party analytics SDK in the app.
+- PostHog (product usage analytics, EU host) — the app's own first-run question and Settings switch decide it; nothing is sent until the person agrees, and builds without a project key never send. Events carry the person's actor id and workspace id plus plain categories, never names, phone numbers, message text or search text.
+- No ads and no cross-app tracking.
 
 ## 5. Regional differences
 None. Features and content are the same in every region.
@@ -37,5 +38,6 @@ None.
 ## Other points reviewers ask about
 - **Payments:** none in the app. Plan and credits are managed on the website; the app only shows read-only usage and has no purchase button or link to purchase.
 - **User-generated content:** content is private to the members of a workspace (people invited by the owner) and their agents. No public feed, no anonymous or stranger-to-stranger content.
-- **Permissions:** microphone and speech recognition (dictation only), photo library via the system picker, notifications.
+- **Permissions:** microphone and speech recognition (dictation only), photo library via the system picker, notifications. The app never asks for the phone's Contacts.
+- **Caller ID (call directory extension):** when the person switches Maskin on under Settings, Phone, Call Blocking and Identification, an incoming call from a number held in their Maskin workspace shows that contact's name. The names and numbers come from the person's own workspace contacts, not the phone's address book. They sit in one file on the phone (App Group folder, readable after first unlock, kept out of backups), are used only by the extension, which has no network access, and are deleted when the person signs out. Incoming calls only, a name label only: no call blocking, no call or message content. The only analytics about it is a yes/no status and a size bucket (for example "1000_plus"), never a number or a name.
 - **Background audio (`UIBackgroundModes: audio`):** used only while the person is on a live voice call with an agent, so the call keeps its microphone and the agent's voice running when the screen is locked or the app is in the background; the Lock Screen / Dynamic Island card shows the call with Mute and End buttons, and the app does not play audio in the background at any other time.

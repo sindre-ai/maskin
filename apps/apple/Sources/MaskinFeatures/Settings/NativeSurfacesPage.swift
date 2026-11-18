@@ -8,6 +8,7 @@ import SwiftUI
 /// another device, so each row opens a page that says how, plus the one action the app can take.
 struct NativeSurfacesPage: View {
 	let environment: AppEnvironment
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	private struct Surface: Identifiable {
 		let id: String
@@ -61,6 +62,9 @@ struct NativeSurfacesPage: View {
 
 	var body: some View {
 		List {
+			#if os(iOS)
+				if let runtime { CallerIDSection(runtime: runtime) }
+			#endif
 			Section("Outside the app") {
 				ForEach(Self.outside) { row($0) }
 			}
@@ -98,12 +102,7 @@ private struct SurfaceInfoPage: View {
 		List {
 			Section {
 				ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-					HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s6) {
-						Text("\(index + 1)").maskinText(.subhead).fontWeight(.bold).foregroundStyle(MaskinColor.ink4)
-							.frame(width: MaskinSpace.s10)
-						Text(step).foregroundStyle(MaskinColor.ink)
-					}
-					.padding(.vertical, MaskinSpace.s2)
+					NumberedStep(number: index + 1, text: step)
 				}
 			} header: {
 				Text(summary)
@@ -114,5 +113,20 @@ private struct SurfaceInfoPage: View {
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 		#endif
+	}
+}
+
+/// One numbered step of a how-to list.
+struct NumberedStep: View {
+	let number: Int
+	let text: String
+
+	var body: some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s6) {
+			Text("\(number)").maskinText(.subhead).fontWeight(.bold).foregroundStyle(MaskinColor.ink4)
+				.frame(width: MaskinSpace.s10)
+			Text(text).foregroundStyle(MaskinColor.ink)
+		}
+		.padding(.vertical, MaskinSpace.s2)
 	}
 }
