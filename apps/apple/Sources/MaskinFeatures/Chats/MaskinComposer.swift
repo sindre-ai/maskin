@@ -385,16 +385,13 @@ struct MaskinComposer: View {
 	}
 
 	private var attachActions: [ComposerAttachAction] {
-		var actions: [ComposerAttachAction] = [.photo]
 		#if os(iOS)
-		if CameraPicker.isAvailable { actions.append(.camera) }
+		ComposerAttachAction.available(
+			hasCamera: CameraPicker.isAvailable, clipboardHasImage: UIPasteboard.general.hasImages,
+			showsFormatting: showsFormatting)
+		#else
+		ComposerAttachAction.available(hasCamera: false, clipboardHasImage: false, showsFormatting: showsFormatting)
 		#endif
-		actions += [.file, .object, .person]
-		#if os(iOS)
-		if UIPasteboard.general.hasImages { actions.append(.paste) }
-		#endif
-		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
-		return actions
 	}
 
 	/// The room above the bar, less the status bar, navigation bar and the 8pt gap. Never under three
@@ -443,8 +440,7 @@ struct MaskinComposer: View {
 	}
 
 	private func insertTrigger(_ trigger: String) {
-		let needsSpace = !(model.text.isEmpty || model.text.last?.isWhitespace == true)
-		model.insert(needsSpace ? " \(trigger)" : trigger)
+		model.insertTrigger(trigger)
 		focused = true
 	}
 

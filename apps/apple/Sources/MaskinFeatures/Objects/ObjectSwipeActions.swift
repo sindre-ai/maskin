@@ -14,6 +14,27 @@ struct ObjectAskActions {
 	var undo: (ObjectAsk) -> Void = { _ in }
 }
 
+/// Which button a list row's swipe shows. An agent's ask comes first on both sides; with none, the
+/// right swipe approves or marks done, and the left swipe archives, or deletes when the type has
+/// no archive status.
+enum ObjectRowSwipe: Equatable {
+	case approveAsk, approve, done, hold, archive, delete
+
+	/// Swipe right. Nil when the row has nothing to approve or finish.
+	static func leading(hasAsk: Bool, needsYou: Bool, canApprove: Bool, canMarkDone: Bool) -> ObjectRowSwipe? {
+		if hasAsk { return .approveAsk }
+		if needsYou, canApprove { return .approve }
+		if canMarkDone { return .done }
+		return nil
+	}
+
+	/// Swipe left. Always one button.
+	static func trailing(hasAsk: Bool, canArchive: Bool) -> ObjectRowSwipe {
+		if hasAsk { return .hold }
+		return canArchive ? .archive : .delete
+	}
+}
+
 /// The shared menu body for one object (the row's context menu and the board card).
 struct ObjectMenuItems: View {
 	let object: WorkObject
