@@ -24,6 +24,9 @@ import marketWatchTriggersData from './data/market-watch-triggers.json'
 import meetingLoopActorsData from './data/meeting-loop-actors.json'
 import meetingLoopSkillsData from './data/meeting-loop-skills.json'
 import meetingLoopTriggersData from './data/meeting-loop-triggers.json'
+import productReleaseActorsData from './data/product-release-actors.json'
+import productReleaseSkillsData from './data/product-release-skills.json'
+import productReleaseTriggersData from './data/product-release-triggers.json'
 import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
@@ -57,7 +60,7 @@ export interface ViewData extends ViewSnapshotSource {
 }
 
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
-// ./market-watch-loop, ./meeting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
+// ./market-watch-loop, ./meeting-loop, ./product-release-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
 export interface MarketplaceLoopSeedConfig {
 	loop: {
@@ -80,18 +83,21 @@ const actorsById: Record<string, ActorData> = {
 	...(marketWatchActorsData as Record<string, ActorData>),
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
+	...(productReleaseActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
 	...(marketWatchTriggersData as Record<string, TriggerData>),
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
+	...(productReleaseTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
+	...(productReleaseSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {

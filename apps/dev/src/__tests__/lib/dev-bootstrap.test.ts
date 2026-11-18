@@ -13,9 +13,10 @@ import {
 } from '../../lib/marketplace-loops/discovery-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
+import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
 import { createTestContext } from '../setup'
 
-const ALL_PACKAGES = [MARKET_WATCH_LOOP, DISCOVERY_LOOP, MEETING_LOOP]
+const ALL_PACKAGES = [MARKET_WATCH_LOOP, DISCOVERY_LOOP, MEETING_LOOP, PRODUCT_RELEASE_LOOP]
 
 function matchingMarketplaceRows() {
 	return ALL_PACKAGES.map((loop, i) => ({

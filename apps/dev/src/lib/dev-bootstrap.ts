@@ -40,6 +40,12 @@ import {
 	MEETING_LOOP_SKILL_IDS,
 	MEETING_LOOP_TRIGGER_IDS,
 } from './marketplace-loops/meeting-loop'
+import {
+	PRODUCT_RELEASE_ACTOR_IDS,
+	PRODUCT_RELEASE_LOOP,
+	PRODUCT_RELEASE_SKILL_IDS,
+	PRODUCT_RELEASE_TRIGGER_IDS,
+} from './marketplace-loops/product-release-loop'
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
@@ -62,6 +68,12 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		triggerIds: MEETING_LOOP_TRIGGER_IDS,
 		skillIds: MEETING_LOOP_SKILL_IDS,
 	},
+	{
+		loop: PRODUCT_RELEASE_LOOP,
+		actorIds: PRODUCT_RELEASE_ACTOR_IDS,
+		triggerIds: PRODUCT_RELEASE_TRIGGER_IDS,
+		skillIds: PRODUCT_RELEASE_SKILL_IDS,
+	},
 ]
 
 export interface MarketplaceSyncResult {
@@ -74,7 +86,7 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Market & Competitor Watch, Meeting Loop), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Market & Competitor Watch, Meeting Loop, Product release), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
