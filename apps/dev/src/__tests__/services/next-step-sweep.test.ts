@@ -5,18 +5,26 @@ const now = new Date('2026-11-12T15:30:00.000Z')
 const ago = (ms: number) => new Date(now.getTime() - ms)
 
 describe('sweepMode', () => {
+	it('is off, whatever else is set, when the sweep flag is not on', () => {
+		expect(
+			sweepMode({ sweepOn: false, wakeOn: true, firstRecordedAt: ago(10 * RECORD_ONLY_MS), now }),
+		).toBe('off')
+		expect(sweepMode({ sweepOn: false, wakeOn: false, firstRecordedAt: null, now })).toBe('off')
+	})
+
 	it('only records until the wake flag is on', () => {
-		expect(sweepMode({ wakeOn: false, firstRecordedAt: ago(10 * RECORD_ONLY_MS), now })).toBe(
-			'record',
-		)
+		expect(
+			sweepMode({ sweepOn: true, wakeOn: false, firstRecordedAt: ago(10 * RECORD_ONLY_MS), now }),
+		).toBe('record')
 	})
 
 	it('records on the first ever tick, even with the wake flag on', () => {
-		expect(sweepMode({ wakeOn: true, firstRecordedAt: null, now })).toBe('record')
+		expect(sweepMode({ sweepOn: true, wakeOn: true, firstRecordedAt: null, now })).toBe('record')
 	})
 
 	it('keeps recording for 3 days, then wakes', () => {
-		const at = (ms: number) => sweepMode({ wakeOn: true, firstRecordedAt: ago(ms), now })
+		const at = (ms: number) =>
+			sweepMode({ sweepOn: true, wakeOn: true, firstRecordedAt: ago(ms), now })
 		expect(at(RECORD_ONLY_MS - 1)).toBe('record')
 		expect(at(RECORD_ONLY_MS)).toBe('wake')
 	})

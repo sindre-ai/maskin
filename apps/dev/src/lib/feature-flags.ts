@@ -113,8 +113,17 @@ export const FLAGS = {
 	 */
 	DRIVER_WAKE: 'driver-wake',
 	/**
-	 * Lets the sweep start runs. The sweep records in every workspace and must have been recording
-	 * in this one for at least 3 days (the first-run flood guard). Turn on only after the
+	 * Gates the sweep for overdue or missing next steps (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4, fallback half). Backend only, workspace-scoped: read with isFlagEnabledForWorkspace
+	 * in services/next-step-sweep.ts, and the sweep only visits workspaces named in
+	 * FF_WORKSPACE_FEATURES. On means the sweep runs in RECORD-ONLY mode: it writes what it would
+	 * have woken and starts nothing. Off (the default) means the sweep does not look at the
+	 * workspace and writes nothing. Nothing here starts a run until NEXT_STEP_SWEEP_WAKE is on too.
+	 */
+	NEXT_STEP_SWEEP: 'next-step-sweep',
+	/**
+	 * Lets the sweep start runs. Needs NEXT_STEP_SWEEP on for the workspace, and the sweep must
+	 * have been recording for at least 3 days (the first-run flood guard). Turn on only after the
 	 * would-wake list was compared with what is really stuck and the self-start limits are live.
 	 */
 	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
