@@ -157,7 +157,7 @@ app.get('/', async (c) => {
 			// The workspace is bounded by >= and <= (same rows as =) and ordered by
 			// (workspace_id, id). With a plain equality Postgres treats the order as just "by
 			// id", picks the primary key and walks every other workspace's rows from an old
-			// cursor onward, throwing them away (migration 0160 adds the index that avoids
+			// cursor onward, throwing them away (migration 0166 adds the index that avoids
 			// it, but the planner only uses it for this shape). The 100 row cap is unchanged.
 			const missed = await db
 				.select()
