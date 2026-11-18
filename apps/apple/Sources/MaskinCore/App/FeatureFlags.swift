@@ -5,8 +5,6 @@ import OpenAPIRuntime
 
 /// Flag ids the app reads. Same ids as `FLAGS` in `apps/dev/src/lib/feature-flags.ts`.
 public enum FeatureFlagID {
-	/// Undo send in chat: a sent message is held for a few seconds behind an Undo bar.
-	public static let chatUndoSend = "chat-undo-send"
 	/// "Create view with agent" item in the items list, item and flow menus.
 	public static let createViewWithAgent = "create-view-with-agent"
 	/// Agents in the top row of the iOS share sheet.

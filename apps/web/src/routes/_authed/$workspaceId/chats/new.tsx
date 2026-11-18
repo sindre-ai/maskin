@@ -1,6 +1,5 @@
 import { Composer } from '@/components/chat/chat'
 import { StarterPrompts } from '@/components/chat/starter-prompts'
-import { UndoSendBar } from '@/components/chat/undo-send-bar'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Input } from '@/components/ui/input'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
@@ -8,10 +7,9 @@ import { useCreateConversation } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
-import { useUndoSend } from '@/hooks/use-undo-send'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
-import { type MessageMetadata, api } from '@/lib/api'
+import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
 	type ChatSelectionAction,
@@ -80,10 +78,6 @@ interface Recipient {
 
 const MAX_SUGGESTIONS = 6
 
-function describeSendError(err: unknown) {
-	return err instanceof Error ? err.message : 'Failed to create conversation'
-}
-
 function NewChatRoute() {
 	useDocumentTitle('New chat')
 	const search = Route.useSearch()
@@ -91,15 +85,6 @@ function NewChatRoute() {
 	const richText = useFeatureFlag('chat-formatting')
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
-	const { hold, undo, isHeld } = useUndoSend()
-	// A held first message that is posted after the person left the page must not pull them back.
-	const mountedRef = useRef(true)
-	useEffect(() => {
-		mountedRef.current = true
-		return () => {
-			mountedRef.current = false
-		}
-	}, [])
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: actors } = useActors(workspaceId, { enabled: true })
 	const defaultAgent = useDefaultChatAgent()
@@ -319,12 +304,6 @@ function NewChatRoute() {
 
 	const handleSend = async (content: string, extras?: { files: ChatSelectionFile[] }) => {
 		if (createConversation.isPending) return
-		if (isHeld) {
-			// Posting a second first message would start a second chat; keep the text in the box.
-			const message = 'Undo your first message, or wait for it to send'
-			setError(message)
-			throw new Error(message)
-		}
 		if (picked.length === 0) {
 			const message = 'Pick at least one person or agent to start the conversation'
 			setError(message)
@@ -356,62 +335,34 @@ function NewChatRoute() {
 			}))
 		}
 
-		const recipients = picked
-		const restore = () => {
-			for (const file of files) dispatchSelection({ type: 'add_file', file })
-			for (const object of selection.objects) dispatchSelection({ type: 'add_object', object })
-			for (const notification of selection.notifications) {
-				dispatchSelection({ type: 'add_notification', notification })
-			}
-			setFillRequest((prev) => ({
-				text: content || undefined,
-				append: true,
-				nonce: (prev?.nonce ?? 0) + 1,
-			}))
-		}
-		const createBody = {
-			title: deriveConversationTitle(content, recipients[0]?.name ?? 'New chat'),
-			participant_actor_ids: recipients.map((r) => r.id),
-			// An attachments-only send has empty text; the API accepts that when attachments ride along.
-			...(content || metadata.attachments ? { initial_message: content } : {}),
-			...((content || metadata.attachments) && Object.keys(metadata).length > 0
-				? { initial_message_metadata: metadata }
-				: {}),
-		}
-		const create = async () => {
-			const conversation = await createConversation.mutateAsync(createBody)
-			const singleAgent =
-				recipients.length === 1 && recipients[0]?.type === 'agent' ? recipients[0] : null
+		try {
+			const conversation = await createConversation.mutateAsync({
+				title: deriveConversationTitle(content, picked[0]?.name ?? 'New chat'),
+				participant_actor_ids: picked.map((r) => r.id),
+				// An attachments-only send has empty text; the API accepts that when attachments ride along.
+				...(content || metadata.attachments ? { initial_message: content } : {}),
+				...((content || metadata.attachments) && Object.keys(metadata).length > 0
+					? { initial_message_metadata: metadata }
+					: {}),
+			})
+			const singleAgent = picked.length === 1 && picked[0]?.type === 'agent' ? picked[0] : null
 			// Opened from a Message button and still exactly that one person: say which button.
 			const fromMessageButton =
-				search.from &&
-				recipients.length === 1 &&
-				recipients[0]?.id === search.agentId &&
-				!singleAgent
+				search.from && picked.length === 1 && picked[0]?.id === search.agentId && !singleAgent
 			trackChatSessionStarted({
 				entity_id: conversation.id,
 				entity_type: 'session',
 				entry_point: fromMessageButton && search.from ? search.from : 'agent_one_shot',
 				entry_agent_role: singleAgent ? deriveEntryAgentRole(singleAgent.name) : null,
-				participant_count: recipients.length,
+				participant_count: picked.length,
 			})
-			if (!mountedRef.current) return
 			dispatchSelection({ type: 'clear_all' })
 			navigate({
 				to: '/$workspaceId/chats/$conversationId',
 				params: { workspaceId, conversationId: conversation.id },
 			})
-		}
-
-		try {
-			await hold({
-				send: create,
-				sendOnHide: () => api.conversations.create(workspaceId, createBody, { keepalive: true }),
-				restore,
-				onError: (err) => setError(describeSendError(err)),
-			})
 		} catch (err) {
-			setError(describeSendError(err))
+			setError(err instanceof Error ? err.message : 'Failed to create conversation')
 			throw err
 		}
 	}
@@ -529,7 +480,6 @@ function NewChatRoute() {
 			<div className="min-h-8 flex-1" />
 
 			<StarterPrompts prompts={starters} onPick={pickStarter} className="pb-3" />
-			{isHeld ? <UndoSendBar onUndo={undo} /> : null}
 			<Composer
 				workspaceId={workspaceId}
 				onSend={handleSend}

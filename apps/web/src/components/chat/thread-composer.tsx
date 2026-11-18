@@ -1,5 +1,4 @@
 import { Composer } from '@/components/chat/chat'
-import { UndoSendBar } from '@/components/chat/undo-send-bar'
 import { useActors } from '@/hooks/use-actors'
 import {
 	flattenMessagesOldestFirst,
@@ -9,8 +8,7 @@ import {
 } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
-import { useUndoSend } from '@/hooks/use-undo-send'
-import { type ConversationParticipantResponse, type MessageMetadata, api } from '@/lib/api'
+import type { ConversationParticipantResponse, MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import {
 	type ChatSelectionAction,
@@ -21,7 +19,7 @@ import {
 import { type ComposerCue, NEUTRAL_PLACEHOLDER, deriveComposerCue } from '@/lib/composer-cue'
 import { findLastEditableMessage } from '@/lib/last-editable-message'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 
 const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 
@@ -67,22 +65,11 @@ interface ThreadComposerProps {
 export function ThreadComposer({
 	workspaceId,
 	conversationId,
-	fillRequest: parentFill,
+	fillRequest,
 	onEditLast,
 	reply,
 }: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
-	const { hold, undo, isHeld } = useUndoSend(conversationId)
-	// Undo puts the held text back through the composer's own fill request. The parent's
-	// requests ride the same channel with fresh nonces, so the newest of the two wins.
-	const [fillRequest, setFillRequest] = useState(parentFill)
-	const fillSeq = useRef(parentFill?.nonce ?? 0)
-	const lastParentNonce = useRef(parentFill?.nonce)
-	useEffect(() => {
-		if (parentFill?.nonce === lastParentNonce.current) return
-		lastParentNonce.current = parentFill?.nonce
-		if (parentFill) setFillRequest({ ...parentFill, nonce: ++fillSeq.current })
-	}, [parentFill])
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
@@ -180,29 +167,11 @@ export function ThreadComposer({
 				metadata.mentions = mentions
 			}
 
-			const restore = () => {
-				for (const file of files) dispatch({ type: 'add_file', file })
-				for (const object of selection.objects) dispatch({ type: 'add_object', object })
-				for (const notification of selection.notifications) {
-					dispatch({ type: 'add_notification', notification })
-				}
-				setFillRequest({ text: content || undefined, append: true, nonce: ++fillSeq.current })
-			}
-
 			try {
-				const body = {
+				await sendMessage.mutateAsync({
 					content,
 					...(Object.keys(metadata).length > 0 ? { metadata } : {}),
 					...(reply ? { thread_root_id: reply.rootId, also_in_channel: reply.alsoInChannel } : {}),
-				}
-				await hold({
-					send: async () => {
-						await sendMessage.mutateAsync(body)
-						reply?.onSent?.()
-					},
-					sendOnHide: () =>
-						api.conversations.postMessage(conversationId, workspaceId, body, { keepalive: true }),
-					restore,
 				})
 				dispatch({ type: 'clear_all' })
 				// clear_all wipes the seeded recipient; the next reply is still addressed to them.
@@ -212,12 +181,13 @@ export function ThreadComposer({
 						agent: { id: reply.recipient.id, name: reply.recipient.name },
 					})
 				}
+				reply?.onSent?.()
 			} catch (err) {
 				setError(err instanceof Error ? err.message : 'Failed to send message')
 				throw err
 			}
 		},
-		[selection, sendMessage, self?.id, reply, hold, conversationId, workspaceId],
+		[selection, sendMessage, self?.id, reply],
 	)
 
 	// Name who you are answering (mockup 7850). "Message this conversation"
@@ -286,40 +256,37 @@ export function ThreadComposer({
 	const placeholder = reply ? todaysPlaceholder : (cue?.placeholder ?? todaysPlaceholder)
 
 	return (
-		<>
-			{isHeld ? <UndoSendBar onUndo={undo} /> : null}
-			<Composer
-				workspaceId={workspaceId}
-				onSend={handleSend}
-				allowAttachmentOnly
-				longTextAsFile
-				disabled={false}
-				pending={sendMessage.isPending}
-				surface="sheet"
-				placeholder={placeholder}
-				selection={selection}
-				onDispatchSelection={handleSelectionAction}
-				conversationParticipantIds={participantIds}
-				onRemoveAgent={(id) => dispatch({ type: 'remove_agent', id })}
-				onRemoveObject={(id) => dispatch({ type: 'remove_object', id })}
-				onRemoveNotification={(id) => dispatch({ type: 'remove_notification', id })}
-				onRemoveFile={(fileId) => dispatch({ type: 'remove_file', fileId })}
-				externalError={error}
-				onDismissExternalError={() => setError(null)}
-				hint={cue ? cue.hint : undefined}
-				// The accessible name stays constant while the visible placeholder
-				// names the counterpart — a name that changed with the thread's lead
-				// would make the same control a different control to a screen reader.
-				textareaLabel={reply ? 'Reply in thread' : 'Message this conversation'}
-				draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
-				fillRequest={fillRequest}
-				onEditLast={handleEditLast}
-				inlineTags
-				richText={richText}
-				secretCapture={secretCapture}
-				secretRestarting={secretRestarting}
-				vaultModeBlocked={vaultModeBlocked}
-			/>
-		</>
+		<Composer
+			workspaceId={workspaceId}
+			onSend={handleSend}
+			allowAttachmentOnly
+			longTextAsFile
+			disabled={false}
+			pending={sendMessage.isPending}
+			surface="sheet"
+			placeholder={placeholder}
+			selection={selection}
+			onDispatchSelection={handleSelectionAction}
+			conversationParticipantIds={participantIds}
+			onRemoveAgent={(id) => dispatch({ type: 'remove_agent', id })}
+			onRemoveObject={(id) => dispatch({ type: 'remove_object', id })}
+			onRemoveNotification={(id) => dispatch({ type: 'remove_notification', id })}
+			onRemoveFile={(fileId) => dispatch({ type: 'remove_file', fileId })}
+			externalError={error}
+			onDismissExternalError={() => setError(null)}
+			hint={cue ? cue.hint : undefined}
+			// The accessible name stays constant while the visible placeholder
+			// names the counterpart — a name that changed with the thread's lead
+			// would make the same control a different control to a screen reader.
+			textareaLabel={reply ? 'Reply in thread' : 'Message this conversation'}
+			draftKey={reply ? `${conversationId}:reply:${reply.rootId}` : conversationId}
+			fillRequest={fillRequest}
+			onEditLast={handleEditLast}
+			inlineTags
+			richText={richText}
+			secretCapture={secretCapture}
+			secretRestarting={secretRestarting}
+			vaultModeBlocked={vaultModeBlocked}
+		/>
 	)
 }

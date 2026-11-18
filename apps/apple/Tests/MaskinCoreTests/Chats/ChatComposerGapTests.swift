@@ -196,30 +196,7 @@ struct ChatComposerGapTests {
 		#expect(m.take()?.metadata == nil)
 	}
 
-	// MARK: Undone send
-
-	@Test("an undone send puts uploaded attachments back once, not twice")
-	func restoreAttachments() async {
-		let m = model()
-		m.text = "see this"
-		m.attach(name: "a.png", mimeType: "image/png", prepare: picture)
-		#expect(await eventually { m.canSend })
-		let snapshot = m.snapshot()
-		#expect(m.take() != nil)
-		#expect(m.attachments.isEmpty)
-		m.restore(snapshot)
-		m.restore(snapshot)
-		#expect(m.attachments.count == 1)
-		#expect(m.canSend)
-	}
-
-	@Test("an attachment that never uploaded is not kept in the snapshot")
-	func snapshotSkipsUnfinished() {
-		let m = model(uploader: false)
-		m.text = "x"
-		m.attach(name: "a.png", mimeType: "image/png", prepare: picture)
-		#expect(m.snapshot().attachments.isEmpty)
-	}
+	// MARK: Clearing
 
 	@Test("clearing the bar drops text, chips, attachments and the reply together")
 	func clearEverything() {

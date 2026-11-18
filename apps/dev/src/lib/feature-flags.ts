@@ -170,14 +170,6 @@ export const FLAGS = {
 	 */
 	DECISION_DEFAULT: 'decision-default',
 	/**
-	 * Gates undo send in chat: a sent message is held in the client for a few seconds
-	 * behind an Undo bar, and nothing is posted until the window ends. Frontend only: web reads
-	 * it once, in `useUndoSend`, and iOS reads it from `GET /api/feature-flags` (`FeatureFlagID`).
-	 * Off means a send posts at once, as before. The API is untouched. Retire once undo send is
-	 * on for everyone.
-	 */
-	CHAT_UNDO_SEND: 'chat-undo-send',
-	/**
 	 * Gates the mail to the billing owner when a workspace uses up its plan (task [Email when a
 	 * workspace uses up its plan](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/456ff70b-5c4a-4e2a-80c6-fded357ea84a)).
 	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in
