@@ -211,7 +211,8 @@ final class MustKeepTests: XCTestCase {
 				app.terminate()
 				app = XCUIApplication()
 				app.launchEnvironment["MASKIN_DEMO_SESSION"] = Self.session
-				app.launchArguments = ["-AppleInterfaceStyle", "Dark"]
+				// The app follows the device unless the account menu chose a look; that choice is this default.
+				app.launchArguments = ["-maskin.appearance", "dark"]
 				app.launch()
 				XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
 				dismissNotNow()
