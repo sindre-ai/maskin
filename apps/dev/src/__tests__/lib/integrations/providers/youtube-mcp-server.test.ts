@@ -39,10 +39,10 @@ describe('maskin-youtube tool server', () => {
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists exactly youtube__get_channel', async () => {
+	it('lists exactly the YouTube tools built so far', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
-		expect(tools.map((t) => t.name)).toEqual(['youtube__get_channel'])
+		expect(tools.map((t) => t.name)).toEqual(['youtube__get_channel', 'youtube__get_video_stats'])
 	})
 
 	it('get_channel reads channels.list mine=true with the three parts, 1 unit', async () => {

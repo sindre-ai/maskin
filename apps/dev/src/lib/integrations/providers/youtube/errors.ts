@@ -11,6 +11,7 @@ export type YoutubeErrorCode =
 	| 'RATE_LIMITED'
 	| 'NOT_FOUND'
 	| 'PERMISSION_DENIED'
+	| 'INVALID_INPUT'
 	| 'PROVIDER_ERROR'
 
 export interface YoutubeErrorPayload {
