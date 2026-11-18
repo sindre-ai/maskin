@@ -16,13 +16,16 @@ import {
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
+	PILOT_REFUSAL,
 	type WebAppTarget,
 	applyLoopView,
 	buildWebAppHref,
 	formatCopenhagenStamp,
+	isPilotHeldMaskinTool,
 	loopStatusTurnsTriggersOff,
 	normalizeLoopViewName,
 	readLoopViews,
+	resolveToolKind,
 	resolveWebAppBaseUrl,
 	slimForYouItems,
 	stripTrailingSlash,
@@ -2306,6 +2309,46 @@ function assertWriteStaysInSessionWorkspace(
 }
 
 /**
+ * Pilot flows hold the Maskin tools that leave the company or cannot be undone (delete_object,
+ * delete_file, delete_loop, delete_trigger, create_notification) and any tool nobody classified,
+ * such as an extension's. For those, with a session, the API is asked first: a session under a
+ * flow in pilot is refused and a card goes to a person; after they approve that exact call, the
+ * repeated call goes through once. A call with no session (a person's own chat) is not asked.
+ * If the question cannot be asked the call is held: not being able to ask never lets it through.
+ */
+async function assertNotHeldByPilot(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+	/** An extension tool whose name says it only reads: classified, so not held. */
+	extensionRead: boolean,
+): Promise<void> {
+	if (!isPilotHeldMaskinTool(toolName, toolName in TOOL_ANNOTATIONS || extensionRead)) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	let held: { held?: boolean; message?: string }
+	try {
+		const response = await apiFetch(
+			config,
+			'POST',
+			'/api/pilot-gate/check',
+			{ tool: toolName, arguments: args },
+			// The answer changes with every call (a card, then an approval), so it is never replayed.
+			{ idempotencyKey: randomUUID() },
+		)
+		held = (await response.json()) as { held?: boolean; message?: string }
+	} catch {
+		throw new Error(
+			`${PILOT_REFUSAL}. This flow could not be checked just now, so ${toolName} was held. Nothing was done. Try again shortly.`,
+		)
+	}
+	if (held.held) throw new Error(held.message ?? `${PILOT_REFUSAL}. Nothing was done.`)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -3613,6 +3656,10 @@ export function createMcpServer(config: McpConfig) {
 	// (and `createInvokeTool` in ./invoke.ts) can dispatch tools directly.
 	const handlers = new Map<string, McpToolHandler>()
 
+	// Extension tools whose names say they only read. Every other tool without a row in
+	// annotations.ts counts as outbound in a pilot flow.
+	const extensionReadTools = new Set<string>()
+
 	// The rollback switch for the list contract: off registers the pre-contract list_objects and
 	// search_objects (definition and handler). Read once at server creation, from the process
 	// environment, so a changed value needs a restart.
@@ -3708,6 +3755,7 @@ export function createMcpServer(config: McpConfig) {
 			let response: unknown
 			try {
 				assertWriteStaysInSessionWorkspace(config, name, args)
+				await assertNotHeldByPilot(config, name, args, extensionReadTools.has(name))
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -10771,6 +10819,9 @@ ${claudeCredsBlock}`,
 	// Register extension MCP tools (namespaced with extensionId prefix)
 	for (const ext of getAllModules()) {
 		for (const tool of ext.mcpTools ?? []) {
+			if (resolveToolKind({ name: tool.name }) === 'read') {
+				extensionReadTools.add(`${ext.id}_${tool.name}`)
+			}
 			try {
 				registerAppTool(
 					server,

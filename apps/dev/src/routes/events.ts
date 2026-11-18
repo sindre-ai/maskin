@@ -37,6 +37,7 @@ import {
 	eventResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { recordFlowCallAnswer, resolveFlowCallTap } from '../lib/pilot-hold'
 import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
 import { canReadSession } from '../lib/session-access'
@@ -489,6 +490,17 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 		: null
 
+	// A person answering a pilot hold card approves or rejects that exact call. It only records the
+	// answer; the agent repeats its call after it is woken by this reply.
+	const flowCallTap = mayApprove
+		? await resolveFlowCallTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+
 	// A person tapping Approve on a done-when card approves the draft as themselves, in the same
 	// transaction as their reply. Only a person's own client counts, as above.
 	const doneWhenTap = mayApprove
@@ -524,6 +536,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			!delivery &&
 			!statusTap &&
 			!deletionTap &&
+			!flowCallTap &&
 			!doneWhenTap &&
 			!doneWhenDraft
 				? await post(db)
@@ -533,6 +546,13 @@ app.openapi(createCommentRoute, (async (c) => {
 								workspaceId,
 								approverId: actorId,
 								tap: deletionTap,
+							})
+						}
+						if (flowCallTap) {
+							await recordFlowCallAnswer(tx, {
+								workspaceId,
+								approverId: actorId,
+								tap: flowCallTap,
 							})
 						}
 						if (doneWhenTap) {

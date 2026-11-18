@@ -169,7 +169,21 @@ export async function flowsOfSession(
 								eq(objects.type, 'loop'),
 							),
 						)
-		for (const flow of flows) found.set(flow.id, flow)
+		// A session woken on the flow itself (the answer to one of its cards) belongs to that flow.
+		const own =
+			flows.length === 0 && session.initiatedFromObjectId
+				? await db
+						.select({ id: objects.id, status: objects.status })
+						.from(objects)
+						.where(
+							and(
+								eq(objects.id, session.initiatedFromObjectId),
+								eq(objects.workspaceId, workspaceId),
+								eq(objects.type, 'loop'),
+							),
+						)
+				: []
+		for (const flow of [...flows, ...own]) found.set(flow.id, flow)
 		currentId = session.spawnedBySessionId
 	}
 	return [...found.values()]
