@@ -13,12 +13,12 @@ import {
 	MARKET_WATCH_TRIGGER_IDS,
 } from '../../../lib/marketplace-loops/market-watch-loop'
 
-describe('Market & Competitor Watch loop definition', () => {
+describe('Competitor watch loop definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
-		expect(MARKET_WATCH_LOOP.name).toBe('Market & Competitor Watch')
+		expect(MARKET_WATCH_LOOP.name).toBe('Competitor watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.1.1')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.2.0')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -61,6 +61,41 @@ describe('Market & Competitor Watch loop definition', () => {
 			expect(attached.length).toBeGreaterThan(0)
 			for (const actorId of attached) expect(actorIds.has(actorId)).toBe(true)
 		}
+	})
+
+	// Scope ruling: this flow covers competitors, personal agents and the category. Customers and
+	// prospects belong to another flow, and the weekly deck, its check, the owner heartbeat and
+	// the Results tab live only in the source workspace.
+	it('covers competitors, personal agents and the category, and not customers or prospects', () => {
+		const texts = [
+			...MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? ''),
+			...MARKET_WATCH_SKILL_IDS.map((id) => getSkillData(id).content ?? ''),
+		].join('\n')
+		expect(texts).toMatch(/personal-agent-intel/)
+		expect(texts).not.toMatch(/learn-from/i)
+		expect(texts).not.toMatch(/customer-direction/)
+		expect(texts).not.toMatch(/Customers and prospects\*\*/)
+		expect(texts).not.toMatch(/Market & Competitor Watch/)
+	})
+
+	it('ships no deck step, deck check, owner heartbeat, targets or views', () => {
+		const names = MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).name)
+		expect(names).toEqual([
+			'Weekly sweep',
+			'Monthly revalidation',
+			'Monthly outlook and positioning',
+			'Weekly briefing check',
+		])
+		const prompts = MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? '')
+		for (const prompt of prompts) expect(prompt).not.toMatch(/\bdeck\b|heartbeat/i)
+		expect(MARKET_WATCH_LOOP.settings.targets).toBeUndefined()
+	})
+
+	it('names the flow Competitor watch in every trigger prompt and skill that names it', () => {
+		const trigger = MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? '')
+		const skills = MARKET_WATCH_SKILL_IDS.map((id) => getSkillData(id).content ?? '')
+		expect(trigger.filter((t) => t.includes('Competitor watch')).length).toBe(4)
+		expect(skills.join('\n')).toMatch(/name Competitor watch/)
 	})
 
 	it('keeps the published text free of workspace-specific references and credentials', () => {

@@ -171,7 +171,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 			const tabs = readLoopViews(loopObject?.metadata as Record<string, unknown>).map((v) => v.name)
 			expect(tabs).toEqual(
 				slug === 'product-discovery-loop'
-					? ['Radar', 'Learning', 'Briefing', 'Opportunities', 'Pipeline']
+					? ['Radar', 'Learning', 'Briefing', 'Opportunities', 'Opportunity shortlist', 'Pipeline']
 					: slug === 'customer-voice-loop'
 						? ['Results']
 						: slug === 'knowledge-wiki-loop'
