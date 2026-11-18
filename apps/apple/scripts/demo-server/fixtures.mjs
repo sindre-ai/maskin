@@ -623,12 +623,15 @@ export function overrides({ method, path, params, query, body, base, item }) {
 		}
 	}
 	// A trial a few days from its end, with a credit meter, so Billing shows its banner and bar.
+	// trial_state is set because the schema sample's first value is awaiting_card, which puts the
+	// "Your trial has not started" banner over the top bar (it covers the Live briefing button).
 	if (method === 'get' && path === '/api/billing/usage') {
 		return {
 			body: {
 				...base,
 				plan: 'trial',
 				status: 'active',
+				trial_state: 'started',
 				usd_cents_used: 4120,
 				hard_cap_usd_cents: 10000,
 				period_start: Date.now() - 9 * DAY * 60_000,
