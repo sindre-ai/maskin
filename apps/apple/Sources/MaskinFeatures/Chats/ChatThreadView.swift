@@ -198,6 +198,9 @@ struct ChatThreadView: View {
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
 				.task { runtime?.chatOpened(store.conversationID) }
+				.task(id: store.participants.map(\.id)) {
+					runtime?.chatParticipantsLoaded(store.participants, selfID: store.currentActorID)
+				}
 				.onAppear {
 					liveCalls?.visibleConversationID = store.conversationID
 					composer.splitsLongMessages = true

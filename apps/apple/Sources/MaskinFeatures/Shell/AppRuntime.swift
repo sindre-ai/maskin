@@ -371,6 +371,9 @@ public final class AppRuntime {
 			} else {
 				createView.reset()
 			}
+			if featureFlags.isEnabled(FeatureFlagID.iosShareSuggestions) {
+				await ShareSuggestions.refresh(environment: environment)
+			}
 		}
 		// Start the chat runtime now (not when the Chats tab first appears) so messages queued
 		// offline, or before the app was last killed, replay as soon as the user is signed in.
@@ -509,6 +512,15 @@ public final class AppRuntime {
 			return
 		}
 		await deliveredSync?.reconcile()
+	}
+
+	/// A chat's people have loaded: a one-to-one with an agent makes that agent a share suggestion.
+	func chatParticipantsLoaded(_ participants: [ChatParticipant], selfID: String) {
+		guard featureFlags.isEnabled(FeatureFlagID.iosShareSuggestions), let workspaceId = environment.workspaceId
+		else { return }
+		let others = participants.filter { $0.id != selfID }
+		guard others.count == 1, let agent = others.first, agent.kind == .agent else { return }
+		ShareSuggestions.chatted(agentID: agent.id, name: agent.name, workspaceId: workspaceId)
 	}
 
 	/// The person opened a chat: its pushes are read.
@@ -673,6 +685,8 @@ public final class AppRuntime {
 		ChatsRuntime.signOut(actorId: actorId)
 		// Shares parked by the share extension live in the App Group container; same rule.
 		ShareQueue.shared()?.removeAll()
+		// The agents offered in the system share sheet are this account's too.
+		ShareSuggestions.clear()
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil

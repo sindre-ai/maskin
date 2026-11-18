@@ -9,6 +9,8 @@ public enum FeatureFlagID {
 	public static let chatUndoSend = "chat-undo-send"
 	/// "Create view with agent" item in the items list, item and flow menus.
 	public static let createViewWithAgent = "create-view-with-agent"
+	/// Agents in the top row of the iOS share sheet.
+	public static let iosShareSuggestions = "ios-share-suggestions"
 }
 
 /// Network seam for the resolved flags (`GET /api/feature-flags`).
