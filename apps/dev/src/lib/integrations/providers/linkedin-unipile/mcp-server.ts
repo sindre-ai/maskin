@@ -224,6 +224,7 @@ export function registerLinkedInMcpInstance(
 			workspaceId: ctx.workspaceId,
 			agentId: ctx.actorId,
 			kind,
+			sessionId: ctx.sessionId,
 		})
 		if (decision === 'denied') {
 			throw new LinkedInActionRefusal('refused_rule', 'INVALID_INPUT', deniedMessage(what))

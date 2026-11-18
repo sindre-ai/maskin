@@ -18,6 +18,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		maskinSessionId?: string
 	}
 }
 
@@ -145,6 +146,7 @@ app.post('/', async (c) => {
 			iconUrl,
 			workspaceId,
 			actorId,
+			sessionId: c.get('maskinSessionId'),
 			slackTeamId: resolved.slackTeamId,
 			db,
 		},

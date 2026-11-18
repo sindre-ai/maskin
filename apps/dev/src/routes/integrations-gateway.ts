@@ -45,7 +45,7 @@ import { isWorkspaceWriter } from '../lib/workspace-auth'
  *    stream, session end): forwarded as is.
  */
 
-type Env = { Variables: { db: Database; actorId: string } }
+type Env = { Variables: { db: Database; actorId: string; maskinSessionId?: string } }
 
 const app = new Hono<Env>()
 
@@ -235,7 +235,12 @@ export async function proxyMcp(
 		// Read & write lets an agent use Resend's send tools, unless its send setting for emails holds
 		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
 		if (decision.allowed && provider === 'resend' && RESEND_SEND_TOOLS.has(toolName)) {
-			const send = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+			const send = await decideSend(db, {
+				workspaceId,
+				agentId: actorId,
+				kind: 'email',
+				sessionId: c.get('maskinSessionId'),
+			})
 			if (send !== 'send_now') {
 				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }
 			}

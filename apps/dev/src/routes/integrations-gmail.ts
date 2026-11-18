@@ -603,7 +603,12 @@ app.openapi(sendRoute, async (c) => {
 		return c.json(f.body, f.status)
 	}
 	// 1b. The agent's send setting for emails: send as given, wait for a person, or never.
-	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	const decision = await decideSend(db, {
+		workspaceId,
+		agentId: actorId,
+		kind: 'email',
+		sessionId: c.get('maskinSessionId'),
+	})
 	if (decision === 'denied') {
 		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
 		return c.json(f.body, f.status)

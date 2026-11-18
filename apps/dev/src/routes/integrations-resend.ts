@@ -58,6 +58,7 @@ const app = new OpenAPIHono<{
 		actorId: string
 		workspaceRole?: string
 		storageProvider?: StorageProvider
+		maskinSessionId?: string
 	}
 }>({ defaultHook: validationFailureHook })
 
@@ -264,7 +265,12 @@ app.openapi(sendRoute, async (c) => {
 	}
 
 	// 3. The agent's send setting for emails, then exactly what is going out.
-	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	const decision = await decideSend(db, {
+		workspaceId,
+		agentId: actorId,
+		kind: 'email',
+		sessionId: c.get('maskinSessionId'),
+	})
 	if (decision === 'denied') {
 		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
 		return c.json(f.body, f.status)
