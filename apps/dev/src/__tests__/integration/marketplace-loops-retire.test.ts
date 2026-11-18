@@ -158,6 +158,7 @@ describe('Marketplace loop retirement', () => {
 			'meeting-loop',
 			'product-discovery-loop',
 			'product-release-loop',
+			'product-usage-loop',
 		])
 		expect(body.counts.total).toBe(6)
 	})

@@ -129,7 +129,9 @@ describe('Product Usage flow definition', () => {
 	})
 
 	it('says flow, not loop, in the text a person reads', () => {
-		for (const part of shippedText()) {
+		// The slug (product-usage-loop) is an identifier, not text a person reads.
+		const { slug: _slug, ...definition } = PRODUCT_USAGE_LOOP
+		for (const part of [definition, ...shippedText().slice(1)]) {
 			// Tool and object type names (list_loops, in_loop) are one word, so they do not match.
 			expect(JSON.stringify(part)).not.toMatch(/\b[Ll]oops?\b/)
 		}
