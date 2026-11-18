@@ -2274,6 +2274,7 @@ describe('SessionManager', () => {
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					})
 					expect(servers['github-vaerksted-ai']).toEqual({
@@ -2286,6 +2287,7 @@ describe('SessionManager', () => {
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					})
 					// The agent's own key stays out of the session's MCP config.
