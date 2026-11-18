@@ -517,10 +517,13 @@ struct ConversationListView: View {
 	private func archive(_ ids: [String]) {
 		Task {
 			let result = await store.setArchived(ids, true)
-			if result.succeeded > 0 {
-				undoOffer = UndoOffer(message: "Archived \(result.succeeded). Undo.") { _ = await store.setArchived(ids, false) }
-			}
+			offerArchiveUndo(ids: ids, result: result)
 		}
+	}
+
+	private func offerArchiveUndo(ids: [String], result: BulkResult) {
+		guard let undo = ChatBulkActions.archiveUndo(ids: ids, result: result) else { return }
+		undoOffer = UndoOffer(message: undo.message) { _ = await store.setArchived(undo.idsToRestore, false) }
 	}
 
 	private func act(on empty: TeamLayout.Empty, query: String) {
@@ -536,31 +539,22 @@ struct ConversationListView: View {
 	/// Bulk actions in the selection bar. Archive is the primary; the rest sit in a text menu.
 	@ViewBuilder
 	private func bulkActions(allIDs: [String]) -> some View {
-		let ids = picking.ordered(in: allIDs)
+		let bulk = ChatBulkActions(ids: picking.ordered(in: allIDs))
 		Menu {
-			Button("Pin", systemImage: "pin") { run(ids) { await store.setPinned($0, true) } }
-			Button("Unpin", systemImage: "pin.slash") { run(ids) { await store.setPinned($0, false) } }
-			Button("Mark as read", systemImage: "envelope.open") { run(ids) { await store.markRead($0) } }
-			Button("Mark as unread", systemImage: "envelope.badge") { run(ids) { await store.markUnread($0) } }
+			ForEach(bulk.moreItems, id: \.self) { item in
+				Button(item.title, systemImage: item.systemImage) { run(bulk.ids, item) }
+			}
 		} label: {
 			SelectionBarLabel(title: "More")
 		}
-		.disabled(picking.isEmpty)
+		.disabled(!bulk.isEnabled)
 		Button {
-			run(ids) { picked in
-				let result = await store.setArchived(picked, true)
-				if result.succeeded > 0 {
-					undoOffer = UndoOffer(message: "Archived \(result.succeeded). Undo.") {
-						_ = await store.setArchived(picked, false)
-					}
-				}
-				return result
-			}
+			run(bulk.ids, bulk.primary)
 		} label: {
-			SelectionBarLabel(title: "Archive", isPrimary: true)
+			SelectionBarLabel(title: bulk.primary.title, isPrimary: true)
 		}
 		.buttonStyle(.maskinPressed(.shrink))
-		.disabled(picking.isEmpty)
+		.disabled(!bulk.isEnabled)
 	}
 
 	@ViewBuilder
@@ -662,10 +656,18 @@ struct ConversationListView: View {
 		}
 	}
 
-	private func run(_ ids: [String], _ action: @escaping ([String]) async -> BulkResult) {
+	private func run(_ ids: [String], _ item: ChatBulkActions.Item) {
 		MaskinHaptics.play(.selection)
 		picking.exit()
-		Task { _ = await action(ids) }
+		Task {
+			switch item {
+			case .pin: _ = await store.setPinned(ids, true)
+			case .unpin: _ = await store.setPinned(ids, false)
+			case .markRead: _ = await store.markRead(ids)
+			case .markUnread: _ = await store.markUnread(ids)
+			case .archive: offerArchiveUndo(ids: ids, result: await store.setArchived(ids, true))
+			}
+		}
 	}
 
 	/// Plain wording for people; debug builds add the underlying error so a bad response is findable.
