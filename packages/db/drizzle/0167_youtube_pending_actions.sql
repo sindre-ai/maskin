@@ -15,7 +15,7 @@
 -- New, empty tables, additive, neither on the hot-tables list (see MIGRATIONS.md), so plain DDL is
 -- fine and there is nothing to backfill. Row-level security is switched on because
 -- 0111_enable_rls_public_tables ran before these tables existed.
--- Down: drizzle/down/0166_youtube_pending_actions_down.sql.
+-- Down: drizzle/down/0167_youtube_pending_actions_down.sql.
 
 CREATE TABLE IF NOT EXISTS "youtube_pending_actions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

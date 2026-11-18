@@ -3730,7 +3730,7 @@ export const apiRouteTimingMinutes = pgTable(
 // The person who approved is read from approved_by, never from anything an agent wrote.
 // status: pending, approved, rejected, expired, executed, failed. claimed_at is set once, by the
 // executor, in one conditional update, which is what makes an approved action run at most once.
-// See 0166_youtube_pending_actions.sql.
+// See 0167_youtube_pending_actions.sql.
 export const youtubePendingActions = pgTable(
 	'youtube_pending_actions',
 	{
@@ -3775,7 +3775,7 @@ export const youtubePendingActions = pgTable(
 // payload, a comment, a title or an error string. The safety line "no public action without
 // approval" is read from here (an executed row with no approved row for the same action). No
 // foreign key to the action or the integration, so the record outlives both.
-// decision: approved, rejected, expired, executed, failed, refused. See 0166_youtube_pending_actions.sql.
+// decision: approved, rejected, expired, executed, failed, refused. See 0167_youtube_pending_actions.sql.
 export const youtubeActionAudit = pgTable(
 	'youtube_action_audit',
 	{
@@ -3801,5 +3801,23 @@ export const youtubeActionAudit = pgTable(
 			'youtube_action_audit_decision_check',
 			sql`${t.decision} in ('approved', 'rejected', 'expired', 'executed', 'failed', 'refused')`,
 		),
+	],
+)
+
+// ── YouTube quota ──────────────────────────────────────────────────────────
+
+// Units charged against the YouTube Data API today. One row per (Pacific date, scope): scope is the
+// word global or a workspace id. Holds no YouTube data, only the date, the scope and a count. See
+// 0166_youtube_quota_usage.sql.
+export const youtubeQuotaUsage = pgTable(
+	'youtube_quota_usage',
+	{
+		quotaDate: date('quota_date').notNull(),
+		scope: text('scope').notNull(),
+		unitsUsed: integer('units_used').notNull().default(0),
+	},
+	(t) => [
+		primaryKey({ columns: [t.quotaDate, t.scope], name: 'youtube_quota_usage_pkey' }),
+		check('youtube_quota_usage_units_check', sql`${t.unitsUsed} >= 0`),
 	],
 )

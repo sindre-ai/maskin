@@ -75,6 +75,8 @@ import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
+import { config as youtubeConfig } from './providers/youtube/config'
+import { resolveExternalId as youtubeResolveExternalId } from './providers/youtube/resolve-id'
 import { config as zapierConfig } from './providers/zapier/config'
 
 const providers = new Map<string, ResolvedProvider>()
@@ -246,6 +248,14 @@ providers.set('sentry', {
 
 providers.set('zapier', {
 	config: zapierConfig,
+})
+
+// youtube — read-only, own channel. Workspace-scoped like Meet (deliberately NOT in
+// `actorScopedProviders`). No webhook, postInstall or watch hooks: reads are on demand. The
+// revoke-and-purge `preDisconnect` hook is added by the disconnect task.
+providers.set('youtube', {
+	config: youtubeConfig,
+	resolveExternalId: youtubeResolveExternalId,
 })
 
 providers.set('stripe', {
