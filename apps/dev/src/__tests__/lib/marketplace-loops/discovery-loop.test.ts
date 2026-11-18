@@ -22,7 +22,7 @@ describe('Product Discovery Flow definition', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Flow')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.5.0')
+		expect(DISCOVERY_LOOP.version).toBe('1.5.1')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 

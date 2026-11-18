@@ -56,7 +56,7 @@ const DISCOVERY_SETTINGS: LoopSettings = {
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Flow',
-	version: '1.5.0',
+	version: '1.5.1',
 	useCase: 'Discovery',
 	settings: DISCOVERY_SETTINGS,
 	description:
