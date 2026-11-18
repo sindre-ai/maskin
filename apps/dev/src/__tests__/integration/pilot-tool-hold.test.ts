@@ -9,6 +9,7 @@ import {
 	FLOW_CALL_ANSWERED_ACTION,
 	FLOW_GATE_REFUSED_ACTION,
 	checkPilotHold,
+	findAnswerForAgent,
 	recordFlowCallAnswer,
 	resolveFlowCallTap,
 } from '../../lib/pilot-hold'
@@ -67,7 +68,14 @@ async function setup(status = 'pilot') {
 	})
 	const [session] = await db
 		.insert(sessions)
-		.values(buildSession({ workspaceId: ws.id, actorId: agent.id, triggerId: trigger.id }))
+		.values(
+			buildSession({
+				workspaceId: ws.id,
+				actorId: agent.id,
+				triggerId: trigger.id,
+				createdBy: getTestActorId(),
+			}),
+		)
 		.returning()
 	return { ws, agent, flow, session }
 }
@@ -189,7 +197,9 @@ describe('a flow in pilot holds outbound tools', () => {
 		).toBe(false)
 		const [free] = await db
 			.insert(sessions)
-			.values(buildSession({ workspaceId: s.ws.id, actorId: s.agent.id }))
+			.values(
+				buildSession({ workspaceId: s.ws.id, actorId: s.agent.id, createdBy: getTestActorId() }),
+			)
 			.returning()
 		expect((await checkPilotHold(db, { ...base, sessionId: free?.id })).held).toBe(false)
 	})
@@ -203,6 +213,7 @@ describe('a flow in pilot holds outbound tools', () => {
 					workspaceId: s.ws.id,
 					actorId: s.agent.id,
 					initiatedFromObjectId: s.flow.id,
+					createdBy: getTestActorId(),
 				}),
 			)
 			.returning()
@@ -275,6 +286,22 @@ describe('only a person can answer a pilot hold card', () => {
 		expect((await reply(s, cardId, getTestActorId(), 'human')).status).toBe(201)
 		expect(await eventsOf(s.ws.id, FLOW_CALL_ANSWERED_ACTION)).toHaveLength(1)
 		expect((await call(s)).held).toBe(false)
+	})
+
+	it('tells the woken agent the answer, but only the agent whose call was held', async () => {
+		const { s, cardId } = await heldWithCard()
+		const lookup = (agentId: string) =>
+			findAnswerForAgent(db, {
+				workspaceId: s.ws.id,
+				entityId: s.flow.id,
+				cardEventId: cardId,
+				agentId,
+			})
+		expect(await lookup(s.agent.id)).toBeNull()
+		await reply(s, cardId, getTestActorId(), 'human')
+		expect(await lookup(s.agent.id)).toEqual({ answer: 'approve', tool: 'delete_object' })
+		const other = await insertActor(db, { type: 'agent' })
+		expect(await lookup(other.id)).toBeNull()
 	})
 
 	it('does not count a reply from the agent whose call was held', async () => {

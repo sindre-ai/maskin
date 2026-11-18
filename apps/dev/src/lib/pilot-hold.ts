@@ -418,6 +418,33 @@ export async function resolveFlowCallTap(
 	}
 }
 
+/**
+ * The recorded answer to a gate card this agent's own call was refused with, or null when the
+ * card is not one of its held calls. The wake-up uses it to tell the agent what to do next.
+ */
+export async function findAnswerForAgent(
+	db: Database,
+	params: { workspaceId: string; entityId: string; cardEventId: number; agentId: string },
+): Promise<{ answer: 'approve' | 'reject'; tool: string } | null> {
+	const [row] = await db
+		.select({ data: events.data })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, params.workspaceId),
+				eq(events.action, FLOW_CALL_ANSWERED_ACTION),
+				eq(events.entityId, params.entityId),
+				sql`${events.data}->>'card_event_id' = ${String(params.cardEventId)}`,
+				sql`${events.data}->>'requested_by' = ${params.agentId}`,
+			),
+		)
+		.orderBy(desc(events.id))
+		.limit(1)
+	const data = row?.data as { answer?: string; tool?: string } | null | undefined
+	if (!data?.tool || (data.answer !== 'approve' && data.answer !== 'reject')) return null
+	return { answer: data.answer, tool: data.tool }
+}
+
 /** Records a person's answer, in the same transaction as their reply. */
 export async function recordFlowCallAnswer(
 	tx: Parameters<typeof recordEventReturning>[0],
