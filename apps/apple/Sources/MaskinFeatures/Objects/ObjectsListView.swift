@@ -117,14 +117,18 @@ struct ObjectsListView: View {
 	/// The large title (tap for Go to), type tabs and the active filter chip.
 	private var header: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			Text(store.title)
-				.maskinText(.largeTitle)
-				.foregroundStyle(MaskinColor.ink)
-				.lineLimit(1)
-				.minimumScaleFactor(0.7)
-				.frame(minHeight: MaskinSpace.touchMin)
-				.padding(.horizontal, MaskinSpace.s11)
-				.accessibilityAddTraits(.isHeader)
+			// iPad: the left bar already says "Items", so the plain scope shows no title of its own.
+			// A type or saved view still names itself.
+			if !(ShellIdiom.isPad && store.scope == .all) {
+				Text(store.title)
+					.maskinText(.largeTitle)
+					.foregroundStyle(MaskinColor.ink)
+					.lineLimit(1)
+					.minimumScaleFactor(0.7)
+					.frame(minHeight: MaskinSpace.touchMin)
+					.padding(.horizontal, MaskinSpace.s11)
+					.accessibilityAddTraits(.isHeader)
+			}
 			if store.display.showsTypeTabs {
 				ObjectTypeTabs(tabs: ObjectTypeTab.tabs(for: store), selected: store.scope) { scope in
 					Task { await store.setScope(scope) }

@@ -121,8 +121,9 @@ private struct LoopsContainer: View {
 		// Closing the field can't leave a stale query behind.
 		.onChange(of: searchPresented) { if !searchPresented, !search.isEmpty { search = "" } }
 		// Flows carry no tags, so there is no tag filter bar; Display holds the sort, filter and Summary.
+		// iPad: the left bar names the screen, so the header row is the actions alone.
 		.shellToolbar(
-			environment: environment, title: "Flows",
+			environment: environment, title: ShellIdiom.isPad ? nil : "Flows",
 			actions: ShellActions(
 				new: { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
