@@ -27,6 +27,8 @@ final class MustKeepMoreTests: XCTestCase {
 		app.launchEnvironment["MASKIN_DEMO_SESSION"] = Self.session
 		app.launch()
 		XCTAssertTrue(app.tabBars.buttons["For you"].waitForExistence(timeout: 30), "signed-in shell")
+		// The notification sheet covers For you once the feed shows a decision, and swallows the first taps.
+		dismissNotNow(timeout: 10)
 	}
 
 	// MARK: Helpers
@@ -40,10 +42,14 @@ final class MustKeepMoreTests: XCTestCase {
 		row.tap()
 	}
 
-	/// Closes the notification pre-prompt if it shows over a chat; it would swallow the first tap.
-	private func dismissNotNow() {
+	/// Closes the notification pre-prompt if it shows; it would swallow the first tap. It only shows once
+	/// the feed holds a decision, so setUp waits longer for it than a chat does.
+	private func dismissNotNow(timeout: TimeInterval = 3) {
 		let notNow = app.buttons["Not now"]
-		if notNow.waitForExistence(timeout: 3) { notNow.tap() }
+		if notNow.waitForExistence(timeout: timeout) {
+			notNow.tap()
+			_ = notNow.waitForNonExistence(timeout: 5)
+		}
 	}
 
 	/// Anything on screen whose label contains `text`.
@@ -151,6 +157,12 @@ final class MustKeepMoreTests: XCTestCase {
 	func testMK12_PickDecisionOptionOnForYou() throws {
 		app.tabBars.buttons["For you"].tap()
 		let option = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Send all 7'")).firstMatch
+		// In the one-column feed a card shows its options once it is opened.
+		if !option.waitForExistence(timeout: 3) {
+			let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Send 7 follow-ups to Northwind?'")).firstMatch
+			expectExists(card, "For you shows the first decision card", dump: "mk12-card")
+			card.tap()
+		}
 		for _ in 0..<4 where !option.exists { app.swipeUp() }
 		expectExists(option, "For you shows the decision option 'Send all 7'", dump: "mk12-option")
 		option.tap()
