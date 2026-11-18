@@ -23,6 +23,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		maskinSessionId?: string
 	}
 }
 
@@ -69,7 +70,10 @@ app.post('/', async (c) => {
 		provider: 'youtube',
 		providerLabel: 'YouTube',
 	})
-	const mcpServer = createYoutubeMcpServer({ db, workspaceId, actorId }, gate)
+	const mcpServer = createYoutubeMcpServer(
+		{ db, workspaceId, actorId, sessionId: c.get('maskinSessionId') },
+		gate,
+	)
 
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,

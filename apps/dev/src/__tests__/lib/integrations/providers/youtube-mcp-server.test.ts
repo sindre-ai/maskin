@@ -12,6 +12,11 @@ vi.mock('../../../../lib/integrations/providers/youtube/client', () => ({
 	youtubeRead: (...args: unknown[]) => youtubeRead(...args),
 }))
 
+const trackYoutubeToolCalled = vi.fn()
+vi.mock('../../../../lib/analytics/youtube-events', () => ({
+	trackYoutubeToolCalled: (...args: unknown[]) => trackYoutubeToolCalled(...args),
+}))
+
 import { YoutubeError } from '../../../../lib/integrations/providers/youtube/errors'
 import { createYoutubeMcpServer } from '../../../../lib/integrations/providers/youtube/mcp-server'
 import { classifyTool } from '../../../../lib/integrations/tool-kinds'
@@ -29,7 +34,10 @@ const text = (result: Awaited<ReturnType<Client['callTool']>>) =>
 	JSON.parse((result.content as Array<{ text: string }>)[0].text)
 
 describe('maskin-youtube tool server', () => {
-	beforeEach(() => youtubeRead.mockReset())
+	beforeEach(() => {
+		youtubeRead.mockReset()
+		trackYoutubeToolCalled.mockReset()
+	})
 
 	it('lists exactly youtube__get_channel', async () => {
 		const { client } = await connect()
@@ -85,6 +93,102 @@ describe('maskin-youtube tool server', () => {
 		expect(result.isError).toBe(true)
 		expect(JSON.stringify(text(result))).not.toContain('Secret channel title')
 		expect(text(result).error.code).toBe('PROVIDER_ERROR')
+	})
+})
+
+describe('youtube_tool_called event', () => {
+	beforeEach(() => {
+		youtubeRead.mockReset()
+		trackYoutubeToolCalled.mockReset()
+	})
+
+	it('emits one event per call with the short tool name and no content', async () => {
+		youtubeRead.mockResolvedValueOnce({ items: [{ snippet: { title: 'Secret channel title' } }] })
+		const { client } = await connect()
+
+		await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+
+		expect(trackYoutubeToolCalled).toHaveBeenCalledTimes(1)
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith({
+			workspaceId: 'ws-1',
+			agentId: 'agent-1',
+			sessionId: null,
+			tool: 'get_channel',
+			outcome: 'ok',
+			viaLoop: false,
+		})
+		expect(JSON.stringify(trackYoutubeToolCalled.mock.calls)).not.toContain('Secret channel title')
+	})
+
+	it.each([
+		['QUOTA_EXHAUSTED', 'quota_blocked'],
+		['WORKSPACE_QUOTA_EXHAUSTED', 'quota_blocked'],
+		['NOT_CONNECTED', 'not_connected'],
+		['RECONSENT_REQUIRED', 'not_connected'],
+		['PROVIDER_ERROR', 'upstream_error'],
+		['RATE_LIMITED', 'upstream_error'],
+	] as const)('reports %s as outcome %s', async (code, outcome) => {
+		youtubeRead.mockRejectedValueOnce(new YoutubeError({ code, message: 'x' }))
+		const { client } = await connect()
+
+		await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+
+		expect(trackYoutubeToolCalled).toHaveBeenCalledTimes(1)
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(expect.objectContaining({ outcome }))
+	})
+
+	it('reports an unexpected error as upstream_error', async () => {
+		youtubeRead.mockRejectedValueOnce(new Error('boom'))
+		const { client } = await connect()
+		await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ outcome: 'upstream_error' }),
+		)
+	})
+
+	it('marks via_loop when a trigger started the calling session', async () => {
+		youtubeRead.mockResolvedValueOnce({})
+		const rows = [{ triggerId: 'trigger-1' }]
+		const chain: Record<string, unknown> = {}
+		for (const m of ['select', 'from', 'where']) chain[m] = () => chain
+		chain.limit = async () => rows
+		const server = createYoutubeMcpServer({
+			db: chain as unknown as Database,
+			workspaceId: 'ws-1',
+			actorId: 'agent-1',
+			sessionId: 'session-1',
+		})
+		const client = new Client({ name: 'c', version: '0.0.0' })
+		const [a, b] = InMemoryTransport.createLinkedPair()
+		await Promise.all([server.connect(a), client.connect(b)])
+
+		await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1', viaLoop: true }),
+		)
+	})
+
+	it('still answers when the session lookup fails', async () => {
+		youtubeRead.mockResolvedValueOnce({ ok: true })
+		const server = createYoutubeMcpServer({
+			db: {
+				select: () => {
+					throw new Error('db down')
+				},
+			} as unknown as Database,
+			workspaceId: 'ws-1',
+			actorId: 'agent-1',
+			sessionId: 'session-1',
+		})
+		const client = new Client({ name: 'c', version: '0.0.0' })
+		const [a, b] = InMemoryTransport.createLinkedPair()
+		await Promise.all([server.connect(a), client.connect(b)])
+
+		const result = await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+
+		expect(result.isError).toBeUndefined()
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(expect.objectContaining({ viaLoop: false }))
 	})
 })
 

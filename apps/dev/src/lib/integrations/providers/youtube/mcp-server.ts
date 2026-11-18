@@ -1,8 +1,15 @@
 import type { Database } from '@maskin/db'
+import { sessions } from '@maskin/db/schema'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { eq } from 'drizzle-orm'
+import {
+	type YoutubeOutcome,
+	type YoutubeToolName,
+	trackYoutubeToolCalled,
+} from '../../../analytics/youtube-events'
 import { logger } from '../../../logger'
 import { type YoutubeClientContext, youtubeRead } from './client'
-import { isYoutubeError } from './errors'
+import { type YoutubeErrorCode, isYoutubeError } from './errors'
 
 /**
  * In-process MCP server for the YouTube integration, served over Streamable HTTP at
@@ -14,6 +21,30 @@ export interface YoutubeMcpContext {
 	db: Database
 	workspaceId: string
 	actorId: string
+	/** The Maskin session making the call (X-Maskin-Session-Id), for the tool-called event only. */
+	sessionId?: string | null
+}
+
+const OUTCOME_BY_CODE: Partial<Record<YoutubeErrorCode, YoutubeOutcome>> = {
+	QUOTA_EXHAUSTED: 'quota_blocked',
+	WORKSPACE_QUOTA_EXHAUSTED: 'quota_blocked',
+	NOT_CONNECTED: 'not_connected',
+	RECONSENT_REQUIRED: 'not_connected',
+}
+
+/** A session a flow trigger started, as opposed to a person's chat. Best-effort: false on any failure. */
+async function startedByTrigger(db: Database, sessionId: string | null | undefined) {
+	if (!sessionId) return false
+	try {
+		const [row] = await db
+			.select({ triggerId: sessions.triggerId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		return Boolean(row?.triggerId)
+	} catch {
+		return false
+	}
 }
 
 function jsonResult(payload: unknown) {
@@ -59,23 +90,38 @@ export function createYoutubeMcpServer(
 
 /**
  * Every tool goes through this one wrapper, so anything that must happen on every youtube__ call
- * has one place to live.
+ * has one place to live. It emits one youtube_tool_called event per call, on a cache hit and on a
+ * quota refusal too. The event never throws and carries a category, never an error string.
  */
 function registerTool(
 	server: McpServer,
-	name: string,
+	ctx: YoutubeMcpContext,
+	name: YoutubeToolName,
 	description: string,
 	run: () => Promise<unknown>,
 ) {
+	const toolName = `youtube__${name}`
 	server.registerTool(
-		name,
+		toolName,
 		{ description, inputSchema: {}, annotations: { readOnlyHint: true } },
 		async () => {
+			let outcome: YoutubeOutcome = 'ok'
+			let result: ReturnType<typeof jsonResult> | ReturnType<typeof toolError>
 			try {
-				return jsonResult(await run())
+				result = jsonResult(await run())
 			} catch (err) {
-				return toolError(name, err)
+				outcome = (isYoutubeError(err) && OUTCOME_BY_CODE[err.code]) || 'upstream_error'
+				result = toolError(toolName, err)
 			}
+			await trackYoutubeToolCalled({
+				workspaceId: ctx.workspaceId,
+				agentId: ctx.actorId,
+				sessionId: ctx.sessionId ?? null,
+				tool: name,
+				outcome,
+				viaLoop: await startedByTrigger(ctx.db, ctx.sessionId),
+			})
+			return result
 		},
 	)
 }
@@ -85,7 +131,8 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 
 	registerTool(
 		server,
-		'youtube__get_channel',
+		ctx,
+		'get_channel',
 		'Get the connected YouTube channel: title, description, subscriber, view and video counts, and the id of its uploads playlist. Returns the channel as the YouTube Data API returns it. Costs 1 quota unit; repeat reads within 15 minutes are served from a cache at no cost. If the Google account owns several channels, the one chosen at connect time is returned.',
 		() =>
 			youtubeRead(client, {
