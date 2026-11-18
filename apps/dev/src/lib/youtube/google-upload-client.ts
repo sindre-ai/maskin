@@ -306,7 +306,9 @@ export async function publishVideo(request: {
 	const was = found.status.privacyStatus
 	if (payload.publishAt !== undefined && was !== 'private')
 		return { ok: false, code: 'not_private' }
-	if (was === 'public' || was === payload.privacyStatus) return { ok: false, code: 'already_set' }
+	// A scheduled publish is private plus a time, so a private video is the expected start there.
+	if (payload.publishAt === undefined && (was === 'public' || was === payload.privacyStatus))
+		return { ok: false, code: 'already_set' }
 
 	const status: Record<string, unknown> = { privacyStatus: payload.privacyStatus }
 	for (const field of STATUS_FIELDS) {

@@ -362,13 +362,13 @@ describe('youtube write tools', () => {
 		)
 	})
 
-	it('marks the write tools as not read-only and the read tool as read-only', async () => {
+	it('marks the write tools as not read-only and the read tools as read-only', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		const byName = new Map(tools.map((t) => [t.name, t]))
-		expect(byName.get('youtube__get_channel')?.annotations?.readOnlyHint).toBe(true)
+		const reads = ['youtube__get_channel', 'youtube__get_upload_status']
 		for (const [name, tool] of byName) {
-			if (name !== 'youtube__get_channel') expect(tool.annotations?.readOnlyHint).toBe(false)
+			expect(tool.annotations?.readOnlyHint).toBe(reads.includes(name))
 		}
 	})
 

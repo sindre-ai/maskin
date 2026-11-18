@@ -92,17 +92,17 @@ describe('buildUploadPayload', () => {
 describe('publish requests', () => {
 	it('makes a scheduled video a private video with an exact UTC time', () => {
 		const payload = buildPublishPayload(
-			{ videoId: 'abcDEF12345', visibility: 'public', publishAt: '2026-12-01T10:00:00+02:00' },
+			{ videoId: 'abcDEF12345', visibility: 'public', publishAt: '2026-12-01T12:00:00+02:00' },
 			NOW,
 		)
 		expect(payload).toEqual({
 			videoId: 'abcDEF12345',
 			privacyStatus: 'private',
-			publishAt: '2026-12-01T08:00:00.000Z',
+			publishAt: '2026-12-01T10:00:00.000Z',
 		})
 		expect(
 			describeStoredRequest('publish_video', payload as unknown as Record<string, unknown>),
-		).toEqual(['Goes public at exactly: 2026-12-01T08:00:00.000Z (UTC)'])
+		).toEqual(['Goes public at exactly: 2026-12-01T10:00:00.000Z (UTC)'])
 	})
 
 	it('refuses a time that is not in the future, because YouTube would publish at once', () => {
