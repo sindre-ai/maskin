@@ -46,8 +46,9 @@ const HOVER_BUTTON =
 	'hidden h-6 items-center rounded-full px-2 text-xs font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring can-hover:inline-flex'
 
 /**
- * One chat in the new list: three lines (agent names and time, title, a two-line preview), a gutter
- * dot for unread, and at most one marker on the preview line (error, needs you, working). Row
+ * One chat in the new list: three lines (agent names and time, title, a one-line preview), or two
+ * for a direct message, which has no title line. A gutter dot for unread, and at most one marker
+ * on the preview line (error, needs you, working). Row
  * actions sit top right: on hover where hover exists, and always behind the ··· button.
  */
 export function ChatRow({
@@ -64,7 +65,6 @@ export function ChatRow({
 	const names = (others.length > 0 ? others : conversation.participants)
 		.map((p) => p.actorName)
 		.join(', ')
-	const title = isDirect ? 'Direct message' : conversation.title
 	const isUnread = conversation.unread_count > 0
 	const marker = previewMarker(conversation)
 	const error = conversation.error
@@ -139,7 +139,11 @@ export function ChatRow({
 							className="mr-8 shrink-0 text-xs text-muted-foreground can-hover:group-focus-within/row:mr-(--cluster-w) can-hover:group-hover/row:mr-(--cluster-w) max-sm:mr-9"
 						/>
 					</div>
-					<div className="mt-0.5 truncate text-sm font-medium text-foreground">{title}</div>
+					{isDirect ? null : (
+						<div className="mt-0.5 truncate text-sm font-medium text-foreground">
+							{conversation.title}
+						</div>
+					)}
 					<div className="mt-0.5 flex items-start gap-1.5 text-[13px] text-muted-foreground">
 						{marker === 'error' ? (
 							<span
@@ -162,7 +166,7 @@ export function ChatRow({
 						) : null}
 						<span
 							className={cn(
-								'line-clamp-2 min-w-0',
+								'line-clamp-1 min-w-0',
 								marker === 'error' && 'font-medium text-error',
 								marker === 'needs_you' && 'font-medium text-foreground',
 							)}
