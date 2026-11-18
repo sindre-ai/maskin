@@ -8,6 +8,7 @@ import { trackTurnCheckCapHit, trackTurnSentBack } from '../lib/analytics/turn-c
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import {
 	classifyBannerResult,
+	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	isCreditBalanceLowText,
 } from '../lib/credit-classifier'
@@ -1635,6 +1636,25 @@ export class InteractiveTurnFinalizer {
 			// Answer the unanswered message on the new subscription ourselves. Only
 			// reached when the pointer actually moved, so a spent chain (movedTo
 			// null) cannot loop: each resume consumes one slot of the chain.
+			// A login that lapsed inside this container (no move happened) is dead for
+			// as long as the session lives: the CLI keeps its own copy, so a token
+			// the human refreshes afterwards is never read, and every retry replays
+			// on the dead login. Stop it so the retry spawns a fresh session, whose
+			// start path refreshes the slot. Nothing is resumed here: the token is
+			// still dead, so the human refreshes it and retries.
+			if (
+				!movedTo &&
+				this.onStopSession &&
+				classifyClaudeAuthFailureText(detail)?.reason_code === 'oauth_expired'
+			) {
+				try {
+					await this.onStopSession(sessionId, 'login_expired')
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not be stopped after its login expired: ${describeError(err)}`,
+					)
+				}
+			}
 			if (movedTo && this.onResumeAfterMove) {
 				try {
 					await this.onResumeAfterMove({
