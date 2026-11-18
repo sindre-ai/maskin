@@ -1,7 +1,8 @@
 // The sweep for overdue or missing next steps (bet "Agents take the lead", rule 4). It finds a
 // covered object whose step is overdue or missing, claims it once per hour across instances, and
 // wakes the driver through startSession. In its first 3 days in a workspace it only records what it
-// would have woken, and it only starts runs where the next-step-sweep-wake flag is on.
+// would have woken, and it only starts runs where the next-step-sweep-wake flag is on. It only
+// looks at workspaces that have the next-step-sweep flag.
 
 import { events, nextStepSweepClaims, nextSteps, objects, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -69,8 +70,11 @@ describe('NextStepSweep', () => {
 		db.select().from(nextStepSweepClaims).where(eq(nextStepSweepClaims.workspaceId, workspaceId))
 	const sweep = () => new NextStepSweep(db)
 
+	// Turns the sweep on for this workspace, plus any extra flags.
 	function setFlags(...flags: string[]) {
-		process.env.FF_WORKSPACE_FEATURES = flags.map((f) => `${workspaceId}:${f}`).join(',')
+		process.env.FF_WORKSPACE_FEATURES = ['next-step-sweep', ...flags]
+			.map((f) => `${workspaceId}:${f}`)
+			.join(',')
 		_resetFeatureFlagConfig()
 	}
 
@@ -127,6 +131,7 @@ describe('NextStepSweep', () => {
 		workspaceId = (await insertWorkspace(db, ownerId)).id
 		driverId = (await insertActor(db, { type: 'agent', name: 'Driver' })).id
 		await ensureWorkspaceMember(db, workspaceId, driverId)
+		setFlags()
 		startSessionMock.mockImplementation(async (input) => {
 			const started = await insertSession(db, workspaceId, driverId, driverId, {
 				status: 'running',
@@ -159,6 +164,40 @@ describe('NextStepSweep', () => {
 				outcome: 'recorded_only',
 			}),
 		])
+	})
+
+	describe('the workspace switch', () => {
+		it('writes nothing in a workspace the switch does not name', async () => {
+			await overdueBet()
+			const other = await insertWorkspace(db, ownerId)
+			process.env.FF_WORKSPACE_FEATURES = `${other.id}:next-step-sweep`
+			_resetFeatureFlagConfig()
+
+			await sweep().tick()
+			await sweep().sweepWorkspace(workspaceId)
+
+			expect(await claims()).toEqual([])
+			expect(woken()).toEqual([])
+			expect(startSessionMock).not.toHaveBeenCalled()
+		})
+
+		it('writes nothing when only the wake flag is listed', async () => {
+			await overdueBet()
+			process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:next-step-sweep-wake`
+			_resetFeatureFlagConfig()
+
+			await sweep().tick()
+
+			expect(await claims()).toEqual([])
+		})
+
+		it('a pass visits a workspace the switch names', async () => {
+			const bet = await overdueBet()
+
+			await sweep().tick()
+
+			expect(await claims()).toEqual([expect.objectContaining({ objectId: bet.id })])
+		})
 	})
 
 	it('records the same object once per day, not on every tick', async () => {
