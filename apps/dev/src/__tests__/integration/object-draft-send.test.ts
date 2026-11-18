@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, workspaceMembers } from '@maskin/db/schema'
+import { events, integrations, sendPermissions, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
@@ -235,6 +235,102 @@ describe('object email drafts', () => {
 		const s = await setup('read_write')
 		const plain = await insertObject(db, s.workspace.id, s.agent.id, { type: 'task', content: 'x' })
 		expect((await sendDraft(s.agent.id, s.workspace.id, plain.id)).status).toBe(400)
+	})
+})
+
+describe('a draft sent on Always allow', () => {
+	async function alwaysAllow() {
+		const s = await setup('read_write')
+		await db
+			.update(sendPermissions)
+			.set({ mode: 'always_allow' })
+			.where(
+				and(eq(sendPermissions.workspaceId, s.workspace.id), eq(sendPermissions.kind, 'email')),
+			)
+		return s
+	}
+	const eventsOf = (objectId: string, action: string) =>
+		db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, objectId), eq(events.action, action)))
+
+	it('writes one auto_sent with the kind, the hash and the setting, and the card says so', async () => {
+		const s = await alwaysAllow()
+		const shown = await previewOf(s)
+		fetchMock.mockResolvedValueOnce(gmailOk('m1'))
+
+		const sent = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
+
+		expect(sent.status).toBe(200)
+		expect(await sent.json()).toMatchObject({ mode: 'direct' })
+		const auto = await eventsOf(s.draft.id, 'auto_sent')
+		expect(auto).toHaveLength(1)
+		expect(auto[0]?.actorId).toBe(s.agent.id)
+		expect(auto[0]?.data).toMatchObject({
+			kind: 'email',
+			content_hash: shown.content_hash,
+			setting: { mode: 'always_allow', source: 'agent' },
+		})
+		const after = (await (await getObject(s.human, s.workspace.id, s.draft.id)).json()) as {
+			preview: Preview & { details: Array<{ label: string; value: string }> }
+		}
+		expect(after.preview.delivery?.state).toBe('sent')
+		expect(after.preview.details).toContainEqual({
+			label: 'Sent',
+			value: expect.stringMatching(/^By the agent, no approval needed, \d{1,2} \w{3} \d{4}$/),
+		})
+		// The line is not part of what an approval is bound to.
+		expect(after.preview.content_hash).toBe(shown.content_hash)
+	})
+
+	it('writes no second auto_sent when a failed send is tried again, and shows no line until it goes', async () => {
+		const s = await alwaysAllow()
+		fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }))
+		const failed = await sendDraft(s.agent.id, s.workspace.id, s.draft.id)
+		expect(failed.status).toBeGreaterThanOrEqual(400)
+		expect(await eventsOf(s.draft.id, 'delivered')).toHaveLength(0)
+		const midway = (await (await getObject(s.human, s.workspace.id, s.draft.id)).json()) as {
+			preview: { details: Array<{ label: string }> }
+		}
+		expect(midway.preview.details.map((d) => d.label)).not.toContain('Sent')
+
+		fetchMock.mockResolvedValueOnce(gmailOk('m2'))
+		expect((await sendDraft(s.agent.id, s.workspace.id, s.draft.id)).status).toBe(200)
+
+		expect(await eventsOf(s.draft.id, 'auto_sent')).toHaveLength(1)
+		expect(await eventsOf(s.draft.id, 'delivered')).toHaveLength(1)
+	})
+
+	it('writes none for a send a person approved', async () => {
+		const s = await alwaysAllow()
+		await approve(s.human, s.workspace.id, s.draft.id)
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		expect((await sendDraft(s.agent.id, s.workspace.id, s.draft.id)).status).toBe(200)
+
+		expect(await eventsOf(s.draft.id, 'auto_sent')).toHaveLength(0)
+		const after = (await (await getObject(s.human, s.workspace.id, s.draft.id)).json()) as {
+			preview: { details: Array<{ label: string }> }
+		}
+		expect(after.preview.details.map((d) => d.label)).not.toContain('Sent')
+	})
+
+	it('writes none when the setting holds or refuses the send', async () => {
+		const asked = await setup('read_write')
+		expect((await sendDraft(asked.agent.id, asked.workspace.id, asked.draft.id)).status).toBe(403)
+		expect(await eventsOf(asked.draft.id, 'auto_sent')).toHaveLength(0)
+
+		const denied = await setup('read_write')
+		await db
+			.update(sendPermissions)
+			.set({ mode: 'deny' })
+			.where(eq(sendPermissions.workspaceId, denied.workspace.id))
+		expect((await sendDraft(denied.agent.id, denied.workspace.id, denied.draft.id)).status).toBe(
+			403,
+		)
+		expect(await eventsOf(denied.draft.id, 'auto_sent')).toHaveLength(0)
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
 

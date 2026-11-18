@@ -19,6 +19,7 @@ import { recordEventReturning } from './events/record-event'
 
 export const APPROVED_ACTION = 'approved'
 export const DELIVERED_ACTION = 'delivered'
+export const AUTO_SENT_ACTION = 'auto_sent'
 
 export interface ObjectApproval {
 	/** The id of the approval event. Send claims are keyed on it: one approval, one send. */
@@ -85,6 +86,12 @@ export async function findCurrentApproval(
 	return { id: latest.id, actorId: latest.actorId, createdAt: latest.createdAt }
 }
 
+/** ", 18 Nov 2026" for the line that says an agent sent a draft; empty when the time is unknown. */
+function formatSentDate(at: Date | null): string {
+	if (!at) return ''
+	return `, ${at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`
+}
+
 /** Adds `delivery` to a preview: draft, approved, or sent. */
 export async function withDeliveryState(
 	db: Database,
@@ -96,8 +103,23 @@ export async function withDeliveryState(
 	const preview = await withAttachmentNames(db, workspaceId, basePreview)
 	const delivered = await latestEvent(db, workspaceId, objectId, DELIVERED_ACTION, false)
 	if (delivered?.contentHash === preview.content_hash) {
+		// An agent on Always allow sent this text with no person in between: say so on the card.
+		// It is a detail line added after the hash was computed, so it never changes an approval
+		// and every client that draws details (web, chat, For You, iOS) shows it.
+		const auto = await latestEvent(db, workspaceId, objectId, AUTO_SENT_ACTION, false)
+		const details =
+			auto?.contentHash === preview.content_hash
+				? [
+						...preview.details,
+						{
+							label: 'Sent',
+							value: `By the agent, no approval needed${formatSentDate(delivered.createdAt)}`,
+						},
+					]
+				: preview.details
 		return {
 			...preview,
+			details,
 			delivery: { state: 'sent', at: delivered.createdAt?.toISOString() ?? null },
 		}
 	}

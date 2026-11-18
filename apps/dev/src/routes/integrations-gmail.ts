@@ -44,7 +44,7 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage } from '../lib/send-gate'
+import { decideSend, deniedMessage, recordAutoSent } from '../lib/send-gate'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -719,6 +719,16 @@ app.openapi(sendRoute, async (c) => {
 				'This exact email was already sent in the last 24 hours. Do not send it again.',
 			)
 			return c.json(f.body, f.status)
+		}
+		// Released on Always allow with no approval: log it on the draft.
+		if (objectDraft) {
+			await recordAutoSent(db, {
+				workspaceId,
+				agentId: actorId,
+				object: { id: objectDraft.id, type: objectDraft.type },
+				kind: 'email',
+				contentHash: objectDraft.hash,
+			})
 		}
 	}
 

@@ -408,6 +408,7 @@ export function createSlackMcpServer(
 					if (!ctx.db) throw new SlackSendRefusal('Sending a draft is not available here.')
 					approved = await loadApprovedSlackMessage(ctx.db, {
 						workspaceId: ctx.workspaceId,
+						actorId: ctx.actorId,
 						objectId: args.object_id,
 						requireApproval: decision === 'needs_approval',
 					})
@@ -887,6 +888,7 @@ export function createSlackMcpServer(
 					if (!ctx.db) throw new SlackSendRefusal('Editing with a draft is not available here.')
 					approved = await loadApprovedSlackMessage(ctx.db, {
 						workspaceId: ctx.workspaceId,
+						actorId: ctx.actorId,
 						objectId: args.object_id,
 						requireApproval: decision === 'needs_approval',
 					})

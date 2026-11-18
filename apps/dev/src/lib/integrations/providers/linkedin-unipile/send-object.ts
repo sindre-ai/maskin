@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
+import { recordAutoSent } from '../../../send-gate'
 import { loadApprovedAttachment, loadAttachment } from './attachment'
 import { LinkedInIntegrationError } from './errors'
 import { assertInmailSendable, readCreditsAfter, startInmailChat } from './inmail-send'
@@ -142,6 +143,17 @@ export async function sendApprovedLinkedInObject(
 			'INVALID_INPUT',
 			'A conversation or a recipient is required: pass thread_id, or file thread_id or recipient_provider_id on the object.',
 		)
+	}
+
+	// Released on Always allow with no approval: log it on the draft.
+	if (!approval) {
+		await recordAutoSent(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			agentId: ctx.actorId,
+			object,
+			kind: preview.kind,
+			contentHash: preview.content_hash,
+		})
 	}
 
 	input.onResolved?.({
@@ -286,6 +298,16 @@ async function loadApprovedDraft(
 	)
 	if (!approval && requireApproval) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', NOT_APPROVED_MESSAGE)
+	}
+	// Released on Always allow with no approval: log it on the draft.
+	if (!approval) {
+		await recordAutoSent(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			agentId: ctx.actorId,
+			object,
+			kind: preview.kind,
+			contentHash: preview.content_hash,
+		})
 	}
 	return { object, preview, approval, filed: (object.metadata ?? {}) as Record<string, unknown> }
 }

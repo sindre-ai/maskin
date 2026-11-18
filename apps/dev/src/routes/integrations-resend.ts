@@ -31,7 +31,7 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage } from '../lib/send-gate'
+import { decideSend, deniedMessage, recordAutoSent } from '../lib/send-gate'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -296,6 +296,16 @@ app.openapi(sendRoute, async (c) => {
 			'This draft was already sent. Do not send it again. Create a new task for a new email.',
 		)
 		return c.json(f.body, f.status)
+	}
+	// Released on Always allow with no approval: log it on the draft.
+	if (!approvalEventId) {
+		await recordAutoSent(db, {
+			workspaceId,
+			agentId: actorId,
+			object: { id: objectId, type: loaded.objectType },
+			kind: 'email',
+			contentHash: loaded.contentHash,
+		})
 	}
 	const mode = approvalEventId ? ('approved_draft' as const) : ('direct' as const)
 	const idempotencyKey = approvalEventId
