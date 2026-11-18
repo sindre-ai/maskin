@@ -32,7 +32,7 @@ name: iOS TestFlight
 # Crash and error reports: the build carries the DSN of the native app's Sentry project (maskin-ios), see
 # MASKIN_SENTRY_DSN below, so a TestFlight build reports crashes and nothing else does. The dSYMs are also
 # uploaded to that project so crashes show real function names. The upload needs one repository secret,
-# SENTRY_AUTH_TOKEN (an organization token with release and project read-write rights). Unset = the
+# SENTRY_AUTH_TOKEN_IOS (an organization token with release and project read-write rights). Unset = the
 # upload step is skipped and the build goes on; the 7 day artifact above stays the fallback.
 #
 # Internal testers get the build automatically once App Store Connect finishes processing it,
@@ -195,15 +195,15 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'maskin' }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'maskin-ios' }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN_IOS }}
+          SENTRY_ORG: maskin
+          SENTRY_PROJECT: maskin-ios
           # The project's ingest host ends in .de.sentry.io, so the organization lives in the EU region.
           SENTRY_URL: https://de.sentry.io
         run: |
           set -euo pipefail
           if [ -z "$SENTRY_AUTH_TOKEN" ]; then
-            echo "::notice::Sentry symbol upload skipped: the SENTRY_AUTH_TOKEN secret is not set yet."
+            echo "::notice::Sentry symbol upload skipped: the SENTRY_AUTH_TOKEN_IOS secret is not set yet."
             exit 0
           fi
           npx --yes @sentry/cli@2 debug-files upload \
