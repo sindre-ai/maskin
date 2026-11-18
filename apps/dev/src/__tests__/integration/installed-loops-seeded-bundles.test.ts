@@ -120,6 +120,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		'product-discovery-loop',
 		'meeting-loop',
 		'product-release-loop',
+		'customer-voice-loop',
 		'knowledge-wiki-loop',
 	] as const
 
@@ -171,9 +172,11 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 			expect(tabs).toEqual(
 				slug === 'product-discovery-loop'
 					? ['Radar', 'Learning', 'Briefing', 'Opportunities', 'Pipeline']
-					: slug === 'knowledge-wiki-loop'
-						? ['Results', 'Strategic context']
-						: [],
+					: slug === 'customer-voice-loop'
+						? ['Results']
+						: slug === 'knowledge-wiki-loop'
+							? ['Results', 'Strategic context']
+							: [],
 			)
 		})
 	}

@@ -14,6 +14,10 @@
 // are merged into one lookup per entity type below — every loop config calls
 // the same getActorData/getTriggerData/getSkillData.
 
+import customerVoiceActorsData from './data/customer-voice-actors.json'
+import customerVoiceSkillsData from './data/customer-voice-skills.json'
+import customerVoiceTriggersData from './data/customer-voice-triggers.json'
+import customerVoiceViewsData from './data/customer-voice-views.json'
 import discoveryActorsData from './data/discovery-actors.json'
 import discoverySkillsData from './data/discovery-skills.json'
 import discoveryTriggersData from './data/discovery-triggers.json'
@@ -64,7 +68,7 @@ export interface ViewData extends ViewSnapshotSource {
 }
 
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
-// ./market-watch-loop, ./meeting-loop, ./product-release-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
+// ./market-watch-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
 export interface MarketplaceLoopSeedConfig {
 	loop: {
@@ -88,6 +92,7 @@ const actorsById: Record<string, ActorData> = {
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
 	...(productReleaseActorsData as Record<string, ActorData>),
+	...(customerVoiceActorsData as Record<string, ActorData>),
 	...(knowledgeWikiActorsData as Record<string, ActorData>),
 }
 
@@ -96,6 +101,7 @@ const triggersById: Record<string, TriggerData> = {
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
 	...(productReleaseTriggersData as Record<string, TriggerData>),
+	...(customerVoiceTriggersData as Record<string, TriggerData>),
 	...(knowledgeWikiTriggersData as Record<string, TriggerData>),
 }
 
@@ -104,11 +110,13 @@ const skillsById: Record<string, SkillData> = {
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
 	...(productReleaseSkillsData as Record<string, SkillData>),
+	...(customerVoiceSkillsData as Record<string, SkillData>),
 	...(knowledgeWikiSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {
 	...(discoveryViewsData as Record<string, ViewData>),
+	...(customerVoiceViewsData as Record<string, ViewData>),
 	...(knowledgeWikiViewsData as Record<string, ViewData>),
 }
 

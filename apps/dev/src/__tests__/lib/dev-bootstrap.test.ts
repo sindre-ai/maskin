@@ -5,6 +5,7 @@ import {
 	seedMarketplaceIfEmpty,
 	seedMarketplaceLoops,
 } from '../../lib/dev-bootstrap'
+import { CUSTOMER_VOICE_LOOP } from '../../lib/marketplace-loops/customer-voice-loop'
 import {
 	DISCOVERY_ACTOR_IDS,
 	DISCOVERY_LOOP,
@@ -22,6 +23,7 @@ const ALL_PACKAGES = [
 	DISCOVERY_LOOP,
 	MEETING_LOOP,
 	PRODUCT_RELEASE_LOOP,
+	CUSTOMER_VOICE_LOOP,
 	KNOWLEDGE_WIKI_LOOP,
 ]
 
