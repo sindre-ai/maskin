@@ -246,7 +246,9 @@ export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
 	}
 
 	return (
-		<div className="space-y-4">
+		// Takes back the panel's padding and puts it on itself, so the manual-add row below can run edge to
+		// edge inside this box instead of sticking out of it (the mobile QA gate flags that as overflow).
+		<div className="-m-4 space-y-4 p-4">
 			{grants.isError && <ClaudeNotice onRetry={() => grants.refetch()} />}
 			<AddToClaude mcpUrl={mcpUrl} />
 		</div>
