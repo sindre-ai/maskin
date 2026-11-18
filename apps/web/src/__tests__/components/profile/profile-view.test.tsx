@@ -24,6 +24,10 @@ vi.mock('@/hooks/use-web-push', () => ({
 	}),
 }))
 
+vi.mock('@/components/profile/delete-account-dialog', () => ({
+	DeleteAccountDialog: () => <div role="dialog" aria-label="Delete account dialog" />,
+}))
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function renderProfile(overrides: Parameters<typeof buildActorResponse>[0] = {}) {
@@ -180,5 +184,16 @@ describe('ProfileView', () => {
 		renderProfile()
 		expect(screen.getByText('actor-1')).toBeInTheDocument()
 		expect(screen.getAllByRole('button', { name: 'Copy' }).length).toBeGreaterThan(0)
+	})
+
+	it('shows Delete account as a quiet red text row that opens the confirm dialog', async () => {
+		const user = userEvent.setup()
+		renderProfile()
+		const row = screen.getByRole('button', { name: 'Delete account' })
+		expect(row).toHaveClass('text-destructive')
+		expect(row).not.toHaveClass('bg-destructive')
+
+		await user.click(row)
+		expect(screen.getByRole('dialog', { name: 'Delete account dialog' })).toBeInTheDocument()
 	})
 })

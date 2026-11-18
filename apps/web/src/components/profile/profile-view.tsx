@@ -1,7 +1,6 @@
 import { BrowserNotificationsToggle } from '@/components/profile/browser-notifications-row'
 import { DeleteAccountDialog } from '@/components/profile/delete-account-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
@@ -9,7 +8,7 @@ import { useWebPush } from '@/hooks/use-web-push'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
-import { Camera, Copy } from 'lucide-react'
+import { Camera, ChevronRight, Copy } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -285,10 +284,22 @@ function AccountSection({
 					copyable
 				/>
 				<AccountRow label="Workspace" value={workspaceName} />
-				<AccountRow label="Actor ID" value={actor.id} copyable />
 			</div>
+			<ActorIdRow id={actor.id} />
 			<DeleteAccountRow />
 		</>
+	)
+}
+
+// Support-only detail: still copyable, but out of the main Account list so it does not read as
+// something to act on.
+function ActorIdRow({ id }: { id: string }) {
+	return (
+		<div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+			<span>Actor ID</span>
+			<span className="min-w-0 truncate font-mono">{id}</span>
+			<CopyButton value={id} />
+		</div>
 	)
 }
 
@@ -296,16 +307,15 @@ function DeleteAccountRow() {
 	const [open, setOpen] = useState(false)
 
 	return (
-		<div className="flex flex-col gap-3 border-t border-border py-2.5 sm:flex-row sm:items-center sm:justify-between">
-			<div className="min-w-0">
-				<span className="block text-[13px] font-semibold">Delete account</span>
-				<span className="text-xs text-muted-foreground">
-					Permanently deletes your account and signs you out everywhere.
-				</span>
-			</div>
-			<Button variant="destructive" onClick={() => setOpen(true)}>
+		<div className="mt-3 border-t border-border">
+			<button
+				type="button"
+				onClick={() => setOpen(true)}
+				className="flex w-full items-center justify-between py-3.5 text-left text-[13px] font-medium leading-tight text-destructive"
+			>
 				Delete account
-			</Button>
+				<ChevronRight size={16} aria-hidden className="text-muted-foreground" />
+			</button>
 			{open && <DeleteAccountDialog open={open} onOpenChange={setOpen} />}
 		</div>
 	)
