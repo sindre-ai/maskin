@@ -5,6 +5,11 @@ vi.mock('../../../../lib/integrations/providers/youtube/purge', () => ({
 	purgeYoutubeData: (...args: unknown[]) => purgeYoutubeData(...args),
 }))
 
+const hasSiblingYoutubeGrant = vi.fn()
+vi.mock('../../../../lib/integrations/providers/youtube/sibling', () => ({
+	hasSiblingYoutubeGrant: (...args: unknown[]) => hasSiblingYoutubeGrant(...args),
+}))
+
 import { revokeYoutubeGrant } from '../../../../lib/integrations/providers/youtube/disconnect'
 import type { PreDisconnectContext } from '../../../../lib/integrations/types'
 import { logger } from '../../../../lib/logger'
@@ -29,6 +34,7 @@ function tokenSentTo(fetchSpy: ReturnType<typeof vi.spyOn>): string | null {
 describe('revokeYoutubeGrant', () => {
 	beforeEach(() => {
 		purgeYoutubeData.mockReset().mockResolvedValue(undefined)
+		hasSiblingYoutubeGrant.mockReset().mockResolvedValue(false)
 		vi.stubEnv('GOOGLE_YOUTUBE_CLIENT_ID', 'client-id')
 		vi.stubEnv('GOOGLE_YOUTUBE_CLIENT_SECRET', 'client-secret')
 		vi.spyOn(logger, 'info').mockImplementation(() => {})
@@ -145,5 +151,52 @@ describe('revokeYoutubeGrant', () => {
 		purgeYoutubeData.mockRejectedValue(new Error('db down'))
 
 		await expect(revokeYoutubeGrant(context({ refreshToken: 'rt-1' }))).resolves.toBeUndefined()
+	})
+
+	it('skips the revoke but still purges when another workspace uses the same Google account', async () => {
+		hasSiblingYoutubeGrant.mockResolvedValue(true)
+		const fetchSpy = vi.spyOn(globalThis, 'fetch')
+		const ctx = context({ accessToken: 'at-1', refreshToken: 'rt-1' })
+
+		await revokeYoutubeGrant(ctx)
+
+		expect(hasSiblingYoutubeGrant).toHaveBeenCalledWith(ctx.db, {
+			workspaceId: 'ws-1',
+			externalId: 'person@example.com',
+		})
+		expect(fetchSpy).not.toHaveBeenCalled()
+		expect(logger.info).toHaveBeenCalledWith(
+			'YouTube revoke skipped: another workspace uses the same Google account',
+			{ integrationId: 'int-1' },
+		)
+		expect(purgeYoutubeData).toHaveBeenCalledTimes(1)
+	})
+
+	it('revokes when no other workspace uses the account', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'))
+
+		await revokeYoutubeGrant(context({ refreshToken: 'rt-1' }))
+
+		expect(hasSiblingYoutubeGrant).toHaveBeenCalledTimes(1)
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+	})
+
+	it('revokes without a lookup when there is no externalId', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'))
+
+		await revokeYoutubeGrant({ ...context({ refreshToken: 'rt-1' }), externalId: null })
+
+		expect(hasSiblingYoutubeGrant).not.toHaveBeenCalled()
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+	})
+
+	it('revokes when the sibling lookup fails', async () => {
+		hasSiblingYoutubeGrant.mockRejectedValue(new Error('db down'))
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'))
+
+		await revokeYoutubeGrant(context({ refreshToken: 'rt-1' }))
+
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+		expect(purgeYoutubeData).toHaveBeenCalledTimes(1)
 	})
 })

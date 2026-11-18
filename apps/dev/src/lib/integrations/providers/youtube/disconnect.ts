@@ -4,6 +4,7 @@ import { OAuth2Handler, TokenRequestError } from '../../oauth/handler'
 import type { PreDisconnectContext } from '../../types'
 import { config } from './config'
 import { purgeYoutubeData } from './purge'
+import { hasSiblingYoutubeGrant } from './sibling'
 
 /**
  * preDisconnect for YouTube: revoke the Google grant, then clear every copy of YouTube data we
@@ -13,10 +14,20 @@ import { purgeYoutubeData } from './purge'
  * neither throws out of here: the disconnect always completes. A revoke that fails leaves the
  * grant alive at Google until the person removes the app on their Google permissions page.
  * There is no retry.
+ *
+ * The revoke is skipped when another workspace still has the same Google account connected for
+ * YouTube: revoking would kill that workspace's grant too. This workspace's data is purged either
+ * way. With no externalId, or when the lookup fails, we revoke.
  */
 export async function revokeYoutubeGrant(ctx: PreDisconnectContext): Promise<void> {
 	try {
-		await revoke(ctx)
+		if (await otherWorkspaceUsesGrant(ctx)) {
+			logger.info('YouTube revoke skipped: another workspace uses the same Google account', {
+				integrationId: ctx.integrationId,
+			})
+		} else {
+			await revoke(ctx)
+		}
 	} catch (err) {
 		const status = err instanceof TokenRequestError ? err.status : undefined
 		logger.warn('YouTube revoke failed (continuing with disconnect)', {
@@ -37,6 +48,22 @@ export async function revokeYoutubeGrant(ctx: PreDisconnectContext): Promise<voi
 			integrationId: ctx.integrationId,
 			error: errorMessage(err),
 		})
+	}
+}
+
+async function otherWorkspaceUsesGrant(ctx: PreDisconnectContext): Promise<boolean> {
+	if (!ctx.externalId) return false
+	try {
+		return await hasSiblingYoutubeGrant(ctx.db as Database, {
+			workspaceId: ctx.workspaceId,
+			externalId: ctx.externalId,
+		})
+	} catch (err) {
+		logger.warn('YouTube sibling grant lookup failed (revoking)', {
+			integrationId: ctx.integrationId,
+			error: errorMessage(err),
+		})
+		return false
 	}
 }
 
