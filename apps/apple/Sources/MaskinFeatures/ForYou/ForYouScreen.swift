@@ -569,24 +569,26 @@ struct ForYouFeedView: View {
 				// kept "accept recommended"). Options that can't be undone are never one swipe
 				// away: they keep their confirmation on the card. A plain mention has no options,
 				// so there the swipe is Done (mark read).
-				if entry.record == nil {
-					if let option = entry.card.decision?.recommended, !option.destructive,
-						!store.isSendHeldBack(option, on: entry.card)
-					{
-						Button {
-							liveActions(entry).choose(option)
-						} label: {
-							Label(option.label, systemImage: "checkmark")
-						}
-						.tint(MaskinColor.doneFg)
-					} else if entry.card.kind == .thread {
-						Button {
-							liveActions(entry).dismiss()
-						} label: {
-							Label("Done", systemImage: "checkmark")
-						}
-						.tint(MaskinColor.doneFg)
+				switch DecisionCardActions.leadingSwipe(
+					for: entry.card, answered: entry.record != nil,
+					isHeldBack: { store.isSendHeldBack($0, on: entry.card) })
+				{
+				case .take(let option):
+					Button {
+						liveActions(entry).choose(option)
+					} label: {
+						Label(option.label, systemImage: "checkmark")
 					}
+					.tint(MaskinColor.doneFg)
+				case .done:
+					Button {
+						liveActions(entry).dismiss()
+					} label: {
+						Label("Done", systemImage: "checkmark")
+					}
+					.tint(MaskinColor.doneFg)
+				case nil:
+					EmptyView()
 				}
 			}
 	}
