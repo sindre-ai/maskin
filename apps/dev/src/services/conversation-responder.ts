@@ -59,7 +59,7 @@ const LAST_SPEAKER_WAKE_TEXT =
 	'This looks like a follow-up to your last reply, so it was routed to you. Reply unless it clearly was not meant for you.'
 const LONE_AGENT_WAKE_TEXT = 'You are the only agent in this chat and this is its first message.'
 const THREAD_SESSION_HINT =
-	'This session is for one thread of the chat. Your reply is posted in that thread, and later turns here are messages from the same thread. The main chat and other threads have their own sessions.'
+	'This session is for one thread of the chat. Your reply is posted in that thread, and later turns here are messages from the same thread. The main chat and other threads have their own sessions, so act only on what this thread asks: leave a message, an answered question or a result in the main chat or another thread to the session there.'
 const GROUP_HANDOFF_HINT =
 	'To hand something to another agent, post with the chat tool and tag them; tagging in your final reply wakes nobody.'
 
@@ -318,6 +318,7 @@ export async function evaluateAndRespond(ctx: {
 				conversationId,
 				messageId,
 				threadRootId: message.threadRootId,
+				helperReturn: isHelperReturn(message.metadata),
 				agentId: agent.id,
 				message: messageForPrompt,
 				conversationHistory,
@@ -605,6 +606,7 @@ async function routeByWakeRule(ctx: {
 					conversationId,
 					messageId,
 					threadRootId: message.threadRootId,
+					helperReturn: isHelperReturn(message.metadata),
 					agentId: wake.agentId,
 					message: ctx.messageForPrompt,
 					conversationHistory: ctx.conversationHistory,
@@ -664,6 +666,11 @@ function wakeReasonForRule(
 	}
 }
 
+/** A finished helper's result, posted by helper-return.ts to wake the agent that started it. */
+function isHelperReturn(metadata: unknown): boolean {
+	return typeof (metadata as { helper_return?: unknown } | null)?.helper_return === 'string'
+}
+
 /**
  * Hands one turn to an agent in a conversation: written into its running session, buffered
  * while that session boots, or seeding a fresh session when there is none. `messageId` is
@@ -683,6 +690,8 @@ export async function deliverTurnToAgent(params: {
 	messageId: number
 	/** The thread `messageId` sits in; null or omitted for a message in the main chat. */
 	threadRootId?: number | null
+	/** The message is a finished helper's result handed back to this agent (see helper-return.ts). */
+	helperReturn?: boolean
 	agentId: string
 	message: { actorId: string; content: string; authorName: string; authorType: string }
 	conversationHistory: Array<{ actorName: string; content: string }>
@@ -712,6 +721,7 @@ export async function deliverTurnToAgent(params: {
 		agentId,
 		message,
 		threadRootId: params.threadRootId ?? null,
+		helperReturn: params.helperReturn === true,
 	})
 	const activeSessionsNote = await loadActiveSessionsNote(db, { conversationId, workspaceId })
 	const turnPayload = {
@@ -835,7 +845,8 @@ export async function deliverTurnToAgent(params: {
  * The thread whose own session should take this turn, or null for the main-chat session.
  *
  * A thread gets its own session only when the message is in a thread and was written by a person
- * (never judged by the agent), and then: a live session for that thread is reused as is,
+ * (never judged by the agent; a helper's result is the one exception, see below), and then: a
+ * live session for that thread is reused as is,
  * otherwise a new one starts, however many other threads the agent has going. Only when the
  * workspace has no chat capacity does the turn fall back to the main-chat session rather than
  * queueing, because a queued thread reply is slower than the main session answering it.
@@ -847,10 +858,22 @@ async function pickSessionThread(ctx: {
 	agentId: string
 	message: { actorId: string; authorType: string }
 	threadRootId: number | null
+	helperReturn: boolean
 }): Promise<number | null> {
 	const { sessionManager, conversationId, agentId, threadRootId } = ctx
 	if (threadRootId === null) return null
-	if (ctx.message.authorType !== 'human') return null
+	if (ctx.message.authorType !== 'human') {
+		// A helper's result posted in a thread goes back to that thread's session while it is
+		// live: it handed the work over and holds the thread's context. It never starts a thread
+		// session; without a live one the main-chat session answers, in the thread.
+		if (!ctx.helperReturn) return null
+		const live = await sessionManager.findConversationSessionAnyActive(
+			conversationId,
+			agentId,
+			threadRootId,
+		)
+		return live ? threadRootId : null
+	}
 
 	if (
 		await sessionManager.findConversationSessionAnyActive(conversationId, agentId, threadRootId)
