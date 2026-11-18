@@ -321,7 +321,6 @@ struct MessageRow: View {
 						mentions.isEmpty ? text : MentionText.markdown(text, mentions: mentions), style: .chat,
 						hardBreaks: message.author == .human
 					)
-					.textSelection(.enabled)
 				case .card(let target):
 					LinkedTargetCard(
 						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, skipped: draftSkipped,
@@ -414,7 +413,6 @@ struct MessageRow: View {
 									} else {
 										HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
 											MarkdownContent(markdownText, style: .chat, hardBreaks: true)
-												.textSelection(.enabled)
 											if message.editedAt != nil { EditedMark() }
 										}
 									}
@@ -433,7 +431,7 @@ struct MessageRow: View {
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .trailing)
-			.messageMoreMenu(actions: actions, isOwn: true)
+			.messageActionSheet(actions: actions)
 			.swipeToReply(onReply)
 			if let appended = layout?.appended, !appended.isEmpty {
 				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
@@ -500,7 +498,6 @@ struct MessageRow: View {
 								linkedBody(layout.parts, askNote: askNote)
 							} else {
 								MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
-									.textSelection(.enabled)
 							}
 						}
 						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
@@ -520,7 +517,7 @@ struct MessageRow: View {
 					}
 				}
 			}
-			.messageMoreMenu(actions: menuActions, isOwn: false)
+			.messageActionSheet(actions: menuActions)
 			.swipeToReply(onReply)
 			if let appended = layout?.appended {
 				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
