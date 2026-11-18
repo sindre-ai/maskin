@@ -14,7 +14,9 @@ import {
 	type ProposeInput,
 	proposeYoutubeWrite,
 } from '../../../youtube/propose'
+import { getOwnCaptions } from './captions'
 import { type YoutubeClientContext, youtubeRead } from './client'
+import { COMMENTS_MAX_PAGES, COMMENTS_MAX_PER_PAGE, listComments } from './comments'
 import { type YoutubeErrorCode, isYoutubeError } from './errors'
 import {
 	prepareUpload,
@@ -163,6 +165,54 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
 				units: 1,
 			}),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'list_comments',
+		`List the comment threads on a video, with up to 5 replies each, as the YouTube Data API returns them. Costs 1 quota unit per page, ${COMMENTS_MAX_PER_PAGE} threads a page, at most ${COMMENTS_MAX_PAGES} pages a call. If next_page_token is not null, pass it as page_token to read on. Fails with PERMISSION_DENIED when the video has comments turned off. Comment text is not stored by Maskin; repeat reads within 15 minutes come from a memory cache.`,
+		{
+			video_id: z.string().min(1).max(32).describe('The video id, for example dQw4w9WgXcQ.'),
+			order: z
+				.enum(['time', 'relevance'])
+				.default('time')
+				.describe('time is newest first; relevance is the top comments first.'),
+			max_results: z
+				.number()
+				.int()
+				.min(1)
+				.max(COMMENTS_MAX_PER_PAGE)
+				.default(COMMENTS_MAX_PER_PAGE)
+				.describe('Threads per page.'),
+			pages: z
+				.number()
+				.int()
+				.min(1)
+				.max(COMMENTS_MAX_PAGES)
+				.default(1)
+				.describe('Pages to read in this call.'),
+			page_token: z.string().optional().describe('The next_page_token of an earlier call.'),
+		},
+		(args) => listComments(client, args),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'get_own_captions',
+		'Get the caption text of a video on the connected channel, as SRT or VTT. Only videos owned by the connected channel: any other video is refused with PERMISSION_DENIED before any caption call. Costs about 252 quota units (2 ownership reads, the caption list at 50, the download at 200), so use it sparingly: a workspace has 1,000 units a day. The result is never cached and is returned to you only. Needs the youtube.force-ssl permission: a connection made before it was added fails with RECONSENT_REQUIRED until it is reconnected.',
+		{
+			video_id: z.string().min(1).max(32).describe('The video id of one of your own videos.'),
+			language: z
+				.string()
+				.min(2)
+				.max(16)
+				.optional()
+				.describe('Caption language code, for example en. Default: the best track the video has.'),
+			format: z.enum(['srt', 'vtt']).default('srt').describe('Caption file format.'),
+		},
+		(args) => getOwnCaptions(client, args),
 	)
 
 	registerWriteTools(server, ctx)
