@@ -24,6 +24,8 @@ describe('featureAreaForEvent', () => {
 		['file_viewer_page_navigated', 'files_briefings'],
 		['integration_connected', 'integrations'],
 		['keychain_credential_created', 'integrations'],
+		['youtube_tool_called', 'integrations'],
+		['youtube_action_decided', 'integrations'],
 		['slack.message.posted', 'integrations'],
 		['search_performed', 'search'],
 		['command_palette_opened', 'search'],
