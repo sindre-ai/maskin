@@ -5,6 +5,7 @@ import { TokenManager } from '../../oauth/token-manager'
 import { readContextFor } from '../../read-context'
 import { getProvider } from '../../registry'
 import { YoutubeError } from './errors'
+import { purgeYoutubeData } from './purge'
 
 export const YOUTUBE_PROVIDER = 'youtube'
 
@@ -44,15 +45,21 @@ export async function getYoutubeIntegrationId(
 /**
  * A valid access token for the integration, refreshed if it is about to expire. A refresh that
  * Google answers with invalid_grant flips the row to revoked inside TokenManager; here it becomes
- * RECONSENT_REQUIRED. getProvider throws on an unregistered provider, and that throw is left
+ * RECONSENT_REQUIRED, and the YouTube data we hold is purged (the person revoked on Google's side).
+ * getProvider throws on an unregistered provider, and that throw is left
  * loud on purpose: it must not be mistaken for a revoked grant.
  */
-export async function getYoutubeAccessToken(db: Database, integrationId: string): Promise<string> {
+export async function getYoutubeAccessToken(
+	db: Database,
+	integrationId: string,
+	workspaceId: string,
+): Promise<string> {
 	const provider = getProvider(YOUTUBE_PROVIDER)
 	try {
 		return await new TokenManager().getValidToken(db, integrationId, provider)
 	} catch (err) {
 		if (err instanceof IntegrationAuthRevokedError) {
+			await purgeYoutubeData(db, { integrationId, workspaceId })
 			throw new YoutubeError({
 				code: 'RECONSENT_REQUIRED',
 				message: 'The connected YouTube grant was revoked and must be reconnected.',

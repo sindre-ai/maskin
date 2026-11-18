@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
 import { logger } from '../../../logger'
 import { TokenManager } from '../../oauth/token-manager'
-import { getCachedRead, setCachedRead } from './cache'
+import { getCachedRead, getPurgeEpoch, setCachedRead } from './cache'
 import { YoutubeError, classifyYoutubeError } from './errors'
+import { purgeYoutubeData } from './purge'
 import { chargeYoutubeQuota } from './quota'
 import { getYoutubeAccessToken, getYoutubeIntegrationId } from './token'
 
@@ -45,9 +46,10 @@ export async function youtubeRead<T = unknown>(
 	const cached = getCachedRead(integrationId, read.tool, read.params)
 	if (cached !== undefined) return cached as T
 
+	const epoch = getPurgeEpoch(integrationId)
 	await chargeYoutubeQuota(db, workspaceId, read.units)
 
-	const accessToken = await getYoutubeAccessToken(db, integrationId)
+	const accessToken = await getYoutubeAccessToken(db, integrationId, workspaceId)
 	const url = `${YOUTUBE_API_BASE}/${read.path}?${new URLSearchParams(read.params).toString()}`
 
 	let res: Response
@@ -79,6 +81,8 @@ export async function youtubeRead<T = unknown>(
 					error: markErr instanceof Error ? markErr.message : String(markErr),
 				})
 			}
+			// Revoked on Google's side: the data we hold has to go too. Never throws.
+			await purgeYoutubeData(db, { integrationId, workspaceId })
 		}
 		logger.info('YouTube API call failed', {
 			integrationId,
@@ -90,6 +94,6 @@ export async function youtubeRead<T = unknown>(
 	}
 
 	const body = (await res.json()) as T
-	setCachedRead(integrationId, read.tool, read.params, body)
+	setCachedRead(integrationId, read.tool, read.params, body, epoch)
 	return body
 }

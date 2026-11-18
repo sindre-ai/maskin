@@ -3,6 +3,7 @@ import {
 	CACHE_TTL_MS,
 	clearYoutubeCache,
 	getCachedRead,
+	getPurgeEpoch,
 	purgeYoutubeCache,
 	setCachedRead,
 } from '../../../../lib/integrations/providers/youtube/cache'
@@ -52,5 +53,15 @@ describe('youtube read cache', () => {
 		expect(getCachedRead('int-1', 'tool', { a: '2' })).toBeUndefined()
 		// int-10 shares the text prefix int-1 but is a different integration.
 		expect(getCachedRead('int-10', 'tool', { a: '1' })).toBe('ten')
+	})
+
+	it('drops a read that started before a purge instead of refilling the cache', () => {
+		const epoch = getPurgeEpoch('int-1')
+		purgeYoutubeCache('int-1')
+		setCachedRead('int-1', 'tool', {}, 'stale', epoch)
+		expect(getCachedRead('int-1', 'tool', {})).toBeUndefined()
+
+		setCachedRead('int-1', 'tool', {}, 'fresh', getPurgeEpoch('int-1'))
+		expect(getCachedRead('int-1', 'tool', {})).toBe('fresh')
 	})
 })

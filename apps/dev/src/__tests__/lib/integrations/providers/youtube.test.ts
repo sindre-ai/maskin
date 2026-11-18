@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { actorScopedProviders } from '../../../../lib/integrations/lookup'
 import { config } from '../../../../lib/integrations/providers/youtube/config'
+import { revokeYoutubeGrant } from '../../../../lib/integrations/providers/youtube/disconnect'
 import { resolveExternalId } from '../../../../lib/integrations/providers/youtube/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
 
@@ -66,10 +67,13 @@ describe('youtube registry entry', () => {
 		expect(getProvider('youtube').config).toBe(config)
 	})
 
+	it('revokes and purges on disconnect', () => {
+		expect(getProvider('youtube').preDisconnect).toBe(revokeYoutubeGrant)
+	})
+
 	it('has no postInstall, watch or webhook hooks', () => {
 		const provider = getProvider('youtube')
 		expect(provider.postInstall).toBeUndefined()
-		expect(provider.preDisconnect).toBeUndefined()
 		expect(provider.customWebhookVerifier).toBeUndefined()
 		expect(provider.webhookFanOut).toBeUndefined()
 	})
