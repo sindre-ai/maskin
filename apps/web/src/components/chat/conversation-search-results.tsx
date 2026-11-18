@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import type { useChatListSearch } from '@/hooks/use-chat-list-search'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import { keepListFilter } from '@/lib/chat-list-search'
 import { cn } from '@/lib/cn'
 import { type LoadedList, hitLine, isArchivedHit } from '@/lib/conversation-search'
 import { highlightText } from '@/lib/search-highlight'
@@ -124,6 +125,7 @@ function SearchHit({
 			<Link
 				to="/$workspaceId/chats/$conversationId"
 				params={{ workspaceId, conversationId: row.id }}
+				search={keepListFilter}
 				onClick={onOpen}
 				activeProps={{ className: 'bg-accent' }}
 				className="flex items-start gap-3 rounded-lg px-2 py-[11px] text-left hover:bg-accent"
