@@ -7,8 +7,8 @@ import { GRAPH_BASE } from './graph'
  * bodies, validates what an agent passed, and trims messages to the fields an agent needs. No I/O
  * here, so every rule is unit-tested without a server.
  *
- * Reads and one write: a draft in the person's Drafts folder. Nothing here sends. Graph's send
- * address needs Mail.Send, which the sign-in does not hold, and no builder below produces it.
+ * Reads, a draft in the person's Drafts folder, and the body of one send (buildSendMailRequest).
+ * Nothing here decides whether a send is allowed: that is send.ts, behind a person's approval.
  */
 
 export const MAIL_DEFAULT_LIMIT = 25
@@ -172,6 +172,34 @@ export function buildDraftRequest(input: DraftInput): Built<{ url: string; body:
 			body: { contentType: 'text', content: input.body },
 			toRecipients: to.map(toGraph),
 			ccRecipients: cc.map(toGraph),
+		},
+	}
+}
+
+/**
+ * The Graph body for sending one already-approved email. Recipients were parsed and the text
+ * hashed against the approval before this, so it only reshapes them. Plain text; a copy is kept
+ * in Sent Items.
+ */
+export function buildSendMailRequest(email: {
+	to: Array<{ address: string; name: string | null }>
+	cc?: Array<{ address: string; name: string | null }>
+	subject: string
+	body: string
+}): { url: string; body: unknown } {
+	const toGraph = (r: { address: string; name: string | null }) => ({
+		emailAddress: { address: r.address, ...(r.name ? { name: r.name } : {}) },
+	})
+	return {
+		url: `${GRAPH_BASE}/me/sendMail`,
+		body: {
+			message: {
+				subject: email.subject,
+				body: { contentType: 'text', content: email.body },
+				toRecipients: email.to.map(toGraph),
+				ccRecipients: (email.cc ?? []).map(toGraph),
+			},
+			saveToSentItems: true,
 		},
 	}
 }

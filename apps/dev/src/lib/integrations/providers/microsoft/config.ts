@@ -16,7 +16,9 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  *  - Calendars.Read: the person's calendar events that carry a Teams link.
  *  - Mail.ReadWrite: read and search the mailbox and save drafts (outlook_* mail tools). Graph has no
  *    narrower scope for creating a draft. It would also allow edits and deletes, so the MCP tools
- *    only ever read, and create a draft. Sending is a separate scope (Mail.Send), not requested here.
+ *    only ever read, and create a draft.
+ *  - Mail.Send: send one message after a person approved that exact text (outlook_send_mail). Graph
+ *    has no narrower scope for sendMail. It is only used from the approved-send path (send.ts).
  *  - OnlineMeetings.Read: find the online meeting for an event by its join link
  *    (Graph "get onlineMeeting" with a JoinWebUrl filter lists this as the least
  *    privileged delegated permission). The spec said to add it only if the end to
@@ -33,13 +35,13 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  * `${MASKIN_API_URL}/api/integrations/microsoft/mcp` (./mcp-server.ts). The spec references only
  * MASKIN_API_KEY, so the Microsoft token is never injected into a session; the route resolves it
  * server-side. `autoInject: false` so each agent opts in (or gets it through an access grant).
- * Calendars.Read and Mail.ReadWrite, both in the scopes above, are all the tools need.
+ * Calendars.Read, Mail.ReadWrite and Mail.Send, all in the scopes above, are all the tools need.
  */
 export const config: ProviderConfig = {
 	name: MICROSOFT_PROVIDER,
 	displayName: 'Microsoft',
 	description:
-		'Teams meeting transcripts land in Maskin as meetings. Agents can also read your Outlook calendar and mail, and save mail drafts (nothing is sent). Work or school accounts only. Covers Teams meetings on your calendar that had transcription on; instant meetings and channel meetings are not included.',
+		'Teams meeting transcripts land in Maskin as meetings. Agents can also read your Outlook calendar and mail, save mail drafts, and send an email only after a person approves that exact email. Work or school accounts only. Covers Teams meetings on your calendar that had transcription on; instant meetings and channel meetings are not included.',
 
 	auth: {
 		type: 'oauth2',
@@ -51,6 +53,7 @@ export const config: ProviderConfig = {
 				'User.Read',
 				'Calendars.Read',
 				'Mail.ReadWrite',
+				'Mail.Send',
 				'OnlineMeetings.Read',
 				'OnlineMeetingTranscript.Read.All',
 			],

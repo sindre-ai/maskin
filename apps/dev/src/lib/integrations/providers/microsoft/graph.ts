@@ -144,3 +144,28 @@ export async function graphPostJson<T>(
 	if (!res.ok) throw await toGraphError(res)
 	return (await res.json()) as T
 }
+
+/**
+ * POST to a Graph action that answers 202 with no body (sendMail). Never retried, for the reason
+ * above and worse: a repeat would send the message twice. Non-2xx throws a GraphError; a failure
+ * before any answer (network, timeout) throws whatever fetch threw, and the caller must treat
+ * that as "may have been sent".
+ */
+export async function graphPostAction(
+	url: string,
+	accessToken: string,
+	body: unknown,
+	deps: GraphDeps = {},
+): Promise<void> {
+	const doFetch = deps.fetch ?? fetch
+	const res = await doFetch(url, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify(body),
+	})
+	if (!res.ok) throw await toGraphError(res)
+}
