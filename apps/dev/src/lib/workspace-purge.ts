@@ -356,6 +356,55 @@ export async function purgeWorkspace(
 	}
 }
 
+export interface PurgeFailure {
+	/** What goes in the log: the database's own words, never shown to the caller. */
+	log: Record<string, unknown>
+	/** What the caller is told. The transaction rolled back, so nothing was deleted. */
+	message: string
+}
+
+/**
+ * Reads a failed purge. The driver wraps the database error, so the SQLSTATE, table and
+ * constraint sit on `cause`. The log gets all of it (the unexpected-error page used to hide it);
+ * the caller gets a plain sentence, since a table name means nothing to them.
+ */
+export function describePurgeFailure(err: unknown): PurgeFailure {
+	const top = err instanceof Error ? err : undefined
+	const cause = (top?.cause ?? err) as Record<string, unknown> | undefined
+	const pick = (k: string) => (cause && typeof cause === 'object' ? cause[k] : undefined)
+	const code = pick('code')
+	const log = {
+		code,
+		table: pick('table_name'),
+		constraint: pick('constraint_name'),
+		detail: pick('detail'),
+		message: cause instanceof Error ? cause.message : top?.message,
+		query: typeof top?.message === 'string' ? top.message.slice(0, 300) : undefined,
+	}
+	const untouched = 'Nothing was deleted and the workspace is unchanged.'
+	if (code === '23503') {
+		return {
+			log,
+			message: `The workspace could not be deleted because some of its data is still linked to other data. ${untouched} Support has been given the details.`,
+		}
+	}
+	if (
+		code === '57014' ||
+		code === '55P03' ||
+		code === '40P01' ||
+		top?.name === 'QueryTimeoutError'
+	) {
+		return {
+			log,
+			message: `The workspace could not be deleted because the database took too long or was busy. ${untouched} Try again in a minute.`,
+		}
+	}
+	return {
+		log,
+		message: `The workspace could not be deleted because removing its data failed. ${untouched} Support has been given the details.`,
+	}
+}
+
 /** Drops cached lookups so the workspace stops resolving immediately. Call after commit. */
 export function evictPurgedWorkspace(workspaceId: string, result: WorkspacePurgeResult): void {
 	for (const actorId of result.memberActorIds) evictMembership(actorId, workspaceId)

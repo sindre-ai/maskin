@@ -455,6 +455,28 @@ describe('workspace deletion (integration)', () => {
 		expect(await countRows('objects', 'workspace_id', ws.id)).toBeGreaterThan(0)
 	})
 
+	it('answers a failed purge in plain words, rolls back, and leaves the workspace intact', async () => {
+		const { ws } = await seedWorkspace(me, { name: 'Blocked' })
+		// A table the purge has never heard of, holding a NO ACTION link to the workspace: the same
+		// shape as a table added after the purge list was written.
+		await sql.unsafe(
+			'CREATE TABLE zz_purge_probe (id serial PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id))',
+		)
+		await sql.unsafe('INSERT INTO zz_purge_probe (workspace_id) VALUES ($1)', [ws.id])
+		try {
+			const res = await del(ws.id, 'Blocked')
+			expect(res.status).toBe(500)
+			const body = (await res.json()) as { error: { message: string } }
+			expect(body.error.message).not.toBe('An unexpected error occurred')
+			expect(body.error.message).toContain('Nothing was deleted')
+			// The transaction rolled back: the workspace and its data are all still there.
+			expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(1)
+			expect(await countRows('objects', 'workspace_id', ws.id)).toBeGreaterThan(0)
+		} finally {
+			await sql.unsafe('DROP TABLE zz_purge_probe')
+		}
+	})
+
 	it('refuses a member who is not the billing owner', async () => {
 		const { ws } = await seedWorkspace(me, { name: 'Not yours' })
 		const member = await insertActor(db, { type: 'human' })
