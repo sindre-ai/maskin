@@ -167,6 +167,7 @@ import {
 	stampTokenMetadata,
 } from '../lib/integrations/providers/github/token-metadata'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
+import { sweepYoutubeSessionLogs } from '../lib/integrations/providers/youtube/purge'
 import { getProvider } from '../lib/integrations/registry'
 import {
 	CredentialResolutionTimeoutError,
@@ -7522,6 +7523,14 @@ ${cont.continues_prompt}
 		const now = Date.now()
 		if (now - this.lastLogPruneAt < SessionManager.LOG_PRUNE_INTERVAL_MS) return
 		this.lastLogPruneAt = now
+
+		// YouTube data has its own retention (30 days even for chats, all of it once the integration
+		// is gone). Isolated so a failure here never stops the general sweep below.
+		await sweepYoutubeSessionLogs(this.db).catch((err) =>
+			logger.warn('YouTube session log sweep failed', {
+				error: err instanceof Error ? err.message : String(err),
+			}),
+		)
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
 		let checked = 0

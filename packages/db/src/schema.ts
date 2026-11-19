@@ -3719,3 +3719,125 @@ export const apiRouteTimingMinutes = pgTable(
 		}),
 	],
 )
+
+// ── YouTube approval gate ──────────────────────────────────────────────────
+
+// One write an agent wants to make on YouTube, held until a person approves it. A tool call only
+// ever creates a row here; the server-side executor is the one caller of the Google write client,
+// and it runs a row only after a person approved it. payload is the exact request; it is cleared
+// when the action ends (executed, rejected, expired, failed) and never kept past 30 days.
+// requested_by_actor, requested_by_session and approved_by carry no foreign key: they are a record.
+// The person who approved is read from approved_by, never from anything an agent wrote.
+// status: pending, approved, rejected, expired, executed, failed. claimed_at is set once, by the
+// executor, in one conditional update, which is what makes an approved action run at most once.
+// See 0167_youtube_pending_actions.sql.
+export const youtubePendingActions = pgTable(
+	'youtube_pending_actions',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull(),
+		payload: jsonb('payload'),
+		payloadHash: text('payload_hash').notNull(),
+		targetVideoId: text('target_video_id'),
+		// The channel's public name, resolved by the server when the action was made, for the card.
+		channelLabel: text('channel_label'),
+		agentNote: text('agent_note'),
+		// sha256 of a comment's normalized text, so "no identical comment twice" holds after the
+		// payload is cleared. Null for every other kind. See 0168_youtube_action_text_hash.sql.
+		textHash: text('text_hash'),
+		requestedByActor: uuid('requested_by_actor').notNull(),
+		requestedBySession: uuid('requested_by_session'),
+		cardEventId: bigint('card_event_id', { mode: 'number' }),
+		status: text('status').notNull().default('pending'),
+		approvedBy: uuid('approved_by'),
+		approvedPayloadHash: text('approved_payload_hash'),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+		executedAt: timestamp('executed_at', { withTimezone: true }),
+		resultCode: text('result_code'),
+		// Upload progress (kind upload_video), written back so a cut-off upload resumes. The session
+		// address is cleared when the action ends. See 0169_youtube_upload_progress.sql.
+		uploadSessionUri: text('upload_session_uri'),
+		uploadBytesSent: bigint('upload_bytes_sent', { mode: 'number' }),
+		uploadAttempts: integer('upload_attempts').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('youtube_pending_actions_workspace_status_idx').on(t.workspaceId, t.status),
+		index('youtube_pending_actions_status_expires_idx').on(t.status, t.expiresAt),
+		index('youtube_pending_actions_text_hash_idx')
+			.on(t.workspaceId, t.textHash)
+			.where(sql`${t.textHash} is not null`),
+		check(
+			'youtube_pending_actions_status_check',
+			sql`${t.status} in ('pending', 'approved', 'rejected', 'expired', 'executed', 'failed')`,
+		),
+	],
+)
+
+// One row per decision on a YouTube action, kept 12 months. Ids, counts and codes only: never the
+// payload, a comment, a title or an error string. The safety line "no public action without
+// approval" is read from here (an executed row with no approved row for the same action). No
+// foreign key to the action or the integration, so the record outlives both.
+// decision: approved, rejected, expired, executed, failed, refused. See 0167_youtube_pending_actions.sql.
+export const youtubeActionAudit = pgTable(
+	'youtube_action_audit',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		pendingActionId: uuid('pending_action_id').notNull(),
+		integrationId: uuid('integration_id').notNull(),
+		kind: text('kind').notNull(),
+		decision: text('decision').notNull(),
+		actorId: uuid('actor_id'),
+		actorType: text('actor_type'),
+		payloadHash: text('payload_hash'),
+		resultCode: text('result_code'),
+		requestedBySession: uuid('requested_by_session'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('youtube_action_audit_action_idx').on(t.pendingActionId),
+		index('youtube_action_audit_workspace_created_idx').on(t.workspaceId, t.createdAt),
+		check(
+			'youtube_action_audit_decision_check',
+			sql`${t.decision} in ('approved', 'rejected', 'expired', 'executed', 'failed', 'refused')`,
+		),
+	],
+)
+
+// ── YouTube quota ──────────────────────────────────────────────────────────
+
+// Units charged against the YouTube Data API today. One row per (Pacific date, scope, bucket):
+// scope is the word global or a workspace id, bucket is the Google quota bucket (data, search,
+// upload, analytics). Holds no YouTube data, only the date, the scope, the bucket and a count. See
+// 0166_youtube_quota_usage.sql and 0170_youtube_quota_bucket.sql.
+export const youtubeQuotaUsage = pgTable(
+	'youtube_quota_usage',
+	{
+		quotaDate: date('quota_date').notNull(),
+		scope: text('scope').notNull(),
+		bucket: text('bucket').notNull().default('data'),
+		unitsUsed: integer('units_used').notNull().default(0),
+	},
+	(t) => [
+		primaryKey({
+			columns: [t.quotaDate, t.scope, t.bucket],
+			name: 'youtube_quota_usage_pkey',
+		}),
+		check('youtube_quota_usage_units_check', sql`${t.unitsUsed} >= 0`),
+		check(
+			'youtube_quota_usage_bucket_check',
+			sql`${t.bucket} IN ('data', 'search', 'upload', 'analytics')`,
+		),
+	],
+)

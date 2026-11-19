@@ -42,6 +42,15 @@ export interface PostCommentInput {
 	 * taken from the request body.
 	 */
 	approvedSendHash?: string
+	/**
+	 * The pending YouTube action this card asks about (see `lib/youtube/actions.ts`). Set only by
+	 * the server when it draws a card from a stored action, never taken from a request body, so
+	 * an agent cannot post a card that a person's tap would approve. The card stands on its own
+	 * for as long as the action lives, so it does not retire the author's other cards.
+	 */
+	youtubeActionId?: string
+	/** The hash of the request the card showed, so a tap is checked against what the person saw. */
+	youtubePayloadHash?: string
 }
 
 export interface PostCommentResult {
@@ -82,6 +91,8 @@ async function withdrawSupersededCards(
 				lt(events.id, input.newCommentId),
 				eq(actors.type, 'agent'),
 				sql`${events.data}->'decision' IS NOT NULL`,
+				// A card drawn from a held YouTube action lives as long as the action does.
+				sql`${events.data}->'youtube_action_id' IS NULL`,
 			),
 		)
 	if (earlier.length === 0) return
@@ -132,10 +143,12 @@ export async function postComment(
 				attention: input.attention,
 				...(input.authorSessionId ? { authorSessionId: input.authorSessionId } : {}),
 				...(input.approvedSendHash ? { approved_send_hash: input.approvedSendHash } : {}),
+				...(input.youtubeActionId ? { youtube_action_id: input.youtubeActionId } : {}),
+				...(input.youtubePayloadHash ? { youtube_payload_hash: input.youtubePayloadHash } : {}),
 			},
 		})
 
-		if (input.decision && entityType === 'object') {
+		if (input.decision && entityType === 'object' && !input.youtubeActionId) {
 			await withdrawSupersededCards(tx, {
 				workspaceId: input.workspaceId,
 				actorId: input.actorId,
