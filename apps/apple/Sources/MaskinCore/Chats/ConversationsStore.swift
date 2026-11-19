@@ -137,17 +137,38 @@ public final class ConversationsStore {
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
+	/// Spaces the refetches that chat events cause (chat list and threads list).
+	@ObservationIgnored private let chatRefetch: RefreshDebouncer
+	/// Spaces the refetches that session and actor events cause (actors list and flow rooms).
+	@ObservationIgnored private let peopleRefetch: RefreshDebouncer
 	@ObservationIgnored private var loadingArchived = false
 	@ObservationIgnored private var generation = 0
 	/// Rows deleted here while the API has no delete: hidden from every later page.
 	@ObservationIgnored private var locallyDeleted: Set<String> = []
 
-	public init(
+	/// Events refetch each group of lists at most this often.
+	static let refetchInterval: Duration = .seconds(5)
+
+	public convenience init(
 		api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil,
 		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil
 	) {
+		self.init(
+			api: api, events: events, cache: cache, flowRooms: flowRooms, preferences: preferences,
+			chatRefetch: RefreshDebouncer(minInterval: Self.refetchInterval),
+			peopleRefetch: RefreshDebouncer(minInterval: Self.refetchInterval))
+	}
+
+	/// Test seam: the waits between a live event and the refetch it causes.
+	init(
+		api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil,
+		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil,
+		chatRefetch: RefreshDebouncer, peopleRefetch: RefreshDebouncer
+	) {
 		self.api = api
 		self.events = events
+		self.chatRefetch = chatRefetch
+		self.peopleRefetch = peopleRefetch
 		self.cache = cache
 		self.flowSource = flowRooms
 		self.preferences = preferences
@@ -298,18 +319,22 @@ public final class ConversationsStore {
 					guard let self else { return }
 					switch signal {
 					case .reconnected:
-						await self.refresh()
-						await self.refreshLater()
-						await self.refreshArchived()
-						await self.refreshThreads()
+						// A list refetched in the last few seconds is current: skip it.
+						await self.chatRefetch.runIfStale {
+							await self.refresh()
+							await self.refreshLater()
+							await self.refreshArchived()
+							await self.refreshThreads()
+						}
+						await self.peopleRefetch.runIfStale {
+							await self.refreshActors()
+							await self.refreshFlowRooms()
+						}
 					case .event(let event) where event.entityType == .conversation:
-						await self.refresh()
-						await self.refreshLater()
-						await self.refreshThreads()
+						self.scheduleChatRefetch()
 					case .event(let event) where event.entityType == .session || event.entityType == .actor:
 						// Working state on rows and avatars follows the agents' runs.
-						await self.refreshActors()
-						await self.refreshFlowRooms()
+						self.schedulePeopleRefetch()
 					case .event:
 						break
 					}
@@ -328,6 +353,36 @@ public final class ConversationsStore {
 	public func stop() {
 		listener?.cancel()
 		listener = nil
+		chatRefetch.cancel()
+		peopleRefetch.cancel()
+	}
+
+	/// A burst of chat events becomes one reload of the chat list and the threads list, at most
+	/// once per `refetchInterval`.
+	private func scheduleChatRefetch() {
+		guard !skipsInBackground() else { return }
+		chatRefetch.schedule { [weak self] in
+			await self?.refresh()
+			await self?.refreshLater()
+			await self?.refreshThreads()
+		}
+	}
+
+	/// The same for session and actor events: one reload of the actors list and the flow rooms.
+	private func schedulePeopleRefetch() {
+		guard !skipsInBackground() else { return }
+		peopleRefetch.schedule { [weak self] in
+			await self?.refreshActors()
+			await self?.refreshFlowRooms()
+		}
+	}
+
+	/// No refetch for an event while the app is in the background; the hub asks every store to
+	/// reload once when it returns.
+	private func skipsInBackground() -> Bool {
+		guard let events, !events.isForeground else { return false }
+		events.noteSkippedInBackground()
+		return true
 	}
 
 	/// Reload the first page. Overlapping calls coalesce into one trailing reload so a burst of
@@ -341,6 +396,7 @@ public final class ConversationsStore {
 		defer { refreshing = false }
 		repeat {
 			refreshQueued = false
+			chatRefetch.noteRan()
 			generation += 1
 			let mine = generation
 			if conversations.isEmpty { phase = .loading }
@@ -416,6 +472,7 @@ public final class ConversationsStore {
 	}
 
 	public func refreshActors() async {
+		peopleRefetch.noteRan()
 		if let fresh = try? await api.actors() { actors = fresh }
 	}
 
@@ -465,9 +522,9 @@ public final class ConversationsStore {
 	) async throws -> ConversationSummary {
 		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
-		let hasMessage = !(message?.isEmpty ?? true)
+		let hasMessage = !(message?.isEmpty ?? true) || firstMessageMetadata?.attachments != nil
 		let created = try await api.create(
-			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? (message ?? "") : nil,
 			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
 		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
 			conversations.insert(created, at: 0)

@@ -129,6 +129,39 @@ describe('SessionRetryScheduler', () => {
 		expect(inserts.some((r) => r.action === 'session_retry_scheduled')).toBe(true)
 	})
 
+	it.each(['session_limit', 'weekly_limit', 'opus_limit', 'max_plan_rate_limit'])(
+		'marks the rerun of a %s failure as subscription only',
+		async (reasonCode) => {
+			const { db } = fakeDb([
+				buildDueRow({
+					config: { llm_route: 'claude_oauth' },
+					result: { failure_reason: { provider: 'anthropic', reason_code: reasonCode } },
+				}),
+			])
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+			await scheduler.tick(NOW)
+
+			const call = vi.mocked(startSession).mock.calls[0][0]
+			expect(call.config).toEqual({ llm_route: 'claude_oauth', retry_subscription_only: true })
+		},
+	)
+
+	it('leaves the config alone for a rerun of any other failure', async () => {
+		const { db } = fakeDb([
+			buildDueRow({
+				config: { llm_route: 'claude_oauth' },
+				result: { failure_reason: { provider: 'anthropic', reason_code: 'credit_balance_low' } },
+			}),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const call = vi.mocked(startSession).mock.calls[0][0]
+		expect(call.config).toEqual({ llm_route: 'claude_oauth' })
+	})
+
 	it('hands the rerun to whoever handed the original work over', async () => {
 		const { db } = fakeDb([
 			buildDueRow({ spawnedBySessionId: 'session-sender', spawnedByMessageId: 17903 }),

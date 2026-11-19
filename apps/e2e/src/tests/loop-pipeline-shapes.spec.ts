@@ -22,7 +22,7 @@ async function flow(
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title,
-		status: 'learning',
+		status: 'pilot',
 	})
 	const ids: string[] = []
 	for (const step of steps) {

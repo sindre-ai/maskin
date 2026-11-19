@@ -82,14 +82,14 @@ struct FlowsOverviewTests {
 
 	@Test("changing the stage updates the status at once, and rolls back when refused")
 	@MainActor func setStage() async {
-		let api = FakeLoopsAPI([loopRow("a", status: .learning)])
-		let store = LoopDetailStore(loop: loopRow("a", status: .learning), api: api, events: nil)
-		await store.setStage(.autonomous)
-		#expect(store.loop.status == .fullyAutonomous)
-		#expect(await api.statusCalls.map(\.1) == [.fullyAutonomous])
+		let api = FakeLoopsAPI([loopRow("a", status: .pilot)])
+		let store = LoopDetailStore(loop: loopRow("a", status: .pilot), api: api, events: nil)
+		await store.setStage(.live)
+		#expect(store.loop.status == .live)
+		#expect(await api.statusCalls.map(\.1) == [.live])
 		await api.setFailStatus(true)
 		await store.setStage(.supervised)
-		#expect(store.loop.status == .fullyAutonomous)
+		#expect(store.loop.status == .live)
 		#expect(store.notice?.contains("Couldn't change the stage") == true)
 	}
 
@@ -97,7 +97,7 @@ struct FlowsOverviewTests {
 	@MainActor func pausedIgnoresStage() async {
 		let api = FakeLoopsAPI([loopRow("a", status: .paused)])
 		let store = LoopDetailStore(loop: loopRow("a", status: .paused), api: api, events: nil)
-		await store.setStage(.learning)
+		await store.setStage(.pilot)
 		#expect(store.loop.status == .paused)
 		#expect(await api.statusCalls.isEmpty)
 	}

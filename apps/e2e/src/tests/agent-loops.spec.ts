@@ -19,7 +19,7 @@ test.describe('Agent detail — Works in', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',

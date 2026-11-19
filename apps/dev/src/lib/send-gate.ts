@@ -6,6 +6,7 @@ import { recordEventReturning } from './events/record-event'
 import { logger } from './logger'
 import { AUTO_SENT_ACTION } from './object-delivery'
 import { resolveSendMode } from './send-permissions'
+import { PILOT_FLOW_STATUSES, flowsOfSession } from './session-flow'
 
 /**
  * What a send tool does with a call, once the integration level has let it through (Read and
@@ -18,6 +19,7 @@ import { resolveSendMode } from './send-permissions'
  *   denied          the kind is set to deny: nothing goes out, whatever the agent says
  *
  * The setting is per agent and per draft kind, read now on every call (see send-permissions.ts).
+ * Inside a flow in pilot, Always allow counts as ask_first (deny stays deny).
  * A caller with no database handle cannot be resolved and is treated as ask_first, so a
  * missing handle never widens what sends.
  */
@@ -31,11 +33,39 @@ const DECISIONS: Record<SendPermissionMode, SendDecision> = {
 
 export async function decideSend(
 	db: Database | undefined,
-	params: { workspaceId: string; agentId: string; kind: string },
+	params: { workspaceId: string; agentId: string; kind: string; sessionId?: string | null },
 ): Promise<SendDecision> {
 	if (!db) return 'needs_approval'
 	const { mode } = await resolveSendMode(db, params)
-	return DECISIONS[mode]
+	const decision = DECISIONS[mode]
+	if (decision !== 'send_now' || !params.sessionId) return decision
+	return (await heldByPilotFlow(db, { ...params, sessionId: params.sessionId }))
+		? 'needs_approval'
+		: 'send_now'
+}
+
+/**
+ * True when the calling session runs under a flow in pilot, so a send set to Always allow waits
+ * for a person like Ask first. Read now on every call, never cached: moving a flow out of pilot
+ * changes the very next send. Deny and Ask first are not asked here, they already hold. When
+ * several flows qualify, one in pilot is enough. A call with no session (a person chatting with
+ * the agent) is not held, a person is already in that conversation. A lookup that fails holds
+ * the send, like a missing database handle.
+ */
+async function heldByPilotFlow(
+	db: Database,
+	params: { workspaceId: string; agentId: string; sessionId: string },
+): Promise<boolean> {
+	try {
+		const flows = await flowsOfSession(db, params)
+		return flows.some((flow) => PILOT_FLOW_STATUSES.includes(flow.status))
+	} catch (err) {
+		logger.error('Could not read the flow of a session, holding the send', {
+			workspaceId: params.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return true
+	}
 }
 
 /** The refusal for a send the person set to deny. Same wording for every provider. */

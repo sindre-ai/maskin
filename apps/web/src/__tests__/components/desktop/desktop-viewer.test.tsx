@@ -35,14 +35,12 @@ const { instances, FakeRfb } = vi.hoisted(() => {
 })
 
 vi.mock('@novnc/novnc/lib/rfb', () => ({ default: FakeRfb }))
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: vi.fn(() => false) }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/lib/api', () => ({
 	api: { desktop: { connect: vi.fn(), remove: vi.fn() } },
 }))
 
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { api } from '@/lib/api'
 import { KEYBOARD_SENTINEL } from '@/lib/desktop-keyboard'
 import { createWorkspaceWrapper } from '../../setup'
@@ -59,7 +57,6 @@ function renderViewer() {
 describe('DesktopViewer', () => {
 	beforeEach(() => {
 		instances.length = 0
-		vi.mocked(useFeatureFlag).mockReturnValue(false)
 		vi.mocked(api.desktop.connect).mockReset()
 		vi.mocked(api.desktop.connect).mockResolvedValue({
 			ticket: 'tkt',
@@ -190,15 +187,7 @@ describe('DesktopViewer', () => {
 			return rfb
 		}
 
-		it('are off without the flag', async () => {
-			const user = userEvent.setup()
-			await takeOver(user)
-
-			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
-		})
-
 		it('are not shown without a touch screen: the keys do the work', async () => {
-			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			const user = userEvent.setup()
 			renderViewer()
 			await waitFor(() => expect(instances).toHaveLength(1))
@@ -217,7 +206,6 @@ describe('DesktopViewer', () => {
 		})
 
 		it('bring in Copy only after the browser refused the write', async () => {
-			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			const user = userEvent.setup()
 			const rfb = await takeOver(user)
 			const refused = new DOMException('no', 'NotAllowedError')
@@ -369,7 +357,6 @@ describe('DesktopViewer', () => {
 		})
 
 		it('keeps both clipboard buttons, with Copy waiting for text from the computer', async () => {
-			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			usePrimaryPointer(true)
 			const user = userEvent.setup()
 			const rfb = await takeControl()

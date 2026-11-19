@@ -11,7 +11,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
@@ -137,7 +137,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Brand new loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',
@@ -171,7 +171,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Renewals loop',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every renewal is reviewed before it lapses',
 			})
 
@@ -215,7 +215,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -244,11 +244,11 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Billing reliability loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Pilot', { timeout: 10000 })
 
 		// Exact — the v2 header's split New button adds a "More ways to start"
 		// control, which a substring match would also pick up.
@@ -267,7 +267,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn early-warning loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)
@@ -286,7 +286,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Retire this loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)

@@ -54,6 +54,7 @@ import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
+import { evictListReadsFor } from '../lib/list-read-cache'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -1388,6 +1389,8 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		.returning({ actorId: conversationParticipants.actorId })
 
 	if (removed.length > 0) {
+		// The removed member's cached chat lists still show this chat; the cache clears the caller's own.
+		evictListReadsFor(actorId)
 		forgetConversationParticipants(id)
 		await recordEvent(db, {
 			workspaceId,

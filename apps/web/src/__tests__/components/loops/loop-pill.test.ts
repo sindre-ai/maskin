@@ -27,9 +27,10 @@ describe('shouldShowNoCreditsPill', () => {
 	})
 
 	it('is false on non-paused rows even at zero credits — parity with SPEC states table', () => {
-		expect(shouldShowNoCreditsPill('learning', 0)).toBe(false)
+		expect(shouldShowNoCreditsPill('pilot', 0)).toBe(false)
 		expect(shouldShowNoCreditsPill('supervised', 0)).toBe(false)
-		expect(shouldShowNoCreditsPill('fully_autonomous', 0)).toBe(false)
+		expect(shouldShowNoCreditsPill('live', 0)).toBe(false)
+		expect(shouldShowNoCreditsPill('archived', 0)).toBe(false)
 		expect(shouldShowNoCreditsPill('waiting_on_you', 0)).toBe(false)
 		expect(shouldShowNoCreditsPill('draft', 0)).toBe(false)
 	})

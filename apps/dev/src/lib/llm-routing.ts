@@ -27,6 +27,7 @@ import {
 	FUNDED_DEFAULT_MODEL,
 	getCatalogModel,
 	tierModel,
+	withContextWindow,
 } from './model-catalog'
 import type { WorkspaceSettings } from './types'
 import { SecretUnreadableError, openSecret } from './workspace-secrets'
@@ -727,7 +728,9 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 		// Force-clear ANTHROPIC_API_KEY so Claude Code uses ANTHROPIC_AUTH_TOKEN's
 		// bearer-token path instead of x-api-key (Morph guide caveat).
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: model,
+		// A model with a known 1M window gets the CLI's "[1m]" marker, or the CLI
+		// assumes 200k for it (see withContextWindow).
+		ANTHROPIC_MODEL: withContextWindow(model),
 		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 	}
 }
@@ -839,7 +842,7 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: model,
+		ANTHROPIC_MODEL: withContextWindow(model),
 		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
 		// does not run: the call dies with "search was cut off" and the turn ends
@@ -957,6 +960,13 @@ export async function resolveLlmRoute(params: {
 	 * production callers omit it.
 	 */
 	env?: NodeJS.ProcessEnv
+	/**
+	 * A retry of a run that died on a Claude limit. When the subscription route yields nothing it
+	 * throws instead of falling through to the custom endpoint, the workspace API key or the
+	 * funded plan: waiting for the reset is the point of the retry, and a key that was never
+	 * the run's route may have no credit. Has no effect when no subscription is connected.
+	 */
+	subscriptionOnly?: boolean
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe, pinned } = params
 
@@ -970,6 +980,8 @@ export async function resolveLlmRoute(params: {
 	 * strands a recoverable session or burns five retries on a dead one.
 	 */
 	let oauthFailureTransient = false
+	/** What the resolver reported when a configured slot yielded nothing usable. */
+	const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
 
 	/** Set when route #4's key was left out because it is marked out of credit. */
 	let apiKeyOutOfCredit = false
@@ -1004,8 +1016,6 @@ export async function resolveLlmRoute(params: {
 		//    unless MASKIN_CLAUDE_FAILOVER_ENABLED=false disables it — the flag
 		//    defaults to on and is a runtime kill-switch, not an opt-in.
 		try {
-			/** Set by the resolver when a configured slot yields nothing usable. */
-			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
 			// On (only when the env is the literal "true"): the platform refreshes at
 			// launch with a session-sized buffer and the container never sees the
 			// refresh token. Off (default): today's behaviour exactly (10 minute
@@ -1101,6 +1111,21 @@ export async function resolveLlmRoute(params: {
 			})
 		}
 
+		if (params.subscriptionOnly && oauthFailure) {
+			// Limited logins come back at the reset, so say when. Anything else (revoked, unreachable)
+			// is reported as the credential error it is; either way the run stays off routes 3 to 5.
+			if (unusableRef.current?.reason === 'quota_exhausted') {
+				throw new SubscriptionStillLimitedError(
+					`Every connected Claude subscription is at its limit: ${oauthFailure}`,
+					unusableRef.current.retryAt ?? null,
+				)
+			}
+			throw new LlmCredentialsUnavailableError(
+				`Not retried on another route, the run died on a Claude limit and its subscription is unusable: ${oauthFailure}`,
+				oauthFailureTransient,
+			)
+		}
+
 		// Routes 3 and 4 read stored secrets, which are sealed at rest. A value
 		// that cannot be opened ends the lookup here: carrying on to a later
 		// route would quietly run the session on credentials the workspace did
@@ -1112,7 +1137,7 @@ export async function resolveLlmRoute(params: {
 				return {
 					route: LLM_ROUTE_CUSTOM,
 					envVars: customEnv,
-					modelName: customEnv.ANTHROPIC_MODEL,
+					modelName: customEnv.ANTHROPIC_MODEL?.replace(/\[1m\]$/i, ''),
 					modelSource: 'workspace',
 				}
 			}
@@ -1308,6 +1333,34 @@ export class LlmCredentialsUnavailableError extends Error {
 						: LlmCredentialsUnavailableError.humanMessage,
 			http_status: null,
 			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * A retry of a run that died on a Claude limit found every subscription login still limited.
+ * Not a credential problem: it reports the limit again, with the reset time when the probe gave
+ * one, so the retry scheduler queues the run again for then instead of starting it on the API key.
+ */
+export class SubscriptionStillLimitedError extends LlmCredentialsUnavailableError {
+	/** ISO-8601 time a login may accept requests again, or null when the probe gave none. */
+	readonly resetAt: string | null
+
+	constructor(detail: string, resetAt: string | null) {
+		super(detail, false)
+		this.name = 'SubscriptionStillLimitedError'
+		this.resetAt = resetAt
+	}
+
+	toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'anthropic',
+			reason_code: 'session_limit',
+			human_message:
+				'Every connected Claude subscription is still at its limit, so this run was not started on another route. It starts again by itself once a subscription is available.',
+			http_status: null,
+			reset_at: this.resetAt,
 			verbatim_output: this.detail,
 		}
 	}

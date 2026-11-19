@@ -15,7 +15,7 @@ struct LoopOverviewTests {
 	}
 
 	private func graph(links: [ObjectLink] = [], events: [ObjectEvent] = []) -> ObjectGraph {
-		ObjectGraph(object: WorkObject(id: "loop", type: "loop", status: "learning"), links: links, events: events)
+		ObjectGraph(object: WorkObject(id: "loop", type: "loop", status: "pilot"), links: links, events: events)
 	}
 
 	private func comment(_ id: Int, _ text: String, parent: Int? = nil, decision: Bool = false, at: TimeInterval = 0)
@@ -135,7 +135,7 @@ struct LoopPhasesTests {
 	@Test("a member carries the driver of the linked object")
 	func driver() {
 		let graph = ObjectGraph(
-			object: WorkObject(id: "loop", type: "loop", status: "learning"),
+			object: WorkObject(id: "loop", type: "loop", status: "pilot"),
 			links: [
 				ObjectLink(
 					id: "r", relation: "in_loop", isOutgoing: true, otherId: "x", otherType: "task",

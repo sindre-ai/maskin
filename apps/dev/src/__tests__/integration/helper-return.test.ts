@@ -317,6 +317,70 @@ describe('Helper return (integration)', () => {
 			expect(msgs[0].content).toContain('Helper stopped with an error')
 			// The server-written marker is not stripped (only client input is).
 			expect(msgs[0].metadata).toMatchObject({ helper_return: h.id })
+			// A sender that worked in the main chat is told in the main chat.
+			expect(msgs[0].threadRootId).toBeNull()
+		})
+
+		describe('a sender that worked in a thread', () => {
+			const threadedChat = async () => {
+				const [conv] = await db
+					.insert(conversations)
+					.values({ workspaceId, createdBy: human, title: 'chat' })
+					.returning()
+				const say = (threadRootId: number | null) =>
+					insertConversationMessage(db, {
+						conversationId: conv.id,
+						workspaceId,
+						actorId: human,
+						content: 'hello',
+						metadata: null,
+						sessionId: null,
+						threadRootId,
+					})
+				const root = await say(null)
+				const reply = await say(root?.id as number)
+				return { conv, rootId: root?.id as number, replyId: reply?.id as number }
+			}
+			const returned = async (conversationId: string, helperId: string) => {
+				const rows = await db
+					.select()
+					.from(messages)
+					.where(eq(messages.conversationId, conversationId))
+				return rows.filter(
+					(m) => (m.metadata as { helper_return?: string } | null)?.helper_return === helperId,
+				)
+			}
+
+			it('returns into the sender’s own thread when it is a thread session', async () => {
+				const { conv, rootId } = await threadedChat()
+				const s = await senderSession({
+					initiatedFromObjectId: null,
+					conversationId: conv.id,
+					threadRootId: rootId,
+				})
+				const h = await helperSession(s, { initiatedFromObjectId: null })
+
+				expect(await returnToSender(db, h.id)).toEqual({
+					returned: true,
+					destination: 'conversation',
+				})
+				const [msg] = await returned(conv.id, h.id)
+				expect(msg.threadRootId).toBe(rootId)
+			})
+
+			it('returns into the thread of the message that started the sender’s last turn', async () => {
+				const { conv, rootId, replyId } = await threadedChat()
+				const s = await senderSession({ initiatedFromObjectId: null, conversationId: conv.id })
+				await insertSessionLog(db, s.id, {
+					stream: 'stdout',
+					content: JSON.stringify({ type: 'user', maskin_message_id: replyId }),
+				})
+				const h = await helperSession(s, { initiatedFromObjectId: null })
+
+				await returnToSender(db, h.id)
+				const [msg] = await returned(conv.id, h.id)
+				expect(msg.threadRootId).toBe(rootId)
+			})
 		})
 
 		it('with no destination it posts nothing and records no_destination', async () => {

@@ -273,10 +273,17 @@ struct ConversationsStoreTests {
 		try await store.create(
 			title: "Plan", participantIDs: ["relay"], firstMessage: "see this", firstMessageMetadata: metadata)
 		#expect(await api.createdMetadata == [metadata])
-		// With no message there is nothing for the attachments to belong to.
+		// An attachment alone is a message: the body goes empty and the file still rides along.
 		try await store.create(
 			title: "Plan", participantIDs: ["relay"], firstMessage: " ", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata.last == .some(metadata))
+		#expect(await api.created.last?.2 == "")
+		// Without text or an attachment there is no message at all.
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: " ",
+			firstMessageMetadata: ChatSendMetadata(mentions: ["relay"]))
 		#expect(await api.createdMetadata.last == .some(nil))
+		#expect(await api.created.last?.2 == nil)
 	}
 
 	@Test("loadMore appends the next page without duplicates")
@@ -305,7 +312,8 @@ struct ConversationsStoreTests {
 	func liveReload() async {
 		let api = FakeListAPI([chatConvo("a")])
 		let hub = scriptedHub([conversationFrame(1, conversation: "a")])
-		let store = ConversationsStore(api: api, events: hub)
+		let store = ConversationsStore(
+			api: api, events: hub, chatRefetch: instantRefetch(), peopleRefetch: instantRefetch())
 		await store.start()
 		await api.set([chatConvo("a"), chatConvo("b")])
 		hub.connect(workspaceId: "w1")
@@ -318,7 +326,8 @@ struct ConversationsStoreTests {
 		let api = FakeListAPI([chatConvo("a")])
 		// First body ends (a drop), the hub reconnects and broadcasts .reconnected.
 		let hub = scriptedHub(["id: 1\nevent: x\ndata: {\"entity_type\":\"object\",\"workspace_id\":\"w1\",\"event_id\":\"1\"}\n\n", ""])
-		let store = ConversationsStore(api: api, events: hub)
+		let store = ConversationsStore(
+			api: api, events: hub, chatRefetch: instantRefetch(), peopleRefetch: instantRefetch())
 		await store.start()
 		await api.set([chatConvo("a"), chatConvo("b"), chatConvo("c")])
 		hub.connect(workspaceId: "w1")

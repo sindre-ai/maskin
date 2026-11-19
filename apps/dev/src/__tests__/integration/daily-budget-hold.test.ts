@@ -86,6 +86,16 @@ describe('daily budget hold (Integration)', () => {
 		return r
 	}
 
+	// The session leaves 'pending' before its queue row is written, so wait for the row.
+	const queueRowWhenWritten = async (id: string) => {
+		for (let i = 0; i < 50; i++) {
+			const r = await queueRow(id)
+			if (r) return r
+			await new Promise((resolve) => setTimeout(resolve, 100))
+		}
+		return queueRow(id)
+	}
+
 	const admissionEvents = (sessionId: string) =>
 		db
 			.select()
@@ -213,9 +223,9 @@ describe('daily budget hold (Integration)', () => {
 			const handle = await start('person', { callerKind: 'rest' })
 			const started = await settled(handle.sessionId)
 			expect((started.config as { held?: unknown }).held).toBeUndefined()
-			expect((await queueRow(handle.sessionId))?.nextAttemptAt.getTime()).toBeLessThanOrEqual(
-				Date.now() + 1000,
-			)
+			expect(
+				(await queueRowWhenWritten(handle.sessionId))?.nextAttemptAt.getTime(),
+			).toBeLessThanOrEqual(Date.now() + 1000)
 		})
 
 		it('does not count held sessions against the workspace start limit', async () => {

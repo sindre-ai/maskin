@@ -96,6 +96,6 @@ describe('statusStage', () => {
 
 	it('keeps flow statuses on the plain ring', () => {
 		expect(statusStage('supervised')).toBe('unknown')
-		expect(statusStage('fully_autonomous')).toBe('unknown')
+		expect(statusStage('pilot')).toBe('unknown')
 	})
 })

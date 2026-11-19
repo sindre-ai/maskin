@@ -2,40 +2,40 @@ import Foundation
 
 /// The three stages a running flow moves through, as the Status pill and Setup chips name them.
 public enum LoopStage: CaseIterable, Sendable, Equatable {
-	case learning, supervised, autonomous
+	case pilot, supervised, live
 
 	public var title: String {
 		switch self {
-		case .learning: "Learning"
+		case .pilot: "Pilot"
 		case .supervised: "Supervised"
-		case .autonomous: "Autonomous"
+		case .live: "Live"
 		}
 	}
 
 	/// The one line under the chips.
 	public var note: String {
 		switch self {
-		case .learning: "Agents ask before every action."
+		case .pilot: "Agents ask before every action."
 		case .supervised: "Agents act inside guardrails and ask on the rest."
-		case .autonomous: "Agents act and report."
+		case .live: "Agents act and report."
 		}
 	}
 
 	public var status: LoopPill {
 		switch self {
-		case .learning: .learning
+		case .pilot: .pilot
 		case .supervised: .supervised
-		case .autonomous: .fullyAutonomous
+		case .live: .live
 		}
 	}
 
 	/// The stage of a running flow; nil for a draft or a paused flow.
 	public init?(status: LoopPill) {
 		switch status {
-		case .learning: self = .learning
+		case .pilot: self = .pilot
 		case .supervised: self = .supervised
-		case .fullyAutonomous: self = .autonomous
-		case .draft, .paused, .waitingOnYou: return nil
+		case .live: self = .live
+		case .draft, .paused, .archived, .waitingOnYou: return nil
 		}
 	}
 }

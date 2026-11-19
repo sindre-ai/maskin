@@ -592,7 +592,7 @@ export async function bootstrapDefaultAgents(
 					type: 'loop',
 					title: loop.name,
 					content: loop.content,
-					status: 'learning',
+					status: 'pilot',
 					createdBy,
 					metadata: {
 						entry_condition: loop.entryCondition,

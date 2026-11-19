@@ -3,8 +3,7 @@ import Foundation
 /// A loop's stored lifecycle rung, plus the per-viewer "needs you" overlay the list shows
 /// as one badge. Mirrors `loopPillSchema`.
 public enum LoopPill: String, Sendable, Equatable, CaseIterable, Codable {
-	case draft, paused, learning, supervised
-	case fullyAutonomous = "fully_autonomous"
+	case draft, pilot, supervised, live, paused, archived
 	case waitingOnYou = "waiting_on_you"
 
 	public init(wire: String) { self = LoopPill(rawValue: wire) ?? .draft }
@@ -12,10 +11,11 @@ public enum LoopPill: String, Sendable, Equatable, CaseIterable, Codable {
 	public var label: String {
 		switch self {
 		case .draft: "Draft"
-		case .paused: "Paused"
-		case .learning: "Learning"
+		case .pilot: "Pilot"
 		case .supervised: "Supervised"
-		case .fullyAutonomous: "Fully autonomous"
+		case .live: "Live"
+		case .paused: "Paused"
+		case .archived: "Archived"
 		case .waitingOnYou: "Needs you"
 		}
 	}
@@ -23,8 +23,8 @@ public enum LoopPill: String, Sendable, Equatable, CaseIterable, Codable {
 	/// A loop that is actually running work through its triggers.
 	public var isLive: Bool {
 		switch self {
-		case .learning, .supervised, .fullyAutonomous, .waitingOnYou: true
-		case .draft, .paused: false
+		case .pilot, .supervised, .live, .waitingOnYou: true
+		case .draft, .paused, .archived: false
 		}
 	}
 }
@@ -88,7 +88,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	public var tags: [String]?
 
 	public init(
-		id: String, name: String?, content: String? = nil, status: LoopPill = .learning,
+		id: String, name: String?, content: String? = nil, status: LoopPill = .pilot,
 		pill: LoopPill? = nil, entryCondition: String? = nil, closeCondition: String? = nil,
 		inProgressCount: Int = 0, closedCount: Int = 0, medianTimeToClose: TimeInterval? = nil,
 		agentIDs: [String] = [], triggerIDs: [String] = [], waitingCount: Int = 0,
@@ -133,7 +133,7 @@ public struct LoopSummary: Identifiable, Equatable, Sendable, Codable {
 	}
 
 	/// What a pause or resume sets: resuming goes back to the first live rung, like the web app.
-	public var toggledStatus: LoopPill { isPaused ? .learning : .paused }
+	public var toggledStatus: LoopPill { isPaused ? .pilot : .paused }
 
 	/// A copy showing `status` locally (optimistic update), pill recomputed.
 	func with(status: LoopPill) -> LoopSummary {

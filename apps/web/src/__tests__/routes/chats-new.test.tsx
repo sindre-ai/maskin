@@ -18,6 +18,12 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+const queryClientMock = vi.hoisted(() => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }))
+vi.mock('@tanstack/react-query', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-query')>()),
+	useQueryClient: () => queryClientMock,
+}))
+
 const mockCreateConversation = vi.fn()
 vi.mock('@/hooks/use-conversations', () => ({
 	useCreateConversation: () => ({ mutateAsync: mockCreateConversation, isPending: false }),
@@ -498,8 +504,7 @@ describe('New chat', () => {
 			expect(mockCreateConversation).toHaveBeenCalledTimes(1)
 		})
 
-		it('sends the held first message at once when the tab closes', async () => {
-			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+		function stubCreateFetch() {
 			const fetchMock = vi.fn().mockResolvedValue(
 				new Response(JSON.stringify({ id: 'conv-2' }), {
 					status: 200,
@@ -507,11 +512,17 @@ describe('New chat', () => {
 				}),
 			)
 			vi.stubGlobal('fetch', fetchMock)
+			return fetchMock
+		}
+
+		it('sends the held first message at once when the tab closes, and opens the new chat', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			const fetchMock = stubCreateFetch()
 			try {
 				render(<NewChatPage />)
 				await sendFirstMessage(user, 'Plan the launch')
 
-				act(() => {
+				await act(async () => {
 					window.dispatchEvent(new Event('pagehide'))
 				})
 
@@ -522,10 +533,59 @@ describe('New chat', () => {
 				expect(JSON.parse(String(init.body))).toEqual(
 					expect.objectContaining({ initial_message: 'Plan the launch' }),
 				)
+				await waitFor(() =>
+					expect(mockNavigate).toHaveBeenCalledWith({
+						to: '/$workspaceId/chats/$conversationId',
+						params: { workspaceId: 'ws-1', conversationId: 'conv-2' },
+					}),
+				)
+				expect(queryClientMock.invalidateQueries).toHaveBeenCalled()
 
 				await act(() => vi.advanceTimersByTimeAsync(UNDO_SEND_WINDOW_MS * 2))
 				expect(fetchMock).toHaveBeenCalledTimes(1)
 				expect(mockCreateConversation).not.toHaveBeenCalled()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		})
+
+		it('opens the new chat when the tab is only hidden, not closed', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			stubCreateFetch()
+			const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+			try {
+				render(<NewChatPage />)
+				await sendFirstMessage(user, 'Plan the launch')
+
+				await act(async () => {
+					document.dispatchEvent(new Event('visibilitychange'))
+				})
+
+				await waitFor(() =>
+					expect(mockNavigate).toHaveBeenCalledWith({
+						to: '/$workspaceId/chats/$conversationId',
+						params: { workspaceId: 'ws-1', conversationId: 'conv-2' },
+					}),
+				)
+			} finally {
+				visibility.mockRestore()
+				vi.unstubAllGlobals()
+			}
+		})
+
+		it('does not navigate when the page is gone before the hide-time request is answered', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			const fetchMock = stubCreateFetch()
+			try {
+				const { unmount } = render(<NewChatPage />)
+				await sendFirstMessage(user, 'Plan the launch')
+				await act(async () => {
+					window.dispatchEvent(new Event('pagehide'))
+					unmount()
+				})
+				await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+				await act(() => vi.advanceTimersByTimeAsync(0))
+				expect(mockNavigate).not.toHaveBeenCalled()
 			} finally {
 				vi.unstubAllGlobals()
 			}

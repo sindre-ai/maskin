@@ -165,6 +165,22 @@ describe('MessageThreadPane', () => {
 		expect(text.indexOf('message 2')).toBeLessThan(text.indexOf('message 3'))
 	})
 
+	it('hides a reply meant for the agent only, and leaves it out of the reply count', async () => {
+		const root = agentRoot()
+		setup({
+			main: [{ ...root, thread: root.thread ? { ...root.thread, replyCount: 1 } : root.thread }],
+			replies: [
+				reply(5, { content: 'a card nudge', metadata: { hidden_from_chat: true } }),
+				reply(4, { content: 'the helper result', metadata: { helper_return: 'session-1' } }),
+				reply(2),
+			],
+		})
+		expect(await screen.findByText('message 2')).toBeInTheDocument()
+		expect(screen.getByText('1 reply')).toBeInTheDocument()
+		expect(screen.queryByText('the helper result')).not.toBeInTheDocument()
+		expect(screen.queryByText('a card nudge')).not.toBeInTheDocument()
+	})
+
 	it("shows an agent's question card among the thread's replies", async () => {
 		const question = reply(2, {
 			content: 'How should I reach Spotify?',

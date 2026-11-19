@@ -10,7 +10,7 @@ struct LoopsStoreTests {
 	func flatList() async {
 		let api = FakeLoopsAPI([
 			loopRow("a", status: .paused), loopRow("b", status: .supervised, waiting: 2),
-			loopRow("c", status: .learning), loopRow("d", status: .draft),
+			loopRow("c", status: .pilot), loopRow("d", status: .draft),
 		])
 		let store = LoopsStore(api: api, events: nil)
 		await store.start()
@@ -63,19 +63,19 @@ struct LoopsStoreTests {
 		await task.value
 		#expect(store.loop(id: "a")?.pill == .paused)
 		await store.togglePause("a")
-		#expect(store.loop(id: "a")?.status == .learning)
+		#expect(store.loop(id: "a")?.status == .pilot)
 		let calls = await api.statusCalls
-		#expect(calls.map(\.1) == [.paused, .learning])
+		#expect(calls.map(\.1) == [.paused, .pilot])
 	}
 
 	@Test("a refused pause rolls back and explains")
 	func pauseRollback() async {
-		let api = FakeLoopsAPI([loopRow("a", status: .learning, waiting: 1)])
+		let api = FakeLoopsAPI([loopRow("a", status: .pilot, waiting: 1)])
 		await api.setFailStatus(true)
 		let store = LoopsStore(api: api, events: nil)
 		await store.start()
 		await store.togglePause("a")
-		#expect(store.loop(id: "a")?.status == .learning)
+		#expect(store.loop(id: "a")?.status == .pilot)
 		#expect(store.loop(id: "a")?.pill == .waitingOnYou)
 		#expect(store.notice?.contains("Couldn't pause") == true)
 	}
@@ -83,13 +83,13 @@ struct LoopsStoreTests {
 	@Test("resuming a loop with unread work shows needs you again")
 	func resumeWaiting() {
 		let paused = loopRow("a", status: .paused, waiting: 3)
-		#expect(paused.with(status: .learning).pill == .waitingOnYou)
+		#expect(paused.with(status: .pilot).pill == .waitingOnYou)
 		#expect(paused.pill == .paused)
 	}
 
 	@Test("a refresh during a pending pause does not undo it")
 	func refreshKeepsPending() async {
-		let api = FakeLoopsAPI([loopRow("a", status: .learning)])
+		let api = FakeLoopsAPI([loopRow("a", status: .pilot)])
 		await api.setStatusDelay(.milliseconds(150))
 		let store = LoopsStore(api: api, events: nil)
 		await store.start()
@@ -398,8 +398,8 @@ struct FlowsNeedsYouTests {
 	@Test("the pill counts running flows that need you, not open items or paused flows")
 	func count() async {
 		let s = await store([
-			loopRow("a", status: .supervised, waiting: 3), loopRow("b", status: .learning, waiting: 1),
-			loopRow("c", status: .learning), loopRow("d", status: .paused, waiting: 2),
+			loopRow("a", status: .supervised, waiting: 3), loopRow("b", status: .pilot, waiting: 1),
+			loopRow("c", status: .pilot), loopRow("d", status: .paused, waiting: 2),
 		])
 		#expect(s.needYouCount == 2)
 		#expect(s.waitingCount == 6)
@@ -408,7 +408,7 @@ struct FlowsNeedsYouTests {
 	@Test("the filter narrows the list to flows that need you and lifts cleanly")
 	func filter() async {
 		let s = await store([
-			loopRow("a", status: .supervised, waiting: 1), loopRow("b", status: .learning),
+			loopRow("a", status: .supervised, waiting: 1), loopRow("b", status: .pilot),
 			loopRow("c", status: .paused, waiting: 2),
 		])
 		#expect(!s.needsYouOnly)
@@ -421,10 +421,10 @@ struct FlowsNeedsYouTests {
 	@Test("the filter composes with search and keeps the chosen sort")
 	func composes() async {
 		let s = await store([
-			loopRow("1", name: "Sales rep", status: .learning, waiting: 1),
-			loopRow("2", name: "Sales digest", status: .learning),
-			loopRow("3", name: "Ops triage", status: .learning, waiting: 2),
-			loopRow("4", name: "Alpha ask", status: .learning, waiting: 1),
+			loopRow("1", name: "Sales rep", status: .pilot, waiting: 1),
+			loopRow("2", name: "Sales digest", status: .pilot),
+			loopRow("3", name: "Ops triage", status: .pilot, waiting: 2),
+			loopRow("4", name: "Alpha ask", status: .pilot, waiting: 1),
 		])
 		s.needsYouOnly = true
 		#expect(s.filtered(query: "sales").map(\.id) == ["1"])

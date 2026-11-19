@@ -19036,10 +19036,11 @@
 													],
 													"loop": [
 														"draft",
-														"paused",
-														"learning",
+														"pilot",
 														"supervised",
-														"fully_autonomous"
+														"live",
+														"paused",
+														"archived"
 													]
 												}
 											},
@@ -20314,10 +20315,11 @@
 													],
 													"loop": [
 														"draft",
-														"paused",
-														"learning",
+														"pilot",
 														"supervised",
-														"fully_autonomous"
+														"live",
+														"paused",
+														"archived"
 													]
 												}
 											},
@@ -29205,20 +29207,22 @@
 														"type": "string",
 														"enum": [
 															"draft",
-															"paused",
-															"learning",
+															"pilot",
 															"supervised",
-															"fully_autonomous"
+															"live",
+															"paused",
+															"archived"
 														]
 													},
 													"pill": {
 														"type": "string",
 														"enum": [
 															"draft",
-															"paused",
-															"learning",
+															"pilot",
 															"supervised",
-															"fully_autonomous",
+															"live",
+															"paused",
+															"archived",
 															"waiting_on_you"
 														]
 													},

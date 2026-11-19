@@ -376,7 +376,7 @@ struct FlowTabBar: View {
 	}
 }
 
-/// "● Learning · Needs you": the flow's stage, with the warning colour when decisions wait.
+/// "● Pilot · Needs you": the flow's stage, with the warning colour when decisions wait.
 struct LoopStatusPill: View {
 	let loop: LoopSummary
 
@@ -401,7 +401,7 @@ struct LoopStatusPill: View {
 	}
 }
 
-/// UNDER THE HOOD: Learning, Supervised, Autonomous as chips with a one-line explanation. Changing
+/// UNDER THE HOOD: Pilot, Supervised, Live as chips with a one-line explanation. Changing
 /// it moves the Status pill. Hidden while the flow is a draft or paused, since it has no stage then.
 struct LoopStageSection: View {
 	let store: LoopDetailStore

@@ -88,7 +88,7 @@ describe('renderEmail', () => {
 		)
 		expect(blocks).toContain('background-color: #dff1e8; color: #166a49')
 		expect(blocks.match(/border-top: 1px solid #eef0f4/g)).toHaveLength(1)
-		expect(blocks).toContain('bgcolor="#2545c8"')
+		expect(blocks).toContain('bgcolor="#10131a"')
 		expect(blocks).toContain('border-radius: 10px')
 	})
 
@@ -108,8 +108,6 @@ describe('renderEmail', () => {
 			'#e8eaee',
 			'#8a93a0',
 			'#1a1d23',
-			'#6a8cff',
-			'#060b1f',
 			'#e8b03e',
 			'#4fd39a',
 			'#022c22',

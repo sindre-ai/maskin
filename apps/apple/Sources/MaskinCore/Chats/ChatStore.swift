@@ -885,7 +885,8 @@ public final class ChatStore {
 		_ text: String, metadata: ChatSendMetadata? = nil, thread: ChatSendThread? = nil
 	) -> String? {
 		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !content.isEmpty else { return nil }
+		// A message needs words or a file; the server takes an empty body only with an attachment.
+		guard !content.isEmpty || metadata?.attachments != nil else { return nil }
 		// The server refuses a message that holds a secret, so no entry point queues one: the main chat
 		// shows its own sheet first, and any other (a thread reply, a draft card) gets this notice
 		// instead of a failed row that would keep the key.

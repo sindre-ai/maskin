@@ -4,6 +4,7 @@ import {
 	OBJECT_DIFF_FIELDS,
 	TERMINAL_BET_STATUSES,
 	computeChanges,
+	loopStatusTurnsTriggersOff,
 	type updateObjectSchema,
 } from '@maskin/shared'
 import { and, eq, inArray, ne } from 'drizzle-orm'
@@ -216,16 +217,19 @@ export async function applyObjectUpdate(
 		})
 	}
 
-	// Pausing a loop must pause its work: every trigger referenced in the
-	// loop's metadata.trigger_ids stops firing while the loop is paused, and
-	// resumes when the loop leaves paused. This PATCH is the single choke
+	// A loop's status decides whether it runs: every trigger referenced in the
+	// loop's metadata.trigger_ids stops firing while the loop is draft, paused
+	// or archived, and resumes when the loop moves to a running status (pilot,
+	// supervised or live). Moving between two off statuses (draft to paused,
+	// or any status to archived from an off one) or two on statuses changes
+	// nothing. This PATCH is the single choke
 	// point for loop status writes — the frontend's pause/resume button and
 	// the MCP update_loop tool both land here — so it's implemented once
 	// rather than duplicated per caller.
 	if (action === 'status_changed' && current.type === 'loop') {
-		const enteringPaused = row.status === 'paused' && current.status !== 'paused'
-		const leavingPaused = current.status === 'paused' && row.status !== 'paused'
-		if (enteringPaused || leavingPaused) {
+		const wasOff = loopStatusTurnsTriggersOff(current.status)
+		const isOff = loopStatusTurnsTriggersOff(row.status)
+		if (wasOff !== isOff) {
 			const meta = (row.metadata as Record<string, unknown> | null) ?? {}
 			const rawTriggerIds = meta.trigger_ids
 			const triggerIds = Array.isArray(rawTriggerIds)
@@ -234,7 +238,7 @@ export async function applyObjectUpdate(
 			if (triggerIds.length > 0) {
 				await tx
 					.update(triggers)
-					.set({ enabled: leavingPaused, updatedAt: new Date() })
+					.set({ enabled: !isOff, updatedAt: new Date() })
 					.where(
 						and(eq(triggers.workspaceId, current.workspaceId), inArray(triggers.id, triggerIds)),
 					)

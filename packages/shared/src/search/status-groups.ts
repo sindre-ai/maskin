@@ -58,7 +58,7 @@ const GROUP_STATUSES_BY_TYPE: Record<string, Partial<Record<StatusGroupKey, read
 	},
 	loop: {
 		new: ['draft'],
-		in_progress: ['pilot', 'learning', 'supervised', 'live', 'fully_autonomous'],
+		in_progress: ['pilot', 'supervised', 'live'],
 		archived: ['paused', 'archived'],
 	},
 	event: {
