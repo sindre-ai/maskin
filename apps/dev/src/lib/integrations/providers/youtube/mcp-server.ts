@@ -45,7 +45,6 @@ const MAX_VIDEO_IDS = 50
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
 
 const OUTCOME_BY_CODE: Partial<Record<YoutubeErrorCode, YoutubeOutcome>> = {
-	INVALID_INPUT: 'invalid_input',
 	QUOTA_EXHAUSTED: 'quota_blocked',
 	WORKSPACE_QUOTA_EXHAUSTED: 'quota_blocked',
 	CAP_REACHED: 'quota_blocked',

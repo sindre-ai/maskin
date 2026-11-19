@@ -130,7 +130,14 @@ export async function chargeYoutubeUploadQuota(
 	try {
 		await db.transaction(async (tx) => {
 			if (
-				!(await chargeRow(tx, uploadWorkspaceScope(workspaceId), 1, UPLOAD_WORKSPACE_DAILY_CAP, at))
+				!(await chargeRow(
+					tx,
+					uploadWorkspaceScope(workspaceId),
+					'upload',
+					1,
+					UPLOAD_WORKSPACE_DAILY_CAP,
+					at,
+				))
 			) {
 				throw new YoutubeError({
 					code: 'WORKSPACE_QUOTA_EXHAUSTED',
@@ -138,7 +145,7 @@ export async function chargeYoutubeUploadQuota(
 					hint: 'The limit resets at midnight Pacific time.',
 				})
 			}
-			if (!(await chargeRow(tx, UPLOAD_GLOBAL_SCOPE, 1, UPLOAD_GLOBAL_DAILY_CAP, at))) {
+			if (!(await chargeRow(tx, UPLOAD_GLOBAL_SCOPE, 'upload', 1, UPLOAD_GLOBAL_DAILY_CAP, at))) {
 				throw new GlobalCapReached()
 			}
 		})
