@@ -902,6 +902,9 @@ export async function emitCompletion(
 		// The size of the window at the last model call of the last turn, and the window the
 		// session reports. Left off when the session showed neither (PostHog reads them as absent).
 		last_turn_window_tokens: contextSize?.lastTurnWindowTokens,
+		// assistant_usage is the model's own reading, log_estimate a rough count of log lines
+		// (DeepSeek writes zero usage), so the two can be told apart in the baseline.
+		size_source: contextSize?.sizeSource,
 		context_window_tokens: contextSize?.contextWindowTokens,
 		exit_code: outcome.exitCode ?? null,
 		duration_ms: durationMs,

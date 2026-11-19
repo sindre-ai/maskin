@@ -299,6 +299,7 @@ describe('emitCompletion: context size and end cause', () => {
 	it('carries the window numbers and the end cause on the existing stop reason', async () => {
 		recordSessionContextSize('sess-1', {
 			lastTurnWindowTokens: 161_000,
+			sizeSource: 'assistant_usage',
 			contextWindowTokens: 1_000_000,
 			endCause: 'compaction_failed',
 		})
@@ -311,7 +312,17 @@ describe('emitCompletion: context size and end cause', () => {
 		expect(sentProps()).toMatchObject({
 			stop_reason: 'compaction_failed',
 			last_turn_window_tokens: 161_000,
+			size_source: 'assistant_usage',
 			context_window_tokens: 1_000_000,
+		})
+	})
+
+	it('says when the window size is a log estimate', async () => {
+		recordSessionContextSize('sess-1', { lastTurnWindowTokens: 42_000, sizeSource: 'log_estimate' })
+		await emitCompletion(baseSession(), baseOutcome(), ZERO_TOTALS, END)
+		expect(sentProps()).toMatchObject({
+			last_turn_window_tokens: 42_000,
+			size_source: 'log_estimate',
 		})
 	})
 
@@ -324,6 +335,7 @@ describe('emitCompletion: context size and end cause', () => {
 		)
 		expect(sentProps().stop_reason).toBe('exit code 1')
 		expect(sentProps().last_turn_window_tokens).toBeUndefined()
+		expect(sentProps().size_source).toBeUndefined()
 		expect(sentProps().context_window_tokens).toBeUndefined()
 	})
 })
