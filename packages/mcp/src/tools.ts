@@ -137,7 +137,7 @@ const actorLlmConfigSchema = z
 // Runs woken on a loop are shown this text as their finish line, so it says
 // what a good one looks like. A suggestion only; nothing validates it.
 const CLOSE_CONDITION_GUIDANCE =
-	'Runs in this loop are shown this text, so say what done looks like (a status reached, a summary written, a check that found nothing to do). Short is fine.'
+	'Runs in this loop are shown this text, so say what done looks like. A status reached, a summary written or a check that found nothing to do all count. Short is fine.'
 
 // Optional suggestion shown on every field an agent writes a trigger prompt
 // into (create_trigger, update_trigger, and the inline steps of create_loop /
