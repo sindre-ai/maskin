@@ -1107,38 +1107,23 @@ export const tools = {
 		description:
 			"List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Each row has id, name, role, createdAt, updatedAt, onboardingEnabled and isDefault; pass include_settings: true to also get each workspace's settings (secrets redacted). isDefault is true for the one workspace the user chose as their default in Settings (at most one row; none if they have not chosen). Prefer it when the user does not name a workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
 		inputSchema: z.object({
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 			include_settings: z
 				.boolean()
 				.optional()
-				.describe(
-					'When true, rows are the full workspace records including settings (statuses, field definitions, display names), with secrets redacted. Defaults to false.',
-				),
+				.describe('Return full workspace records with settings (secrets redacted). Default false.'),
 		}),
 	},
 	get_workspace_schema: {
 		description:
-			'Get the workspace schema: available statuses per object type, custom metadata field definitions (name, type, required, enum values), display names, and relationship types. Call this before creating or updating objects to know which metadata fields exist, what types they expect, and which values are valid. Optionally filter by object type. Types with Hero Card defaults or workspace overrides also include a `hero_card` annotation block on the response (`hero_card_context`, `hero_card_metas`, `primary_action`) describing how matching objects render in the Hero Card MCP widget.',
+			'Get the workspace schema: statuses per object type, custom metadata field definitions (name, type, required, enum values), display names and relationship types. Call it before creating or updating objects to see which fields and values are valid. Types with Hero Card settings also carry a `hero_card` block (`hero_card_context`, `hero_card_metas`, `primary_action`) describing how they render in the Hero Card widget.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
 				.string()
 				.optional()
-				.describe(
-					'Filter schema to a specific object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). If omitted, returns schema for all types.',
-				),
+				.describe('Object type to filter by (built-in or custom). Omit for all types.'),
 		}),
 	},
 	// ─── Workspace Schema Editing (W1) ──────────────────────
@@ -1149,19 +1134,14 @@ export const tools = {
 	// endpoint shallow-merges `settings`.
 	create_workspace_field: {
 		description:
-			'Add a new metadata field to a workspace object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
+			'Add a metadata field to an object type (built-in or custom). Once added, it shows in get_workspace_schema and is accepted in create_objects and update_objects metadata. Names must be unique within a type.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z
-				.string()
-				.min(1)
-				.describe('Object type to attach the field to (e.g. "insight", "bet", "task").'),
+			type: z.string().min(1).describe('Object type to attach the field to.'),
 			name: z.string().min(1).describe('Field name. Must be unique within the type.'),
 			field_type: z
 				.enum(['text', 'number', 'date', 'enum', 'boolean'])
-				.describe(
-					'Field value type. Use "enum" for a fixed set of values (provide values[]); "text" for free text; "number"/"date"/"boolean" for typed scalars.',
-				),
+				.describe('"enum" needs values[].'),
 			required: z
 				.boolean()
 				.optional()
@@ -1169,12 +1149,12 @@ export const tools = {
 			values: z
 				.array(z.string().min(1))
 				.optional()
-				.describe('Allowed values for an enum field. Required when field_type is "enum".'),
+				.describe('Allowed enum values. Required when field_type is "enum".'),
 		}),
 	},
 	update_workspace_field: {
 		description:
-			"Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or edit an enum field's allowed values. Pass only the fields you want to change. For enum values, prefer add_values/remove_values to add or remove individual values without disturbing the rest (idempotent — adding an existing value or removing a missing one is a no-op); use values only when replacing the full list wholesale. Existing objects keep any value they previously stored even after it is removed from the allowed list — only new writes are constrained.",
+			'Update a metadata field on an object type: rename, change type, toggle required, or edit enum values. Pass only what changes. For enum values prefer add_values/remove_values (idempotent); use values only to replace the whole list. Objects keep values already stored even after they are removed from the list; only new writes are constrained.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
@@ -1183,35 +1163,33 @@ export const tools = {
 				.string()
 				.min(1)
 				.optional()
-				.describe('Optional rename. Must remain unique within the type.'),
+				.describe('New name. Must stay unique within the type.'),
 			field_type: z
 				.enum(['text', 'number', 'date', 'enum', 'boolean'])
 				.optional()
-				.describe('Optional new field type.'),
-			required: z.boolean().optional().describe('Optional new required flag.'),
+				.describe('New field type.'),
+			required: z.boolean().optional().describe('New required flag.'),
 			values: z
 				.array(z.string().min(1))
 				.optional()
 				.describe(
-					'Optional full replacement list of enum values, applied before add_values/remove_values. Pass an empty array to clear (only valid if add_values then supplies at least one value, since enum fields require at least one). Omit to leave the current values as the starting point for add_values/remove_values.',
+					'Full replacement list, applied before add_values/remove_values. An empty array clears it, which is only valid if add_values then supplies at least one value. Omit to keep current values.',
 				),
 			add_values: z
 				.array(z.string().min(1))
 				.optional()
 				.describe(
-					'Enum values to add, keeping all existing values. Only valid when the field is (or is being changed to, via field_type) an enum.',
+					'Enum values to add. Only valid for an enum field (or one changed to enum via field_type).',
 				),
 			remove_values: z
 				.array(z.string().min(1))
 				.optional()
-				.describe(
-					'Enum values to remove, keeping the rest. Only valid when the field is (or is being changed to, via field_type) an enum. Applied after add_values.',
-				),
+				.describe('Enum values to remove, applied after add_values. Enum fields only.'),
 		}),
 	},
 	delete_workspace_field: {
 		description:
-			'Remove a metadata field from a workspace object type. Existing objects keep any data they previously stored under this field; new objects can no longer set it. Idempotent — deleting a field that does not exist returns success.',
+			'Remove a metadata field from an object type. Existing objects keep data already stored under it; new writes cannot set it. Idempotent: deleting a missing field succeeds.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
@@ -1223,32 +1201,17 @@ export const tools = {
 	// NOT the same as per-agent skills (those live under an agent's own file store).
 	list_workspace_skills: {
 		description:
-			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. Find a skill with `q`, a word of its name or description. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page.',
+			'List shared workspace skills (SKILL.md files stored once per workspace, attachable to any agent; not per-agent skills). Rows omit the SKILL.md body; get_workspace_skill returns it. Find one with `q`, a word of its name or description. Default 25, max 100. The response has `page` ({ limit, returned, has_more, total }, total counts rows matching your filters) and `next_cursor` while `has_more` is true; pass it as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			q: z
-				.string()
-				.min(1)
-				.optional()
-				.describe('Only skills whose name or description contains this text. Ignores case.'),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			q: z.string().min(1).optional().describe('Match in name or description, ignoring case.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 		}),
 	},
 	get_workspace_skill: {
 		description:
-			'Get a shared workspace skill by id or name, including its full SKILL.md content. Workspace-scoped and attachable to any agent in the workspace — NOT a per-agent skill.',
+			'Get a shared workspace skill by id or name, with its full SKILL.md content. Not a per-agent skill.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
@@ -1256,23 +1219,21 @@ export const tools = {
 	},
 	create_workspace_skill: {
 		description:
-			'Create a shared workspace skill. The skill is stored once in the workspace and can be attached to any number of agents afterwards — NOT a per-agent skill. Content must be valid SKILL.md (markdown with optional YAML frontmatter); the server parses the frontmatter to extract the description.',
+			'Create a shared workspace skill, stored once and attachable to any number of agents. Not a per-agent skill. Content is SKILL.md (markdown, optional YAML frontmatter); the server reads the description from the frontmatter.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: skillNameSchema.describe(
-				'Skill name. Lowercase letters, numbers, and hyphens only; max 64 chars. Must be unique within the workspace.',
+				'Lowercase letters, numbers and hyphens, max 64 chars. Unique in the workspace.',
 			),
 			content: z
 				.string()
 				.min(1)
-				.describe(
-					'Full SKILL.md content. Optional YAML frontmatter (--- name, description, ... ---) is parsed for the description.',
-				),
+				.describe('Full SKILL.md. Optional YAML frontmatter supplies the description.'),
 		}),
 	},
 	update_workspace_skill: {
 		description:
-			'Replace the content of an existing shared workspace skill, found by id or name. Affects every agent the skill is attached to. These are workspace-scoped, reusable skills — NOT per-agent skills. The server re-parses frontmatter for an updated description.',
+			'Replace the content of a shared workspace skill, found by id or name. Affects every agent it is attached to. The server re-reads the description from the frontmatter.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
@@ -1284,7 +1245,7 @@ export const tools = {
 	},
 	delete_workspace_skill: {
 		description:
-			'Delete a shared workspace skill, found by id or name. Any agent_skills attachments are removed in cascade. These are workspace-scoped skills — NOT per-agent skills.',
+			'Delete a shared workspace skill, found by id or name. Its attachments to agents are removed too.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: skillNameSchema.describe('Skill id (from list_workspace_skills) or name.'),
@@ -1293,7 +1254,7 @@ export const tools = {
 	// ─── Files ───────────────────────────────────────────────
 	create_file: {
 		description:
-			'Author a file in the workspace and store it in object storage. Use this to publish design docs, strategy notes, generated reports, or any document you want a workspace member to be able to open. The response includes a `url` field — share this URL anywhere (Slack, email, a comment) and any workspace member can open it in a browser to view the file. For text content (markdown, HTML, JSON, code), pass `content` as a raw string — the `encoding` field defaults to "utf8". For binary content (images, PDFs, archives), set `encoding` to "base64" and pass `content` as base64-encoded bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type` (e.g. text/markdown, text/html, application/pdf, image/png); the viewer renders markdown inline and offers download for everything else. The file is linked to the chat you are running in, so it stays reachable from that chat; pass `conversation_id` to link it to another chat, and `object_id` to attach it to a work item.',
+			'Create a file in the workspace (design docs, notes, reports). The response has a `url` that any workspace member can open in a browser. Text content: pass `content` as a raw string. Binary content (images, PDFs, archives): set `encoding` to "base64" and pass base64 bytes. Max 10 MB after decoding (50 MB for `video/*`). Use the real `mime_type`; markdown renders inline, other types download. The file is linked to the chat you are in; pass `conversation_id` to link another chat and `object_id` to attach it to a work item.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -1310,38 +1271,30 @@ export const tools = {
 				.enum(['briefing'])
 				.optional()
 				.describe(
-					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.',
+					'Set `"briefing"` on an HTML page meant to be read in the For you tab (a daily briefing, a loop briefing). Only briefing files appear there. Omit for ordinary files.',
 				),
 			tags: z
 				.array(z.string())
 				.max(20)
 				.optional()
 				.describe(
-					'Labels for finding this file later, such as "b-roll" or "clip_type:b_roll" (a colon marks a structured tag). Trimmed and lowercased on save, so "B-roll" and "b-roll" are one tag. Up to 20 per file, 60 characters each, no commas. Call list_file_tags first and reuse a tag that already exists instead of inventing a near copy. Keep longer notes in `description`.',
+					'Labels for finding the file later, e.g. "b-roll" or "clip_type:b_roll" (a colon marks a structured tag). Trimmed and lowercased on save. Up to 20, 60 characters each, no commas. Call list_file_tags first and reuse an existing tag. Put longer notes in `description`.',
 				),
-			mime_type: z
-				.string()
-				.describe(
-					'IANA MIME type of the content, e.g. "text/markdown", "text/html", "application/pdf", "image/png".',
-				),
+			mime_type: z.string().describe('MIME type, e.g. "text/markdown" or "application/pdf".'),
 			content: z
 				.string()
 				.describe(
-					'File content. For text/markdown/HTML/JSON, pass the raw string and leave `encoding` at the default. For binary files, set `encoding` to "base64" and pass base64-encoded bytes. Max 10 MB.',
+					'File content: a raw string for text, or base64 bytes with `encoding` "base64". Max 10 MB.',
 				),
 			encoding: z
 				.enum(['base64', 'utf8'])
 				.optional()
-				.describe(
-					'Encoding of `content`. Defaults to "utf8" — pass markdown/HTML/JSON as a normal string. Use "base64" for binary files (images, PDFs, archives).',
-				),
+				.describe('Default "utf8". Use "base64" for binary files.'),
 			conversation_id: z
 				.string()
 				.uuid()
 				.optional()
-				.describe(
-					'Chat to link the file to. Leave out to link it to the chat you are running in (none when you are not in a chat).',
-				),
+				.describe('Chat to link the file to. Default: the chat you are in, if any.'),
 			object_id: z
 				.string()
 				.uuid()
@@ -1351,7 +1304,7 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. To see which files belong to one chat, pass `conversation_id` (a chat you are in): it returns the 50 newest files attached to messages in that chat, each with name, mime type, size, who attached it and when, plus `total` and `omitted` for the rest, however old the chat is. Narrow it with `type` (a mime type or prefix, e.g. "video") and `uploaded_by` (an actor id). With `conversation_id` the other filters and paging do not apply. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Filter by name substring `q`, `kind: "briefing"` (briefings shown in For you), or `tags` (`tags_match: "all"`, the default, needs every tag; "any" needs at least one). Rows show their `tags`. Files attached to chat messages are included: when a name search finds nothing, narrow by tag or page on with `next_cursor` instead of asking for a re-upload. `conversation_id` (a chat you are in) returns the 50 newest files attached to that chat\'s messages (name, mime type, size, who attached it, when) plus `total` and `omitted`; narrow with `type` (mime type or prefix, e.g. "video") and `uploaded_by` (actor id). With `conversation_id` the other filters and paging do not apply. Default page 25; pass `next_cursor` as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
@@ -1361,14 +1314,12 @@ export const tools = {
 				.uuid()
 				.optional()
 				.describe(
-					'List the files attached to messages in this chat instead of the whole workspace. Only chats you are in.',
+					'List files attached to messages in this chat (one you are in) instead of the whole workspace.',
 				),
 			type: z
 				.string()
 				.optional()
-				.describe(
-					'With conversation_id: only files whose mime type starts with this, e.g. "video" or "application/pdf".',
-				),
+				.describe('With conversation_id: mime type or prefix, e.g. "video".'),
 			uploaded_by: z
 				.string()
 				.uuid()
@@ -1380,40 +1331,25 @@ export const tools = {
 				.array(z.string())
 				.max(20)
 				.optional()
-				.describe(
-					'Only files carrying these tags (see tags_match). Trimmed and lowercased like tags on save.',
-				),
+				.describe('Files carrying these tags (see tags_match). Trimmed and lowercased.'),
 			tags_match: z
 				.enum(['all', 'any'])
 				.optional()
-				.describe(
-					'"all" (default): the file has every tag in `tags`. "any": the file has at least one of them.',
-				),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(200)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+				.describe('"all" (default): every tag. "any": at least one.'),
+			limit: z.number().int().min(1).max(200).optional().describe('Default 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 		}),
 	},
 	list_file_tags: {
 		description:
-			'List the tags in use on files in the workspace and how many files carry each, most-used first. Call this before tagging a file or searching by tag, so you pick a tag that already exists instead of inventing a near copy (for example "b-roll" and "broll"). Returns `[{ tag, count }]`. Use a tag with list_files `tags` to find the files, and with create_file or update_file `tags` to put it on one.',
+			'List the tags in use on files and how many files carry each, most-used first. Call it before tagging or searching by tag, so you reuse an existing tag instead of inventing a near copy ("b-roll" vs "broll"). Returns `[{ tag, count }]`. Use a tag in `tags` of list_files, create_file or update_file.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	rename_file_tag: {
 		description:
-			'Rename a tag on every file in the workspace at once. All or nothing: either every file that carries `from` now carries `to`, or nothing changes. Fails if `to` is already a tag (use merge_file_tags to fold one tag into an existing one) or if no file carries `from`. Names are trimmed and lowercased. Returns `{ from, to, files_changed }`. The workspace tag guide says only the Knowledge Curator renames tags: if you are not the curator, ask it instead of calling this.',
+			'Rename a tag on every file at once, all or nothing. Fails if `to` is already a tag (use merge_file_tags) or no file carries `from`. Names are trimmed and lowercased. Returns `{ from, to, files_changed }`. Per the workspace tag guide only the Knowledge Curator renames tags: if you are not the curator, ask it instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			from: z.string().describe('The tag to rename. Must be on at least one file.'),
@@ -1422,7 +1358,7 @@ export const tools = {
 	},
 	merge_file_tags: {
 		description:
-			'Merge one tag into another on every file in the workspace at once. Every file with `from` gets `into` (a file that already has both keeps one copy), and `from` disappears from list_file_tags. All or nothing. `into` does not have to exist yet. Fails if no file carries `from`. Returns `{ from, to, files_changed }`. The workspace tag guide says only the Knowledge Curator merges tags: if you are not the curator, ask it instead of calling this.',
+			'Merge tag `from` into `into` on every file at once, all or nothing. Files with `from` get `into` (a file with both keeps one copy) and `from` disappears from list_file_tags. `into` need not exist yet. Fails if no file carries `from`. Returns `{ from, to, files_changed }`. Per the workspace tag guide only the Knowledge Curator merges tags: if you are not the curator, ask it instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			from: z.string().describe('The tag to fold away. Must be on at least one file.'),
@@ -1431,7 +1367,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a file with its content and a viewer URL. Over 50 MB: `content` is empty, `contentOmitted: true`, and a short-lived `downloadUrl` is given. `encoding` is "utf8" for text types (`content` is the raw string) or "base64" for binary. `annotations` are pinned review comments humans left on the rendered file (CSS `selector`, `bounds`, `comment`); read them to see what a reviewer flagged. `contentHash` goes in `if_match` on update_file so your write is refused if someone saved in between. Any HTML page (deck, website, dashboard, custom view) can be mostly embedded fonts and inline CSS or script, so raw `content` is huge and unreadable: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, bullets, tables, links, button and field labels, slide blocks with notes for a deck), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read that is mostly embedded data opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. To change a file use update_file with `edits` or `content`. There is no offset or limit; use format "text" rather than paging raw bytes.',
+			'Get a file with its content and a viewer URL. Over 50 MB: `content` is empty, `contentOmitted: true` and a short-lived `downloadUrl` is given. `encoding` is "utf8" (`content` is the raw string) or "base64". `annotations` are pinned reviewer comments (CSS `selector`, `bounds`, `comment`). Pass `contentHash` as `if_match` to update_file to refuse your write if someone saved in between. HTML pages (deck, website, dashboard, custom view) are mostly embedded fonts and inline CSS or script, so raw `content` is huge: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, tables, links, labels, slide notes), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. There is no offset or limit; use format "text" rather than paging raw bytes.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1439,13 +1375,13 @@ export const tools = {
 				.enum(['raw', 'text'])
 				.optional()
 				.describe(
-					'"raw" (default) returns the stored bytes as `content`. "text" returns `content_text`: for HTML, the readable words as markdown; for other text files, the content unchanged.',
+					'"raw" (default): stored bytes as `content`. "text": `content_text`, for HTML the readable words as markdown, other text files unchanged.',
 				),
 		}),
 	},
 	transcribe_file: {
 		description:
-			'Transcribe an uploaded audio or video file to text; use it when someone has uploaded a recording (a meeting, voice memo, interview, video) and you need the words. Pass the file `id` (from list_files or create_file). Audio (mp3, m4a, wav, ogg, flac, webm) and video (mp4, mov, mkv, webm) both work: the audio track is extracted for you, so do not download or convert the file first. Up to 60 minutes of audio per call; for a longer recording, cut it into parts and transcribe each. Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, next_step, timed, audio_seconds, chunks, model }`. The transcript is saved as a .txt workspace file, one line per speaker turn in the form `[mm:ss] Speaker 1: text` (`timed` is true), or plain text when the speech model returned no timing (`timed` is false). It is not in the response: call get_file with `transcript_file_id` to read it, and share `transcript_file_url`. `text` is null unless saving failed (then it holds the transcript) or no speech was found (then no file is saved). Pass `language` (for example "en" or "nb-NO") when you know it, otherwise it is detected. The call runs on the workspace plan and counts toward its usage, and a long file can take a minute or more. Fails with 402 when the plan cap is reached (enterprise workspaces have no cap), and 400 for a file that is not audio or video, has no audio track, or is over the limit.',
+			'Transcribe an uploaded audio or video file to text. Pass the file `id` (from list_files or create_file). Audio (mp3, m4a, wav, ogg, flac, webm) and video (mp4, mov, mkv, webm) work; no need to convert. Up to 60 minutes per call; cut longer recordings into parts. Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, timed }`. The transcript is saved as a .txt workspace file, one line per speaker turn (`[mm:ss] Speaker 1: text`, `timed` true), or plain text when no timing came back (`timed` false). Read it with get_file on `transcript_file_id` and share `transcript_file_url`; `text` is null unless saving failed (then it holds the transcript) or no speech was found (then no file is saved). Pass `language` (e.g. "en", "nb-NO") if known, otherwise it is detected. Counts toward plan usage; a long file can take a minute or more. Fails with 402 when the plan cap is reached (enterprise has none), and 400 for a file that is not audio or video, has no audio track, or is over the limit.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID of the uploaded audio or video file.'),
@@ -1458,7 +1394,7 @@ export const tools = {
 	},
 	update_file: {
 		description:
-			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409 conflict, writes nothing, and the error carries the current hash. Re-read the file with get_file, merge, and retry with the new hash. Without `if_match` the last write wins. To change part of a text file (a typo, one slide, one number) pass `edits` instead of `content`: a list of `{old, new, replace_all?}`, applied in order on the server against the stored text, so you do not re-send the whole file. `old` must match exactly once (include enough surrounding text to be unique) unless `replace_all` is true; an edit that matches nothing or matches more than once fails with a 400 and nothing is written. `edits` and `content` cannot be combined, and `edits` work on text files only (HTML, markdown, JSON, code). It works with `if_match`. Read the text to copy `old` from with get_file (raw), since `old` must match the stored bytes, not the `format: "text"` extract.',
+			'Update a file. Pass any subset of name, description, kind, mime_type, content (at least one). Updating content re-uploads the bytes; other fields update metadata only. Text: pass `content` as a raw string; binary: `encoding` "base64". To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409, writes nothing and returns the current hash; re-read, merge, retry. Without `if_match` the last write wins. To change part of a text file pass `edits` instead of `content`: a list of `{old, new, replace_all?}` applied in order on the server. `old` must match exactly once (add context to be unique) unless `replace_all` is true; an edit that matches nothing or more than once fails with a 400 and nothing is written. `edits` and `content` cannot be combined. `edits` works with `if_match`. Copy `old` from the raw text of get_file, not the `format: "text"` extract.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1469,7 +1405,7 @@ export const tools = {
 				.nullable()
 				.optional()
 				.describe(
-					'What the file is for. Set `"briefing"` on an HTML page written to be read in the For you tab (the Chief of Staff\'s daily briefing, a loop\'s briefing). Only files with kind "briefing" appear there — every other file a loop produces stays out of it. Omit for ordinary files.' +
+					'Set `"briefing"` on an HTML page meant to be read in the For you tab (a daily briefing, a loop briefing). Only briefing files appear there. Omit for ordinary files.' +
 						' Pass null to clear.',
 				),
 			tags: z
@@ -1477,14 +1413,14 @@ export const tools = {
 				.max(20)
 				.optional()
 				.describe(
-					'Replaces the whole tag list: send every tag the file should have, or [] to clear them. Omit to leave the tags as they are. Trimmed and lowercased on save. Up to 20 per file, 60 characters each, no commas. Call list_file_tags first and reuse an existing tag.',
+					'Replaces the whole tag list: send every tag the file should have, or [] to clear. Omit to leave tags unchanged. Trimmed and lowercased. Up to 20, 60 characters each, no commas. Reuse tags from list_file_tags.',
 				),
 			mime_type: z.string().optional(),
 			content: z
 				.string()
 				.optional()
 				.describe(
-					'New file content. For text, pass the raw string and leave `encoding` at the default. For binary files, set `encoding` to "base64" and pass base64-encoded bytes. Max 10 MB.',
+					'New content: a raw string for text, or base64 bytes with `encoding` "base64". Max 10 MB.',
 				),
 			encoding: z
 				.enum(['base64', 'utf8'])
@@ -1518,13 +1454,13 @@ export const tools = {
 				.regex(/^[0-9a-f]{64}$/, 'Expected a sha256 hex digest')
 				.optional()
 				.describe(
-					'Version check. The `contentHash` from get_file. If the file changed since, the update is refused with a 409 conflict and nothing is written. Optional.',
+					'The `contentHash` from get_file. If the file changed since, the update is refused with a 409 and nothing is written.',
 				),
 		}),
 	},
 	propose_file_changes: {
 		description:
-			'Propose text changes to a markdown file instead of overwriting it, so a person can review each change. Pass the file `id` and a list of `changes`, each with `old_text` (the exact text to replace, copied from the file), `new_text` and an optional `reason`. The shape matches the edit tool coding agents already use. Each `old_text` is matched against the raw markdown source and must occur exactly once, so include enough surrounding text to be unique; changes may not overlap. If any change fails the whole call is rejected with the change index and a plain message, and nothing is stored. Limits: 50 changes, `old_text` up to 4000 characters, `new_text` up to 8000. Markdown files only (.md, .markdown or text/markdown). The file is not changed: the proposal is stored and the driver of each object the file is attached to is notified. Returns the proposal id and the file URL. Use update_file instead for a new file or a full rewrite that nobody needs to review.',
+			'Propose text changes to a markdown file for review instead of overwriting it. Pass the file `id` and `changes`, each with `old_text` (exact text from the file), `new_text` and optional `reason`. Each `old_text` is matched against the raw markdown and must occur exactly once (add context to be unique); changes may not overlap. If any change fails the whole call is rejected with the change index and nothing is stored. Limits: 50 changes, `old_text` up to 4000 characters, `new_text` up to 8000. Markdown files only. The file itself is not changed: the proposal is stored and the driver of each attached object is notified. Returns the proposal id and file URL. For a new file or a full rewrite, use update_file.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1559,7 +1495,7 @@ export const tools = {
 	},
 	get_events: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration|capability_source|workspace) and action (created|updated|deleted|status_changed|capability_changed|capability_snapshot|capability_scan_completed). The daily capability scan writes: capability_changed (entity_type capability_source) lists tools newly available to agents, capability_snapshot (capability_source) is the stored tool list per source, capability_scan_completed (entity_type workspace) is one count per workspace per day. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Get the workspace activity log: every mutation (create, update, delete) is an event. Pass `id` to fetch one event by its numeric event_id. Filter by entity_type (object|relationship|integration|capability_source|workspace) and action (created|updated|deleted|status_changed|capability_changed|capability_snapshot|capability_scan_completed). The daily capability scan writes capability_changed (tools newly available to agents), capability_snapshot (stored tool list per source), both on entity_type capability_source, and capability_scan_completed (entity_type workspace, one count per day). Pass `next_cursor` as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z
@@ -1571,31 +1507,21 @@ export const tools = {
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 		}),
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Get comments on an object, newest first. Replies point to the comment they answer through data.parentEventId. Pass `next_cursor` back as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
 			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 		}),
 	},
 	create_comment: {
-		description: `One way to communicate with humans, alongside chat: a comment stays on an object (bet, task, insight) as a visible record. Use it for status updates, questions, findings, decisions and blockers. Do NOT bury that dialogue in \`bet.content\`, \`task.content\` or titles; those are the durable spec and nobody scans them for news.\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it makes a comment clearer or shorter.\n\nTo get a human to make a call, put them in \`mentions\` and fill in \`decision\`; that pair is the only way an ask reaches their For You feed as a one-tap decision. The \`decision\` param docs give the shape; the API rejects a decision that breaks its rules, listing every violation.\n\nThreading: when this session was dispatched from a comment, your reply is threaded into that comment automatically. Pass \`parent_event_id\` only to reply under a DIFFERENT comment; set \`no_thread: true\` for a fresh top-level comment.\n\nWho gets woken: only agents in \`mentions\`. A comment with no mentions wakes nobody, so mention the agent when you hand off or need a reply. Mentioned humans are notified.`,
+		description: `A comment stays on an object (bet, task, insight) as a visible record, alongside chat. Use it for status updates, questions, findings, decisions and blockers, not \`bet.content\`, \`task.content\` or titles (the durable spec, which nobody scans for news).\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it helps.\n\nTo get a human to make a call, put them in \`mentions\` and fill in \`decision\`: that pair is the only way an ask reaches their For You feed as a one-tap decision. The API rejects a decision that breaks its rules and lists every violation.\n\nA reply to the comment that dispatched this session is threaded automatically. Pass \`parent_event_id\` to reply under a different comment; \`no_thread: true\` starts a top-level comment.\n\nOnly agents in \`mentions\` are woken, so mention the agent when you hand off or need a reply. Mentioned humans are notified.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1603,13 +1529,13 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
+					'Force a new top-level comment on `entity_id` instead of replying in the dispatching thread. Ignored if `parent_event_id` is set.',
 				),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until each agent in `mentions` has replied to this comment (in its thread) and return the replies. Ends early with settled false if an agent never starts or the wait runs out. Nothing is waited for when no agent is mentioned.',
+					'Hold until each agent in `mentions` has replied in the thread and return the replies. Ends early with settled false if an agent never starts or the wait runs out. No agent mentioned, no wait.',
 				),
 		}),
 	},
@@ -1617,7 +1543,7 @@ export const tools = {
 	// ─── Conversations ───────────────────────────────────────
 	get_conversation: {
 		description:
-			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room. Each agent also carries a `status` (starting, running, waiting_for_input, paused or not_running) so you can see who has a live session before you @mention them. Everyone listed sees every message, so there is no need to ask permission before addressing a human participant; to make an agent participant respond, @mention it with its actorId via `metadata.mentions` of post_conversation_message. This tool is read-only.",
+			"Get a conversation's title and participants (humans and agents). Call it before replying to see who else is in the room. Each agent carries a `status` (starting, running, waiting_for_input, paused or not_running), so you can see who has a live session before you @mention them. Everyone listed sees every message, so no permission is needed to address a human; to make an agent respond, @mention its actorId via `metadata.mentions` of post_conversation_message.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1625,7 +1551,7 @@ export const tools = {
 	},
 	list_chats: {
 		description:
-			'List the chats you are a participant in, most recent activity first. Each row has the chat id and title, its participants (name and type), when the last message was posted, who wrote it and whether that was you (last_message.is_you), a short snippet of it, and unread_count for you. Read a chat you find here with list_conversation_messages. Use updated_after (ISO time) to see only chats with a message since then, and has_human to keep only chats that still include a person. Archived chats are left out. Paginated (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This tool is read-only.',
+			'List the chats you are in, most recent activity first. Each row has the chat id and title, participants (name and type), the last message (when, who wrote it, whether that was you in last_message.is_you, a snippet) and unread_count for you. Read a chat with list_conversation_messages. updated_after (ISO time) keeps chats with a message since then; has_human keeps chats that include a person. Archived chats are left out. Default page 25; pass `next_cursor` as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			updated_after: z
@@ -1643,17 +1569,12 @@ export const tools = {
 				.describe('With subject_id: only the chat that belongs to this bet/task/insight or loop.'),
 			subject_id: z.string().uuid().optional(),
 			limit: z.number().int().min(1).max(100).optional(),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the walk continues where that page ended.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 		}),
 	},
 	list_conversation_messages: {
 		description:
-			"List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history. The main list holds top-level messages (a message that has replies carries a `thread` summary with its reply count). To read one thread, pass the root message id as `thread_root_id`: you get only that thread's replies, newest first. Each message row carries its `metadata`; files people uploaded with a message are in `metadata.attachments`, an array of `{file_id, name, mime_type, size_bytes}`. Fetch one with get_file using that id. An upload is on the message it was sent with, so page back with before_id to find an older one. This tool is read-only — to answer inside a thread, use post_conversation_message with the same `thread_root_id`.",
+			'List messages in a conversation, newest first. Page with before_id (older) or after_id (newer), using the id of a message you already have. The main list holds top-level messages; one with replies carries a `thread` summary with its reply count. To read a thread, pass the root message id as `thread_root_id`: you get only its replies, newest first. Each row carries `metadata`; uploaded files are in `metadata.attachments`, an array of `{file_id, name, mime_type, size_bytes}`; fetch one with get_file. An upload is on the message it was sent with, so page back with before_id to find an older one. To answer inside a thread use post_conversation_message with the same `thread_root_id`.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1669,7 +1590,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need it for your actual reply: whatever you write at the end of your turn is posted automatically. Use it only when blocked on a person or to bring in another agent. Never for progress notes ("got it", "still on it", what you do next). Read recent messages with list_conversation_messages if you need context. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); use a thread for side conversations or long-running work and keep \`also_in_channel\` off unless the whole chat should see it. If your turn was started by a reply in a thread, an interim post lands in that thread; if it was started by a top-level message, it goes to the main timeline. Your final reply is posted automatically. Pass \`top_level: true\` only when the whole chat must see a post made during a thread turn. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and you must never write card text yourself; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are in, mid-turn. Not needed for your actual reply: what you write at the end of your turn is posted automatically. Use it only when blocked on a person or to bring in another agent, never for progress notes. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); keep \`also_in_channel\` off unless the whole chat should see it. An interim post lands in the thread your turn started from, or the main timeline if it started from a top-level message; \`top_level: true\` overrides that. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1680,14 +1601,14 @@ export const tools = {
 				.max(20)
 				.optional()
 				.describe(
-					'Display names of conversation participants to @mention, as get_conversation lists them (for example "Strategist"). Resolved server-side to actor IDs and merged into `metadata.mentions`, so you do not have to copy a UUID. Names that match nobody, or more than one participant, are returned in `unresolved_mentions` and are not mentioned.',
+					'Participant names to @mention, as get_conversation lists them (e.g. "Strategist"). Resolved to actor IDs and merged into `metadata.mentions`. Names matching nobody, or more than one participant, come back in `unresolved_mentions` and are not mentioned.',
 				),
 			sub_chat_session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Talk to a sub-chat you started with create_sub_chat: the message goes in its thread and to its agent, which takes it while it runs or starts a follow-up if it has ended. `conversation_id` is the chat the sub-chat lives in. The response says how it got there (`delivered_to_session`: live, continued or not_delivered). Fails if the sub-chat is not attached to a message yet; it is once the reply that started it has been posted.',
+					'Talk to a sub-chat you started with create_sub_chat: the message goes in its thread and to its agent, which takes it while running or starts a follow-up if it has ended. `conversation_id` is the chat the sub-chat lives in. The response reports `delivered_to_session` (live, continued or not_delivered). Fails until the reply that started the sub-chat has been posted.',
 				),
 			thread_root_id: z
 				.number()
@@ -1695,7 +1616,7 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					"Reply inside the thread under this message of the chat instead of posting at the top level. The root must be a top-level message of this conversation; replying to a reply is not possible, so pass the thread's root. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.",
+					"Reply in the thread under this message instead of at the top level. Must be a top-level message of this conversation (pass the thread's root, not a reply). If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.",
 				),
 			also_in_channel: z
 				.boolean()
@@ -1707,18 +1628,18 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread; a turn started by a top-level message always posts to the main timeline. People start threads, you continue them. Ignored when thread_root_id or sub_chat_session_id is given.',
+					'Post in the main timeline even though your turn started from a thread message. Without it such a post goes into that thread. Ignored when thread_root_id or sub_chat_session_id is given.',
 				),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'After posting, hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has finished its reply, and return those replies. Ends early with settled false if an agent never starts or the wait runs out; read the chat later with list_conversation_messages. Only use this when you cannot go on without the answer.',
+					'Hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has replied, and return the replies. Ends early with settled false if an agent never starts or the wait runs out; read the chat later with list_conversation_messages. Use only when you cannot go on without the answer.',
 				),
 		}),
 	},
 	create_chat: {
-		description: `Start a top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. With one other actor and no subject this opens your direct message with them: every pair has exactly one, so asking again returns it instead of making a new chat. Set \`topical: true\` for a new topic that deserves its own room; with two or more others it is always a new chat. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Start a top-level chat with other agents and/or people, with you in it, separate from the chat you are in. With one other actor and no subject this opens your direct message with them (each pair has exactly one, so asking again returns it). \`topical: true\` makes a new room for a topic; with two or more others it is always a new chat. To hand a task to an agent from the current chat, use create_sub_chat instead (a thread under your message). Give \`participant_actor_ids\` (agents are woken by \`first_message\`; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. \`wait: true\` holds until the agents reply. \`subject_type\` and \`subject_id\` open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			title: z.string().min(1).max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -1734,20 +1655,20 @@ export const tools = {
 				.max(MESSAGE_MAX_LENGTH)
 				.optional()
 				.describe(
-					'What you open the chat with. Every agent in `participant_actor_ids` is @mentioned on it so they start. Leave it out to open an empty chat.',
+					'Opening message. Every agent in `participant_actor_ids` is @mentioned on it so they start. Omit to open an empty chat.',
 				),
 			subject_type: z
 				.enum(['object', 'loop'])
 				.optional()
 				.describe(
-					'With subject_id: tie the chat to an object (bet, task, insight) or a loop. Asking again returns the chat that already exists for it.',
+					'With subject_id: tie the chat to an object or a loop. Asking again returns the existing chat.',
 				),
 			subject_id: z.string().uuid().optional(),
 			topical: z
 				.boolean()
 				.optional()
 				.describe(
-					'With one other actor: open a new, separate chat for this topic instead of your direct message with them.',
+					'With one other actor: open a separate chat for this topic instead of your direct message.',
 				),
 			wait: z
 				.boolean()
@@ -1759,7 +1680,7 @@ export const tools = {
 	},
 	add_chat_participant: {
 		description:
-			'Bring an agent or a person into a chat you are in, so they see everything from now on and can be @mentioned. Use it when you need a teammate who is not in the room. Anyone in the workspace can be added. Adding someone who is already in does nothing, and someone who left comes back. Mentioning an agent with post_conversation_message also pulls it in, so you only need this to add someone without saying anything yet, or to add people. Read who is in the chat with get_conversation.',
+			'Bring an agent or person into a chat you are in, so they see everything from now on and can be @mentioned. Anyone in the workspace can be added. Adding someone already in does nothing; someone who left comes back. Mentioning an agent with post_conversation_message also pulls it in, so use this to add someone silently, or to add people.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1768,7 +1689,7 @@ export const tools = {
 	},
 	remove_chat_participant: {
 		description:
-			'Take an agent or a person out of a chat you are in. They stop seeing new messages and can no longer be woken by a mention, but what they already wrote stays. You can remove yourself, or anyone if you started the chat; otherwise it is refused. Use it to clear out an agent whose part is done. To stop an agent that is working right now, use stop_chat_agent. Read who is in the chat with get_conversation.',
+			'Take an agent or person out of a chat you are in. They stop seeing new messages and cannot be woken by a mention; what they wrote stays. You can remove yourself, or anyone if you started the chat; otherwise it is refused. To stop an agent that is working right now, use stop_chat_agent.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1777,7 +1698,7 @@ export const tools = {
 	},
 	get_chat_activity: {
 		description:
-			"See what the agents in a chat actually did: their tool calls, thinking, errors and results, turn by turn, not just the messages they posted. Give the chat's `conversation_id` and, to look at one agent, its `actor_id`; without it you get every agent that has run in the chat. Each agent entry says whether it has a live session (`status`: starting, running, waiting_for_input, paused or not_running) and carries the same trace get_session_activity returns for its latest run (use `limit_turns` to see more turns). For an agent you started with create_sub_chat, pass the sub-chat's `session_id` instead. This tool is read-only — to stop an agent that is working use stop_chat_agent, to talk to it use post_conversation_message.",
+			"See what the agents in a chat did: tool calls, thinking, errors and results, turn by turn. Give the chat's `conversation_id`, and an `actor_id` for one agent (otherwise every agent that has run in the chat is returned). Each agent entry has a live-session `status` (starting, running, waiting_for_input, paused or not_running) and the same trace get_session_activity returns for its latest run (`limit_turns` for more turns). For an agent started with create_sub_chat, pass the sub-chat's `session_id` instead. To stop a working agent use stop_chat_agent; to talk to it, post_conversation_message.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid().optional(),
@@ -1798,7 +1719,7 @@ export const tools = {
 	},
 	stop_chat_agent: {
 		description:
-			"Interrupt an agent that is running in a chat right now. The agent stops what it is doing; it stays in the chat and wakes again the next time someone @mentions it. Give the `conversation_id` and the agent's `actor_id` (see get_chat_activity or get_conversation for who is running). Use it when an agent is going the wrong way or has run too long. For a sub-chat from create_sub_chat, pass its `session_id` instead.",
+			"Interrupt an agent running in a chat. It stops what it is doing, stays in the chat and wakes again on the next @mention. Give the `conversation_id` and the agent's `actor_id` (get_chat_activity or get_conversation shows who is running). For a sub-chat from create_sub_chat, pass its `session_id` instead.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid().optional(),
@@ -1813,7 +1734,7 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events, and the trigger form shows it as Driver. To start whoever drives the item, put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it). For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. Otherwise target_actor_id is required and must be an agent. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
+			"Create an automation trigger that fires an agent on a schedule (cron) or on an event; the `config` param shows both shapes. To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events. To start whoever drives the item, put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it); otherwise target_actor_id is required and must be an agent. For a one-off, pass `run_at` instead of `type` and `config`: it runs once, then disables itself and shows as one-time in list_triggers. Never use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) comes from the target agent and workspace settings; sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
@@ -1825,14 +1746,14 @@ export const tools = {
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'For cron triggers: { "expression": "*/5 * * * *" }. For event triggers: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }. Leave out when you pass run_at.',
+					'Cron: { "expression": "*/5 * * * *" }. Event: { "entity_type": "object", "action": "created"|"updated"|"deleted"|"status_changed", "filter": { ... } }. Omit with run_at.',
 				),
 			run_at: z
 				.string()
 				.datetime({ offset: true })
 				.optional()
 				.describe(
-					'Run once at this time (ISO 8601, for example 2026-11-12T09:00:00Z), then disable the trigger. Must be in the future. Use it instead of type and config.',
+					'Run once at this ISO 8601 time (e.g. 2026-11-12T09:00:00Z), then disable. Must be in the future. Use instead of type and config.',
 				),
 			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z
