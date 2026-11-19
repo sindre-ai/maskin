@@ -220,7 +220,10 @@ describe('ChatRotation handoff result', () => {
 		rotation.claimHandoffResult(SESSION_ID, { text: note, isError: false })
 		await flush()
 		expect(host.closeForRotation).not.toHaveBeenCalled()
-		// and asks again after the next turn
+		// the handoff turn's own reading comes in as it does live, and starts nothing
+		await rotation.onTurn(SESSION_ID, reading())
+		expect(host.writeHandoffTurn).toHaveBeenCalledTimes(1)
+		// and it asks again after the next turn
 		await rotation.onTurn(SESSION_ID, reading())
 		expect(host.writeHandoffTurn).toHaveBeenCalledTimes(2)
 	})
