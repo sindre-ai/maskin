@@ -273,10 +273,17 @@ struct ConversationsStoreTests {
 		try await store.create(
 			title: "Plan", participantIDs: ["relay"], firstMessage: "see this", firstMessageMetadata: metadata)
 		#expect(await api.createdMetadata == [metadata])
-		// With no message there is nothing for the attachments to belong to.
+		// An attachment alone is a message: the body goes empty and the file still rides along.
 		try await store.create(
 			title: "Plan", participantIDs: ["relay"], firstMessage: " ", firstMessageMetadata: metadata)
+		#expect(await api.createdMetadata.last == .some(metadata))
+		#expect(await api.created.last?.2 == "")
+		// Without text or an attachment there is no message at all.
+		try await store.create(
+			title: "Plan", participantIDs: ["relay"], firstMessage: " ",
+			firstMessageMetadata: ChatSendMetadata(mentions: ["relay"]))
 		#expect(await api.createdMetadata.last == .some(nil))
+		#expect(await api.created.last?.2 == nil)
 	}
 
 	@Test("loadMore appends the next page without duplicates")

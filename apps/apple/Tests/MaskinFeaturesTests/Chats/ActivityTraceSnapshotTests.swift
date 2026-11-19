@@ -124,6 +124,22 @@ struct ActivityTraceSnapshotTests {
 		}
 	}
 
+	@Test("a question that carries a long draft shows the question, the cut text and the options together")
+	func decisionCardWithLongText() throws {
+		let draft = (1...14).map { "Line \($0) of the draft the agent wants you to read before it sends." }
+			.joined(separator: "\n")
+		let long = [
+			ChatQuestionItem(
+				index: 0, header: "Reply", question: "Send this to Maya?\n\n\(draft)", multiSelect: false,
+				options: [.init(label: "Send it", recommended: true), .init(label: "Hold")])
+		]
+		for dark in [false, true] {
+			try render(
+				QuestionOptionsView(questions: long, answers: nil, onSubmit: { _ in }, onDismiss: {}),
+				width: 375, dark: dark, name: "decision-long-text")
+		}
+	}
+
 	@Test("the card with its X renders at 375pt, in both themes and at the largest text size")
 	func decisionCardWithDismiss() throws {
 		for dark in [false, true] {

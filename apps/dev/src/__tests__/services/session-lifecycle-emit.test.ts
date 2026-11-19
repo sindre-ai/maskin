@@ -8,6 +8,7 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 import { LLM_ROUTE_MASKIN_PLAN, LLM_ROUTE_OAUTH } from '../../lib/llm-routing'
+import { forgetSessionContextSize, recordSessionContextSize } from '../../lib/session-context-size'
 import {
 	type EmitCompletionUsageTotals,
 	type SettleOutcome,
@@ -287,5 +288,42 @@ describe('emitCompletion — maskin_plan_session_completed dual-emit', () => {
 			'ws-1',
 			expect.any(Object),
 		)
+	})
+})
+
+describe('emitCompletion: context size and end cause', () => {
+	afterEach(() => forgetSessionContextSize('sess-1'))
+
+	const sentProps = () => capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+
+	it('carries the window numbers and the end cause on the existing stop reason', async () => {
+		recordSessionContextSize('sess-1', {
+			lastTurnWindowTokens: 161_000,
+			contextWindowTokens: 1_000_000,
+			endCause: 'compaction_failed',
+		})
+		await emitCompletion(
+			baseSession(),
+			baseOutcome({ kind: 'fail', classification: 'agent_failed', reason: 'exit code 1' }),
+			ZERO_TOTALS,
+			END,
+		)
+		expect(sentProps()).toMatchObject({
+			stop_reason: 'compaction_failed',
+			last_turn_window_tokens: 161_000,
+			context_window_tokens: 1_000_000,
+		})
+	})
+
+	it('keeps the settle reason and leaves the numbers off when nothing was read', async () => {
+		await emitCompletion(
+			baseSession(),
+			baseOutcome({ kind: 'fail', classification: 'agent_failed', reason: 'exit code 1' }),
+			ZERO_TOTALS,
+			END,
+		)
+		expect(sentProps().stop_reason).toBe('exit code 1')
+		expect(sentProps().last_turn_window_tokens).toBeUndefined()
+		expect(sentProps().context_window_tokens).toBeUndefined()
 	})
 })

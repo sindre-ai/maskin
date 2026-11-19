@@ -17,6 +17,9 @@ struct QuestionOptionsView: View {
 	/// Closes the card without answering (the X).
 	var onDismiss: (() -> Void)?
 
+	/// A question's text (a whole draft, say) shows this many lines; the rest opens with Show all.
+	static let detailLines = 6
+
 	@State private var picked: [Int: [String]]
 
 	init(
@@ -120,14 +123,16 @@ struct QuestionOptionsView: View {
 
 	private func group(_ question: ChatQuestionItem) -> some View {
 		let chosen = picked[question.index] ?? []
+		let text = QuestionTextSplit(question.question)
 		return VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 				Text(question.header.uppercased()).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
-				Text(question.question).maskinText(.headline).foregroundStyle(MaskinColor.ink)
+				Text(text.lead).maskinText(.headline).foregroundStyle(MaskinColor.ink)
 					.fixedSize(horizontal: false, vertical: true)
 			}
 			.accessibilityElement(children: .combine)
 			.accessibilityAddTraits(.isHeader)
+			if let detail = text.detail { CutText(text: detail, lines: Self.detailLines) }
 			VStack(spacing: MaskinSpace.s4) {
 				ForEach(question.options, id: \.self) { option in
 					let isChosen = chosen.contains(option.label)
@@ -235,5 +240,64 @@ private struct QuestionOptionStyle: ButtonStyle {
 
 	private var border: Color {
 		chosen ? .clear : (recommended ? MaskinColor.ruleStrong : MaskinSurface.line)
+	}
+}
+
+/// Running text cut after `lines` lines, faded into the card, with Show all / Show less when there is
+/// more. Text that fits shows in full with no button. The full text is measured by a hidden copy, so
+/// no character count stands in for the layout.
+private struct CutText: View {
+	let text: String
+	let lines: Int
+	@State private var expanded = false
+	@State private var fullHeight: CGFloat = 0
+	@State private var cutHeight: CGFloat = 0
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+	/// `cutHeight` only follows the text while it is cut, so it keeps the cut height once opened.
+	private var isCut: Bool { fullHeight > cutHeight + 1 }
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text(text).maskinText(.subhead).foregroundStyle(MaskinColor.ink)
+				.lineLimit(expanded ? nil : lines)
+				.multilineTextAlignment(.leading)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { if !expanded { cutHeight = $0 } }
+				.background(alignment: .top) {
+					Text(text).maskinText(.subhead).fixedSize(horizontal: false, vertical: true)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.hidden()
+						.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { fullHeight = $0 }
+				}
+				.overlay(alignment: .bottom) {
+					if isCut && !expanded {
+						LinearGradient(
+							colors: [MaskinSurface.card.opacity(0), MaskinSurface.card], startPoint: .top, endPoint: .bottom
+						)
+						.frame(height: MaskinSpace.s11)
+						.allowsHitTesting(false)
+					}
+				}
+			if isCut {
+				Button {
+					MaskinHaptics.play(.light)
+					if reduceMotion { expanded.toggle() } else { withAnimation(MaskinMotion.standard) { expanded.toggle() } }
+				} label: {
+					HStack(spacing: MaskinSpace.s3) {
+						Text(expanded ? "Show less" : "Show all")
+						Image(systemName: "chevron.down").maskinSymbol(MaskinFontSize.t12, weight: .semibold)
+							.rotationEffect(.degrees(expanded ? 180 : 0))
+					}
+					.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink3)
+					.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.maskinPressed)
+				.accessibilityValue(expanded ? "Expanded" : "Collapsed")
+			}
+		}
+		.accessibilityElement(children: .contain)
+		.accessibilityLabel("Text to review")
 	}
 }

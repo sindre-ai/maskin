@@ -250,6 +250,43 @@ private struct AdaptiveTabs: View {
 	@State private var showWorkspaces = false
 
 	var body: some View {
+		shell
+			.sheet(isPresented: $showWorkspaces) {
+				WorkspaceSwitcher(environment: environment)
+					.presentationDetents([.medium, .large])
+					.environment(\.shellShowsAvatar, false)
+			}
+	}
+
+	@ViewBuilder private var shell: some View {
+		#if os(iOS)
+			if ShellIdiom.hasRail {
+				// The iPad: the rail picks the tab; the tab view only holds each tab's state, with its own bar hidden.
+				HStack(spacing: 0) {
+					ShellRail(
+						environment: environment, runtime: runtime, badges: badges, switchWorkspace: { showWorkspaces = true })
+					tabs
+						.tabViewStyle(.tabBarOnly)
+						.toolbarVisibility(.hidden, for: .tabBar)
+				}
+			} else {
+				standardTabs
+			}
+		#else
+			standardTabs
+		#endif
+	}
+
+	private var standardTabs: some View {
+		tabs
+			.modifier(ShellTabStyle(environment: environment, runtime: runtime, showWorkspaces: $showWorkspaces))
+			.modifier(TeamFoldingTabBar(runtime: runtime))
+			#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
+				.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
+			#endif
+	}
+
+	private var tabs: some View {
 		TabView(selection: $runtime.selectedTab) {
 			ForEach(ShellTab.primary) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
@@ -268,22 +305,12 @@ private struct AdaptiveTabs: View {
 				}
 			}
 		}
-		.modifier(ShellTabStyle(environment: environment, runtime: runtime, showWorkspaces: $showWorkspaces))
-		.sheet(isPresented: $showWorkspaces) {
-			WorkspaceSwitcher(environment: environment)
-				.presentationDetents([.medium, .large])
-				.environment(\.shellShowsAvatar, false)
-		}
-		.modifier(TeamFoldingTabBar(runtime: runtime))
-		#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
-			.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
-		#endif
 	}
 }
 
-/// A notice at the top of the app. iPhone and Mac inset it above the content. The iPad's tab bar is
-/// at the top of the screen, so an inset would cover the bar (and the avatar and "+" beside it):
-/// there the notice sits above the tab view and pushes the bar down, with a little room below it.
+/// A notice at the top of the app. iPhone and Mac inset it above the content. The iPad's bar (the rail,
+/// or the top tab bar on iOS 17) reaches the top of the screen, so an inset would cover it: there the
+/// notice sits across the full width above the app and pushes it down, with a little room below it.
 private struct TopBanner<Banner: View>: ViewModifier {
 	let isVisible: Bool
 	let banner: Banner
@@ -310,29 +337,15 @@ extension View {
 	}
 }
 
-/// The tab view's style. The iPad gets the bar of destinations alone, with no sidebar behind it, so
-/// there is one navigation (the avatar on each screen holds workspace and profile). iPhone and Mac
-/// keep the adaptive style: a bottom bar on the iPhone, a sidebar on the Mac.
+/// The tab view's style: a bottom bar on the iPhone, a sidebar on the Mac. (The iPad has the rail
+/// and never gets here.)
 @available(iOS 18, macOS 15, *)
 private struct ShellTabStyle: ViewModifier {
 	let environment: AppEnvironment
 	let runtime: AppRuntime
 	@Binding var showWorkspaces: Bool
 
-	@ViewBuilder
 	func body(content: Content) -> some View {
-		#if os(iOS)
-			if ShellIdiom.isPad {
-				content.tabViewStyle(.tabBarOnly)
-			} else {
-				sidebarAdaptable(content)
-			}
-		#else
-			sidebarAdaptable(content)
-		#endif
-	}
-
-	private func sidebarAdaptable(_ content: Content) -> some View {
 		content
 			.tabViewStyle(.sidebarAdaptable)
 			// The sidebar opens with the workspace and a Switch button (4-iPad.md).
@@ -474,7 +487,7 @@ extension ShellTab {
 	/// The badge on the tab: open decisions on For you (a dot when only updates are unread), unread
 	/// conversations on Team. Nothing when there is nothing.
 	@MainActor
-	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
+	func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
 		switch self {
 		case .forYou:
 			let store = runtime.forYou.store

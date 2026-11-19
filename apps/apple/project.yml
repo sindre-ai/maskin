@@ -21,7 +21,7 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "1.2"
+    MARKETING_VERSION: "1.3"
     CURRENT_PROJECT_VERSION: "1"
 packages:
   MaskinKit:
@@ -100,7 +100,7 @@ targets:
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
         NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages and talk with your agents in a live call.
-        NSCameraUsageDescription: Maskin uses the camera so you can take a photo to attach to a message.
+        NSCameraUsageDescription: Maskin uses the camera so you can take a photo or scan a document to attach to a message.
         # App lock (Settings → Security): Face ID unlocks Maskin instead of the device passcode.
         NSFaceIDUsageDescription: Maskin uses Face ID to unlock the app when you turn on app lock.
         UILaunchScreen:
@@ -132,6 +132,15 @@ targets:
           - io.maskin.app.refresh
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+        # The menu a long press on the icon opens (HomeScreenQuickAction; QuickActionSceneDelegate
+        # handles the tap). The type strings must match HomeScreenQuickAction's raw values.
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: io.maskin.app.quick-action.new-message
+            UIApplicationShortcutItemTitle: New message
+            UIApplicationShortcutItemIconType: UIApplicationShortcutIconTypeCompose
+          - UIApplicationShortcutItemType: io.maskin.app.quick-action.for-you
+            UIApplicationShortcutItemTitle: For you
+            UIApplicationShortcutItemIconSymbolName: text.alignleft
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -611,7 +620,7 @@ targets:
           - Fonts/JetBrainsMono.ttf
         # maskin://<workspaceId>/objects/<id>: what the Top Shelf items open.
         CFBundleURLTypes:
-          - CFBundleURLName: io.maskin.app.tv
+          - CFBundleURLName: io.maskin.app
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - maskin
@@ -621,7 +630,7 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app
         CODE_SIGN_ENTITLEMENTS: Apps/MaskinTV/MaskinTV.entitlements
         PRODUCT_NAME: Maskin
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -664,7 +673,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv.topshelf
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.topshelf
         PRODUCT_NAME: MaskinTVTopShelf
         # TVServices hands back non-Sendable content types, which Swift 6 mode rejects; this target
         # is a thin adapter over the system API, so it builds in Swift 5 mode.
