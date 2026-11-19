@@ -5,6 +5,7 @@ name: Apple must-keep UI tests
 # so the UI tests get compiled and run without anyone needing a Mac.
 #
 # Only runs when the tests, the demo server or the script change (or by hand). Not a required check.
+# By hand you can name one test (for example MustKeepMoreTests/testMK15b_...) to run just that row.
 #
 # Output: the step summary (pass or fail per test) and the `must-keep` artifact (xcodebuild.log, and
 # the screenshot + element tree that a failing step leaves in dump/).
@@ -17,6 +18,11 @@ on:
       - apps/apple/scripts/run-must-keep.sh
       - .github/workflows/apple-must-keep.yml
   workflow_dispatch:
+    inputs:
+      only:
+        description: "One test as Class/testName (empty runs every row)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -95,10 +101,11 @@ jobs:
           DEST: id=${{ steps.sim.outputs.udid }}
           DERIVED: ${{ github.workspace }}/maskin-must-keep-dd
           MUSTKEEP_DUMP_DIR: ${{ github.workspace }}/must-keep-out/dump
+          ONLY: ${{ inputs.only }}
         run: |
           set -euo pipefail
           # bash, not ./: the script may reach the repo without the executable bit.
-          bash scripts/run-must-keep.sh 2>&1 | tee "$OUT/xcodebuild.log"
+          bash scripts/run-must-keep.sh ${ONLY:+"$ONLY"} 2>&1 | tee "$OUT/xcodebuild.log"
 
       - name: Summary
         if: always()
