@@ -30,6 +30,7 @@ function session(overrides: Record<string, unknown> = {}) {
 function reading(overrides: Partial<TurnSizeReading> = {}): TurnSizeReading {
 	return {
 		lastTurnWindowTokens: 160_000,
+		sizeSource: 'assistant_usage',
 		contextWindowTokens: 1_000_000,
 		compactionsInTurn: 0,
 		isError: false,

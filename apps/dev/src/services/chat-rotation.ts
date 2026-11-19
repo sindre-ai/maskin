@@ -180,6 +180,7 @@ export class ChatRotation {
 				sessionId: session.id,
 				reason,
 				sizeBucket: state.sizeBucket,
+				sizeSource: reading.sizeSource,
 			})
 		} catch (err) {
 			logger.warn('Chat rotation check failed', { sessionId, error: String(err) })

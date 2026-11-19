@@ -67,12 +67,45 @@ describe('TurnSizeObserver', () => {
 			},
 		})}\n`
 		const readings = observer.feed(zero + zero + resultLine())
-		expect(readings[0]?.lastTurnWindowTokens).toBeNull()
+		expect(readings[0]?.sizeSource).toBe('log_estimate')
 		// A zero line never wipes a real reading from an earlier call of the same turn.
 		const mixed = new TurnSizeObserver().feed(
 			assistantLine({ input: 10_000, read: 50_000 }) + zero + resultLine(),
 		)
 		expect(mixed[0]?.lastTurnWindowTokens).toBe(60_000)
+		expect(mixed[0]?.sizeSource).toBe('assistant_usage')
+	})
+
+	it('counts the log at 4 characters a token when the usage is zero', () => {
+		const zeroUsage = {
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_creation_input_tokens: null,
+			cache_read_input_tokens: null,
+		}
+		const big = `${JSON.stringify({
+			type: 'assistant',
+			parent_tool_use_id: null,
+			message: { usage: zeroUsage, content: [{ type: 'text', text: 'x'.repeat(4_000) }] },
+		})}\n`
+		const sub = `${JSON.stringify({
+			type: 'assistant',
+			parent_tool_use_id: 'toolu_1',
+			message: { usage: zeroUsage, content: [{ type: 'text', text: 'x'.repeat(40_000) }] },
+		})}\n`
+		const [reading] = new TurnSizeObserver().feed(big + big + sub + resultLine())
+		expect(reading?.sizeSource).toBe('log_estimate')
+		// Two top-level lines of about 4,000 characters each; the sub-agent line is not counted.
+		expect(reading?.lastTurnWindowTokens).toBeGreaterThanOrEqual(2_000)
+		expect(reading?.lastTurnWindowTokens).toBeLessThan(2_300)
+	})
+
+	it('starts counting again after a compaction', () => {
+		const boundary = `${JSON.stringify({ type: 'system', subtype: 'compact_boundary' })}\n`
+		const line = `${JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 0 } } })}\n`
+		const [reading] = new TurnSizeObserver().feed(line + boundary + resultLine())
+		expect(reading?.lastTurnWindowTokens).toBeNull()
+		expect(reading?.sizeSource).toBeNull()
 	})
 
 	it('reads the failure codes off the result line', () => {
@@ -115,7 +148,8 @@ describe('TurnSizeObserver', () => {
 		const readings = observer.feed(
 			assistantLine({ input: 50_000 }) + resultLine() + resultLine({ result: 'again' }),
 		)
-		expect(readings.map((r) => r.lastTurnWindowTokens)).toEqual([50_000, null])
+		expect(readings.map((r) => r.lastTurnWindowTokens)).toEqual([50_000, expect.any(Number)])
+		expect(readings.map((r) => r.sizeSource)).toEqual(['assistant_usage', 'log_estimate'])
 	})
 
 	it('takes the largest window of the models the session reports', () => {

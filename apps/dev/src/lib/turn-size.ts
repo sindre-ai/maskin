@@ -9,10 +9,13 @@ export interface TurnSizeReading {
 	/**
 	 * Input + cache creation + cache read tokens of the LAST top-level model call of the turn:
 	 * the size of the window the next call starts from. Not the turn's `result` usage, which adds
-	 * up every model call of the turn and reads far too big for a turn with tools. Null when the
-	 * turn showed no assistant usage.
+	 * up every model call of the turn and reads far too big for a turn with tools. When the
+	 * assistant lines carry no usage (DeepSeek writes zeros), a count from the log stands in: see
+	 * `sizeSource`. Null when neither gives a number.
 	 */
 	lastTurnWindowTokens: number | null
+	/** Where `lastTurnWindowTokens` came from, null when it is null. */
+	sizeSource: SizeSource | null
 	/** The window the CLI reports for the session's model (`modelUsage.*.contextWindow`), largest seen. */
 	contextWindowTokens: number | null
 	/** How many times the CLI compacted the conversation since the previous turn closed. */
@@ -27,7 +30,16 @@ export interface TurnSizeReading {
 	terminalReason: string | null
 }
 
+/**
+ * `assistant_usage`: the usage on the last top-level assistant line. `log_estimate`: characters of
+ * the session's own lines since the last compaction, at 4 per token. It reads low (no system
+ * prompt or tool list) and starts from zero when the backend restarts, so it only stands in when
+ * the assistant lines carry no usage.
+ */
+export type SizeSource = 'assistant_usage' | 'log_estimate'
+
 const MAX_BUFFERED_BYTES = 256 * 1024
+const CHARS_PER_TOKEN = 4
 
 const finiteOrNull = (v: unknown): number | null => {
 	if (typeof v !== 'number' && typeof v !== 'string') return null
@@ -48,6 +60,7 @@ const finiteOrNull = (v: unknown): number | null => {
 export class TurnSizeObserver {
 	private carried = ''
 	private lastCallTokens: number | null = null
+	private logChars = 0
 	private compactions = 0
 
 	/** Compactions seen since the last `result`: for a session with no turns, the whole run so far. */
@@ -72,8 +85,16 @@ export class TurnSizeObserver {
 		if (line.includes('"type":"result"')) {
 			const result = parseResultLine(line)
 			if (!result) return null
+			const estimate = Math.ceil(this.logChars / CHARS_PER_TOKEN)
+			const size =
+				this.lastCallTokens !== null
+					? { tokens: this.lastCallTokens, source: 'assistant_usage' as const }
+					: estimate > 0
+						? { tokens: estimate, source: 'log_estimate' as const }
+						: null
 			const reading: TurnSizeReading = {
-				lastTurnWindowTokens: this.lastCallTokens,
+				lastTurnWindowTokens: size?.tokens ?? null,
+				sizeSource: size?.source ?? null,
 				contextWindowTokens: readContextWindow(result.raw),
 				compactionsInTurn: this.compactions,
 				isError: result.isError,
@@ -89,9 +110,19 @@ export class TurnSizeObserver {
 			this.compactions += 1
 			// The window just shrank: a figure from before the compaction is stale.
 			this.lastCallTokens = null
+			this.logChars = 0
 			return null
 		}
-		if (!line.includes('"type":"assistant"')) return null
+		const isAssistant = line.includes('"type":"assistant"')
+		// What the model sees: its own lines and the tool results written back as user lines.
+		// A sub-agent's lines (a string parent id) are not in this window.
+		if (
+			(isAssistant || line.includes('"type":"user"')) &&
+			!line.includes('"parent_tool_use_id":"')
+		) {
+			this.logChars += line.length
+		}
+		if (!isAssistant) return null
 		let obj: Record<string, unknown>
 		try {
 			obj = JSON.parse(line)
