@@ -560,8 +560,7 @@ public final class AppRuntime {
 			openFile(id)
 		case .notifications:
 			// The old inbox link: its replacement is the For You tab.
-			presentation = nil
-			selectedTab = .forYou
+			openForYou()
 		case .agents:
 			presentation = .agents
 		case .agent(_, let id):
@@ -610,6 +609,21 @@ public final class AppRuntime {
 	}
 
 	public func openAgent(_ id: String) { presentedAgentId = id }
+
+	/// Selects the For You tab, closing anything open over it.
+	public func openForYou() {
+		presentation = nil
+		selectedTab = .forYou
+	}
+
+	/// A tap on the home screen icon's menu. New message is the new-conversation sheet the ⌘N
+	/// command opens; For you is the For You tab. Both act on the workspace that is open.
+	public func perform(_ action: HomeScreenQuickAction) {
+		switch action {
+		case .newMessage: requestNewConversation()
+		case .forYou: openForYou()
+		}
+	}
 
 	/// Selects the Chats tab and asks for the thread.
 	public func openChat(_ id: String) {
