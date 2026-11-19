@@ -1,7 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { objects, triggers } from '@maskin/db/schema'
-import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
+import {
+	configSchemaForType,
+	createTriggerSchema,
+	itemDriverTargetError,
+	updateTriggerSchema,
+	usesItemDriverTarget,
+} from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
 import { CLIENT_SOURCE_HEADER, resolveCreatedVia } from '../lib/analytics/knowledge-events'
@@ -59,6 +65,12 @@ async function findModelRouteKeyInConfig(c: {
 	const config = raw?.config
 	if (typeof config !== 'object' || config === null) return undefined
 	return MODEL_ROUTE_CONFIG_KEYS.find((key) => key in config)
+}
+
+// Same reason for the item's driver: a cron or reminder config that sends
+// `target` would otherwise have it stripped and be saved as if it never asked.
+async function readRawConfig(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
+	return ((await c.req.json()) as { config?: unknown } | null)?.config
 }
 
 function modelRouteConfigError(key: string) {
@@ -190,9 +202,24 @@ app.openapi(createTriggerRoute, async (c) => {
 		}
 	}
 
+	const itemDriverError = itemDriverTargetError(body.type, await readRawConfig(c))
+	if (itemDriverError) return c.json(createApiError('VALIDATION_ERROR', itemDriverError), 400)
+	// A trigger that starts the item's driver has no fixed agent; the column still
+	// needs an actor, so it keeps the caller as a placeholder the runner ignores.
+	const targetActorId = usesItemDriverTarget(body.config) ? actorId : body.target_actor_id
+	if (!targetActorId) {
+		return c.json(
+			createApiError(
+				'VALIDATION_ERROR',
+				"target_actor_id is required unless config.target is 'item_driver'",
+			),
+			400,
+		)
+	}
+
 	// The trigger starts its target agent on every fire, so the agent has to be a
 	// member of this workspace.
-	await assertInWorkspace(db, workspaceId, { actors: [body.target_actor_id] })
+	await assertInWorkspace(db, workspaceId, { actors: [targetActorId] })
 
 	// A run an agent started for itself may leave only a few new triggers waiting.
 	const { createdFromStartReason } =
@@ -214,7 +241,7 @@ app.openapi(createTriggerRoute, async (c) => {
 				type: body.type,
 				config: body.config,
 				actionPrompt: body.action_prompt,
-				targetActorId: body.target_actor_id,
+				targetActorId,
 				enabled: body.enabled,
 				createdBy: actorId,
 			})
@@ -497,12 +524,30 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	// Checked against the trigger's own workspace, which is where it will fire.
 	await assertInWorkspace(db, trigger.workspaceId, { actors: [body.target_actor_id] })
 
+	// Same rules as create: the item's driver is for event triggers on object events,
+	// and a trigger moved off it has to name the agent to start.
+	const itemDriverError = itemDriverTargetError(effectiveType, await readRawConfig(c))
+	if (itemDriverError) return c.json(createApiError('VALIDATION_ERROR', itemDriverError), 400)
+	if (
+		body.config &&
+		!usesItemDriverTarget(body.config) &&
+		usesItemDriverTarget(trigger.config) &&
+		!body.target_actor_id
+	) {
+		return c.json(
+			createApiError('VALIDATION_ERROR', "target_actor_id is required when leaving 'item_driver'"),
+			400,
+		)
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.type) updateData.type = body.type
 	if (body.config) updateData.config = body.config
 	if (body.action_prompt) updateData.actionPrompt = body.action_prompt
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
+	// On the item's driver the column is only a placeholder (see create).
+	if (body.config && usesItemDriverTarget(body.config)) updateData.targetActorId = actorId
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
 
 	// PR D — Slack auto-resume. When the resume UX flips a trigger back on it

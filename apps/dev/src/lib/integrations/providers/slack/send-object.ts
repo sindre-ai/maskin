@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { findCurrentApproval, withDeliveryState } from '../../../object-delivery'
 import { buildObjectPreview } from '../../../object-preview'
 import { type SendClosure, recordSendOutcome } from '../../../send-closure'
+import { recordAutoSent } from '../../../send-gate'
 
 export const SLACK_MESSAGE_KIND = 'slack_message'
 
@@ -28,7 +29,13 @@ export class SlackSendRefusal extends Error {
  */
 export async function loadApprovedSlackMessage(
 	db: Database,
-	params: { workspaceId: string; objectId: string; requireApproval?: boolean },
+	params: {
+		workspaceId: string
+		/** The agent sending: the `auto_sent` record names it. */
+		actorId: string
+		objectId: string
+		requireApproval?: boolean
+	},
 ) {
 	const [object] = await db
 		.select()
@@ -71,6 +78,16 @@ export async function loadApprovedSlackMessage(
 	const channel = preview.details.find((d) => d.label === 'Channel')?.value.trim()
 	if (!channel) {
 		throw new SlackSendRefusal('The draft has no channel. Nothing was posted.')
+	}
+	// Released on Always allow with no approval: log it on the draft.
+	if (!approval) {
+		await recordAutoSent(db, {
+			workspaceId: params.workspaceId,
+			agentId: params.actorId,
+			object,
+			kind: SLACK_MESSAGE_KIND,
+			contentHash: preview.content_hash,
+		})
 	}
 	return { object, preview, approval, channel }
 }

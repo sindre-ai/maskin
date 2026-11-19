@@ -13,7 +13,12 @@ import {
 	workspaceSuppressions,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
+import {
+	SAFE_METADATA_FIELD_NAME_RE,
+	readChanges,
+	reversePatch,
+	usesItemDriverTarget,
+} from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { isActorHumanPaused, isHumanPaused } from '../lib/agent-pause'
@@ -34,7 +39,6 @@ import {
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
-import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import {
 	type PrecheckResult,
 	decidePrecheck,
@@ -45,6 +49,7 @@ import {
 	CredentialResolutionTimeoutError,
 	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
+	SubscriptionStillLimitedError,
 	TrialNotStartedError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -607,7 +612,8 @@ export class TriggerRunner {
 		if (
 			err instanceof LlmCredentialsUnavailableError &&
 			!err.transient &&
-			!(err instanceof CredentialResolutionTimeoutError)
+			!(err instanceof CredentialResolutionTimeoutError) &&
+			!(err instanceof SubscriptionStillLimitedError)
 		) {
 			await this.suppressWorkspace(
 				workspaceId,
@@ -1090,17 +1096,45 @@ export class TriggerRunner {
 				continue
 			}
 
+			// A trigger set to the item's driver starts whoever drives the item at this
+			// moment, read from the same row the driver condition reads. No driver (or a
+			// person driving it) means nobody to wake: log it and fall back to no one.
+			let targetActorId = trigger.targetActorId
+			if (usesItemDriverTarget(config)) {
+				const data = await getEventData()
+				const root: Record<string, unknown> = data ? await buildFilterRoot(data) : {}
+				const driver = await this.resolveItemDriver(root.driver)
+				if ('skipReason' in driver) {
+					logger.info(`Trigger '${trigger.name}' skipped (${driver.skipReason})`)
+					await recordEvent(this.db, {
+						workspaceId: event.workspace_id,
+						actorId: trigger.targetActorId,
+						action: 'trigger_skipped',
+						entityType: 'trigger',
+						entityId: trigger.id,
+						data: {
+							trigger_name: trigger.name,
+							reason: driver.skipReason,
+							source_event_id: event.event_id,
+							entity_id: event.entity_id,
+						},
+					})
+					continue
+				}
+				targetActorId = driver.actorId
+			}
+
 			// Log trigger fired event
 			await recordEvent(this.db, {
 				workspaceId: event.workspace_id,
-				actorId: trigger.targetActorId,
+				actorId: targetActorId,
 				action: 'trigger_fired',
 				entityType: 'trigger',
 				entityId: trigger.id,
 				data: {
 					trigger_name: trigger.name,
 					prompt: trigger.actionPrompt,
-					target_actor_id: trigger.targetActorId,
+					target_actor_id: targetActorId,
 					source_event: event,
 				},
 			})
@@ -1109,7 +1143,7 @@ export class TriggerRunner {
 			const initiatedFrom = await loadInitiatedFromObject(this.db, event.entity_id)
 			startSession({
 				workspaceId: event.workspace_id,
-				actorId: trigger.targetActorId,
+				actorId: targetActorId,
 				callerKind: 'trigger',
 				actionPrompt: prompt,
 				triggerId: trigger.id,
@@ -1167,6 +1201,21 @@ export class TriggerRunner {
 					),
 				)
 		}
+	}
+
+	/** The agent to start for a trigger set to the item's driver, or why there is none. */
+	private async resolveItemDriver(
+		driver: unknown,
+	): Promise<{ actorId: string } | { skipReason: 'item_has_no_driver' | 'item_driver_not_agent' }> {
+		if (typeof driver !== 'string' || !UUID_RE.test(driver)) {
+			return { skipReason: 'item_has_no_driver' }
+		}
+		const [actor] = await this.db
+			.select({ type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, driver))
+			.limit(1)
+		return actor?.type === 'agent' ? { actorId: driver } : { skipReason: 'item_driver_not_agent' }
 	}
 
 	private async handleTriggerChange(event: PgEvent) {
@@ -1397,9 +1446,9 @@ export class TriggerRunner {
 	}
 
 	/**
-	 * The heartbeat pre-check, record-only (bet "Agents take the lead", sweep task, item 4). Behind
-	 * the next-step-sweep flag. Writes what it found as a heartbeat_precheck event on the trigger and
-	 * as driver_woken (source heartbeat, outcome skipped_nothing_due when it would have skipped).
+	 * The heartbeat pre-check, record-only (bet "Agents take the lead", sweep task, item 4). Writes
+	 * what it found as a heartbeat_precheck event on the trigger and as driver_woken (source
+	 * heartbeat, outcome skipped_nothing_due when it would have skipped).
 	 * It never stops a run: enforcing it is a separate step that needs the owners' agreement.
 	 */
 	private async recordHeartbeatPrecheck(
@@ -1407,7 +1456,6 @@ export class TriggerRunner {
 		tick: Date,
 	): Promise<PrecheckResult | null> {
 		if (!isDailyHeartbeat(trigger)) return null
-		if (!isFlagEnabledForWorkspace(trigger.workspaceId, FLAGS.NEXT_STEP_SWEEP)) return null
 		try {
 			const result = decidePrecheck(await readPrecheckFacts(this.db, trigger, tick))
 			logger.info(

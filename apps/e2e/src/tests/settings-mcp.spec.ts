@@ -4,6 +4,9 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const APPS = ['Claude Code', 'Cursor', 'VS Code', 'Claude Desktop', 'Other'] as const
 
+// The Claude tab carries a status badge: "Sign in" until a connection exists, then "Connected".
+const CLAUDE_TAB = /^Claude\s*(Sign in|Connected)$/i
+
 async function gotoMcp(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}/settings/mcp`)
 	// `load` instead of `networkidle` — the app holds an SSE connection to
@@ -14,7 +17,7 @@ async function gotoMcp(page: Page, workspaceId: string) {
 
 test.describe('Settings — MCP — one tab per app', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`lists the five apps, opens on Claude Code, and never overflows at ${viewport.label}`, async ({
+		test(`lists the Claude tab and the five apps, opens on Claude, and never overflows at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -22,12 +25,11 @@ test.describe('Settings — MCP — one tab per app', () => {
 			await gotoMcp(page, account.workspaceId)
 
 			const tabs = page.getByRole('tab')
-			await expect(tabs).toHaveText([...APPS])
-			await expect(page.getByRole('tab', { name: 'Claude Code' })).toHaveAttribute(
+			await expect(tabs).toHaveText([CLAUDE_TAB, ...APPS])
+			await expect(page.getByRole('tab', { name: CLAUDE_TAB })).toHaveAttribute(
 				'aria-selected',
 				'true',
 			)
-			await expect(page.getByRole('tab', { name: 'Claude', exact: true })).toHaveCount(0)
 
 			for (const app of APPS) {
 				await page.getByRole('tab', { name: app }).click()
@@ -127,6 +129,7 @@ test.describe('Settings — MCP — one tab per app', () => {
 		await context.grantPermissions(['clipboard-read', 'clipboard-write'])
 		await gotoMcp(page, account.workspaceId)
 
+		await page.getByRole('tab', { name: 'Claude Code' }).click()
 		await page.getByRole('button', { name: 'Copy' }).click()
 		await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
 		await expect(page.getByText('Copied with your API key')).toBeVisible()

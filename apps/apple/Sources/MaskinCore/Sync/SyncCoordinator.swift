@@ -37,6 +37,7 @@ public final class SyncCoordinator {
 	@ObservationIgnored private let outboxDidBecomeActive: (@MainActor () -> Void)?
 	@ObservationIgnored private let outboxDrain: (@MainActor () async -> Void)?
 	@ObservationIgnored private let outboxReleaseHolds: (@MainActor () -> Void)?
+	@ObservationIgnored private let foregroundChanged: (@MainActor (Bool) -> Void)?
 	@ObservationIgnored private let tuning: Tuning
 	@ObservationIgnored private let now: @Sendable () -> Date
 	@ObservationIgnored private var backgroundedAt: Date?
@@ -49,6 +50,7 @@ public final class SyncCoordinator {
 		outboxDidBecomeActive: (@MainActor () -> Void)? = nil,
 		outboxDrain: (@MainActor () async -> Void)? = nil,
 		outboxReleaseHolds: (@MainActor () -> Void)? = nil,
+		foregroundChanged: (@MainActor (Bool) -> Void)? = nil,
 		tuning: Tuning = Tuning(),
 		now: @escaping @Sendable () -> Date = { Date() }
 	) {
@@ -57,6 +59,7 @@ public final class SyncCoordinator {
 		self.outboxDidBecomeActive = outboxDidBecomeActive
 		self.outboxDrain = outboxDrain
 		self.outboxReleaseHolds = outboxReleaseHolds
+		self.foregroundChanged = foregroundChanged
 		self.tuning = tuning
 		self.now = now
 		self.isOnline = network.isOnline
@@ -76,9 +79,11 @@ public final class SyncCoordinator {
 			release = { outbox.releaseHolds() }
 		}
 		let refresh: @MainActor () -> Void = { [weak events] in events?.requestRefresh() }
+		let foreground: @MainActor (Bool) -> Void = { [weak events] in events?.setForeground($0) }
 		self.init(
 			network: network, refresh: refresh, outboxDidBecomeActive: onActive,
-			outboxDrain: drain, outboxReleaseHolds: release, tuning: tuning)
+			outboxDrain: drain, outboxReleaseHolds: release, foregroundChanged: foreground,
+			tuning: tuning)
 	}
 
 	deinit { observer?.cancel() }
@@ -113,11 +118,13 @@ public final class SyncCoordinator {
 
 	public func appDidEnterBackground() {
 		backgroundedAt = now()
+		foregroundChanged?(false)
 		outboxReleaseHolds?()
 	}
 
 	public func appDidBecomeActive() {
 		isOnline = network.isOnline
+		foregroundChanged?(true)
 		outboxDidBecomeActive?()
 		defer { backgroundedAt = nil }
 		guard let away = backgroundedAt, now().timeIntervalSince(away) >= tuning.staleAfter else {

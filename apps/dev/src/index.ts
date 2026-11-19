@@ -77,7 +77,6 @@ import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NextStepSweep } from './services/next-step-sweep'
-import { NotificationEmailFanout } from './services/notification-email'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -316,8 +315,9 @@ commentDispatcher.start()
 const driverWaker = new DriverWaker(db, notifyBridge)
 driverWaker.start()
 
-// Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
-// workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
+// Finds objects with an overdue or missing next step and wakes their driver. Only looks at
+// workspaces with the next-step-sweep flag, and is record-only there until the workspace has been
+// swept for 3 days and has the next-step-sweep-wake flag.
 const nextStepSweep = new NextStepSweep(db)
 nextStepSweep.start()
 
@@ -333,9 +333,6 @@ notificationPush.start()
 
 const flowActivity = new FlowActivityNotifier(db, notifyBridge)
 flowActivity.start()
-
-const notificationEmail = new NotificationEmailFanout(db, notifyBridge)
-notificationEmail.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
@@ -700,7 +697,6 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	chainSnapshotJob.stop()
 	notificationPush.stop()
 	flowActivity.stop()
-	notificationEmail.stop()
 	briefingPushScheduler.stop()
 	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()

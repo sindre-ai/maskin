@@ -31,7 +31,8 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage } from '../lib/send-gate'
+import { decideSend, deniedMessage, recordAutoSent } from '../lib/send-gate'
+import { callingSessionId } from '../lib/session-flow'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -58,6 +59,8 @@ const app = new OpenAPIHono<{
 		actorId: string
 		workspaceRole?: string
 		storageProvider?: StorageProvider
+		apiKeySessionId?: string | null
+		maskinSessionId?: string
 	}
 }>({ defaultHook: validationFailureHook })
 
@@ -264,7 +267,12 @@ app.openapi(sendRoute, async (c) => {
 	}
 
 	// 3. The agent's send setting for emails, then exactly what is going out.
-	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	const decision = await decideSend(db, {
+		workspaceId,
+		agentId: actorId,
+		kind: 'email',
+		sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+	})
 	if (decision === 'denied') {
 		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
 		return c.json(f.body, f.status)
@@ -296,6 +304,16 @@ app.openapi(sendRoute, async (c) => {
 			'This draft was already sent. Do not send it again. Create a new task for a new email.',
 		)
 		return c.json(f.body, f.status)
+	}
+	// Released on Always allow with no approval: log it on the draft.
+	if (!approvalEventId) {
+		await recordAutoSent(db, {
+			workspaceId,
+			agentId: actorId,
+			object: { id: objectId, type: loaded.objectType },
+			kind: 'email',
+			contentHash: loaded.contentHash,
+		})
 	}
 	const mode = approvalEventId ? ('approved_draft' as const) : ('direct' as const)
 	const idempotencyKey = approvalEventId

@@ -86,6 +86,7 @@ struct ChatThreadView: View {
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
 	@State private var showingLinked = false
+	@State private var selectingText: ChatMessage?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -198,6 +199,9 @@ struct ChatThreadView: View {
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
 				.task { runtime?.chatOpened(store.conversationID) }
+				.task(id: store.participants.map(\.id)) {
+					runtime?.chatParticipantsLoaded(store.participants, selfID: store.currentActorID)
+				}
 				.onAppear {
 					liveCalls?.visibleConversationID = store.conversationID
 					composer.splitsLongMessages = true
@@ -258,6 +262,9 @@ struct ChatThreadView: View {
 							chatAgentIDs: Set(store.participants.filter { $0.kind == .agent }.map(\.id)),
 							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
 					}
+				}
+				.sheet(item: $selectingText) { message in
+					SelectTextSheet(text: ChatPreviewText.selectable(message.content))
 				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
@@ -589,6 +596,7 @@ struct ChatThreadView: View {
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
+			onSelectText: { selectingText = $0 },
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
@@ -1073,6 +1081,8 @@ struct ChatThreadView: View {
 /// swaps the lazy stack for a plain one there.
 struct ThreadTranscript: View {
 	let store: ChatStore
+	/// Opens a working agent's session from the thread's working line.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	var lazy = true
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
@@ -1082,6 +1092,8 @@ struct ThreadTranscript: View {
 	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
+	/// Opens the message's text in the select-words sheet.
+	var onSelectText: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -1173,6 +1185,17 @@ struct ThreadTranscript: View {
 	private func activity(at date: Date) -> some View {
 		let live = store.presences(at: date).map { PresenceRow(agent: $0.agent, presence: $0.presence) }
 		let sessions = store.liveSessions(at: date)
+		// The new chat list (flag chat-list-v2): one line naming who is working, each name a link to its session.
+		if ChatListFlagCache.lastKnown, !sessions.isEmpty {
+			ThreadWorkingLine(
+				agents: sessions.map {
+					ThreadWorkingLine.Agent(name: store.participant(for: $0.actorID).name, sessionID: $0.id)
+				},
+				onOpenSession: { runtime?.presentation = .session($0) }
+			)
+			.padding(.top, Self.listGap)
+			.padding(.horizontal, MaskinSpace.s3)
+		}
 		ForEach(live) { row in
 			Group {
 				let session = sessions.first { $0.actorID == row.agent.id }
@@ -1232,6 +1255,7 @@ struct ThreadTranscript: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { onSelectText(message) }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))

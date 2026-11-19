@@ -353,7 +353,7 @@ describe('agent control routes', () => {
 		expect(inserts).toHaveLength(0)
 	})
 
-	it('tells the agent to reopen a computer that cannot check the field', async () => {
+	it('tells the agent how to refresh a computer that cannot check the field', async () => {
 		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
 			kind: 'resolved',
 			text: 'fake-pass-abcdefghij',
@@ -373,7 +373,10 @@ describe('agent control routes', () => {
 		})
 
 		expect(res.status).toBe(409)
-		expect(await res.text()).toContain('older version')
+		const text = await res.text()
+		expect(text).toContain('older version')
+		expect(text).toContain('desktop_apply_settings')
+		expect(text).not.toContain('close and reopen')
 	})
 
 	it('types a saved username or email as plain text, as before', async () => {

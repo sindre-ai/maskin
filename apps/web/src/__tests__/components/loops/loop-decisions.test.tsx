@@ -36,6 +36,11 @@ describe('LoopDecisions', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
+	it('links the asking agent to its page', () => {
+		renderCard([row(1)])
+		expect(screen.getByRole('link', { name: 'Researcher' })).toBeInTheDocument()
+	})
+
 	it('titles the card by what waits, with the agent and the oldest wait', () => {
 		renderCard([row(1), row(2), row(3)])
 

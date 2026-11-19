@@ -3,11 +3,12 @@ import type { Database } from '@maskin/db'
 import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
-import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
 import { trackTurnCheckCapHit, trackTurnSentBack } from '../lib/analytics/turn-check-events'
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import {
 	classifyBannerResult,
+	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	isCreditBalanceLowText,
 } from '../lib/credit-classifier'
@@ -151,6 +152,19 @@ const RETRY_UNANSWERED_MESSAGE =
  * the human is told in plain words instead.
  */
 const MAX_PSEUDO_TOOL_CALL_NUDGES = 1
+
+/**
+ * How many times a helper is told its background jobs are still running when
+ * it gives its final message. Two: enough for an agent that simply forgot to
+ * wait to wait, short enough that a job that never reports back (a killed
+ * shell, a lost notification) cannot hold a session open. After this the
+ * helper ends as it always did.
+ */
+const MAX_HELPER_JOB_NUDGES = 2
+
+/** What a helper is told when it ends its turn with background jobs still running. */
+const helperJobsNudge = (jobs: number): string =>
+	`${jobs} background ${jobs === 1 ? 'job is' : 'jobs are'} still running. Giving your final message now ends this session and stops ${jobs === 1 ? 'it' : 'them'}, so nothing they were doing will finish. Wait for ${jobs === 1 ? 'it' : 'them'} to finish, then give your final message. If you do want to stop anyway, say so.`
 
 /** Switches the end-of-turn "work remains" send-back off when set to `0`. Default on. */
 export const TURN_SEND_BACK_KILLSWITCH_ENV_VAR = 'FEATURE_TURN_SEND_BACK'
@@ -434,6 +448,8 @@ export class InteractiveTurnFinalizer {
 	 * emitting markup be nudged forever. Cleared when a turn posts normally.
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
+	/** sessionId -> how many times a helper was told its jobs are still running. */
+	private readonly helperJobNudges = new Map<string, number>()
 	/**
 	 * sessionId -> attempts spent on the empty turn answering one chat message.
 	 *
@@ -550,6 +566,7 @@ export class InteractiveTurnFinalizer {
 	forgetSession(sessionId: string): void {
 		this.clearRetryCounts(sessionId)
 		this.pseudoToolCallNudges.delete(sessionId)
+		this.helperJobNudges.delete(sessionId)
 		this.emptyTurns.delete(sessionId)
 		this.turnSendBacks.delete(sessionId)
 		this.fallbackActive.delete(sessionId)
@@ -903,6 +920,7 @@ export class InteractiveTurnFinalizer {
 		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
 		if (this.seen.has(dedupeKey)) return
 		if (!(await this.isNewestTurn(sessionId, logId))) return
+		if (!result.isError && (await this.nudgeHelperAboutJobs(sessionId))) return
 		this.rememberKey(dedupeKey)
 		try {
 			await this.onHelperResult?.(sessionId, { isError: result.isError, text: result.text })
@@ -911,6 +929,93 @@ export class InteractiveTurnFinalizer {
 				`Helper session ${sessionId} could not be ended after its result: ${describeError(err)}`,
 			)
 		}
+	}
+
+	/**
+	 * A helper's final message ends the session, and a background job or subagent
+	 * dies with it. If any are still running, tell the helper instead of ending:
+	 * the CLI starts a new turn by itself when a job reports back, so a helper
+	 * that waits is woken. Returns true when the nudge was written and the
+	 * session must stay open.
+	 *
+	 * Capped, and any failure to count or write falls through to ending the
+	 * session, so a stuck job can never hold one open.
+	 */
+	private async nudgeHelperAboutJobs(sessionId: string): Promise<boolean> {
+		if (!this.retryTurn) return false
+		const spent = this.helperJobNudges.get(sessionId) ?? 0
+		if (spent >= MAX_HELPER_JOB_NUDGES) return false
+		try {
+			const running = await this.countRunningJobs(sessionId)
+			if (running === 0) return false
+			this.helperJobNudges.set(sessionId, spent + 1)
+			logger.warn(
+				`Helper session ${sessionId} gave its result with ${running} background job(s) still running; asking it to wait (nudge ${spent + 1}/${MAX_HELPER_JOB_NUDGES})`,
+			)
+			await this.retryTurn(sessionId, {
+				type: 'user',
+				message: { role: 'user', content: helperJobsNudge(running) },
+			})
+			return true
+		} catch (err) {
+			logger.error(
+				`Helper session ${sessionId} could not be told about its running jobs: ${describeError(err)}`,
+			)
+			return false
+		}
+	}
+
+	/**
+	 * Background jobs and subagents the CLI started that have not reported back:
+	 * every `task_started` line with no later `task_notification` or terminal
+	 * `task_updated` for the same task id. A task started with
+	 * `is_backgrounded: false` ran in the foreground, which blocks the turn, so
+	 * it cannot be what is left running when the turn ends.
+	 */
+	private async countRunningJobs(sessionId: string): Promise<number> {
+		const rows = await this.db
+			.select({ content: sessionLogs.content })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					eq(sessionLogs.stream, 'stdout'),
+					or(
+						like(sessionLogs.content, '%"subtype":"task_started"%'),
+						like(sessionLogs.content, '%"subtype":"task_notification"%'),
+						like(sessionLogs.content, '%"subtype":"task_updated"%'),
+					),
+				),
+			)
+			.orderBy(asc(sessionLogs.id))
+		const running = new Set<string>()
+		for (const row of rows) {
+			for (const line of splitRowLines(row.content)) {
+				let parsed: Record<string, unknown>
+				try {
+					parsed = JSON.parse(line.trim()) as Record<string, unknown>
+				} catch {
+					continue
+				}
+				if (parsed.type !== 'system' || typeof parsed.task_id !== 'string') continue
+				if (parsed.subtype === 'task_started') {
+					if (parsed.is_backgrounded !== false) running.add(parsed.task_id)
+				} else if (parsed.subtype === 'task_notification') {
+					running.delete(parsed.task_id)
+				} else if (parsed.subtype === 'task_updated') {
+					const status = (parsed.patch as { status?: unknown } | undefined)?.status
+					if (
+						status === 'completed' ||
+						status === 'failed' ||
+						status === 'killed' ||
+						status === 'stopped'
+					) {
+						running.delete(parsed.task_id)
+					}
+				}
+			}
+		}
+		return running.size
 	}
 
 	/**
@@ -1635,6 +1740,25 @@ export class InteractiveTurnFinalizer {
 			// Answer the unanswered message on the new subscription ourselves. Only
 			// reached when the pointer actually moved, so a spent chain (movedTo
 			// null) cannot loop: each resume consumes one slot of the chain.
+			// A login that lapsed inside this container (no move happened) is dead for
+			// as long as the session lives: the CLI keeps its own copy, so a token
+			// the human refreshes afterwards is never read, and every retry replays
+			// on the dead login. Stop it so the retry spawns a fresh session, whose
+			// start path refreshes the slot. Nothing is resumed here: the token is
+			// still dead, so the human refreshes it and retries.
+			if (
+				!movedTo &&
+				this.onStopSession &&
+				classifyClaudeAuthFailureText(detail)?.reason_code === 'oauth_expired'
+			) {
+				try {
+					await this.onStopSession(sessionId, 'login_expired')
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not be stopped after its login expired: ${describeError(err)}`,
+					)
+				}
+			}
 			if (movedTo && this.onResumeAfterMove) {
 				try {
 					await this.onResumeAfterMove({

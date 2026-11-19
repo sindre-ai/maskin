@@ -48,6 +48,8 @@ export interface SlackPostContext {
 	workspaceId: string
 	/** For logs only — tells us which actor in that workspace sent it. */
 	actorId: string
+	/** The Maskin session making the call (X-Maskin-Session-Id), so a flow in pilot can hold a send. */
+	sessionId?: string | null
 	/**
 	 * Slack `team_id` for the workspace integration — drives the bet's ship
 	 * metric breakdown by Slack workspace. Sourced from `integration.externalId`,
@@ -269,6 +271,7 @@ function slackSendDecision(ctx: SlackPostContext) {
 		workspaceId: ctx.workspaceId,
 		agentId: ctx.actorId,
 		kind: SLACK_MESSAGE_KIND,
+		sessionId: ctx.sessionId,
 	})
 }
 
@@ -408,6 +411,7 @@ export function createSlackMcpServer(
 					if (!ctx.db) throw new SlackSendRefusal('Sending a draft is not available here.')
 					approved = await loadApprovedSlackMessage(ctx.db, {
 						workspaceId: ctx.workspaceId,
+						actorId: ctx.actorId,
 						objectId: args.object_id,
 						requireApproval: decision === 'needs_approval',
 					})
@@ -887,6 +891,7 @@ export function createSlackMcpServer(
 					if (!ctx.db) throw new SlackSendRefusal('Editing with a draft is not available here.')
 					approved = await loadApprovedSlackMessage(ctx.db, {
 						workspaceId: ctx.workspaceId,
+						actorId: ctx.actorId,
 						objectId: args.object_id,
 						requireApproval: decision === 'needs_approval',
 					})

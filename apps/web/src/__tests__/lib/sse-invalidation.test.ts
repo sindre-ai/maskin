@@ -19,6 +19,7 @@ import { api } from '@/lib/api'
 function createMockQueryClient() {
 	return {
 		invalidateQueries: vi.fn(),
+		getQueryCache: () => ({ findAll: () => [] }),
 	}
 }
 
@@ -38,7 +39,7 @@ afterEach(() => {
 })
 
 describe('invalidateFromSSE', () => {
-	it('always invalidates events history and byEntity', () => {
+	it('invalidates the entity’s own history at once and the history views once per window', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
 			entity_type: 'task',
@@ -46,11 +47,16 @@ describe('invalidateFromSSE', () => {
 			action: 'created',
 		} as never)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.events.history(workspaceId),
-		})
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.events.byEntity(entityId),
 		})
+		expect(qc.invalidateQueries).not.toHaveBeenCalledWith({
+			queryKey: queryKeys.events.history(workspaceId),
+		})
+		vi.advanceTimersByTime(5_000)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			{ queryKey: queryKeys.events.history(workspaceId) },
+			{ cancelRefetch: false },
+		)
 	})
 
 	it('invalidates objects for task entity', () => {
@@ -202,7 +208,7 @@ describe('invalidateFromSSE', () => {
 		}
 		expect(calls(['subscriptions', 'unread', workspaceId])).toHaveLength(0)
 		expect(calls(queryKeys.forYou.list(workspaceId))).toHaveLength(0)
-		vi.advanceTimersByTime(3_000)
+		vi.advanceTimersByTime(5_000)
 		expect(calls(['subscriptions', 'unread', workspaceId])).toHaveLength(1)
 		expect(calls(queryKeys.forYou.list(workspaceId))).toHaveLength(1)
 	})
@@ -243,28 +249,38 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
-	it('invalidates actors for actor entity', () => {
+	it('refetches actors once per window for actor entity', () => {
 		const qc = createMockQueryClient()
-		invalidateFromSSE(qc as never, workspaceId, {
-			entity_type: 'actor',
-			entity_id: entityId,
-			action: 'updated',
-		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.actors.all(workspaceId),
-		})
+		for (let i = 0; i < 10; i++) {
+			invalidateFromSSE(qc as never, workspaceId, {
+				entity_type: 'actor',
+				entity_id: entityId,
+				action: 'updated',
+			} as never)
+		}
+		expect(qc.invalidateQueries).not.toHaveBeenCalledWith(
+			{ queryKey: queryKeys.actors.all(workspaceId) },
+			expect.anything(),
+		)
+		vi.advanceTimersByTime(5_000)
+		const actorCalls = qc.invalidateQueries.mock.calls.filter(
+			([arg]) => JSON.stringify(arg.queryKey) === JSON.stringify(queryKeys.actors.all(workspaceId)),
+		)
+		expect(actorCalls).toHaveLength(1)
 	})
 
-	it('invalidates actors for an installed_loop event, since a version update renames its agents', () => {
+	it('refetches actors for an installed_loop event, since a version update renames its agents', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
 			entity_type: 'installed_loop',
 			entity_id: entityId,
 			action: 'updated',
 		} as never)
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
-			queryKey: queryKeys.actors.all(workspaceId),
-		})
+		vi.advanceTimersByTime(5_000)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			{ queryKey: queryKeys.actors.all(workspaceId) },
+			{ cancelRefetch: false },
+		)
 	})
 
 	it('refreshes the integration list, and with it every agent access view, for an integration event', () => {
@@ -607,6 +623,174 @@ describe('invalidateFromSSE in a background tab', () => {
 		setVisibility('visible')
 		await vi.advanceTimersByTimeAsync(1_000)
 		expect(list.n).toBe(0)
+	})
+})
+
+describe('invalidateFromSSE request counts for a burst of events', () => {
+	const WINDOW_MS = 5_000
+
+	// Counts requests that would reach the server for each mounted query.
+	function mountCounting(qc: QueryClient, queryKey: readonly unknown[], data: unknown = 'ok') {
+		const requests = { n: 0 }
+		new QueryObserver(qc, {
+			queryKey,
+			queryFn: async () => {
+				requests.n++
+				return data
+			},
+		}).subscribe(() => {})
+		return requests
+	}
+
+	const strip = (id: string) => ({ id, status: 'running' })
+	const messagesPage = (sessionIds: string[]) => ({
+		pages: [
+			{
+				messages: [{ id: 1, spawned_sessions: sessionIds.map(strip) }],
+				has_more: false,
+			},
+		],
+		pageParams: [undefined],
+	})
+
+	async function mountAll(qc: QueryClient) {
+		const lists = {
+			chatList: mountCounting(qc, queryKeys.conversations.listInfinite(workspaceId, {})),
+			unreadChats: mountCounting(qc, queryKeys.conversations.unreadCount(workspaceId)),
+			actors: mountCounting(qc, queryKeys.actors.all(workspaceId)),
+			history: mountCounting(qc, queryKeys.events.history(workspaceId)),
+			forYou: mountCounting(qc, queryKeys.forYou.list(workspaceId)),
+			unread: mountCounting(qc, queryKeys.subscriptions.unread(workspaceId)),
+			openChat: mountCounting(
+				qc,
+				queryKeys.conversations.messages('chat-open', { limit: 50 }),
+				messagesPage(['sess-open']),
+			),
+			otherChat: mountCounting(
+				qc,
+				queryKeys.conversations.messages('chat-other', { limit: 50 }),
+				messagesPage(['sess-other']),
+			),
+		}
+		await vi.advanceTimersByTimeAsync(1_000)
+		for (const r of Object.values(lists)) r.n = 0
+		return lists
+	}
+
+	it('30 events in 10 seconds give at most 2 refetches per list', async () => {
+		const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } })
+		const lists = await mountAll(qc)
+
+		for (let i = 0; i < 30; i++) {
+			const at = (n: number) => `e-${i}-${n}`
+			invalidateFromSSE(qc, workspaceId, {
+				id: at(0),
+				entity_type: 'conversation',
+				entity_id: 'chat-open',
+				action: 'created',
+			} as never)
+			invalidateFromSSE(qc, workspaceId, {
+				id: at(1),
+				entity_type: 'actor',
+				entity_id: `actor-${i}`,
+				action: 'updated',
+			} as never)
+			invalidateFromSSE(qc, workspaceId, {
+				id: at(2),
+				entity_type: 'task',
+				entity_id: 'task-1',
+				action: 'commented',
+			} as never)
+			invalidateFromSSE(qc, workspaceId, {
+				id: at(3),
+				entity_type: 'notification',
+				entity_id: `n-${i}`,
+				action: 'created',
+			} as never)
+			// A session in a chat nobody has open here: the open chat must not refetch for it.
+			invalidateFromSSE(qc, workspaceId, {
+				id: at(4),
+				entity_type: 'session',
+				entity_id: 'sess-other',
+				action: 'session_updated',
+			} as never)
+			await vi.advanceTimersByTimeAsync(10_000 / 30)
+		}
+		await vi.advanceTimersByTimeAsync(2 * WINDOW_MS)
+
+		for (const [name, requests] of Object.entries(lists)) {
+			if (name === 'openChat' || name === 'otherChat') continue
+			expect(requests.n, name).toBeLessThanOrEqual(2)
+		}
+	})
+
+	it('a chat message refetches only that conversation’s messages, at once', async () => {
+		const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } })
+		const lists = await mountAll(qc)
+
+		invalidateFromSSE(qc, workspaceId, {
+			id: 'e-1',
+			entity_type: 'conversation',
+			entity_id: 'chat-open',
+			action: 'created',
+		} as never)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(lists.openChat.n).toBe(1)
+		expect(lists.otherChat.n).toBe(0)
+		// The list family waits for its window.
+		expect(lists.chatList.n).toBe(0)
+		await vi.advanceTimersByTimeAsync(WINDOW_MS)
+		expect(lists.chatList.n).toBe(1)
+		expect(lists.unreadChats.n).toBe(1)
+	})
+
+	it('a session event refetches only the chat whose strip carries it, at once', async () => {
+		const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } })
+		const lists = await mountAll(qc)
+
+		invalidateFromSSE(qc, workspaceId, {
+			id: 'e-1',
+			entity_type: 'session',
+			entity_id: 'sess-open',
+			action: 'session_updated',
+		} as never)
+		// The paired delegation-strip frame has the same event id and must not fetch again.
+		invalidateFromSSE(qc, workspaceId, {
+			id: 'e-1',
+			action: 'session.state_changed',
+			session_id: 'sess-open',
+		} as never)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(lists.openChat.n).toBe(1)
+		expect(lists.otherChat.n).toBe(0)
+	})
+
+	it('a session no cached strip carries is ignored unless it is new', async () => {
+		const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } })
+		const lists = await mountAll(qc)
+
+		invalidateFromSSE(qc, workspaceId, {
+			id: 'e-1',
+			entity_type: 'session',
+			entity_id: 'sess-unknown',
+			action: 'session_updated',
+		} as never)
+		await vi.advanceTimersByTimeAsync(0)
+		expect(lists.openChat.n).toBe(0)
+		expect(lists.otherChat.n).toBe(0)
+
+		// A new handoff can land in any open chat before a message carries it.
+		invalidateFromSSE(qc, workspaceId, {
+			id: 'e-2',
+			entity_type: 'session',
+			entity_id: 'sess-unknown',
+			action: 'session_created',
+		} as never)
+		await vi.advanceTimersByTimeAsync(0)
+		expect(lists.openChat.n).toBe(1)
+		expect(lists.otherChat.n).toBe(1)
 	})
 })
 

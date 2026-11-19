@@ -21,7 +21,7 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "1.1"
+    MARKETING_VERSION: "1.2"
     CURRENT_PROJECT_VERSION: "1"
 packages:
   MaskinKit:
@@ -250,6 +250,10 @@ targets:
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsImageWithMaxCount: 10
               NSExtensionActivationSupportsFileWithMaxCount: 10
+            # Lets iOS list an agent in the sheet's top row: the app donates a message action per
+            # agent, and tapping one opens this extension with that action (ShareSuggestion).
+            IntentsSupportedIdentifiers:
+              - INSendMessageIntent
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.share

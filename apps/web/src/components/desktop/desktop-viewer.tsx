@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import type { ComputerViewFlow } from '@/lib/computer-view-flow'
 import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
@@ -138,7 +137,6 @@ export function DesktopViewer({
 	const [copyArming] = useState(() => createCopyArming())
 	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
 	const [copyBlocked, setCopyBlocked] = useState(false)
-	const clipboardEnabled = useFeatureFlag('computer-clipboard')
 	const [keyboardUp, setKeyboardUp] = useState(false)
 	const keyboardRef = useRef<HTMLTextAreaElement>(null)
 	const lastTyped = useRef(KEYBOARD_SENTINEL)
@@ -243,7 +241,7 @@ export function DesktopViewer({
 	}, [controlling, copyArming])
 
 	// Ctrl/Cmd+V and Ctrl/Cmd+C on the picture, while the person is in control.
-	const shortcutsOn = controlling && clipboardEnabled && phase === 'connected'
+	const shortcutsOn = controlling && phase === 'connected'
 	useEffect(() => {
 		const target = targetRef.current
 		if (!shortcutsOn || !target) return
@@ -270,7 +268,7 @@ export function DesktopViewer({
 	const typing = touch && controlling && phase === 'connected'
 	// A phone has no Ctrl/Cmd keys, so it keeps both buttons. Elsewhere the keys do the job and
 	// Copy appears only when the browser refused to take what the computer copied.
-	const clipboardButtons = controlling && clipboardEnabled && (touch || copyBlocked)
+	const clipboardButtons = controlling && (touch || copyBlocked)
 
 	const typeIntoComputer = (e: React.FormEvent<HTMLTextAreaElement>) => {
 		const area = e.currentTarget

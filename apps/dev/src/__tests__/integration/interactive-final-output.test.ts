@@ -1210,6 +1210,60 @@ ${surviving}
 			expect(stopped).toEqual([])
 		})
 
+		it('stops the session when its login expired so a retry after a token refresh starts fresh', async () => {
+			// The container keeps the login it launched with. Left running, a retry
+			// after the human refreshes the token replays on the dead login and
+			// fails the same way; a fresh session refreshes the slot at start.
+			const stopped: Array<{ sessionId: string; reason: string }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => null,
+				onStopSession: async (sessionId, reason) => {
+					stopped.push({ sessionId, reason })
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({
+					is_error: true,
+					result: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+				})}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([{ sessionId: session.id, reason: 'login_expired' }])
+			const rows = await messagesFor(conversationId)
+			expect(rows[0]?.content).toContain('OAuth session expired')
+		})
+
+		it('keeps the session running for a 403 block page that also opens with Failed to authenticate', async () => {
+			const stopped: string[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onStopSession: async (sessionId) => {
+					stopped.push(sessionId)
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({
+					is_error: true,
+					result: 'Failed to authenticate. API Error: 403 Attention Required! | Cloudflare',
+				})}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([])
+		})
+
 		it('does not treat an onStopSession failure as fatal — the human still sees the moved-subscription notice', async () => {
 			// The stop is best-effort. A stopSession error (network blip to the
 			// remote agent-server, or a container that's already gone) must not

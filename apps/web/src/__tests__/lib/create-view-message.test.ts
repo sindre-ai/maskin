@@ -21,6 +21,8 @@ describe('createViewMessage', () => {
 		expect(message).toContain('the contact items')
 		expect(message).toContain('status active, platform linkedin, search "acme"')
 		expect(message).toContain('pinned_files')
+		expect(message).toContain('settings.list_views')
+		expect(message).toContain('the key "contact"')
 		expect(message).not.toContain('set_loop_view')
 	})
 
@@ -28,6 +30,7 @@ describe('createViewMessage', () => {
 		const message = createViewMessage({ kind: 'list', filters: defaultObjectsFilterModel() })
 		expect(message).toContain('No filters are set on the list.')
 		expect(message).toContain('the items in this workspace')
+		expect(message).toContain('the key "all"')
 	})
 
 	it('names the object on a detail page and pins to Favorites', () => {
@@ -38,6 +41,7 @@ describe('createViewMessage', () => {
 			type: 'bet',
 		})
 		expect(message).toContain('the bet "Big bet" (id obj-1)')
+		expect(message).toContain('metadata.views')
 		expect(message).toContain('pinned_files')
 		expect(message).not.toContain('set_loop_view')
 	})

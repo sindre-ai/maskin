@@ -7,7 +7,7 @@ import { readViewSources } from '@/lib/mini-app'
 import { detectViewerVariantFromDom, detectViewerVariantFromFilename } from '@/lib/viewer-detect'
 import { Link } from '@tanstack/react-router'
 import { ExternalLink } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { type MutableRefObject, useEffect, useRef, useState } from 'react'
 
 /**
  * Whether a pinned view is a deck or briefing page: a file marked as a briefing, or an HTML file
@@ -33,6 +33,7 @@ export function isDeckView(file: FileDetail): boolean {
  *
  * Raising `reloadToken` fetches the file again and redraws the viewer from it, the same hand
  * reload a custom view does. `onRefreshingChange` tells the tab while that fetch runs.
+ * `pageRef` is kept at the slide on screen (zero-based), for the view menu's Export.
  */
 export function LoopBriefingStage({
 	workspaceId,
@@ -40,12 +41,14 @@ export function LoopBriefingStage({
 	hideTitle = false,
 	reloadToken,
 	onRefreshingChange,
+	pageRef,
 }: {
 	workspaceId: string
 	fileId: string
 	hideTitle?: boolean
 	reloadToken?: number
 	onRefreshingChange?: (refreshing: boolean) => void
+	pageRef?: MutableRefObject<number>
 }) {
 	const { data: file, isLoading, isError, isFetching, refetch } = useFile(workspaceId, fileId)
 	const [stageKey, setStageKey] = useState(0)
@@ -88,7 +91,7 @@ export function LoopBriefingStage({
 				data-testid="loop-briefing-stage"
 				className="relative flex h-[max(24rem,calc(100dvh-22rem))] min-h-0 overflow-hidden rounded-xl border border-border"
 			>
-				<ViewerStage key={stageKey} file={file} />
+				<ViewerStage key={stageKey} file={file} pageRef={pageRef} />
 			</div>
 		</div>
 	)

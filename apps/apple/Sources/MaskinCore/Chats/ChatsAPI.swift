@@ -37,6 +37,18 @@ public protocol ConversationsAPI: Sendable {
 	func latestMessageID(conversationID: String) async throws -> Int?
 	/// Threads you started or replied in, across conversations, most recently active first.
 	func threads(limit: Int) async throws -> [ThreadListItem]
+	/// Put a chat on Later for the caller (true) or take it back (false). The server also clears it
+	/// when a new message arrives in the chat.
+	func setLater(conversationID: String, later: Bool) async throws
+	/// The caller's Later chats. The default list leaves them out, so the Later pill asks for them.
+	func listLater(limit: Int, offset: Int) async throws -> ConversationPage
+	/// The list with the attention fields (`needs_you`, `working`, `later`, `error`) filled in. A
+	/// source that cannot read them returns the plain list, so every chat reads as quiet.
+	func listWithAttention(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage
+	/// Ask the agent to answer `messageID` again: the same route as Retry inside the thread.
+	func retry(conversationID: String, messageID: Int, agentID: String?) async throws
 }
 
 extension ConversationsAPI {
@@ -59,6 +71,22 @@ extension ConversationsAPI {
 
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
 	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
+	public func setLater(conversationID: String, later: Bool) async throws {
+		throw ChatsError("Later isn't available here.")
+	}
+	public func listLater(limit: Int, offset: Int) async throws -> ConversationPage {
+		ConversationPage(conversations: [], hasMore: false)
+	}
+	public func listWithAttention(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+			limit: limit, offset: offset)
+	}
+	public func retry(conversationID: String, messageID: Int, agentID: String?) async throws {
+		throw ChatsError("Retry isn't available here.")
+	}
 
 	/// Sources that cannot filter on the server (test doubles) return the whole list.
 	public func list(

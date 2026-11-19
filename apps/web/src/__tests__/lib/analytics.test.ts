@@ -20,6 +20,7 @@ import {
 	trackChatListSearchUsed,
 	trackChatMessageResent,
 	trackChatOpenedFromList,
+	trackChatRowAction,
 	trackChatSessionStarted,
 	trackChatStopClicked,
 	trackCommentPosted,
@@ -1355,6 +1356,53 @@ describe('chat list use', () => {
 
 		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
 			result_count_bucket: '0',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_opened_from_list adds marker, filter and group_by when the v2 list sends them', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatOpenedFromList({
+			source: 'list',
+			section: 'needs_you',
+			position: 1,
+			marker: 'error',
+			filter: 'needs_you',
+			group_by: 'type',
+		})
+
+		expect(capture).toHaveBeenCalledWith('chat_opened_from_list', {
+			source: 'list',
+			section: 'needs_you',
+			position_bucket: '1',
+			marker: 'error',
+			filter: 'needs_you',
+			group_by: 'type',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_row_action carries the action and how it was reached, nothing else', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatRowAction({ action: 'retry', via: 'hover' })
+
+		expect(capture).toHaveBeenCalledWith('chat_row_action', {
+			action: 'retry',
+			via: 'hover',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_list_search_used carries the operators used and no text', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatListSearchUsed({ result_count: 3, operators: ['from', 'is'] })
+
+		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
+			result_count_bucket: '2_5',
+			operators: 'from,is',
 			feature_area: 'chats',
 		})
 	})

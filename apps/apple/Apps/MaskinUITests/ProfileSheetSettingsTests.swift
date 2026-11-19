@@ -36,4 +36,19 @@ final class ProfileSheetSettingsTests: XCTestCase {
 		for _ in 0..<4 where !files.exists { app.swipeUp() }
 		XCTAssertTrue(files.waitForExistence(timeout: 8), "Settings opens and lists Files")
 	}
+
+	/// A row on the Settings page opens its page. The page is pushed onto the profile sheet's stack, which has to
+	/// take Settings routes as well as its own (an Integrations tap used to highlight the row and open nothing).
+	func testSettingsRowOpensIntegrations() {
+		openProfile()
+		let row = app.buttons["Settings"].firstMatch
+		for _ in 0..<4 where !row.exists || !row.isHittable { app.swipeUp() }
+		XCTAssertTrue(row.waitForExistence(timeout: 5), "a Settings row in the profile sheet")
+		row.tap()
+		let integrations = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Integrations'")).firstMatch
+		for _ in 0..<4 where !integrations.exists || !integrations.isHittable { app.swipeUp() }
+		XCTAssertTrue(integrations.waitForExistence(timeout: 8), "Settings lists Integrations")
+		integrations.tap()
+		XCTAssertTrue(app.navigationBars["Integrations"].waitForExistence(timeout: 8), "the Integrations page opens")
+	}
 }

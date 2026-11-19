@@ -2,15 +2,25 @@ import { CommentInput } from '@/components/activity/comment-input'
 import { AgentComposer } from '@/components/agents/agent-composer'
 import type { TagInputHandle } from '@/components/chat/tag-input'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoopViewTab } from '@/components/loops/loop-view-tab'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useActor, useActors } from '@/hooks/use-actors'
+import { useCanWrite } from '@/hooks/use-can-write'
+import { useExistingViews } from '@/hooks/use-existing-views'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useObjectFlow } from '@/hooks/use-object-flow'
-import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
+import {
+	useDeleteObject,
+	useObject,
+	useObjectGraph,
+	useObjects,
+	useUpdateObject,
+} from '@/hooks/use-objects'
+import { usePageViewActions } from '@/hooks/use-page-view-actions'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useSession } from '@/hooks/use-sessions'
 import { useStar } from '@/hooks/use-star'
@@ -26,8 +36,9 @@ import { getStoredActor } from '@/lib/auth'
 import { typeLabel } from '@/lib/constants'
 import type { ObjectDetailTab } from '@/lib/object-detail-tab'
 import { isUpdatedBucket } from '@/lib/objects-updated-buckets'
+import { objectViewTabs } from '@/lib/page-views'
 import { useWorkspace } from '@/lib/workspace-context'
-import { CHROME_KEY } from '@maskin/shared'
+import { CHROME_KEY, readLoopViews, toLoopViewsMetadata } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { ChevronsUpDown, Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -175,19 +186,40 @@ export function ObjectDetailShell({
 		if (focusCommentId != null) changeTab('activity')
 	}, [focusCommentId])
 	const [composerMode, setComposerMode] = useState<'comment' | 'message'>('comment')
+	// Custom views attached to this item show as tabs after the built-in ones (behind the same
+	// flag as the Create view menu item). A tab whose view is gone falls back to Overview.
+	const viewTabsOn = useFeatureFlag('create-view-with-agent')
+	const canWrite = useCanWrite()
+	const { refetch: refetchObject } = useObject(object.id)
+	const storedViewTabs = useMemo(
+		() => objectViewTabs(object.metadata, viewTabsOn),
+		[viewTabsOn, object.metadata],
+	)
+	const viewTabs = useExistingViews(workspaceId, storedViewTabs)
+	const shownTab =
+		tab.startsWith('view-') && !viewTabs.some((v) => v.value === tab) ? 'overview' : tab
 	const [originOpen, setOriginOpen] = useState(false)
 	const flow = useObjectFlow(workspaceId, object.id)
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const updateObject = useUpdateObject(workspaceId)
+	// Renaming or removing a view rewrites the item's `metadata.views` and leaves the file alone.
+	const viewActions = usePageViewActions({
+		readStored: async () =>
+			readLoopViews((await refetchObject()).data?.metadata ?? object.metadata),
+		write: async (next) => {
+			await updateObject.mutateAsync({
+				id: object.id,
+				// The API takes `{ name, file_id }` rows here; the client's metadata type is narrower.
+				data: { metadata: { views: toLoopViewsMetadata(next) as never } },
+			})
+		},
+	})
 	const { toggle: toggleStarKeyboard } = useStar(object.id)
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
-	const nextStepBlockOn = useFeatureFlag('next-step-block')
-	const goAheadOn = useFeatureFlag('go-ahead')
-	const doneWhenOn = useFeatureFlag('done-when-list')
 	const { data: allObjects } = useObjects(workspaceId)
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
@@ -615,28 +647,20 @@ export function ObjectDetailShell({
 						/>
 
 						{/* The open next step: action, owner, due date. Renders NOTHING when the
-						    object has none, and the whole block is behind its flag. */}
-						{nextStepBlockOn && <NextStepBlock step={object.next_step} workspaceId={workspaceId} />}
+						    object has none. */}
+						<NextStepBlock step={object.next_step} workspaceId={workspaceId} />
 
 						{/* A person's go-ahead on this job, with Take back. Renders NOTHING when the job has
-						    none, and the line is behind its own flag. */}
-						{goAheadOn && (
-							<GoAheadLine
-								goAhead={object.go_ahead}
-								objectId={object.id}
-								workspaceId={workspaceId}
-							/>
-						)}
+						    none. */}
+						<GoAheadLine goAhead={object.go_ahead} objectId={object.id} workspaceId={workspaceId} />
 
 						{/* The done-when list: "3 of 6 lines true" and the lines. Renders NOTHING when the
-						    job has no list, and the block is behind its own flag. */}
-						{doneWhenOn && (
-							<DoneWhenProgress
-								doneWhen={object.done_when}
-								objectId={object.id}
-								workspaceId={workspaceId}
-							/>
-						)}
+						    job has no list. */}
+						<DoneWhenProgress
+							doneWhen={object.done_when}
+							objectId={object.id}
+							workspaceId={workspaceId}
+						/>
 
 						{/* A working agent and an open question each get one slim line under
 						    the meta row; an item with neither draws nothing. */}
@@ -665,7 +689,7 @@ export function ObjectDetailShell({
 
 						{/* v16: one column, three tabs. Link / Upload live in Related. */}
 						<Tabs
-							value={tab}
+							value={shownTab}
 							onValueChange={(v) => changeTab(v as ObjectDetailTab)}
 							className="mt-6 flex min-h-0 flex-1 flex-col"
 						>
@@ -685,6 +709,11 @@ export function ObjectDetailShell({
 									Activity
 									<TabCount count={activityCount} />
 								</TabsTrigger>
+								{viewTabs.map((view) => (
+									<TabsTrigger key={view.fileId} value={view.value} className={TAB_TRIGGER_CLASS}>
+										{view.name}
+									</TabsTrigger>
+								))}
 							</TabsList>
 
 							<TabsContent value="overview" className="mt-0">
@@ -700,6 +729,26 @@ export function ObjectDetailShell({
 							<TabsContent value="activity" className="mt-0">
 								<TimelineTab object={object} focusCommentId={focusCommentId} />
 							</TabsContent>
+							{viewTabs.map((view) => (
+								<TabsContent key={view.fileId} value={view.value} className="mt-6">
+									<LoopViewTab
+										workspaceId={workspaceId}
+										fileId={view.fileId}
+										name={view.name}
+										onRename={
+											canWrite ? (name) => viewActions.rename(view.fileId, name) : undefined
+										}
+										onRemove={
+											canWrite
+												? async () => {
+														if (await viewActions.remove(view.fileId)) changeTab('overview')
+													}
+												: undefined
+										}
+										busy={viewActions.busy}
+									/>
+								</TabsContent>
+							))}
 
 							<div aria-hidden="true" className="min-h-6 flex-1" />
 

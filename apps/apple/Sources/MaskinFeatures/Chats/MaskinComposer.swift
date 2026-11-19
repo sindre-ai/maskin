@@ -287,6 +287,9 @@ struct MaskinComposer: View {
 			.padding(.leading, config.showsAttach && !isDictating ? 0 : MaskinSpace.s5)
 			.padding(.trailing, MaskinSpace.s1)
 			.frame(maxWidth: .infinity)
+			#if os(iOS)
+			.background { ComposerImagePasteHook { model.attach([.image($0)]) } }
+			#endif
 	}
 
 	// MARK: Last slot
@@ -382,16 +385,13 @@ struct MaskinComposer: View {
 	}
 
 	private var attachActions: [ComposerAttachAction] {
-		var actions: [ComposerAttachAction] = [.photo]
 		#if os(iOS)
-		if CameraPicker.isAvailable { actions.append(.camera) }
+		ComposerAttachAction.available(
+			hasCamera: CameraPicker.isAvailable, clipboardHasImage: UIPasteboard.general.hasImages,
+			showsFormatting: showsFormatting)
+		#else
+		ComposerAttachAction.available(hasCamera: false, clipboardHasImage: false, showsFormatting: showsFormatting)
 		#endif
-		actions += [.file, .object, .person]
-		#if os(iOS)
-		if UIPasteboard.general.hasImages { actions.append(.paste) }
-		#endif
-		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
-		return actions
 	}
 
 	/// The room above the bar, less the status bar, navigation bar and the 8pt gap. Never under three
@@ -440,8 +440,7 @@ struct MaskinComposer: View {
 	}
 
 	private func insertTrigger(_ trigger: String) {
-		let needsSpace = !(model.text.isEmpty || model.text.last?.isWhitespace == true)
-		model.insert(needsSpace ? " \(trigger)" : trigger)
+		model.insertTrigger(trigger)
 		focused = true
 	}
 
@@ -503,21 +502,10 @@ struct MaskinComposer: View {
 
 	// MARK: Files
 
-	fileprivate func addFiles(_ drops: [ComposerDrop]) {
-		for drop in drops {
-			switch drop {
-			case .image(let data):
-				let name = "Pasted image.jpg"
-				model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
-			case .file(let url):
-				model.attach(
-					name: url.lastPathComponent, mimeType: AttachmentLoading.mimeType(for: url),
-					prepare: AttachmentLoading.file(at: url, deleteAfter: true))
-			}
-		}
-	}
+	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
 	#if os(iOS)
+	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field.
 	fileprivate func pasteImage() {
 		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
 			model.notice = "Couldn't read an image from the clipboard."
@@ -612,8 +600,8 @@ struct MaskinComposer: View {
 					}
 					composer.photoItems = []
 				}
-			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone an image is pasted
-			// through the `+` menu's "Paste image" row, which appears while the clipboard holds one.
+			// Drop works on iPad and Mac. `pasteDestination` is Mac-only; on iPhone a pasted image reaches
+			// the bar through `ComposerImagePasteHook` on the field, or the `+` menu's "Paste image" row.
 			#if os(macOS)
 			base
 				.dropDestination(for: ComposerDrop.self) { items, _ in

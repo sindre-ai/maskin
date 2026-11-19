@@ -305,7 +305,8 @@ struct ConversationsStoreTests {
 	func liveReload() async {
 		let api = FakeListAPI([chatConvo("a")])
 		let hub = scriptedHub([conversationFrame(1, conversation: "a")])
-		let store = ConversationsStore(api: api, events: hub)
+		let store = ConversationsStore(
+			api: api, events: hub, chatRefetch: instantRefetch(), peopleRefetch: instantRefetch())
 		await store.start()
 		await api.set([chatConvo("a"), chatConvo("b")])
 		hub.connect(workspaceId: "w1")
@@ -318,7 +319,8 @@ struct ConversationsStoreTests {
 		let api = FakeListAPI([chatConvo("a")])
 		// First body ends (a drop), the hub reconnects and broadcasts .reconnected.
 		let hub = scriptedHub(["id: 1\nevent: x\ndata: {\"entity_type\":\"object\",\"workspace_id\":\"w1\",\"event_id\":\"1\"}\n\n", ""])
-		let store = ConversationsStore(api: api, events: hub)
+		let store = ConversationsStore(
+			api: api, events: hub, chatRefetch: instantRefetch(), peopleRefetch: instantRefetch())
 		await store.start()
 		await api.set([chatConvo("a"), chatConvo("b"), chatConvo("c")])
 		hub.connect(workspaceId: "w1")
@@ -486,6 +488,22 @@ struct ConversationsStoreTeamTests {
 		#expect(store.conversations.map(\.id) == ["z", "b"])
 		#expect(store.archivedConversations.map(\.id) == ["a"])
 		#expect(await api.stateCalls == ["a pinned=- archived=true read=- unread=false", "z pinned=- archived=false read=- unread=false"])
+	}
+
+	@Test("bulk archive then unarchive the same ids puts every chat back and leaves the archive as it was")
+	func bulkArchiveUndo() async {
+		let api = TeamFakeAPI(active: [chatConvo("a"), chatConvo("b"), chatConvo("c")], archived: [chatConvo("z")])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.start()
+		let picked = ["a", "b"]
+		await store.setArchived(picked, true)
+		#expect(store.conversations.map(\.id) == ["c"])
+		#expect(Set(store.archivedConversations.map(\.id)) == ["a", "b", "z"])
+		let result = await store.setArchived(picked, false)
+		#expect(result == BulkResult(succeeded: 2, failed: 0))
+		#expect(Set(store.conversations.map(\.id)) == ["a", "b", "c"])
+		#expect(store.archivedConversations.map(\.id) == ["z"])
+		#expect(store.conversations.allSatisfy { !$0.archived })
 	}
 
 	@Test("loadMoreArchived pages in the rest of the archive so a search covers all of it")

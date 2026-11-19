@@ -2096,7 +2096,7 @@ describe('tool handlers', () => {
 					name: 'Lead qualification',
 					driver_id: 'agent-1',
 					content: 'Every lead gets an answer',
-					status: 'learning',
+					status: 'pilot',
 					entry_condition: 'A lead is created',
 					close_condition: 'The lead is won or lost',
 					closed_statuses: { lead: ['won', 'lost'] },
@@ -2163,7 +2163,7 @@ describe('tool handlers', () => {
 					type: 'loop',
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
-					status: 'learning',
+					status: 'pilot',
 					driver: 'agent-1',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
@@ -2198,6 +2198,58 @@ describe('tool handlers', () => {
 				expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'has_members')).toBe(
 					false,
 				)
+			})
+
+			it.each([
+				['draft', false],
+				['paused', false],
+				['pilot', true],
+				['supervised', true],
+				['live', true],
+			])('creates the step trigger for status %s with enabled %s', async (status, enabled) => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
+					if (u.endsWith('/api/triggers') && method === 'POST') return okJson({ id: 'trig-1' })
+					if (u.endsWith('/api/triggers'))
+						return okJson([
+							{ id: 'trig-1', name: 'Step', targetActorId: 'agent-1', actionPrompt: 'Do it' },
+						])
+					if (u.endsWith('/api/graph'))
+						return okJson({
+							nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+							edges: [],
+						})
+					if (u.endsWith('/api/integrations')) return okJson([])
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				await getHandler('create_loop')({
+					name: 'Status flow',
+					driver_id: 'agent-1',
+					status,
+					steps: [
+						{
+							name: 'Step',
+							agent_id: 'agent-1',
+							prompt: 'Do it',
+							when: { cron: '0 9 * * 1' },
+						},
+					],
+					trigger_ids: [],
+					object_ids: [],
+				})
+
+				const triggerCall = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							String(c[0]).endsWith('/api/triggers') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(JSON.parse((triggerCall?.[1] as RequestInit).body as string).enabled).toBe(enabled)
 			})
 
 			it('rejects unknown trigger ids before creating anything', async () => {
@@ -5736,7 +5788,12 @@ describe('tool handlers', () => {
 					'updatedAt',
 				]
 				for (const row of result.structuredContent.workspaces) {
-					expect(Object.keys(row).sort()).toEqual(expectedKeys)
+					// Each stored time also carries a Copenhagen sibling; copenhagen-times.test.ts covers those.
+					expect(
+						Object.keys(row)
+							.filter((key) => !key.endsWith('_copenhagen'))
+							.sort(),
+					).toEqual(expectedKeys)
 				}
 				expect(result.structuredContent.workspaces.map((r) => r.onboardingEnabled)).toEqual([
 					true,
@@ -5794,7 +5851,11 @@ describe('tool handlers', () => {
 				const result = (await getHandler('list_workspaces')({
 					include_settings: false,
 				})) as SlimResult
-				expect(Object.keys(result.structuredContent.workspaces[0])).toHaveLength(7)
+				expect(
+					Object.keys(result.structuredContent.workspaces[0]).filter(
+						(key) => !key.endsWith('_copenhagen'),
+					),
+				).toHaveLength(7)
 			})
 
 			it('include_settings true returns the full rows with secrets redacted in both channels', async () => {

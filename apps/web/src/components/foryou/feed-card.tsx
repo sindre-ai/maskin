@@ -1,4 +1,3 @@
-import { CommentInput } from '@/components/activity/comment-input'
 import { Composer } from '@/components/chat/chat'
 import { typeIconOf } from '@/components/chat/linked-card-face'
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
@@ -13,7 +12,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateComment, useEntityEvents } from '@/hooks/use-events'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	secondsSince,
 	trackForyouCardAction,
@@ -41,7 +39,7 @@ import {
 import { bylineName, heldNote, isObjectlessCard } from '@/lib/foryou-feed'
 import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
-import { ArrowUpRight, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { DraftPreview } from './draft-preview'
 import { type DraftAction, DraftStack } from './draft-stack'
@@ -102,8 +100,6 @@ export function FeedCard({
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
 	const decision = decisionOf(item)
-	const doneWhenOn = useFeatureFlag('done-when-list')
-	const contextOn = useFeatureFlag('foryou-card-context')
 	// The ask leads, not the object. `cardHeadline` falls back through the
 	// comment's first line to the object title, so a card still reads sensibly
 	// for a mention with no decision and for an item with no mention payload.
@@ -112,11 +108,6 @@ export function FeedCard({
 	// what follows it — otherwise a one-line mention prints twice.
 	const mentionBody = cardBody(item)
 	const status = object?.status
-	// The object's own name is context now, not the headline — it sits in the
-	// meta line beside the type badge. Suppressed when the headline already fell
-	// back to it, so the card doesn't print the same title twice.
-	const rawObjectTitle = object?.title?.trim() ?? ''
-	const objectTitle = rawObjectTitle === title ? '' : rawObjectTitle
 
 	const { data: actors } = useActors(workspaceId)
 	// Attribution follows the author of the comment that raised the card, NOT
@@ -166,28 +157,15 @@ export function FeedCard({
 	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
 
 	// A card with nothing to tap still gives the reader a way to act on it.
-	const openTheTask = contextOn && !objectless && options.length === 0
+	const openTheTask = !objectless && options.length === 0
 	// The message box names who a reply goes to, so it needs an author. Without one it would say
 	// "the agent", which is not an answer.
-	const showComposer = !objectless && (!contextOn || Boolean(senderId))
+	const showComposer = !objectless && Boolean(senderId)
 
 	// The card is waiting on an agent once the reader has answered it.
 	const waiting = !decided && replied
 	const held = decided || waiting ? '' : heldNote(item.latest_activity_at)
 
-	// The object the card is about, named once. With the context flag on it is the first line of
-	// the card; off, it sits under the message as it always has.
-	const objectLink = objectless ? null : (
-		<Link
-			to="/$workspaceId/objects/$objectId"
-			params={{ workspaceId, objectId }}
-			className="text-[13px] text-muted-foreground hover:text-foreground hover:underline"
-		>
-			{objectTitle || 'Open'}
-			<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
-		</Link>
-	)
-	const objectLine = contextOn ? null : objectLink
 	const ObjectIcon = typeIconOf(object?.type ?? '')
 
 	const [pendingId, setPendingId] = useState<string | null>(null)
@@ -245,7 +223,7 @@ export function FeedCard({
 					who={sender?.name}
 					multiline
 					chat={
-						contextOn && senderId && !objectless
+						senderId && !objectless
 							? {
 									workspaceId,
 									agentId: senderId,
@@ -298,7 +276,7 @@ export function FeedCard({
 	return (
 		<CardShell expanded shellRef={shellRef}>
 			<div className="group/card flex flex-col gap-3 px-[22px] pb-[18px] pt-5">
-				{contextOn && objectLink && (
+				{!objectless && (
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId }}
@@ -371,25 +349,12 @@ export function FeedCard({
 				    the comment as written. */}
 				{decision ? (
 					<div className="flex flex-col gap-3">
-						<div
-							className={cn(
-								'flex flex-col gap-1.5',
-								!contextOn && 'rounded-xl bg-muted/60 px-4 py-3',
-							)}
-						>
-							<p
-								className={cn(
-									'text-[15px] leading-[1.5] text-pretty text-foreground',
-									contextOn && 'max-w-[62ch]',
-								)}
-							>
+						<div className="flex flex-col gap-1.5">
+							<p className="max-w-[62ch] text-[15px] leading-[1.5] text-pretty text-foreground">
 								{decision.summary}
 							</p>
-							{objectLine}
 						</div>
-						{decision.done_when && doneWhenOn ? (
-							<DoneWhenCardLines block={decision.done_when} />
-						) : null}
+						{decision.done_when ? <DoneWhenCardLines block={decision.done_when} /> : null}
 						{decision.draft ? (
 							<DraftPreview workspaceId={workspaceId} draft={decision.draft} />
 						) : null}
@@ -402,8 +367,6 @@ export function FeedCard({
 							/>
 						) : null}
 					</div>
-				) : !mentionBody ? (
-					objectLine
 				) : (
 					mentionBody && (
 						// The whole comment, not a preview: the reader answers here, so
@@ -415,7 +378,6 @@ export function FeedCard({
 								mentionActors={actors}
 								linkedCards={outsideChatLinkedCards(workspaceId, 'chips')}
 							/>
-							{objectLine}
 						</div>
 					)
 				)}
@@ -423,7 +385,7 @@ export function FeedCard({
 				{options.length > 0 && (
 					<DecisionOptions
 						variant="row"
-						hideTagWhenAlone={contextOn}
+						hideTagWhenAlone
 						defaultLine={defaultOnSilenceLine(decision)}
 						options={options}
 						pendingId={pendingId}
@@ -442,27 +404,15 @@ export function FeedCard({
 					</Button>
 				)}
 
-				{showComposer &&
-					(contextOn ? (
-						<CardReply
-							workspaceId={workspaceId}
-							objectId={objectId}
-							parentEventId={item.latest_mention?.event_id}
-							agentName={sender?.name}
-							onSubmitted={onReplied}
-						/>
-					) : (
-						<CommentInput
-							workspaceId={workspaceId}
-							objectId={objectId}
-							// The composer answers the comment that put this card in the feed,
-							// so a typed reply threads under it exactly as a taken option does.
-							parentEventId={item.latest_mention?.event_id}
-							variant="bar"
-							placeholder={`Ask ${sender?.name ?? 'the agent'} or give instructions`}
-							onSubmitted={onReplied}
-						/>
-					))}
+				{showComposer && (
+					<CardReply
+						workspaceId={workspaceId}
+						objectId={objectId}
+						parentEventId={item.latest_mention?.event_id}
+						agentName={sender?.name}
+						onSubmitted={onReplied}
+					/>
+				)}
 			</div>
 		</CardShell>
 	)

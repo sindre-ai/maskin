@@ -565,6 +565,7 @@ describe('capturePosthogEvent internal and paying', () => {
 	let fetchMock: ReturnType<typeof vi.fn>
 	const TEAM_WORKSPACE = '33333333-3333-4333-8333-333333333333'
 	const OUTSIDE_WORKSPACE = '44444444-4444-4444-8444-444444444444'
+	const LISTED_WORKSPACE = '55555555-5555-4555-8555-555555555555'
 	const PAID = {
 		billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_123' },
 	}
@@ -610,6 +611,23 @@ describe('capturePosthogEvent internal and paying', () => {
 			internal: true,
 			paying: true,
 		})
+	})
+
+	it('marks a paying workspace on the internal list internal, and an unlisted one not', async () => {
+		vi.stubEnv('POSTHOG_INTERNAL_WORKSPACE_IDS', `not-a-uuid, ${LISTED_WORKSPACE.toUpperCase()} ,`)
+		expect(await send(PAID, { workspace_id: LISTED_WORKSPACE })).toMatchObject({
+			internal: true,
+			paying: true,
+		})
+		expect(await send(PAID, { workspace_id: OUTSIDE_WORKSPACE })).toMatchObject({
+			internal: false,
+			paying: true,
+		})
+	})
+
+	it('still reads the team workspace when the list is set', async () => {
+		vi.stubEnv('POSTHOG_INTERNAL_WORKSPACE_IDS', LISTED_WORKSPACE)
+		expect(await send({}, { workspace_id: TEAM_WORKSPACE })).toMatchObject({ internal: true })
 	})
 
 	it('sends both false for an event with no workspace', async () => {
