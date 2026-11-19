@@ -8,10 +8,17 @@ import UIKit
 
 /// The composer's mic. Dictates into `text`, appending to whatever was already typed, and shows
 /// the reason (permission refused, language unsupported) under the bar instead of failing silently.
+/// Speech goes to the Maskin server, with the phone's recogniser as the fallback; `engineNote` carries
+/// the plain-words note (the phone took over, the server heard nothing) for the host to show under the bar.
 struct DictationButton: View {
+	/// Dictation through the server, as in the chat composer. Not a setting: the phone is only the fallback.
+	static let usesServer = true
+
 	@Binding var text: String
 	/// True while the mic is open, so the composer keeps it in place of Send.
 	@Binding var listening: Bool
+	/// Set when dictation is not going as it should; nil while all is well. Kept after the mic closes.
+	@Binding var engineNote: String?
 	#if os(iOS)
 	@State private var dictation = Dictation()
 	@State private var draft = DictationDraft(base: "")
@@ -38,11 +45,12 @@ struct DictationButton: View {
 		Button {
 			MaskinHaptics.play(.selection)
 			if dictation.isListening {
-				dictation.stop()
+				// Through the server the last phrase is still being transcribed: finish lets it land.
+				Task { await dictation.finish() }
 			} else {
 				draft = DictationDraft(base: text)
 				Task {
-					await dictation.start { transcript in
+					await dictation.start(backend: Self.usesServer) { transcript in
 						text = draft.apply(transcript: transcript, field: text)
 					}
 				}
@@ -54,6 +62,7 @@ struct DictationButton: View {
 		.accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
 		.onDisappear { dictation.stop() }
 		.onChange(of: dictation.isListening) { _, now in listening = now }
+		.onChange(of: dictation.engineNote) { _, note in engineNote = note }
 		.alert("Dictation", isPresented: failed, presenting: failure) { _ in
 			Button("Open Settings") { openSettings() }
 			Button("OK", role: .cancel) {}
