@@ -1,12 +1,12 @@
 import { sql } from './global-setup'
 
 /**
- * Migration 0166 turns on row-level security for three tables created after the
+ * Migration 0167 turns on row-level security for three tables created after the
  * blanket pass in 0111. global-setup has applied every migration by the time this
  * runs. The app role owns the tables, so it keeps full access (the trial-card,
  * trial-promo and workspace-ai-usage integration tests read and write them).
  */
-describe('migration 0166_enable_rls_ai_usage_trial_tables (integration)', () => {
+describe('migration 0167_enable_rls_ai_usage_trial_tables (integration)', () => {
 	it('has row security on, with no policies, for the three tables', async () => {
 		const rows = await sql<
 			{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }[]
