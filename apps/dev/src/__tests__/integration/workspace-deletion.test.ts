@@ -311,6 +311,27 @@ describe('workspace deletion (integration)', () => {
 			)
 			for (const t of [...explicit, ...cascade]) expect(tables.has(t), `${t} exists`).toBe(true)
 		})
+
+		it('has an index on every column that references objects', async () => {
+			// Deleting an object makes Postgres look up the rows that point at it in every child table.
+			// Without an index on the column that is a full scan per deleted object, which is what pushed
+			// the objects step of a workspace delete past the 45 second query timeout.
+			const unindexed = await sql<{ child: string; col: string }[]>`
+				SELECT c.conrelid::regclass::text AS child, a.attname AS col
+				FROM pg_constraint c
+				JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+				WHERE c.contype = 'f' AND c.confrelid = 'public.objects'::regclass
+					AND NOT EXISTS (
+						SELECT 1 FROM pg_index i
+						WHERE i.indrelid = c.conrelid AND i.indisvalid AND i.indkey[0] = c.conkey[1]
+					)
+				ORDER BY 1, 2`
+
+			expect(
+				unindexed.map((r) => `${r.child}.${r.col}`),
+				'a table references objects but no index starts with that column: add a partial index in a migration (see 0167 to 0169) so deleting an object does not scan the whole table',
+			).toEqual([])
+		})
 	})
 
 	it('purges every row of the workspace and leaves another workspace untouched', async () => {

@@ -182,6 +182,12 @@ const DELETED_AGENT_NAME = 'Deleted agent'
 /** Rows per statement in `purgeWorkspaceInBatches`; small enough that cascades stay quick. */
 const PURGE_BATCH_SIZE = 500
 
+/**
+ * Objects have the most cascades hanging off them, so each statement gets a smaller page than the
+ * other tables: the app drops a query after 45 seconds, and that is what failed the Growth delete.
+ */
+const PURGE_OBJECTS_BATCH_SIZE = 100
+
 export interface BatchedPurgeResult {
 	/** Snapshot keys of the sessions deleted here, which the final purge can no longer read. */
 	storageKeys: string[]
@@ -213,7 +219,7 @@ export async function purgeWorkspaceInBatches(
 			.select({ id: objects.id })
 			.from(objects)
 			.where(eq(objects.workspaceId, workspaceId))
-			.limit(batchSize)
+			.limit(Math.min(batchSize, PURGE_OBJECTS_BATCH_SIZE))
 		if (page.length === 0) break
 		const ids = page.map((r) => r.id)
 		await db
