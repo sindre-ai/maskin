@@ -27,6 +27,7 @@ import {
 	FUNDED_DEFAULT_MODEL,
 	getCatalogModel,
 	tierModel,
+	withContextWindow,
 } from './model-catalog'
 import type { WorkspaceSettings } from './types'
 import { SecretUnreadableError, openSecret } from './workspace-secrets'
@@ -727,7 +728,9 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 		// Force-clear ANTHROPIC_API_KEY so Claude Code uses ANTHROPIC_AUTH_TOKEN's
 		// bearer-token path instead of x-api-key (Morph guide caveat).
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: model,
+		// A model with a known 1M window gets the CLI's "[1m]" marker, or the CLI
+		// assumes 200k for it (see withContextWindow).
+		ANTHROPIC_MODEL: withContextWindow(model),
 		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 	}
 }
@@ -839,7 +842,7 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: model,
+		ANTHROPIC_MODEL: withContextWindow(model),
 		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
 		// does not run: the call dies with "search was cut off" and the turn ends
@@ -1134,7 +1137,7 @@ export async function resolveLlmRoute(params: {
 				return {
 					route: LLM_ROUTE_CUSTOM,
 					envVars: customEnv,
-					modelName: customEnv.ANTHROPIC_MODEL,
+					modelName: customEnv.ANTHROPIC_MODEL.replace(/\[1m\]$/i, ''),
 					modelSource: 'workspace',
 				}
 			}

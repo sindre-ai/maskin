@@ -104,6 +104,40 @@ export const MODEL_CATALOG: readonly CatalogModel[] = [
 	},
 ]
 
+/**
+ * Context windows of non-Claude models, by a lowercase fragment of the model
+ * id. The Claude CLI only knows the windows of Claude models: for any other id
+ * it assumes 200,000 tokens, so a 1M-token model compacts five times too early
+ * and, with a large fixed prompt, can refill its window within a few turns.
+ * Matched on a fragment so OpenRouter ids ("deepseek/deepseek-v4.1-flash") and
+ * bare ids on a bring-your-own endpoint ("deepseek-v4-flash") both resolve.
+ */
+const KNOWN_CONTEXT_WINDOWS: readonly { match: string; tokens: number }[] = [
+	{ match: 'deepseek-v4', tokens: 1_000_000 },
+]
+
+/** The CLI window for a model it does not know; 1M is only reached with the [1m] suffix. */
+export const EXTENDED_CONTEXT_TOKENS = 1_000_000
+
+/** The context window Maskin knows for a model id, or undefined when it does not. */
+export function knownContextWindow(id: string | null | undefined): number | undefined {
+	if (!id) return undefined
+	const lower = id.toLowerCase()
+	return KNOWN_CONTEXT_WINDOWS.find((m) => lower.includes(m.match))?.tokens
+}
+
+/**
+ * The value to send as ANTHROPIC_MODEL. The CLI reads a trailing "[1m]" as
+ * "this model has a 1M-token window" and strips it before the request goes
+ * out, so the provider still sees the plain id. Only the main model gets it:
+ * the name stamped on the session and priced stays the plain id.
+ */
+export function withContextWindow(id: string): string {
+	const tokens = knownContextWindow(id)
+	if (!tokens || tokens < EXTENDED_CONTEXT_TOKENS || /\[1m\]$/i.test(id)) return id
+	return `${id}[1m]`
+}
+
 export function getCatalogModel(id: string | null | undefined): CatalogModel | undefined {
 	if (!id) return undefined
 	return MODEL_CATALOG.find((m) => m.id === id)
