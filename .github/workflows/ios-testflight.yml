@@ -1,7 +1,13 @@
 name: iOS TestFlight
 
-# Signed iOS archive uploaded to TestFlight on every merge to main that changes the Apple
-# app. apple.yml stays the unsigned compile check; this workflow is the release path.
+# Signed iOS archive uploaded to TestFlight on every merge to main that changes MARKETING_VERSION in
+# apps/apple/project.yml. apple.yml stays the unsigned compile check; this workflow is the release path.
+#
+# Why only a version change: Apple closes the build train of a version once it is released and refuses
+# every further build with that version number ("Invalid Pre-Release Train", error 90186, and error
+# 90062). A merge that leaves MARKETING_VERSION alone would spend a Mac for an hour and then fail, and
+# keep main red. The plan job compares the version with the commit before the push, and the Mac job
+# only starts when it changed. A failed upload is retried by running the failed job again from Actions.
 #
 # Inert until the four secrets below exist: the first step checks for them and every later
 # step is skipped, so merging this file before the Apple setup is done does not turn main red.
@@ -34,7 +40,7 @@ name: iOS TestFlight
 #
 # App Review: a merge that changes MARKETING_VERSION in apps/apple/project.yml also sends that
 # version to App Review, once the upload is processed (job app-review, .github/scripts/
-# asc-submit-review.mjs). Any other merge only uploads, as before. The what's-new text comes from
+# asc-submit-review.mjs). The what's-new text comes from
 # apps/apple/release-notes.md ("# <version>" on the first line). The release type is automatic: the
 # version goes live as soon as Apple approves it, with no one pressing Release.
 #
@@ -44,7 +50,8 @@ name: iOS TestFlight
 # never counts as a change). The submit job is separate from the upload job, so a failed
 # submission leaves the TestFlight build in place.
 #
-# One macOS runner for roughly 20-30 minutes per merge (10x the per-minute cost of Linux).
+# One macOS runner for roughly 20-30 minutes per merge that changes MARKETING_VERSION (10x the
+# per-minute cost of Linux). Other merges only run the short Linux plan job.
 
 on:
   push:
@@ -72,9 +79,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  testflight:
-    # A manual run does not archive; see the app-review job.
+  # Decides whether this push uploads. A Linux job on purpose: for a push that leaves the version
+  # alone nothing starts on a Mac. It uploads when MARKETING_VERSION differs from the commit before
+  # the push. With no previous commit to compare against (first push, force push that dropped it) it
+  # uploads as before, so a real version bump is never skipped by mistake.
+  plan:
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      upload: ${{ steps.version.outputs.upload }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Check whether MARKETING_VERSION changed
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          version_of() {
+            sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"?([0-9][^"[:space:]]*)"?.*$/\1/p' | head -n 1
+          }
+          current=$(version_of < apps/apple/project.yml)
+          if [ -z "$current" ]; then
+            echo "::error::Could not read MARKETING_VERSION from apps/apple/project.yml."
+            exit 1
+          fi
+          if [ -z "$BEFORE_SHA" ] || [ "${BEFORE_SHA#*[!0]}" = "$BEFORE_SHA" ] || ! git fetch --no-tags --depth=1 origin "$BEFORE_SHA"; then
+            echo "::notice::No previous commit to compare with (first push or force push), so the upload goes ahead."
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous=$(git show FETCH_HEAD:apps/apple/project.yml 2>/dev/null | version_of || true)
+          if [ "$previous" = "$current" ]; then
+            echo "::notice::MARKETING_VERSION is still $current, so no TestFlight upload. Apple refuses new builds for a version once it is released. Bump MARKETING_VERSION to ship a new build."
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "MARKETING_VERSION changed from '${previous:-none}' to '$current', so the build is uploaded."
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  testflight:
+    # A manual run does not archive; see the app-review job. A push that leaves MARKETING_VERSION
+    # alone is skipped by the plan job.
+    needs: plan
+    if: github.event_name == 'push' && needs.plan.outputs.upload == 'true'
     runs-on: macos-26
     timeout-minutes: 90
     outputs:
