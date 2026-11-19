@@ -65,7 +65,7 @@ test.describe('Chat — a linked loop and trigger draw like an object', () => {
 			await expect(thread).not.toContainText('0 9 * * 1-5')
 
 			// The loop linked inside the sentence is a chip; it is already drawn as a card below.
-			const chip = thread.getByRole('link', { name: /^Flow, learning: Customer feedback/ }).first()
+			const chip = thread.getByRole('link', { name: /^Flow, pilot: Customer feedback/ }).first()
 			await expect(chip).toBeVisible()
 
 			for (const card of [loopCard, triggerCard]) {

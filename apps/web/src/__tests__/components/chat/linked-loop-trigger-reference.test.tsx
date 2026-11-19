@@ -236,11 +236,11 @@ describe('LoopReferenceChip', () => {
 	it('reads kind, state and name as one link, with only the icon and name on the plate', () => {
 		useLoop.mockReturnValue(found(loopRow({ pill: 'live' })))
 		renderChip()
-		const link = screen.getByRole('link', { name: 'Flow, fully autonomous: Nightly triage' })
+		const link = screen.getByRole('link', { name: 'Flow, live: Nightly triage' })
 		expect(link).toHaveTextContent(/^\u2060?Nightly triage$/)
 		expect(link.className).toContain('bg-muted')
 		expect(link.querySelector('svg')).not.toBeNull()
-		expect(screen.queryByText('fully autonomous')).not.toBeInTheDocument()
+		expect(screen.queryByText('live')).not.toBeInTheDocument()
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
 	})
 
