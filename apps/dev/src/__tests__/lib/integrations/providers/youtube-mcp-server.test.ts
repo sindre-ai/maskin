@@ -522,7 +522,13 @@ describe('youtube write tools', () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		const byName = new Map(tools.map((t) => [t.name, t]))
-		const reads = ['youtube__get_channel', 'youtube__get_upload_status']
+		const reads = [
+			'youtube__get_channel',
+			'youtube__get_public_channel',
+			'youtube__get_public_videos',
+			'youtube__get_upload_status',
+			'youtube__search',
+		]
 		for (const [name, tool] of byName) {
 			expect(tool.annotations?.readOnlyHint).toBe(reads.includes(name))
 		}
