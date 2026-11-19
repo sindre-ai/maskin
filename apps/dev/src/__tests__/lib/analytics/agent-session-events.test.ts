@@ -127,6 +127,7 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 			'agent_session_started_with_prompt',
 			'agent-2',
 			expect.objectContaining({ source_session_id: 'sess-parent' }),
+			{ timestamp: undefined },
 		)
 	})
 
@@ -143,6 +144,7 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 			'agent_session_started_with_prompt',
 			'agent-1',
 			expect.objectContaining({ system_prompt_chars: 0, system_prompt_tokens: 0 }),
+			{ timestamp: undefined },
 		)
 	})
 
@@ -175,6 +177,7 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 			'agent_session_started_with_prompt',
 			'agent-1',
 			expect.objectContaining({ trigger_type: 'cron', trigger_id: 'trig-1' }),
+			{ timestamp: undefined },
 		)
 	})
 
@@ -193,6 +196,7 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 			'agent_session_started_with_prompt',
 			'agent-1',
 			expect.objectContaining({ trigger_type: 'event', trigger_id: 'trig-2' }),
+			{ timestamp: undefined },
 		)
 	})
 
