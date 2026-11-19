@@ -34,7 +34,7 @@ public enum PermissionKind: String, CaseIterable, Hashable, Identifiable, Sendab
 	public var note: String {
 		switch self {
 		case .microphone: "Dictate messages and talk with agents in a call"
-		case .camera: "Take a photo to attach to a message"
+		case .camera: "Take a photo or scan a document to attach to a message"
 		case .photos: "Maskin sees only the photos you pick, so iOS never asks"
 		case .notifications: "Decisions and replies reach you when they matter"
 		case .paste: "Paste text and images without a prompt each time"
