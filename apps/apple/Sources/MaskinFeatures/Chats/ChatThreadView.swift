@@ -1331,8 +1331,8 @@ struct ThreadTranscript: View {
 			LiveReceiptRow(event: event)
 		case .callSummary(let summary, let transcript):
 			LiveCallSummaryCard(summary: summary, transcript: transcript)
-		case .handoff(let session, let behind):
-			HandoffRow(session: session, behind: behind)
+		case .handoff(let entries):
+			HandoffGroup(entries: entries)
 		case .message(let message, let showsAuthor):
 			let isOwn = message.actorID == store.currentActorID
 			let isLatestOwn = message.id == latestOwnID
