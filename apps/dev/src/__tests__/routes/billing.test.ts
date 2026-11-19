@@ -808,7 +808,7 @@ describe('GET /api/billing/usage', () => {
 		})
 	})
 
-	it('reports plan enterprise for an enterprise billing owner still stored as trial', async () => {
+	it('reports plan trial for an ops-allowlisted billing owner without the workspace flag', async () => {
 		const ownerId = randomUUID()
 		vi.stubEnv('MASKIN_ENTERPRISE_ACTOR_IDS', ownerId)
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
@@ -827,7 +827,7 @@ describe('GET /api/billing/usage', () => {
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ plan: 'enterprise', period_resets_in_ms: null })
+		expect(await res.json()).toMatchObject({ plan: 'trial' })
 		vi.unstubAllEnvs()
 	})
 

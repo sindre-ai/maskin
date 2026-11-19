@@ -127,10 +127,9 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 /**
  * Flips the `enterprise_granted` ops grant via the real admin route.
  *
- * The allowlist is scoped to just this call rather than the whole test: an
- * actor in MASKIN_ENTERPRISE_ACTOR_IDS is enterprise-entitled outright, so leaving
- * it set would make every later assertion pass through the allowlist and never
- * touch the per-workspace grant these tests are about.
+ * The allowlist is scoped to just this call rather than the whole test: it only
+ * decides who may set the grant, so leaving it set would let a later assertion
+ * pass for the wrong reason.
  */
 async function grantEnterpriseAsOps(
 	app: ReturnType<typeof createApp>,
@@ -828,32 +827,57 @@ describe('Workspaces Integration', () => {
 			expect(listed?.enterprise).toBe(true)
 		})
 
-		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
+		it('does not entitle an allowlisted billing owner without a per-workspace grant', async () => {
 			const app = createApp()
 			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Ops Owner No Grant' }),
 			)
 			const ws = await createRes.json()
 			expect(ws.enterprise).toBe(false)
 
-			// The allowlist is read from process.env at call time, so flipping it
-			// here exercises exactly what a founder deployment configures.
 			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 			try {
 				const listRes = await app.request(jsonGet('/api/workspaces'))
 				const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
-				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(true)
+				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(false)
 
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
 						settings: { llm_keys: { anthropic: 'sk-ant-enterprise' } },
 					}),
 				)
-				expect(res.status).toBe(200)
-				const body = await res.json()
-				expect(body.settings.llm_keys).toBeUndefined()
-				expect(body.llm_configured.anthropic).toBe(true)
+				expect(res.status).toBe(403)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('gives a workspace made by an allowlisted actor the trial card step, with no grant', async () => {
+			const app = createApp()
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const res = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'Made By Ops Actor' }),
+				)
+				expect(res.status).toBe(201)
+				const created = await res.json()
+				expect(created.enterprise).toBe(false)
+
+				const [row] = await db
+					.select({
+						settings: workspacesTable.settings,
+						enterpriseGranted: workspacesTable.enterpriseGranted,
+					})
+					.from(workspacesTable)
+					.where(eq(workspacesTable.id, created.id))
+				expect(row?.enterpriseGranted).toBe(false)
+				expect((row?.settings as { billing?: Record<string, unknown> }).billing).toMatchObject({
+					plan: 'trial',
+					trial_state: 'awaiting_card',
+				})
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
