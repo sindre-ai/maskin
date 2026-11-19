@@ -10,7 +10,10 @@ import MaskinAPI
 /// Reports crashes, and the failed calls `ErrorReporter` lets through, to the native app's own
 /// Sentry project (maskin-ios). Everything that could carry a person's words is switched off or
 /// stripped before an event leaves the phone: no user, no screenshots, no view hierarchy, no
-/// breadcrumbs, no request data, no extra data, no exception text. What stays is the app version
+/// breadcrumbs, no request data, no extra data, no exception text.
+///
+/// Also reports app hangs (the main thread frozen for 2 seconds) and watchdog kills (the system
+/// ending the app for freezing or memory), the two ways a phone seems to restart with no crash log. What stays is the app version
 /// and build, the OS version, the device model, the workspace id and the stack trace.
 ///
 /// Off in debug builds and in test runs, and in any build with no address (`MaskinSentryDSN` in
@@ -52,7 +55,14 @@ public final class SentrySink: ErrorReportSink {
 				options.tracesSampleRate = 0
 				options.enableAutoPerformanceTracing = false
 				options.enableAutoSessionTracking = false
-				options.enableAppHangTracking = false
+				// The phone "restarting" is often the system killing the app for freezing or for
+				// memory, and Apple sends no crash log for that. These two report it, through the
+				// same scrub as crashes. Hang tracking switches itself off under a debugger.
+				options.enableAppHangTracking = true
+				options.enableWatchdogTerminationTracking = true
+				// A watchdog report reads the last run's breadcrumbs back from disk in a form the scrub
+				// below cannot reach. Nothing adds any, and this keeps it that way.
+				options.maxBreadcrumbs = 0
 				options.enableAutoBreadcrumbTracking = false
 				options.enableNetworkBreadcrumbs = false
 				options.enableCaptureFailedRequests = false
@@ -99,9 +109,11 @@ public final class SentrySink: ErrorReportSink {
 			event.tags = ErrorReportTags.scrub(event.tags ?? [:])
 			// A crash's exception text can hold whatever the code was working on. The type and the
 			// stack trace say what happened.
-			for exception in event.exceptions ?? [] { exception.value = exception.type ?? "" }
+			for exception in event.exceptions ?? [] {
+				exception.value = ErrorReportScrub.exceptionText(type: exception.type)
+			}
 			// Keep the hardware and OS description, drop everything else the SDK collected.
-			event.context = (event.context ?? [:]).filter { ["app", "device", "os"].contains($0.key) }
+			event.context = ErrorReportScrub.contexts(event.context ?? [:])
 			return event
 		}
 	#endif

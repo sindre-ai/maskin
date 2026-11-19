@@ -46,6 +46,20 @@ public enum ErrorReportTags {
 	}
 }
 
+/// The rest of what an event may carry, for crashes, hangs and watchdog kills as well as reports.
+/// Kept here, away from the Sentry types, so `swift test` can check the rules.
+public enum ErrorReportScrub {
+	/// The only context blocks that stay: the app, the device and the OS description.
+	public static let contextKeys: Set<String> = ["app", "device", "os"]
+
+	public static func contexts<Value>(_ contexts: [String: Value]) -> [String: Value] {
+		contexts.filter { contextKeys.contains($0.key) }
+	}
+
+	/// An exception's text can hold whatever the code was working on, so only its type is kept.
+	public static func exceptionText(type: String?) -> String { type ?? "" }
+}
+
 /// Where reports go. The real one is `SentrySink` in MaskinFeatures; tests record calls.
 public protocol ErrorReportSink: Sendable {
 	func send(_ report: ErrorReport)

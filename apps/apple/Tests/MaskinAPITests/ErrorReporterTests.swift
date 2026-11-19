@@ -134,6 +134,23 @@ struct ErrorReporterTests {
 		])
 		#expect(Set(scrubbed.keys) == ["kind", "workspace_id", "app_version", "build"])
 	}
+
+	@Test("scrubbing keeps only the app, device and OS context blocks")
+	func scrubKeepsOnlyHardwareContexts() {
+		let scrubbed = ErrorReportScrub.contexts([
+			"app": ["app_version": "1.2"], "device": ["model": "iPhone17,1"], "os": ["name": "iOS"],
+			"user": ["email": "alex@example.com"], "culture": ["locale": "da_DK"],
+			"trace": ["trace_id": "abc"], "profile": ["profile_id": "def"],
+		])
+		#expect(Set(scrubbed.keys) == ["app", "device", "os"])
+		#expect(ErrorReportScrub.contexts([String: [String: String]]()).isEmpty)
+	}
+
+	@Test("an exception keeps its type and never its text")
+	func exceptionKeepsOnlyType() {
+		#expect(ErrorReportScrub.exceptionText(type: "WatchdogTermination") == "WatchdogTermination")
+		#expect(ErrorReportScrub.exceptionText(type: nil).isEmpty)
+	}
 }
 
 @Suite("Error reporting middleware")
