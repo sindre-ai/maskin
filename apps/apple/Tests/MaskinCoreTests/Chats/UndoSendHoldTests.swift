@@ -64,14 +64,16 @@ struct UndoSendHoldTests {
 
 	@Test("an old window cannot send a newer message early")
 	func staleTimer() async throws {
-		let hold = UndoSendHold(window: .milliseconds(150))
+		// The window is wide on purpose: tests run in parallel on a busy runner, and a short sleep can
+		// overshoot by 100 ms or more. The check below needs the second message's own window to still be open.
+		let hold = UndoSendHold(window: .milliseconds(600))
 		var order: [String] = []
 		hold.hold(send: { order.append("first") }, restore: {})
 		hold.undo()
 		hold.hold(send: { order.append("second") }, restore: {})
 		try await Task.sleep(for: .milliseconds(60))
 		#expect(order.isEmpty)
-		try await Task.sleep(for: .milliseconds(400))
+		try await Task.sleep(for: .milliseconds(1500))
 		#expect(order == ["second"])
 	}
 }
