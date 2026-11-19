@@ -25,6 +25,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'amplitude',
 			'atlassian',
 			'attio',
+			'azure-devops',
 			'canva',
 			'clickup',
 			'gmail',

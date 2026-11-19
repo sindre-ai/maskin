@@ -4,6 +4,7 @@ import { config as airtableConfig } from './providers/airtable/config'
 import { config as amplitudeConfig } from './providers/amplitude/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
+import { config as azureDevopsConfig } from './providers/azure-devops/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clickupConfig } from './providers/clickup/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
@@ -226,6 +227,10 @@ providers.set('airtable', {
 
 providers.set('atlassian', {
 	config: atlassianConfig,
+})
+
+providers.set('azure-devops', {
+	config: azureDevopsConfig,
 })
 
 providers.set('amplitude', {

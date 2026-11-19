@@ -35,6 +35,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
@@ -58,6 +59,7 @@ import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
@@ -279,9 +281,15 @@ const listProvidersRoute = createRoute({
 	},
 })
 
+/** Azure DevOps shows up only for the testers of its flag (apps/dev/src/lib/feature-flags.ts). */
+const azureDevopsEnabled = (actorId: string | undefined): boolean =>
+	!!actorId && isFlagEnabled(actorId, FLAGS.AZURE_DEVOPS)
+
 app.openapi(listProvidersRoute, (async (c) => {
+	const actorId = c.get('actorId')
 	const providers = listProviders()
 		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
+		.filter((p) => p.config.name !== AZURE_DEVOPS_PROVIDER || azureDevopsEnabled(actorId))
 		.map((p) => ({
 			name: p.config.name,
 			displayName: p.config.displayName,
@@ -930,6 +938,10 @@ app.openapi(connectRoute, (async (c) => {
 			createApiError('BAD_REQUEST', 'Custom tool servers are added from the Tools section'),
 			400,
 		)
+	}
+
+	if (providerName === AZURE_DEVOPS_PROVIDER && !azureDevopsEnabled(actorId)) {
+		return c.json(createApiError('BAD_REQUEST', `Unknown provider: ${providerName}`), 400)
 	}
 
 	let resolved: ResolvedProvider

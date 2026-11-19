@@ -19,6 +19,7 @@ import {
 	resendSendRefusal,
 	toSse,
 	toolsCallName,
+	withReadOnlyHeaders,
 } from '../lib/integrations/mcp-gateway'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
@@ -165,7 +166,11 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 					`${label} needs to be reconnected. Ask a workspace admin to reconnect it under Settings → Integrations.`,
 				)
 			}
-			return buildUpstreamHeaders(server.headers, envKey, token)
+			return withReadOnlyHeaders(
+				buildUpstreamHeaders(server.headers, envKey, token),
+				resolved.config.mcp?.readOnlyHeaders,
+				access,
+			)
 		},
 	})
 }
