@@ -428,6 +428,17 @@ async function fetchEventHistoryPage(
 	return { page, nextCursor }
 }
 
+/** A file record with its `content` and `content_text` starting at character `offset`, plus the offset. */
+function sliceFileFrom(file: unknown, offset: number): unknown {
+	if (!file || typeof file !== 'object') return file
+	const out: Record<string, unknown> = { ...(file as Record<string, unknown>), offset }
+	for (const key of ['content', 'content_text']) {
+		const value = out[key]
+		if (typeof value === 'string') out[key] = value.slice(offset)
+	}
+	return out
+}
+
 /** Read `.url` off an enriched row without paying the TS cost each time. */
 function pickUrl(row: unknown): string | undefined {
 	if (!row || typeof row !== 'object') return undefined
@@ -6523,9 +6534,12 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
 			const fileQuery = args.format === 'text' ? '?format=text' : ''
-			const result = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
+			const fetched = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
 				workspaceId: wsId,
 			})
+			// A read past the first characters starts where the caller left off, so a file the
+			// response cap cut can still be read to the end.
+			const result = args.offset ? sliceFileFrom(fetched, args.offset) : fetched
 			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
 			// Images go back as a real image block so the model can see them; the
 			// base64 bytes would otherwise arrive as ~50k chars of opaque text.
@@ -6739,6 +6753,24 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					comments: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes right after the last comment
+				// that ships. The history walk pages by offset, so the cursor carries the new offset.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const index = pagedRows.findIndex(
+						(row) =>
+							String((row as { id?: unknown }).id) === String((lastShipped as { id?: unknown }).id),
+					)
+					const row = pagedRows[index] as
+						| { id: number | string; createdAt?: string | null }
+						| undefined
+					if (!row?.createdAt) return null
+					return encodeCursor({
+						s: pagination.snapshotAt,
+						o: pagination.order,
+						k: { sortValue: row.createdAt, id: String(row.id) },
+						n: (pagination.cursor?.n ?? 0) + index + 1,
+					})
 				},
 			}
 		},
