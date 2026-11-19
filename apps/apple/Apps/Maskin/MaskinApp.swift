@@ -40,11 +40,6 @@ struct MaskinApp: App {
 
 	init() {
 		Perf.event("app.init")
-		// Crash and error reports (Sentry, project maskin-ios). Nil in debug builds, tests and any build
-		// without an address; then every report is a no-op. Started first so a crash during launch counts.
-		let errorSink = SentrySink.forThisBuild()
-		errorSink?.start()
-		ErrorReporter.shared.configure(sink: errorSink)
 		#if os(macOS)
 			let source = "macos"
 			let platform = DevicePlatform.macos
