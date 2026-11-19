@@ -59,15 +59,17 @@ describe('maskin-youtube tool server', () => {
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists get_channel, the seven write tools and the three upload tools', async () => {
+	it('lists the read tools, the seven write tools and the three upload tools', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'youtube__add_to_playlist',
 			'youtube__create_playlist',
 			'youtube__get_channel',
+			'youtube__get_own_captions',
 			'youtube__get_upload_status',
 			'youtube__like',
+			'youtube__list_comments',
 			'youtube__post_comment',
 			'youtube__publish_video',
 			'youtube__reply_to_comment',
@@ -366,7 +368,12 @@ describe('youtube write tools', () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		const byName = new Map(tools.map((t) => [t.name, t]))
-		const reads = ['youtube__get_channel', 'youtube__get_upload_status']
+		const reads = [
+			'youtube__get_channel',
+			'youtube__get_upload_status',
+			'youtube__list_comments',
+			'youtube__get_own_captions',
+		]
 		for (const [name, tool] of byName) {
 			expect(tool.annotations?.readOnlyHint).toBe(reads.includes(name))
 		}
