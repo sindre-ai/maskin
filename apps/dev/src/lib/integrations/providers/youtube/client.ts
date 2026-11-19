@@ -26,12 +26,16 @@ export interface YoutubeRead {
 	units: number
 	/** Which Google quota bucket the units count against. Defaults to data. */
 	bucket?: YoutubeQuotaBucket
+	/** False for reads that must never be cached, such as caption text. Default true. */
+	cache?: boolean
+	/** How to read a successful body. Default json; captions.download answers plain text. */
+	as?: 'json' | 'text'
 }
 
 /**
  * Thin fetch wrapper over youtube/v3. Order of operations:
  *  1. the active integration row (a revoked row never resolves),
- *  2. the cache, so a repeat read costs no quota,
+ *  2. the cache (unless the read opts out), so a repeat read costs no quota,
  *  3. the quota guard, charged before the Google call and not refunded on failure,
  *  4. the call itself.
  * A 401 means the grant was revoked between refreshes: the row is marked revoked and the caller
@@ -45,8 +49,11 @@ export async function youtubeRead<T = unknown>(
 	const { db, workspaceId, actorId } = ctx
 	const integrationId = await getYoutubeIntegrationId(db, workspaceId, actorId)
 
-	const cached = getCachedRead(integrationId, read.tool, read.params)
-	if (cached !== undefined) return cached as T
+	const useCache = read.cache !== false
+	if (useCache) {
+		const cached = getCachedRead(integrationId, read.tool, read.params)
+		if (cached !== undefined) return cached as T
+	}
 
 	const epoch = getPurgeEpoch(integrationId)
 	await chargeYoutubeQuota(db, workspaceId, read.units, read.bucket ?? 'data')
@@ -95,7 +102,7 @@ export async function youtubeRead<T = unknown>(
 		throw error
 	}
 
-	const body = (await res.json()) as T
-	setCachedRead(integrationId, read.tool, read.params, body, epoch)
+	const body = (read.as === 'text' ? await res.text() : await res.json()) as T
+	if (useCache) setCachedRead(integrationId, read.tool, read.params, body, epoch)
 	return body
 }
