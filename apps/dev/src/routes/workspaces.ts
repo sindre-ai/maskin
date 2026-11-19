@@ -58,6 +58,7 @@ import {
 import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
+	describePurgeFailure,
 	evictPurgedWorkspace,
 	purgeWorkspace,
 	purgeWorkspaceStorage,
@@ -1617,6 +1618,10 @@ const deleteWorkspaceRoute = createRoute({
 			description: 'A paid plan is still live; cancel it first',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Removing the workspace failed; nothing was deleted',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -1633,29 +1638,41 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	const outcome = await db.transaction(async (tx) => {
-		// Lock first: the checks below and the purge must see one consistent workspace, and a
-		// concurrent transfer, plan change or member add waits for this to finish.
-		const [locked] = await tx
-			.select({ id: workspaces.id })
-			.from(workspaces)
-			.where(eq(workspaces.id, workspaceId))
-			.for('update')
-			.limit(1)
-		if (!locked) return { kind: 'not_found' as const }
+	let outcome: Awaited<ReturnType<typeof runDelete>>
+	try {
+		outcome = await runDelete()
+	} catch (err) {
+		// The transaction rolled back. Say why in the log, and tell the caller in plain words.
+		const failure = describePurgeFailure(err)
+		logger.error('workspace: delete failed', { workspaceId, actorId, ...failure.log })
+		return c.json(createApiError('INTERNAL_ERROR', failure.message), 500)
+	}
 
-		const [facts] = await loadMembershipFacts(tx as unknown as Database, actorId, workspaceId)
-		if (!facts) return { kind: 'not_found' as const }
+	async function runDelete() {
+		return db.transaction(async (tx) => {
+			// Lock first: the checks below and the purge must see one consistent workspace, and a
+			// concurrent transfer, plan change or member add waits for this to finish.
+			const [locked] = await tx
+				.select({ id: workspaces.id })
+				.from(workspaces)
+				.where(eq(workspaces.id, workspaceId))
+				.for('update')
+				.limit(1)
+			if (!locked) return { kind: 'not_found' as const }
 
-		const preview = workspaceDeletionPreview(actorId, actorType, facts)
-		const blocker = preview.blockers[0]
-		if (blocker?.code === 'not_billing_owner') return { kind: 'forbidden' as const }
-		if (confirmName !== facts.workspaceName) return { kind: 'name_mismatch' as const }
-		if (blocker) return { kind: 'blocked' as const, message: blocker.message }
+			const [facts] = await loadMembershipFacts(tx as unknown as Database, actorId, workspaceId)
+			if (!facts) return { kind: 'not_found' as const }
 
-		const result = await purgeWorkspace(tx, workspaceId)
-		return { kind: 'deleted' as const, result, name: facts.workspaceName }
-	})
+			const preview = workspaceDeletionPreview(actorId, actorType, facts)
+			const blocker = preview.blockers[0]
+			if (blocker?.code === 'not_billing_owner') return { kind: 'forbidden' as const }
+			if (confirmName !== facts.workspaceName) return { kind: 'name_mismatch' as const }
+			if (blocker) return { kind: 'blocked' as const, message: blocker.message }
+
+			const result = await purgeWorkspace(tx, workspaceId)
+			return { kind: 'deleted' as const, result, name: facts.workspaceName }
+		})
+	}
 
 	switch (outcome.kind) {
 		case 'not_found':
