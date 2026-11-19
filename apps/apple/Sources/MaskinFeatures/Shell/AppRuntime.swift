@@ -697,6 +697,7 @@ public final class AppRuntime {
 		// Local traces of this account: what they searched for and files they exported to share.
 		SearchRecents.clearAll()
 		FileStore.clearExports()
+		AttachmentDownloader.clearAll()
 		stopSyncCoordinator()
 		// The cached copy of this account's data (feed, objects...) goes with the session.
 		DiskCache.clearAll()
