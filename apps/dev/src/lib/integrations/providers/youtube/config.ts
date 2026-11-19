@@ -12,16 +12,35 @@ import type { ProviderConfig } from '../../types'
  *    disconnect hook would do nothing and show no error.
  *  - `include_granted_scopes` is absent. The token then carries only YouTube scopes, and a
  *    revoke does not drag the person's other Google scopes with it.
- *  - Scopes are exactly youtube.readonly, youtube.force-ssl, youtube, youtube.upload,
- *    userinfo.email and openid (policy item P5: request the minimum, and no yt-analytics.readonly
- *    until the analytics tool is built). youtube.force-ssl and youtube are for the write tools,
- *    which only run after a person approves (comments, playlists and video edits need force-ssl;
- *    videos.rate and thumbnails.set need youtube). youtube.upload is for uploads, which are
- *    always private and need a second approval to publish. A connection made before they were
- *    added must reconnect before an approved change can run.
+ *  - The connect request asks for YOUTUBE_READ_SCOPES only: youtube.readonly, userinfo.email and
+ *    openid (policy item P5: request the minimum, and no yt-analytics.readonly until the analytics
+ *    tool is built). Only read passed Google's round 1 verification, and unverified scopes on the
+ *    production connect screen can show Google's warning.
+ *  - YOUTUBE_WRITE_SCOPES (youtube.force-ssl, youtube, youtube.upload) stay out of the request until
+ *    round 2 passes. The write and upload tools are built but stay off for every agent. To switch
+ *    them on, add YOUTUBE_WRITE_SCOPES to `scopes` below and update the scope test. A connection
+ *    made before then must reconnect before an approved change can run.
  *
  * No webhook, postInstall or watch hooks: reads are on demand.
  */
+/** Verified in round 1. The only scopes a new connection asks for. */
+export const YOUTUBE_READ_SCOPES = [
+	'https://www.googleapis.com/auth/youtube.readonly',
+	'https://www.googleapis.com/auth/userinfo.email',
+	'openid',
+]
+
+/**
+ * Not requested yet: they wait for Google's round 2 verification. force-ssl is for comments,
+ * playlists and video edits, youtube is for videos.rate and thumbnails.set, upload is for private
+ * uploads.
+ */
+export const YOUTUBE_WRITE_SCOPES = [
+	'https://www.googleapis.com/auth/youtube.force-ssl',
+	'https://www.googleapis.com/auth/youtube',
+	'https://www.googleapis.com/auth/youtube.upload',
+]
+
 export const config: ProviderConfig = {
 	name: 'youtube',
 	displayName: 'YouTube',
@@ -33,14 +52,7 @@ export const config: ProviderConfig = {
 			authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
 			tokenUrl: 'https://oauth2.googleapis.com/token',
 			revokeUrl: 'https://oauth2.googleapis.com/revoke',
-			scopes: [
-				'https://www.googleapis.com/auth/youtube.readonly',
-				'https://www.googleapis.com/auth/youtube.force-ssl',
-				'https://www.googleapis.com/auth/youtube',
-				'https://www.googleapis.com/auth/youtube.upload',
-				'https://www.googleapis.com/auth/userinfo.email',
-				'openid',
-			],
+			scopes: YOUTUBE_READ_SCOPES,
 			pkce: true,
 			// access_type=offline + prompt=consent force Google to issue a refresh_token.
 			extraAuthParams: {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { actorScopedProviders } from '../../../../lib/integrations/lookup'
-import { config } from '../../../../lib/integrations/providers/youtube/config'
+import { YOUTUBE_WRITE_SCOPES, config } from '../../../../lib/integrations/providers/youtube/config'
 import { revokeYoutubeGrant } from '../../../../lib/integrations/providers/youtube/disconnect'
 import { resolveExternalId } from '../../../../lib/integrations/providers/youtube/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
@@ -11,15 +11,33 @@ describe('youtube provider config', () => {
 		expect(config.displayName).toBe('YouTube')
 	})
 
-	it('requests exactly the read, write, upload, email and openid scopes', () => {
+	it('requests only the read, email and openid scopes verified in round 1', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
 		expect(config.auth.config.scopes).toEqual([
 			'https://www.googleapis.com/auth/youtube.readonly',
+			'https://www.googleapis.com/auth/userinfo.email',
+			'openid',
+		])
+	})
+
+	it('asks for no scope outside the read list', () => {
+		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
+		const allowed = [
+			'https://www.googleapis.com/auth/youtube.readonly',
+			'https://www.googleapis.com/auth/userinfo.email',
+			'openid',
+		]
+		for (const scope of config.auth.config.scopes) expect(allowed).toContain(scope)
+		for (const scope of YOUTUBE_WRITE_SCOPES) {
+			expect(config.auth.config.scopes).not.toContain(scope)
+		}
+	})
+
+	it('keeps the write scopes in one named list for round 2', () => {
+		expect(YOUTUBE_WRITE_SCOPES).toEqual([
 			'https://www.googleapis.com/auth/youtube.force-ssl',
 			'https://www.googleapis.com/auth/youtube',
 			'https://www.googleapis.com/auth/youtube.upload',
-			'https://www.googleapis.com/auth/userinfo.email',
-			'openid',
 		])
 	})
 
