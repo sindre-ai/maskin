@@ -21,12 +21,7 @@ struct PermissionsPage: View {
 
 	var body: some View {
 		WorkspacePage(title: "Permissions") {
-			PageCard(
-				rows: PermissionKind.allCases.map { kind in
-					PageRowModel(
-						id: kind.id, title: kind.title, subtitle: kind.note,
-						accessory: accessory(for: kind), showsChevron: opensSettings, action: opensSettings ? openSettings : nil)
-				})
+			PageCard(rows: rows)
 			PageFootnote(text: PermissionsRules.pasteFootnote)
 			if PermissionsRules.showsDeniedFootnote(statuses) {
 				PageFootnote(text: PermissionsRules.deniedFootnote)
@@ -37,6 +32,18 @@ struct PermissionsPage: View {
 			}
 		}
 		.task(id: scenePhase) { await refresh() }
+	}
+
+	private var rows: [PageRowModel] {
+		PermissionKind.allCases.map { kind in
+			var row = PageRowModel(id: kind.id, title: kind.title, subtitle: kind.note)
+			row.accessory = accessory(for: kind)
+			if opensSettings {
+				row.showsChevron = true
+				row.action = { openSettings() }
+			}
+			return row
+		}
 	}
 
 	/// iOS only: the other platforms have no Settings > Maskin page to go to.
