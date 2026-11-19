@@ -245,6 +245,7 @@ build_context() {
 MCP_CONFIG_FILE=""
 
 STRIP_IMAGES_PROXY_PORT=9334
+STRIP_IMAGES_PROXY_UP=""
 
 # Start a local proxy in front of the model endpoint that replaces image blocks
 # with a text note, and repoint ANTHROPIC_BASE_URL at it. Only runs when
@@ -257,7 +258,8 @@ setup_strip_images_proxy() {
   # (1), and `set -e` would abort the whole script for every non-stripping session.
   # Also needed when only provider exclusions are set: the proxy injects them.
   # Also needed for the time-to-first-token guard (MASKIN_TTFT_TIMEOUT_MS).
-  [ "$MASKIN_STRIP_IMAGES" = "1" ] || [ -n "$MASKIN_PROVIDER_PREFS" ] || [ -n "$MASKIN_TTFT_TIMEOUT_MS" ] || return 0
+  # Also needed for the on-demand tool loader (MASKIN_TOOL_LOADER).
+  [ "$MASKIN_STRIP_IMAGES" = "1" ] || [ -n "$MASKIN_PROVIDER_PREFS" ] || [ -n "$MASKIN_TTFT_TIMEOUT_MS" ] || [ "$MASKIN_TOOL_LOADER" = "1" ] || return 0
   [ -z "$ANTHROPIC_BASE_URL" ] && return 0
   node /strip-images-proxy.js "$STRIP_IMAGES_PROXY_PORT" "$ANTHROPIC_BASE_URL" \
     > >(tee "${TMPDIR:-/tmp}/strip-images-proxy.log" | sed -u 's/^/[strip-images-proxy] /' >&2) 2>&1 &
@@ -274,8 +276,25 @@ setup_strip_images_proxy() {
   if grep -q "listening on" "${TMPDIR:-/tmp}/strip-images-proxy.log" 2>/dev/null; then
     echo "[system] strip-images proxy up, routing ANTHROPIC_BASE_URL through 127.0.0.1:${STRIP_IMAGES_PROXY_PORT}"
     export ANTHROPIC_BASE_URL="http://127.0.0.1:${STRIP_IMAGES_PROXY_PORT}"
+    STRIP_IMAGES_PROXY_UP=1
   else
     echo "[system] WARNING: strip-images-proxy did not confirm startup, using ANTHROPIC_BASE_URL directly" >&2
+  fi
+}
+
+# On the Maskin-funded route (MASKIN_TOOL_LOADER=1) the proxy above sends MCP
+# tools by name only; this adds the load_tool server the agent uses to bring in
+# the definitions it needs (tool-loader.js). Skipped when the proxy is not up,
+# so an agent never has tools listed by name with no way to load them. Rollback
+# is MASKIN_FALLBACK_TOOL_LOADER=off on apps/dev, no image rebuild.
+add_tool_loader_server() {
+  [ "$MASKIN_TOOL_LOADER" = "1" ] && [ "$STRIP_IMAGES_PROXY_UP" = "1" ] && [ -n "$MCP_CONFIG_FILE" ] || return 0
+  local patched
+  if patched=$(jq -c '.mcpServers.toolloader = {command: "node", args: ["/tool-loader.js", "mcp"]}' "$MCP_CONFIG_FILE"); then
+    printf '%s' "$patched" > "$MCP_CONFIG_FILE"
+    echo "[system] tool loader added: MCP tools are sent by name, load_tool loads a definition on request"
+  else
+    echo "[system] WARNING: could not add the tool loader to the MCP config, tools stay fully loaded" >&2
   fi
 }
 
@@ -703,6 +722,7 @@ assert_skills_symlink
 build_context
 setup_mcps
 setup_strip_images_proxy
+add_tool_loader_server
 setup_claude_credentials
 setup_git_identity
 setup_github_credential_helper
