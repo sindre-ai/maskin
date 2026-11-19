@@ -7,7 +7,11 @@ import UniformTypeIdentifiers
 /// field only takes text, so the keyboard's "Paste from Screenshots" and the edit menu's Paste were dropped.
 /// Put this in the field's `.background`: it finds the text view behind the field, lets it accept images and
 /// hands each pasted picture to `onImage`. A paste that carries text stays a plain text paste.
+/// The text view is found beside this background first. On the iOS 18 selection field it does not sit there, so
+/// when the field takes focus the hook also looks for the text view that is the first responder, which is the
+/// one the edit menu belongs to.
 struct ComposerImagePasteHook: UIViewRepresentable {
+	var isFocused = false
 	let onImage: @MainActor (Data) -> Void
 
 	func makeCoordinator() -> ComposerImagePasteHandler { ComposerImagePasteHandler() }
@@ -21,7 +25,7 @@ struct ComposerImagePasteHook: UIViewRepresentable {
 
 	func updateUIView(_ view: HookView, context: Context) {
 		context.coordinator.onImage = onImage
-		view.attach()
+		view.attach(focused: isFocused)
 	}
 
 	final class HookView: UIView {
@@ -33,15 +37,22 @@ struct ComposerImagePasteHook: UIViewRepresentable {
 		}
 
 		/// The text view may not exist yet when this view lands in a window, so look again a few times.
-		func attach(retries: Int = 5) {
-			guard window != nil, let handler else { return }
+		func attach(focused: Bool = false, retries: Int = 5) {
+			guard let window, let handler else { return }
+			var done = false
 			if let input = textInput() {
 				handler.install(on: input)
-			} else if retries > 0 {
-				Task { @MainActor [weak self] in
-					try? await Task.sleep(for: .milliseconds(100))
-					self?.attach(retries: retries - 1)
-				}
+				done = !focused
+			}
+			// The keyboard may take a moment to make the text view the first responder, so this looks again too.
+			if focused, let input = Self.focusedInput(in: window) {
+				handler.install(on: input)
+				done = true
+			}
+			guard !done, retries > 0 else { return }
+			Task { @MainActor [weak self] in
+				try? await Task.sleep(for: .milliseconds(100))
+				self?.attach(focused: focused, retries: retries - 1)
 			}
 		}
 
@@ -52,6 +63,15 @@ struct ComposerImagePasteHook: UIViewRepresentable {
 				guard let current = scope else { return nil }
 				if let found = Self.firstInput(in: current) { return found }
 				scope = current.superview
+			}
+			return nil
+		}
+
+		/// The text view or text field that has the keyboard right now.
+		private static func focusedInput(in view: UIView) -> UIView? {
+			if view.isFirstResponder, view is UITextView || view is UITextField { return view }
+			for sub in view.subviews {
+				if let found = focusedInput(in: sub) { return found }
 			}
 			return nil
 		}

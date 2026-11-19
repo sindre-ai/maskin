@@ -288,7 +288,7 @@ struct MaskinComposer: View {
 			.padding(.trailing, MaskinSpace.s1)
 			.frame(maxWidth: .infinity)
 			#if os(iOS)
-			.background { ComposerImagePasteHook { model.attach([.image($0)]) } }
+			.background { ComposerImagePasteHook(isFocused: focused) { model.attach([.image($0)]) } }
 			#endif
 	}
 
@@ -408,7 +408,8 @@ struct MaskinComposer: View {
 			// does not depend on how a guide resolves. Fade only: a move transition can park the card off its spot.
 			let rows = attachActions
 			let estimate = min(ComposerAttachMenu.contentHeight(rows: rows.count), attachMenuMaxHeight)
-			ComposerAttachMenu(actions: rows, maxHeight: attachMenuMaxHeight, onPick: pick)
+			ComposerAttachMenu(
+				actions: rows, maxHeight: attachMenuMaxHeight, onPick: pick, onPasteImages: pasteImages)
 				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { attachMenuHeight = $0 }
 				.offset(y: ComposerAttachMenu.offsetY(height: attachMenuHeight ?? estimate))
 				.transition(.opacity)
@@ -433,9 +434,8 @@ struct MaskinComposer: View {
 			showsFormatting = action == .showFormatting
 			ComposerFormatting.setShown(showsFormatting, actorID: model.selfActorID)
 		case .paste:
-			#if os(iOS)
-			pasteImage()
-			#endif
+			// The row is the system paste button and reports through `onPasteImages`, not through a pick.
+			break
 		}
 	}
 
@@ -504,16 +504,26 @@ struct MaskinComposer: View {
 
 	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
-	#if os(iOS)
-	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field.
-	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field. The pictures come from
+	/// the system paste button, so iOS does not ask "Allow Paste".
+	fileprivate func pasteImages(_ providers: [NSItemProvider]) {
+		guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }) else {
 			model.notice = "Couldn't read an image from the clipboard."
 			return
 		}
-		addFiles([.image(data)])
+		let model = model
+		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+			Task { @MainActor in
+				if let data {
+					model.attach([.image(data)])
+				} else {
+					model.notice = "Couldn't read an image from the clipboard."
+				}
+			}
+		}
 	}
 
+	#if os(iOS)
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
