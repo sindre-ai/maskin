@@ -1137,7 +1137,7 @@ export async function resolveLlmRoute(params: {
 				return {
 					route: LLM_ROUTE_CUSTOM,
 					envVars: customEnv,
-					modelName: customEnv.ANTHROPIC_MODEL.replace(/\[1m\]$/i, ''),
+					modelName: customEnv.ANTHROPIC_MODEL?.replace(/\[1m\]$/i, ''),
 					modelSource: 'workspace',
 				}
 			}
