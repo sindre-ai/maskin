@@ -1441,6 +1441,14 @@ export const tools = {
 				.describe(
 					'"raw" (default) returns the stored bytes as `content`. "text" returns `content_text`: for HTML, the readable words as markdown; for other text files, the content unchanged.',
 				),
+			offset: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Start `content` or `content_text` at this character. A long file comes back cut, and the reply says which offset to pass to read on.',
+				),
 		}),
 	},
 	transcribe_file: {
