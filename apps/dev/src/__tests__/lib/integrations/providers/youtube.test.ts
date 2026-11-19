@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { actorScopedProviders } from '../../../../lib/integrations/lookup'
-import { config } from '../../../../lib/integrations/providers/youtube/config'
+import { config, youtubeScopes } from '../../../../lib/integrations/providers/youtube/config'
 import { revokeYoutubeGrant } from '../../../../lib/integrations/providers/youtube/disconnect'
 import { resolveExternalId } from '../../../../lib/integrations/providers/youtube/resolve-id'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
@@ -11,9 +11,24 @@ describe('youtube provider config', () => {
 		expect(config.displayName).toBe('YouTube')
 	})
 
-	it('requests exactly the read, write, upload, email and openid scopes', () => {
+	it('requests read, email and openid only by default', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
 		expect(config.auth.config.scopes).toEqual([
+			'https://www.googleapis.com/auth/youtube.readonly',
+			'https://www.googleapis.com/auth/userinfo.email',
+			'openid',
+		])
+	})
+
+	it('stays read only when the write setting is off or not exactly "true"', () => {
+		const readOnly = youtubeScopes({})
+		expect(youtubeScopes({ YOUTUBE_WRITE_SCOPES_ENABLED: 'false' })).toEqual(readOnly)
+		expect(youtubeScopes({ YOUTUBE_WRITE_SCOPES_ENABLED: '1' })).toEqual(readOnly)
+		expect(readOnly).toHaveLength(3)
+	})
+
+	it('adds the three write scopes when the write setting is on', () => {
+		expect(youtubeScopes({ YOUTUBE_WRITE_SCOPES_ENABLED: 'true' })).toEqual([
 			'https://www.googleapis.com/auth/youtube.readonly',
 			'https://www.googleapis.com/auth/youtube.force-ssl',
 			'https://www.googleapis.com/auth/youtube',
