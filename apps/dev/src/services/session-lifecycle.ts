@@ -32,6 +32,7 @@ import { unclassifiedFingerprint } from '../lib/credit-classifier'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { getSessionContextSize } from '../lib/session-context-size'
 import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
@@ -884,6 +885,8 @@ export async function emitCompletion(
 	const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : null
 	const triggerSource = typeof config.trigger_source === 'string' ? config.trigger_source : null
 
+	const contextSize = getSessionContextSize(session.id)
+
 	await capturePosthogEvent('agent_session_completed', session.workspaceId, {
 		session_id: session.id,
 		actor_id: session.actorId,
@@ -893,7 +896,13 @@ export async function emitCompletion(
 		host,
 		outcome: mapKindToOutcomeProp(outcome.kind),
 		classification: outcome.classification,
-		stop_reason: outcome.reason ?? null,
+		// A full or failing window is its own end cause, so the first sibling bet's thrashing
+		// count and this bet's failure count can read it: context_full, compaction_failed.
+		stop_reason: contextSize?.endCause ?? outcome.reason ?? null,
+		// The size of the window at the last model call of the last turn, and the window the
+		// session reports. Left off when the session showed neither (PostHog reads them as absent).
+		last_turn_window_tokens: contextSize?.lastTurnWindowTokens,
+		context_window_tokens: contextSize?.contextWindowTokens,
 		exit_code: outcome.exitCode ?? null,
 		duration_ms: durationMs,
 		input_tokens: totals.inputTokens ?? 0,

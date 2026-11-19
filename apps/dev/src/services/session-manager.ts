@@ -74,6 +74,7 @@ import {
 	trackSessionLaunchModel,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackChatSessionRotated } from '../lib/analytics/chat-session-events'
 import { FirstCallObserver, type FirstTurnResult } from '../lib/analytics/first-call-size'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
@@ -210,9 +211,11 @@ import {
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
 import { resolveAgentSendModes } from '../lib/send-permissions'
+import { forgetSessionContextSize, recordSessionContextSize } from '../lib/session-context-size'
 import { sessionLogRedactor } from '../lib/session-log-redactor'
 import { RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY, pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
+import { TurnSizeObserver } from '../lib/turn-size'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
@@ -223,6 +226,12 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
+import {
+	ChatRotation,
+	type RotationRecord,
+	buildHandoffPrompt,
+	chatRotationEnabled,
+} from './chat-rotation'
 import {
 	ContainerManager,
 	type LogChunk,
@@ -732,6 +741,25 @@ export class SessionManager extends EventEmitter {
 	 */
 	private readonly pendingLaunchStarts = new Map<string, PendingLaunchStart>()
 
+	/**
+	 * Per-session reader of the window size at the end of each turn. It runs with chat rotation
+	 * off too: the size and end-cause records start at the first deploy, so a baseline exists
+	 * before anything is switched on. In memory only, dropped in clearActiveSession.
+	 */
+	private readonly turnSizeObservers = new Map<string, TurnSizeObserver>()
+
+	/** Background sessions already stopped for compacting in a loop, so one is stopped once. */
+	private readonly compactionLoopStopped = new Set<string>()
+
+	/**
+	 * A background session (no chat, no turns) that compacts this many times is stopped, when
+	 * chat rotation is on. A judgment number: each compaction is a full window spent.
+	 */
+	private static readonly BACKGROUND_COMPACTION_STOP = 3
+
+	/** Restarts big chats with a handoff note. See chat-rotation.ts. */
+	private readonly chatRotation: ChatRotation
+
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
@@ -802,10 +830,43 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			isHandoffResult: (sessionId, result) =>
+				this.chatRotation.claimHandoffResult(sessionId, result),
 			// An interactive CLI stays alive after printing a limit banner as its
 			// final error, so no exit settles the row. Same teardown as a helper.
 			onLimitResult: (sessionId, outcome) =>
 				this.finishHelperSession(sessionId, outcome, { retry: false }),
+		})
+		this.chatRotation = this.buildChatRotation()
+	}
+
+	private buildChatRotation(): ChatRotation {
+		return new ChatRotation({
+			loadSession: async (sessionId) => {
+				const [row] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+				return row ?? null
+			},
+			// Tagged on the persisted envelope only, so the transcript shows what the turn was.
+			writeHandoffTurn: (sessionId) =>
+				this.writeInput(
+					sessionId,
+					{ type: 'user', message: { role: 'user', content: buildHandoffPrompt() } },
+					undefined,
+					undefined,
+					{ maskin_handoff: true },
+				),
+			hasUnansweredTurn: (session) => this.hasUnansweredConversationTurn(session),
+			closeForRotation: (session, record) => this.closeSessionForRotation(session, record),
+			handoffTurnClosed: (sessionId) =>
+				this.emit('turn', {
+					sessionId,
+					phase: 'finished',
+					outcome: 'done',
+				} satisfies SessionTurnEvent),
 		})
 	}
 
@@ -4432,6 +4493,7 @@ ${cont.continues_prompt}
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
 								await this.recordTurnUsage(sessionId, chunk.data)
 								this.observeFirstCallSize(sessionId, chunk.data)
+								await this.observeTurnSize(sessionId, chunk.data)
 							}
 						}
 
@@ -5339,6 +5401,83 @@ ${cont.continues_prompt}
 		}
 	}
 
+	/**
+	 * Reads the window size from a session's stdout and hands each closed turn to chat rotation.
+	 * Runs after the turn finalizer, so the turn's reply is already in the chat when rotation
+	 * looks. With rotation off it only records the reading for the session-completed event. A
+	 * background session (no turns) that compacts in a loop is stopped, when rotation is on.
+	 * Never throws: a fault here must not break log ingest.
+	 */
+	private async observeTurnSize(sessionId: string, chunk: string): Promise<void> {
+		try {
+			let observer = this.turnSizeObservers.get(sessionId)
+			if (!observer) {
+				observer = new TurnSizeObserver()
+				this.turnSizeObservers.set(sessionId, observer)
+			}
+			for (const reading of observer.feed(chunk)) {
+				await this.chatRotation.onTurn(sessionId, reading)
+			}
+			if (
+				observer.pendingCompactions >= SessionManager.BACKGROUND_COMPACTION_STOP &&
+				chatRotationEnabled() &&
+				!this.compactionLoopStopped.has(sessionId)
+			) {
+				await this.stopCompactionLoop(sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to read the turn size', { sessionId, error: String(err) })
+		}
+	}
+
+	/** Stops a background session that keeps compacting. A chat is restarted by rotation instead. */
+	private async stopCompactionLoop(sessionId: string): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session || session.status !== 'running' || session.conversationId) return
+		this.compactionLoopStopped.add(sessionId)
+		recordSessionContextSize(sessionId, { endCause: 'compaction_failed' })
+		logger.warn('Stopping a background session that keeps compacting', { sessionId })
+		await this.insertSystemLog(
+			sessionId,
+			'Session stopped: its context kept filling up and compacting.',
+		).catch(() => {})
+		await this.stopSession(sessionId).catch((err) =>
+			logger.error('Failed to stop a compacting session', { sessionId, error: String(err) }),
+		)
+	}
+
+	/**
+	 * Closes a chat session for rotation: saves what the next seed needs on the row, then closes
+	 * it as an idle chat is closed, so the next message starts a fresh session. The rotated event
+	 * goes out only when this call is the one that closed the session.
+	 */
+	private async closeSessionForRotation(
+		session: typeof sessions.$inferSelect,
+		record: RotationRecord,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				config: sql`coalesce(${sessions.config}, '{}'::jsonb) || ${JSON.stringify({ rotation: record })}::jsonb`,
+			})
+			.where(eq(sessions.id, session.id))
+		const closed = await this.completeIdleChatSession(session, { rotated: true })
+		if (!closed) return
+		const route = (session.config as { llm_route?: unknown } | null)?.llm_route
+		void trackChatSessionRotated({
+			workspaceId: session.workspaceId,
+			agentId: session.actorId,
+			reason: record.reason,
+			route: typeof route === 'string' ? route : null,
+			sizeBucket: record.sizeBucket,
+			handoff: record.handoff,
+		})
+	}
+
 	/** Holds this launch's session-start event until its first turn has run. */
 	private holdLaunchStartEvent(
 		sessionId: string,
@@ -5595,11 +5734,14 @@ ${cont.continues_prompt}
 	 * reprocessing — neither can re-mark the session failed afterwards. A CAS
 	 * miss (something else already transitioned the row) is a silent no-op.
 	 */
-	private async completeIdleChatSession(session: typeof sessions.$inferSelect): Promise<void> {
+	private async completeIdleChatSession(
+		session: typeof sessions.$inferSelect,
+		opts: { rotated?: boolean } = {},
+	): Promise<boolean> {
 		// A session that went quiet with an unanswered message is wedged
 		// mid-turn, not idle — leave it for the hard timeout reaper, which
 		// closes it as `timeout` so the chat UI surfaces the interruption.
-		if (await this.hasUnansweredConversationTurn(session)) return
+		if (await this.hasUnansweredConversationTurn(session)) return false
 		const now = new Date()
 		// Save the usage first, as the timeout close does: the terminal row is final
 		// for usage writes, and the settle below reads these totals for its
@@ -5635,11 +5777,13 @@ ${cont.continues_prompt}
 						kind: 'complete',
 						classification: 'agent_completed',
 						source: 'idle-watcher',
-						resultText: 'Conversation went idle — session closed',
+						resultText: opts.rotated
+							? 'Chat restarted with a handoff note — session closed'
+							: 'Conversation went idle — session closed',
 					},
 			this.buildSettleDeps(),
 		)
-		if (settled.alreadySettled) return
+		if (settled.alreadySettled) return false
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
@@ -5691,7 +5835,9 @@ ${cont.continues_prompt}
 			session.id,
 			creditFailure
 				? 'Session failed — every turn hit a credit error'
-				: 'Session completed — conversation idle',
+				: opts.rotated
+					? 'Session completed — chat restarted in a fresh session'
+					: 'Session completed — conversation idle',
 		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
@@ -5705,6 +5851,7 @@ ${cont.continues_prompt}
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
 		)
+		return true
 	}
 
 	/**
@@ -6827,6 +6974,7 @@ ${cont.continues_prompt}
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
 					await this.recordTurnUsage(sessionId, line.content)
 					this.observeFirstCallSize(sessionId, line.content)
+					await this.observeTurnSize(sessionId, line.content)
 				}
 			}
 		}
@@ -7587,6 +7735,10 @@ ${cont.continues_prompt}
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.flushLaunchStartEvent(sessionId)
 		this.turnFinalizer.forgetSession(sessionId)
+		this.chatRotation.forget(sessionId)
+		this.turnSizeObservers.delete(sessionId)
+		this.compactionLoopStopped.delete(sessionId)
+		forgetSessionContextSize(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
 		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
 		this.mcpHealth.delete(sessionId)
