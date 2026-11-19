@@ -663,7 +663,9 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		expect(evt.truncated).toBe(true)
 	})
 
-	it('AC-T6: calling fetch_handle.tool with fetch_handle.ids returns the omitted rows without re-truncation', async () => {
+	// Lists 25 big rows under a 2000-token cap and returns the ids the list left out. The two tests
+	// below then ask get_objects for those ids under different caps.
+	async function listAndOmit() {
 		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
 
 		const fixture = Array.from({ length: 25 }, (_, i) => bigObjectRow(i))
@@ -708,18 +710,51 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		// specifically.
 		recorded.length = 0
 
+		return { getHandler, omittedIds }
+	}
+
+	it('AC-T6: calling fetch_handle.tool with fetch_handle.ids ships every omitted row when they fit under the cap', async () => {
+		const { getHandler, omittedIds } = await listAndOmit()
+
+		// get_objects is capped too (PR 3715), so "no re-truncation" now holds only
+		// while the requested rows fit. Lift the cap for the follow-up.
+		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '100000'
+
 		const followUp = (await getHandler({ ids: omittedIds })) as {
 			_meta?: { truncated?: boolean }
 			structuredContent: { objects: unknown[] }
 		}
 
-		// The follow-up must NOT be re-truncated: get_objects returns the full
-		// payload for the requested ids. (get_objects is not in
-		// TOKEN_CAP_TARGETS, so even if the shape overflowed the cap the wrapper
-		// wouldn't touch it — which is precisely the "no re-truncation"
-		// guarantee AC-T6 asks for.)
 		expect(followUp._meta?.truncated).toBeUndefined()
 		expect(followUp.structuredContent.objects).toHaveLength(omittedIds.length)
+	})
+
+	it('AC-T6: a follow-up that does not fit under the cap is cut and says which ids were left out', async () => {
+		const { getHandler, omittedIds } = await listAndOmit()
+
+		// The cap stays at 2000 tokens: the omitted rows together are far over it.
+		const followUp = (await getHandler({ ids: omittedIds })) as {
+			_meta?: { truncated?: boolean; fetch_handle?: { tool: string; ids: string[] } }
+			structuredContent: {
+				objects: Array<{ object: { id: string } }>
+				truncated?: boolean
+				omitted_count?: number
+				omitted_ids?: string[]
+				notice?: string
+			}
+		}
+
+		expect(followUp._meta?.truncated).toBe(true)
+		const shipped = followUp.structuredContent.objects.map((o) => o.object.id)
+		const left = followUp.structuredContent.omitted_ids ?? []
+		expect(shipped.length).toBeGreaterThan(0)
+		expect(left.length).toBeGreaterThan(0)
+		// Every requested id is either shipped or named as left out, none lost.
+		expect([...shipped, ...left]).toEqual(omittedIds)
+		expect(followUp.structuredContent.truncated).toBe(true)
+		expect(followUp.structuredContent.omitted_count).toBe(left.length)
+		expect(followUp.structuredContent.notice).toContain(`of ${omittedIds.length} objects`)
+		expect(followUp._meta?.fetch_handle?.ids).toEqual(left)
 	})
 
 	describe('a trimmed page keeps a cursor, so a walk skips no rows', () => {
