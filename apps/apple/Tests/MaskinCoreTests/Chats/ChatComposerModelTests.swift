@@ -165,6 +165,19 @@ struct ChatComposerModelTests {
 		#expect(taken?.metadata?.attachments?.first?.sizeBytes == 10)
 	}
 
+	@Test("the chip takes the real name and type of what was prepared")
+	func chipAdoptsPreparedFile() async {
+		let uploader = FakeUploader()
+		let m = model(uploader)
+		m.attach(
+			name: "Photo 19-11-2026, 08.38.jpg", mimeType: "image/jpeg",
+			prepare: { PreparedChatFile(name: "Video 19-11-2026, 08.38.mov", mimeType: "video/quicktime", data: Data(count: 10)) })
+		#expect(await eventually { m.attachments.first?.ref != nil })
+		#expect(m.attachments.first?.name == "Video 19-11-2026, 08.38.mov")
+		#expect(m.attachments.first?.mimeType == "video/quicktime")
+		#expect(m.attachments.first?.isImage == false)
+	}
+
 	@Test("a failed upload blocks sending until it is retried or removed")
 	func failedUpload() async {
 		let uploader = FakeUploader()
