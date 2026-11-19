@@ -2,7 +2,6 @@
 
 - iPad: a new navigation rail on the left side of the screen.
 - Chat: touch and hold a message to open a menu from the bottom of the screen.
-- Share to Maskin from any app and pick one of your agents right in the share sheet's top row.
 - A tidier chat list: each chat shows a one-line preview.
 - Fixes: the message field no longer crashes on the newest iOS, dictation in thread replies works, and Settings rows open inside your profile.
 
