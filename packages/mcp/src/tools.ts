@@ -1778,30 +1778,19 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List triggers in the workspace, newest first. Call it before creating a trigger to see what already runs. Each row is short: id, name, status, kind (recurring, one-time or event), schedule, next_run, last_run, agent (id and name), purpose (first line of the prompt) and url; read one trigger in full with get_trigger, or set `compact` to false. Filter by `agent_id`, `status` (enabled or disabled) and `q`; `q` matches the trigger name, agent name or id, kind, status, schedule and the name of a loop it belongs to (never the prompt), each word of `q` has to match, and filters combine with AND and carry through the cursor. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, total counting rows matching your filters) and `next_cursor` while `has_more` is true; pass it back as `cursor`. A page that is too long is cut: `truncated` is true and `hint` says how to get the rest. Parameters not listed here are rejected.',
+			'List triggers, newest first. Call it before creating one, to see what already runs. Rows are short (id, name, status, kind, schedule, next_run, last_run, agent, purpose, url); read one in full with get_trigger, or set `compact` false. Filters (`agent_id`, `status`, `q`) combine with AND and carry through the cursor; `q` matches name, agent name or id, kind (recurring, one-time, event), status, schedule and loop name (never the prompt), every word must match. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, total counts rows matching your filters) and `next_cursor` while `has_more` is true; pass it back as `cursor` for the next page. A page cut for length sets `truncated` and a `hint`. Unknown parameters are rejected.',
 		// Strict: an unknown parameter is an error, never a silently ignored filter.
 		inputSchema: z
 			.object({
 				workspace_id: optionalWorkspaceId,
-				limit: z
-					.number()
-					.int()
-					.min(1)
-					.max(100)
-					.optional()
-					.describe('Max rows to return. Defaults to 25.'),
-				cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
+				limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
+				cursor: z.string().optional().describe('The `next_cursor` of the previous page.'),
 				agent_id: z
 					.string()
 					.uuid()
 					.optional()
-					.describe(
-						'Only triggers that run this agent (the trigger target). Find ids with list_actors.',
-					),
-				status: z
-					.enum(['enabled', 'disabled'])
-					.optional()
-					.describe('Only enabled or only disabled triggers. Omit for both.'),
+					.describe('Only triggers that run this agent (id from list_actors).'),
+				status: z.enum(['enabled', 'disabled']).optional().describe('Omit for both.'),
 				q: z
 					.string()
 					.trim()
@@ -1809,23 +1798,23 @@ export const tools = {
 					.max(200)
 					.optional()
 					.describe(
-						'Words to find triggers by (case-insensitive, each word must match): name, agent name or id, kind (recurring, one-time, event), status, schedule, or loop name. Not the prompt.',
+						'Words to match (case-insensitive, all must match) against name, agent, kind, status, schedule or loop name. Not the prompt.',
 					),
 				compact: z
 					.boolean()
 					.optional()
 					.describe(
-						'Defaults to true: short rows without the action prompt or config. Set false to get the full rows. To read one trigger in full, use get_trigger instead.',
+						'Default true: short rows without the prompt or config. False returns full rows.',
 					),
 			})
 			.strict(),
 	},
 	get_trigger: {
 		description:
-			'Read one trigger in full by id: name, status, kind (recurring, one-time or event), schedule, next_run, last_run, the agent it runs, the full action prompt and config. Find ids with list_triggers.',
+			'Read one trigger in full by id, including its action prompt and config. Find ids with list_triggers.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('The trigger id, from list_triggers.'),
+			id: z.string().uuid().describe('From list_triggers.'),
 		}),
 	},
 	// ─── Loops ───────────────────────────────────────────────
@@ -1841,53 +1830,50 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent. Before adding a step check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work; never default to an unrelated agent, and if none fits create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live, or paused. Draft, paused and archived (terminal) turn every trigger off; the others leave them on. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, ideally the main target's owner. Details: docs/reference/loops.md.",
+			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. A STEP is a trigger that fires an agent on an object event or a schedule; add steps inline with `steps` or attach existing triggers with `trigger_ids`. Before adding a step, check with list_actors and list_triggers that the agent's role and system_prompt fit; never default to an unrelated agent, create one with create_actor if none fits. Member objects (any type) are linked by `in_loop` edges. Draft, paused and archived turn every trigger off. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. Add more later with update_loop; read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome. Details: docs/reference/loops.md.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
-			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
+			name: z.string().min(1).describe('Loop name.'),
 			driver_id: loopDriverIdSchema,
-			content: z
-				.string()
-				.optional()
-				.describe('What the loop is for — a plain-language description of the process it runs.'),
+			content: z.string().optional().describe('What the loop is for, in plain language.'),
 			status: z
 				.enum(MCP_LOOP_STATUSES)
 				.default('draft')
 				.describe(
-					'Autonomy stage. `draft` (default) — set up, every trigger the loop references is off. `pilot` → `supervised` → `live` is the trust ladder as the loop proves itself and earns more autonomy; the triggers are on. `paused` can be set from any stage and turns every trigger off until it moves to another stage. `archived` is a terminal retirement state — use it once the loop is no longer in service. Start the loop at `pilot` or later to have its steps fire.',
+					'Autonomy stage. `draft` (default), `paused` and `archived` (terminal) keep triggers off; `pilot`, `supervised` and `live` are the trust ladder, triggers on. Start at `pilot` or later for steps to fire.',
 				),
 			entry_condition: z
 				.string()
 				.optional()
 				.describe(
-					'Plain-language condition for when an object enters the loop, e.g. "A new insight is created with source=intercom".',
+					'When an object enters the loop, e.g. "A new insight is created with source=intercom".',
 				),
 			close_condition: z
 				.string()
 				.optional()
 				.describe(
-					`Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded". ${CLOSE_CONDITION_GUIDANCE}`,
+					`When an object is done and leaves the loop, e.g. "The task reaches status done or discarded". ${CLOSE_CONDITION_GUIDANCE}`,
 				),
 			steps: z
 				.array(loopStepSchema)
 				.max(20)
 				.default([])
 				.describe(
-					'Inline step definitions — each becomes a trigger created in this same call and attached to the loop. Include a feedback step (event `when` on the close condition) to make the loop CLOSED.',
+					'Inline steps, each created as a trigger and attached. Include a feedback step (event `when` on the close condition) to make the loop CLOSED.',
 				),
 			trigger_ids: z
 				.array(z.string().uuid())
 				.max(50)
 				.default([])
 				.describe(
-					'Pre-existing triggers to attach as loop steps — see the tool description for how to pick one whose agent actually fits. Find candidates with list_triggers, or create one with create_trigger. Combined with any inline `steps` and stored on the loop as metadata.trigger_ids.',
+					'Existing triggers to attach as steps (see the tool description for picking an agent). Find them with list_triggers. Combined with inline `steps`.',
 				),
 			object_ids: z
 				.array(z.string().uuid())
 				.max(50)
 				.default([])
 				.describe(
-					'Existing objects — of any workspace-defined type — to start running through the loop. Each becomes an `in_loop` relationship (source = loop, target = object). Objects can also be added later with update_loop.',
+					'Existing objects of any type to run through the loop, each linked by an `in_loop` edge (source = loop). Can also be added later with update_loop.',
 				),
 			closed_statuses: closedStatusesSchema,
 			closed_when: closedWhenSchema,
@@ -1897,32 +1883,27 @@ export const tools = {
 	},
 	update_loop: {
 		description:
-			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types (or closed_when for metadata-based done rules). A step and a trigger are the same thing: see create_loop for how `steps`/`trigger_ids` relate and how to pick an agent that fits; the same applies to add_steps/add_trigger_ids here. To CLOSE an open loop use add_steps with an event `when` on the close condition: the feedback step that captures learnings and seeds the next object when a member reaches its end state. Trigger membership is stored on the loop as metadata.trigger_ids; add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Setting `status` to `draft`, `paused` or `archived` disables every trigger on the loop (including ones just added in this call); a running status re-enables them. Object membership is an `in_loop` edge: add_object_ids creates edges (idempotent), remove_object_ids deletes them. Pass driver_id to change the driver (see create_loop); it cannot be cleared. Find loop ids with list_loops. Fails if the target is not a loop; use update_objects for regular objects.",
+			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach or detach triggers (the loop's steps), add or remove member objects, and set closed_statuses (or closed_when) for custom object types. A step and a trigger are the same thing: see create_loop for `steps`/`trigger_ids` and how to pick a fitting agent. Use add_steps with an event `when` on the close condition to CLOSE an open loop (the feedback step that captures learnings and seeds the next object). Added trigger ids are validated against the workspace. Setting `status` to `draft`, `paused` or `archived` disables every trigger on the loop (including ones added in this call); a running status re-enables them. add_object_ids creates `in_loop` edges (idempotent), remove_object_ids deletes them. driver_id changes the driver (it cannot be cleared). Find loop ids with list_loops. Fails if the id is not a loop: use update_objects for other objects.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			id: z.string().uuid().describe('Loop id (from list_loops).'),
 			name: z.string().min(1).optional().describe('New loop name.'),
 			driver_id: loopDriverIdSchema.optional(),
-			content: z
-				.string()
-				.optional()
-				.describe('New loop description (replaces the current content).'),
+			content: z.string().optional().describe('New description (replaces the current one).'),
 			status: z
 				.enum(MCP_LOOP_STATUSES)
 				.optional()
 				.describe(
-					"New autonomy stage: draft | pilot | supervised | live | paused | archived — see create_loop for what each means. Setting `draft`, `paused` or `archived` disables the loop's triggers; moving to a running status re-enables them. `archived` is terminal.",
+					"New autonomy stage (see create_loop). `draft`, `paused` and `archived` disable the loop's triggers; a running stage re-enables them. `archived` is terminal.",
 				),
 			entry_condition: z
 				.string()
 				.optional()
-				.describe('New plain-language entry condition. Pass an empty string to clear.'),
+				.describe('New entry condition. An empty string clears it.'),
 			close_condition: z
 				.string()
 				.optional()
-				.describe(
-					`New plain-language close condition. Pass an empty string to clear. ${CLOSE_CONDITION_GUIDANCE}`,
-				),
+				.describe(`New close condition. An empty string clears it. ${CLOSE_CONDITION_GUIDANCE}`),
 			closed_statuses: closedStatusesSchema,
 			closed_when: closedWhenSchema,
 			tags: loopTagsSchema.optional(),
@@ -1932,115 +1913,96 @@ export const tools = {
 				.max(20)
 				.optional()
 				.describe(
-					'Inline step definitions to add — each becomes a trigger created in this call and attached to the loop. Add a feedback step (event `when` on the close condition) to close an open loop.',
+					'Inline steps to add, each created as a trigger and attached. A feedback step (event `when` on the close condition) closes an open loop.',
 				),
 			add_trigger_ids: z
 				.array(z.string().uuid())
 				.max(50)
 				.optional()
 				.describe(
-					'Trigger ids to attach as loop steps. Validated against the workspace — unknown ids fail the call. Already-attached ids are a no-op.',
+					'Trigger ids to attach as steps. Unknown ids fail the call; already-attached ones are ignored.',
 				),
 			remove_trigger_ids: z
 				.array(z.string().uuid())
 				.max(50)
 				.optional()
-				.describe(
-					'Trigger ids to detach from the loop. The triggers themselves are NOT deleted (use delete_trigger for that) — they just stop being steps of this loop.',
-				),
+				.describe('Trigger ids to detach. The triggers are not deleted (use delete_trigger).'),
 			add_object_ids: z
 				.array(z.string().uuid())
 				.max(50)
 				.optional()
 				.describe(
-					'Object ids to start running through the loop (creates `in_loop` edges). Idempotent for objects already in the loop.',
+					'Object ids to add (creates `in_loop` edges). Objects already in the loop are fine.',
 				),
 			remove_object_ids: z
 				.array(z.string().uuid())
 				.max(50)
 				.optional()
 				.describe(
-					'Object ids to take out of the loop (deletes their `in_loop` edges). The objects themselves are untouched.',
+					'Object ids to remove (deletes their `in_loop` edges). The objects are untouched.',
 				),
 		}),
 	},
 	list_loops: {
 		description:
-			'List every Loop in the workspace as a lean id/name index — each row is just `{id, workspaceId, name, url}`. Use this to find loop ids, then call get_loop with a specific id for live stats (status pill, entry/close conditions, member-object counts, median time-to-close) and the `steps` view (each trigger nested with its resolved agent). To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop". Narrow the index with `status` and `q` (a word of the name). Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page.',
+			'List Loops as a lean index of `{id, workspaceId, name, url}`. For live stats and `steps` (each trigger with its agent) call get_loop. For the objects inside a loop call list_relationships with source_id=<loop id> and type="in_loop". Filter with `status` and `q` (a word of the name). Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts rows matching your filters) and `next_cursor` while `has_more` is true; pass it back as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
 				.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
 				.optional()
 				.describe(
-					'Only loops in this status, or in any of these statuses when you pass a list: draft, pilot, supervised, live, paused, archived. Ignores case.',
+					'One status, or a list: draft, pilot, supervised, live, paused, archived. Ignores case.',
 				),
-			q: z
-				.string()
-				.min(1)
-				.optional()
-				.describe('Only loops whose name contains this text. Ignores case.'),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
+			q: z.string().min(1).optional().describe('Text the name contains. Ignores case.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` of the previous page.'),
 		}),
 	},
 	get_loop: {
 		description:
-			"Get a single Loop by id: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, plus `steps` — each step's trigger nested with its resolved agent (id/name/description). Use list_loops (a lean id/name index) to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.",
+			'Get one Loop by id: status pill, entry/close conditions, in-progress and closed member counts, median time-to-close, and `steps` (each trigger with its agent). Find ids with list_loops. Fails if the id is not a loop.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			id: z.string().uuid().describe('Loop id (from list_loops).'),
 		}),
 	},
 	delete_loop: {
 		description:
-			"Delete a Loop: removes the loop object itself and its `in_loop` membership edges. Member objects (bets/tasks/insights/custom types that were flowing through the loop) and the loop's step triggers are NOT deleted — they're just no longer associated with this loop (triggers can be removed separately with delete_trigger if they're not reused elsewhere). Fails with a clear error if the id is not a loop in this workspace. This cannot be undone.",
+			'Delete a Loop and its `in_loop` edges. Member objects and step triggers are kept (remove unused triggers with delete_trigger). Fails if the id is not a loop. Cannot be undone.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			id: z.string().uuid().describe('Loop id (from list_loops).'),
 		}),
 	},
 
 	set_loop_view: {
 		description: [
-			'Pin an HTML file as a named custom view tab on a loop (it can have several). `name` (required, 1 to 30 characters, e.g. "Results") picks the tab: same name replaces, new name adds, file_id null removes. Fails if not a loop or the file is not text/html.',
+			'Pin an HTML file as a named view tab on a loop (several allowed). `name` (1 to 30 characters, e.g. "Results") picks the tab: same name replaces, new name adds, file_id null removes. Fails if not a loop or the file is not text/html.',
 			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
-			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. A source returns every group, however many, so draw a long table in a scrolling or paged list.',
-			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change, so query once and never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
+			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. A source returns every group, so page or scroll long tables.',
+			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change: query once, never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
 			'Example:',
 			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
-			'<script>maskin.query("done").then(r => { headline.textContent = r.total.count + " tasks done" }).catch(e => { headline.textContent = "Could not load: " + e.message })</script>',
 		].join('\n'),
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			loop_id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			loop_id: z.string().uuid().describe('Loop id (from list_loops).'),
 			file_id: z
 				.string()
 				.uuid()
 				.nullable()
-				.describe('Id of a text/html file to render as the loop view, or null to clear it.'),
-			name: loopViewRowSchema.shape.name.describe(
-				'Tab name, required, 1 to 30 characters: a short label for what the view shows. Same name replaces that tab, a new name adds one, file_id null removes it.',
-			),
+				.describe('A text/html file id, or null to remove the tab.'),
+			name: loopViewRowSchema.shape.name.describe('Tab name, 1 to 30 characters.'),
 		}),
 	},
 	query_data: {
 		description:
-			'Read-only totals over objects (not SQL: no `sql` or `query` argument), computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current: { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by` read `total`. Every matching object is counted and there is no group limit, but groups come a page at a time (`limit`, default 50, max 1000): while `next_cursor` is set, call again with the same query and `cursor`. In a loop view, window.maskin.query returns every group; use this tool to test a query before declaring it as a source in set_loop_view. It returns no object rows; use list_objects.',
+			'Totals over objects (not SQL), computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; oldest first, empty buckets omitted). `scope` is "workspace" (default) or a loop id for that loop\'s members. Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling), "today", "today-7d" (from midnight); prefer moving bounds. `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by`, read `total`. Groups come back a page at a time (`limit`, default 50, max 1000): while `next_cursor` is set, repeat the query with `cursor: <next_cursor>`. Use it to test a query before declaring it as a source in set_loop_view. Returns no objects: use list_objects.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...dataQuerySpecSchema.shape,
-			cursor: z
-				.string()
-				.max(80)
-				.optional()
-				.describe("The previous page's `next_cursor`, to read the next page of groups."),
+			cursor: z.string().max(80).optional().describe("The previous page's `next_cursor`."),
 			limit: z
 				.number()
 				.int()
@@ -2054,12 +2016,12 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_sub_chat: {
 		description:
-			"Hand a task to another agent from inside the chat you are in. The agent works in a thread under your reply, not a new chat: the person sees a handoff card with live status, can open it, talk to that agent there and break it out into its own chat. For a separate top-level chat use create_chat. The call returns at once with the sub-chat's details (its `id` is the `session_id` other chat tools take). When the agent finishes, its final message comes back to you as a new turn in your own chat: do not poll, and this cannot be switched off. Check on it with get_chat_activity or get_session, stop it with stop_chat_agent, talk to it with send_session_message, continue after it ended, failed or paused with resume_session. Do not @mention the agent in a chat for this: a mention reaches a different session of that agent. Give `action_prompt` a clear first line: it becomes the card's title.",
+			"Hand a task to another agent from inside the current chat. The agent works in a thread under your reply: the person sees a handoff card with live status and can open it or break it out into its own chat. For a separate top-level chat use create_chat. Returns at once with the sub-chat's details (its `id` is the `session_id` other chat tools take). The agent's final message comes back to you as a new turn: do not poll. Check on it with get_chat_activity or get_session, stop it with stop_chat_agent, message it with send_session_message, carry on after it ended, failed or paused with resume_session. Do not @mention the agent in a chat for this: a mention reaches a different session of that agent. Give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: startAgentInputSchema,
 	},
 	list_sessions: {
 		description:
-			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window. A response over the size cap is trimmed from the tail: _meta.truncated is true and next_cursor holds the updated_at of the last row returned. To continue, call again with the same filters, before set to next_cursor and offset left at 0; repeat until next_cursor is absent.",
+			'List sessions, filtered by status, actor, trigger or last-updated window. Rows are lean by default ({ id, title, status, updated_at }); verbose: true returns the full payload. A response over the size cap is trimmed from the tail: _meta.truncated is true and next_cursor holds the updated_at of the last row. To continue, repeat the call with the same filters, before = next_cursor and offset 0, until next_cursor is absent.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -2075,74 +2037,61 @@ export const tools = {
 				])
 				.optional(),
 			actor_id: z.string().uuid().optional(),
-			trigger_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe(
-					'Filter to sessions spawned by a specific trigger. Complements actor_id — a session has both an actor (the agent that ran) and, when spawned automatically, the trigger that scheduled it.',
-				),
+			trigger_id: z.string().uuid().optional().describe('Only sessions spawned by this trigger.'),
 			updated_before: z
 				.string()
 				.datetime({ offset: true })
 				.optional()
 				.describe(
-					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled sessions, e.g. `updated_before = now - 6h`.',
+					'ISO-8601. Rows with `updated_at < updated_before` (exclusive). Use it to find stalled sessions, e.g. now - 6h.',
 				),
 			updated_after: z
 				.string()
 				.datetime({ offset: true })
 				.optional()
 				.describe(
-					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+					'ISO-8601. Rows with `updated_at > updated_after` (exclusive). Combine with `updated_before` for a window.',
 				),
 			before: z
 				.string()
 				.datetime({ offset: true })
 				.optional()
 				.describe(
-					"Cursor: pass the last row's `updated_at` from the previous page to walk backward through history. Half-open, exclusive: returns rows with `updated_at < before`.",
+					"Cursor: the last row's `updated_at` from the previous page. Exclusive: rows with `updated_at < before`.",
 				),
 			verbose: z
 				.boolean()
 				.default(false)
-				.describe(
-					"When false (the default), returns lean rows { id, title, status, updated_at } — ~10x smaller than the fat shape. When true, returns today's full session payload for backwards compatibility.",
-				),
+				.describe('False (default): lean rows, about 10x smaller. True: the full session payload.'),
 			limit: z.number().int().min(1).max(200).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead. Set `wait: true` to hold until the session has finished, and get back the session with the first 500 lines of its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (it has not failed); it also ends early with `settled: false` if the session is waiting for input or is paused. To talk to a running session use send_session_message; to carry on with one that has ended or is paused use resume_session.',
+			'Get session details by id, optionally with container logs (stdout/stderr/system, newest first). To page through log history use get_session_logs. Set `wait: true` to hold until the session has finished and get it back with the first 500 lines of its output; the wait stops after 2 hours, or early if the session waits for input or is paused, with `settled: false` (not finished, not failed). To talk to a running session use send_session_message; to carry on with an ended or paused one use resume_session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
-			include_logs: z
-				.boolean()
-				.default(false)
-				.describe(
-					'Include log output from the session container. When true, the response gains a `logs` array ordered newest-first (id DESC), so the ending — where a failure lives — is at the top.',
-				),
+			include_logs: z.boolean().default(false).describe('Add a `logs` array, newest first.'),
 			log_limit: z
 				.number()
 				.int()
 				.min(1)
 				.max(500)
 				.default(100)
-				.describe('Max log lines to return (only used when include_logs is true)'),
+				.describe('Max log lines (with include_logs).'),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until the session has finished, then return the session with the first 500 lines of its output (oldest first) and `settled`. Stops waiting after 2 hours: then `settled` is false and the session is still running. Ends early, with settled false, if the session is waiting for input or is paused. Ignores include_logs.',
+					'Hold until the session finishes, then return it with the first 500 output lines (oldest first) and `settled`. Gives up after 2 hours or when the session waits for input or is paused: `settled` is false. Ignores include_logs.',
 				),
 		}),
 	},
 	get_session_logs: {
 		description:
-			'Read a session\'s log history with cursor pagination. Default direction is newest-first so the caller lands on the ending, where a failure lives. Walk backward through history with before_id (rows satisfy id < before_id), tail the live stream with after_id (rows satisfy id > after_id), or compose both for the bounded window after_id < id < before_id. Pass direction: "oldest_first" (no cursor) to jump to boot. Row shape: { id, sessionId, stream, content, createdAt }.',
+			'Read a session\'s log history, newest first by default. Page backward with before_id (id < before_id), forward with after_id (id > after_id), or use both for a window. direction "oldest_first" (no cursor) starts at boot. Row shape: { id, sessionId, stream, content, createdAt }.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Session id'),
@@ -2150,24 +2099,20 @@ export const tools = {
 				.enum(['newest_first', 'oldest_first'])
 				.default('newest_first')
 				.describe(
-					'Which end to page from. `newest_first` (the default) returns the latest rows first — id DESC — so a caller lands on the failure. `oldest_first` returns id ASC, for the rare "jump to boot" case.',
+					'`newest_first` (default) returns id DESC, `oldest_first` id ASC (jump to boot).',
 				),
 			before_id: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe(
-					'Half-open, exclusive: rows satisfy `id < before_id`. Pages backward through history. Compose with after_id to bound the window.',
-				),
+				.describe('Rows with `id < before_id`. Pages backward.'),
 			after_id: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe(
-					'Half-open, exclusive: rows satisfy `id > after_id`. Live-tail from a known cursor. Compose with before_id to bound the window.',
-				),
+				.describe('Rows with `id > after_id`. Live-tails from a known cursor.'),
 			stream: z
 				.enum(['stdout', 'stderr', 'system'])
 				.optional()
@@ -2177,7 +2122,7 @@ export const tools = {
 	},
 	get_session_activity: {
 		description:
-			"Get the compact agent activity trace for a session: per conversation-message turns, each with its steps (tool calls, thinking, text, errors), status and final result. Same wording as the web chat activity dropdown. Page toward older turns by passing the previous response's `oldest_log_id` as `before_log_id` while `has_older` is true. content and structuredContent carry the same full payload. This tool is read-only — to see raw log lines use `get_session` with `include_logs: true`; to change a session use `stop_session`, `pause_session` or `resume_session`.",
+			'Compact activity trace of a session: turns per conversation message, each with its steps (tool calls, thinking, text, errors), status and final result. Page to older turns with the previous `oldest_log_id` as `before_log_id` while `has_older` is true. It is read-only, so for raw log lines use get_session with `include_logs: true`; to change a session use stop_session, pause_session or resume_session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Session ID'),
@@ -2187,24 +2132,24 @@ export const tools = {
 				.min(1)
 				.max(20)
 				.default(5)
-				.describe('Newest N turns to return (a turn = one conversation message answered)'),
+				.describe('Newest turns to return (a turn is one answered message).'),
 			message_id: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe('Return only the turn triggered by this conversation message id'),
+				.describe('Only the turn for this conversation message id.'),
 			before_log_id: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe('Exclusive upper bound on log id; pass a previous `oldest_log_id` to page older'),
+				.describe('Pass a previous `oldest_log_id` to page older.'),
 		}),
 	},
 	stop_session: {
 		description:
-			'Stop a running session. Only the actor that started the session can stop it; anyone else gets 403 (session started by a different actor). To end work another agent started, comment on its task instead.',
+			'Stop a running session. Only the actor that started it can; anyone else gets 403. To end work another agent started, comment on its task instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
@@ -2212,17 +2157,13 @@ export const tools = {
 	},
 	ask_user_question: {
 		description:
-			'Ask the person you are working with anything they can answer by tapping a button, and wait for the answer. Prefer it over a free-text question whenever the reply fits a few options: confirmations, approvals, timing, choosing between alternatives, picking a direction, resolving ambiguity, permission before something risky, expensive or hard to undo, and any detail only they can give when a default would be a guess. Do not ask when you can reasonably decide yourself. The question appears in their chat with your options as buttons and their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, so do not wait: decide, state your assumption and continue; if there is nobody to ask, the tool says so and you do the same. Give 2 to 4 options each, with a one- or two-word label and a description only when the label is unclear; a person can always type something else. For a simple yes/no put the one-line question in `question` and a short `header` such as "Confirm". `multi_select` allows several picks, and one call can ask up to 4 related questions.',
+			'Ask the person you are working with a question they can answer by tapping a button, and wait for the answer. Prefer it over a free-text question whenever the reply fits in a few options: confirmations, approvals, timing, choosing between alternatives, ambiguity, permission before something risky or hard to undo, a detail only they can give when a default would be a guess. Do not ask when you can reasonably decide yourself. Their pick comes back as your next turn: after calling it, end your turn with no closing message and do not repeat the question. In a session that runs on its own (a trigger, a schedule) the question goes to the person\'s chat with the Chief of Staff, so do not wait: decide, state your assumption and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 options each, with a one- or two-word label and a description only when the label is unclear. A person can always type something else. For a yes/no put the one-line question in `question` and a short `header` such as "Confirm". `multi_select` allows several picks; up to 4 related questions per call.',
 		inputSchema: z.object({
 			questions: z
 				.array(
 					z.object({
 						question: z.string().min(1).max(1000).describe('The full question.'),
-						header: z
-							.string()
-							.min(1)
-							.max(24)
-							.describe('A short label for the question, e.g. "Job board".'),
+						header: z.string().min(1).max(24).describe('Short label, e.g. "Job board".'),
 						multi_select: z
 							.boolean()
 							.optional()
@@ -2251,28 +2192,22 @@ export const tools = {
 	},
 	resume_session: {
 		description:
-			'Continue a sub-chat that is not running: paused, finished, failed, timed out, out of tokens, died while starting, or stopped; you need not know which. (For an ordinary chat @mention the agent with post_conversation_message instead.) A paused session continues exactly where it stopped. An ended one gets a follow-up session for the same agent in the same thread, starting from your `message` (it gets only a short reminder of what it was asked, not the old files or history); without a `message` it is told to carry on where it left off, so for one that failed or ran out of tokens just pass the id. If the session is still running use send_session_message. `wait: true` holds until the agent has finished and returns its output; it stops after 2 hours with `settled: false` (not failed), and ends early with `settled: false` if the agent is waiting for input or paused. For an ended session the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in its chat, can do this.',
+			'Carry on with a sub-chat that is not running: paused, finished, failed, timed out, out of tokens or stopped (for an ordinary chat, @mention the agent with post_conversation_message instead). You need not know which. A paused session continues where it stopped. An ended one gets a follow-up session for the same agent in the same thread, started from your `message` (it gets only a short reminder of the old task, not its files or history). Without a `message` an ended session is told to carry on where it left off. If the session is still running, use send_session_message. Set `wait: true` to hold until the agent has finished and get its output (stops after 2 hours, or early if the agent waits for input or is paused, with `settled: false`). For an ended session the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in its chat, can do this.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The session to carry on with'),
-			message: z
-				.string()
-				.min(1)
-				.optional()
-				.describe(
-					'What you want the agent to do next. Optional: left out, an ended session is told to carry on where it left off and a paused one simply continues.',
-				),
+			message: z.string().min(1).optional().describe('What the agent should do next. Optional.'),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'Wait for the agent to finish and return the session with the first 500 lines of its output. Stops waiting after 2 hours: then settled is false and the session is still running. Ends early, with settled false, if it is waiting for input or paused.',
+					'Wait for the agent to finish, then return the session with the first 500 output lines. Gives up after 2 hours, or when it waits for input or is paused: settled is false.',
 				),
 		}),
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if typed into its thread. post_conversation_message with its `sub_chat_session_id` also reaches it, running or not. In an ordinary chat post with post_conversation_message and @mention the agent instead. Use it to answer the agent's question, give more direction or change course. It only works while the session is running: if it ended, failed or paused use resume_session, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session. It returns once the message is delivered; read the reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. The wait stops after 2 hours with `settled: false` (not failed), and ends early with `settled: false` if the session is waiting for input or paused. `wait` only works for sessions that end after replying, such as one from create_sub_chat in a chat; a session that stays open still gets the message but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403: comment on the task or start your own with create_sub_chat.",
+			'Send a message into a running sub-chat you started with create_sub_chat (post_conversation_message with its `sub_chat_session_id` also works, running or not). In an ordinary chat do not use this: post with post_conversation_message and @mention the agent. It only works while the session is running: if it ended, failed or paused, use resume_session, which also takes a message. Do not @mention the agent in a chat for this: a mention reaches a different session of that agent. Returns once the message is delivered; read the reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output (stops after 2 hours, or early if the session waits for input or is paused, with `settled: false`). `wait` only works for sessions that end after replying. Only the actor that started the session can message it; anyone else gets 403: comment on the task or start your own with create_sub_chat.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
@@ -2281,7 +2216,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until the session has finished and return the session with the first 500 lines of its output. Stops waiting after 2 hours: then settled is false and the session is still running. Ignored, with a note in the response, if the session stays open after replying.',
+					'Hold until the session finishes, then return it with the first 500 output lines. Gives up after 2 hours: settled is false. Ignored if the session stays open after replying.',
 				),
 		}),
 	},
@@ -2289,91 +2224,77 @@ export const tools = {
 	// ─── Notifications ───────────────────────────────────────
 	create_notification: {
 		description:
-			'Create a notification for a human in the workspace. Use when you need human input to make a decision that you cannot make yourself. Use this tool sparingly — before creating a new notification, always call list_notifications to check whether a similar pending notification already exists that can be updated via update_notification instead. Pass session_id when the agent expects to be resumed with the human\'s reply — this enables the free-text "Reply to agent" input in the UI. To render clickable buttons, pass metadata.actions as a NATIVE JSON array (not a stringified one). For a structured picker (radio/checkbox/text), set metadata.input_type and metadata.options as a NATIVE JSON array.',
+			'Create a notification for a human when you need input to make a decision you cannot make yourself. Use it sparingly: call list_notifications first for a similar pending one and update that with update_notification instead. Pass session_id when the agent expects to be resumed with the human\'s reply (enables the free-text "Reply to agent" input). For clickable buttons pass metadata.actions as a NATIVE JSON array (not stringified). For a structured picker (radio/checkbox/text) set metadata.input_type and metadata.options as a NATIVE JSON array.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
 				.enum(['needs_input', 'recommendation', 'good_news', 'alert'])
 				.describe(
-					'needs_input: agent is blocked and needs a decision. recommendation: agent found something worth attention. good_news: positive outcome to share. alert: something needs attention.',
+					'needs_input: blocked, needs a decision. recommendation: worth attention. good_news: a positive outcome. alert: needs attention.',
 				),
 			title: z.string().min(1),
 			content: z.string().optional(),
 			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags, due_at. Other keys pass through. Set due_at (ISO 8601 time, e.g. 2026-10-26T08:00:00Z) when the human must decide before a time: their push then starts with "Before <time>". Leave it out when nothing expires.',
+					'Structured UI data. Known fields: actions, input_type, options, question, placeholder, multiline, suggestion, urgency_label, meta_text, tags, due_at (other keys pass through). due_at (ISO 8601, e.g. 2026-10-26T08:00:00Z) is for decisions needed by a time: the push then starts with "Before <time>". Omit it when nothing expires.',
 				),
-			source_actor_id: z.string().uuid().describe('The agent actor creating this notification'),
+			source_actor_id: z.string().uuid().describe('The agent creating this notification.'),
 			target_actor_id: z
 				.string()
 				.uuid()
 				.optional()
-				.describe('Specific human to notify. Omit to broadcast to all workspace members.'),
-			object_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe('Related object (insight, bet, or task) this notification is about'),
+				.describe('Human to notify. Omit to notify all workspace members.'),
+			object_id: z.string().uuid().optional().describe('Related object (insight, bet or task).'),
 			session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Session that created this notification. When set (and metadata.input_type is NOT set), the UI renders a free-text "Reply to agent" input that routes the reply back to this session.',
+					'Session to resume with the reply. Without metadata.input_type, the UI shows a free-text "Reply to agent" input.',
 				),
 		}),
 	},
 	list_for_you: {
 		description:
-			'The ranked list of what needs one person, exactly as the web For You page shows it for them: cards already filtered (ended session, closed or moved-on object, already read or answered) and sorted by rank, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, next_offset, items }: total counts the whole list, offset pages through it (offset 50 starts at the 51st card), and next_offset is the offset of the next page, or null when there are no more cards. Each item { rank, source (curated or decision), headline, rationale, notification_id, comment_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card whose due_at is today. object_id, title, type and status are null for a card with no object. Read-only: to answer a card use create_comment, or update_objects to change the object; to retire a dead card use withdraw_decision_card with its comment_id.',
+			'What needs one person, as the web For You page shows it: dead, read and answered cards removed, ranked, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, next_offset, items }: total counts the whole list, offset pages through it, next_offset is null at the end. Each item { rank, source (curated or decision), headline, rationale, notification_id, comment_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card due today. object_id, title, type and status are null for a card with no object. To answer a card use create_comment (or update_objects to change the object); to retire a dead card use withdraw_decision_card with its comment_id.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z
 				.string()
 				.uuid()
-				.describe(
-					'The person whose list to read. Agents may read any member; a person only their own.',
-				),
+				.describe('The person whose list to read. A person can read only their own.'),
 			limit: z
 				.number()
 				.int()
 				.min(1)
 				.max(FOR_YOU_TOOL_MAX_LIMIT)
 				.default(FOR_YOU_TOOL_DEFAULT_LIMIT)
-				.describe(
-					`How many cards to return. Defaults to ${FOR_YOU_TOOL_DEFAULT_LIMIT}; total always counts the whole list.`,
-				),
+				.describe(`Cards to return (default ${FOR_YOU_TOOL_DEFAULT_LIMIT}).`),
 			offset: z
 				.number()
 				.int()
 				.min(0)
 				.default(0)
-				.describe(
-					'How many cards to skip from the top of the list. Pass the next_offset from the previous page to read on; stop when it is null.',
-				),
+				.describe('Cards to skip. Pass the previous next_offset; stop when it is null.'),
 		}),
 	},
 	withdraw_decision_card: {
 		description:
-			"Retire a decision card that is dead, so nobody is shown it any more: a test card, a deadline that passed, an object that already moved on, a duplicate. Use this instead of posting a replacement card. The card leaves every list for everyone, the briefing and the pushes. Pass comment_id (the card's comment id, from list_for_you or the id create_comment returned) and a one-line reason of up to 200 characters. Allowed only for the agent or person who wrote the card, or the Chief of Staff for any card; anyone else gets 403. A comment without a decision block gets 400. Calling it again is harmless. Do NOT use it on a card that is still a live ask, or to hide a card the person simply has not answered yet: the person has Dismiss for their own list.",
+			"Retire a dead decision card so nobody is shown it any more (test card, passed deadline, moved-on object, duplicate), instead of posting a replacement. It leaves every list, the briefing and the pushes. Pass comment_id (from list_for_you, or the id create_comment returned) and a one-line reason up to 200 characters. Only the card's author or the Chief of Staff may do this; anyone else gets 403. A comment without a decision block gets 400. Calling it again is harmless. Do NOT use it on a live ask, or to hide a card the person has not answered: they have Dismiss for their own list.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			comment_id: z
 				.number()
 				.int()
 				.positive()
-				.describe("The decision card's comment id (comment_id in list_for_you)."),
-			reason: z
-				.string()
-				.min(1)
-				.max(200)
-				.describe('One line saying why the card is dead, up to 200 characters.'),
+				.describe("The card's comment id (from list_for_you)."),
+			reason: z.string().min(1).max(200).describe('One line on why the card is dead.'),
 		}),
 	},
 	list_notifications: {
 		description:
-			'List the raw notifications in the workspace, optionally filtered by status or type, in creation order and for every person, with nothing filtered out. This does NOT answer "what needs this person": use list_for_you for that.',
+			'List raw notifications for every person, in creation order. Does NOT answer "what needs this person": use list_for_you.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -2386,7 +2307,7 @@ export const tools = {
 				.min(1)
 				.max(64)
 				.optional()
-				.describe('Only notifications whose metadata.kind equals this, e.g. "for_you".'),
+				.describe('Only notifications with this metadata.kind, e.g. "for_you".'),
 			limit: z.number().int().min(1).max(100).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
@@ -2411,7 +2332,7 @@ export const tools = {
 			metadata: notificationMetadataInput
 				.optional()
 				.describe(
-					'Metadata to update on the notification. Same shape as create_notification.metadata — native arrays for actions/options, do NOT stringify.',
+					'Same shape as create_notification.metadata (native arrays for actions/options, do not stringify).',
 				),
 		}),
 	},
@@ -2425,7 +2346,7 @@ export const tools = {
 	// ─── Subscriptions ────────────────────────────────────────
 	mark_read: {
 		description:
-			'Mark an entity as read up to a given event id. last_event_id should be the highest event id the actor has seen for this entity — the server will never move the high-water-mark backward.',
+			'Mark an entity as read up to an event id: pass the highest event id the actor has seen. The mark never moves backward.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_type: z.enum(['object']),
@@ -2435,80 +2356,60 @@ export const tools = {
 	},
 	list_unread: {
 		description:
-			'List entities the current actor is subscribed to with unread activity (comments newer than the actor\'s last_read_event_id). Returns object summaries inline when entity_type="object". Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List subscribed entities with unread activity (comments newer than the actor\'s last_read_event_id), with object summaries inline when entity_type="object". Default page 25; pass `next_cursor` as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_type: z.enum(['object']).optional(),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` of the previous page.'),
 		}),
 	},
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description:
-			'List integrations connected to the workspace, live connections first and the newest first within each group. Dead rows (a connect that never finished, a revoked connection) sort last but are still listed. Every page starts with a `summary` of the whole workspace: how many rows per status and which connections are active, so you can see what is connected without paging. A connection missing from this page is NOT proof it is absent: find it with `provider` (for example "slack"), `status` or `q` (a word of its name), or follow `next_cursor` while `page.has_more` is true. To answer "can I use X?" call `get_actor` on yourself and read `access`. Rows are slim: `defaultAgentAccess` (what agents without their own entry get), `agentGrants` and `chatGrants`; pass `verbose: true` for config, granted scopes and provider-side ids. Change access with `update_integration_access`. Paginated via a snapshot-consistent cursor (default page: 25).',
+			'List integrations connected to the workspace, live ones first, newest first within each group. Dead rows (never finished, revoked) sort last but are listed. Every page starts with a `summary` of the whole workspace (rows per status, which connections are active). A connection missing from this page is NOT proof it is absent: find it with `provider` (e.g. "slack"), `status` or `q` (a word of its name), or follow `next_cursor` while `page.has_more` is true. To answer "can I use X?" call `get_actor` on yourself and read `access`. Rows are slim: `defaultAgentAccess`, `agentGrants` and `chatGrants`; `verbose: true` adds config, granted scopes and provider-side ids. Change access with update_integration_access. Default page 25.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
 				.optional()
-				.describe(
-					'Only this provider, for example "slack" or "gmail". Matches exactly, ignoring case.',
-				),
+				.describe('Only this provider, e.g. "slack" or "gmail". Exact match, ignoring case.'),
 			status: z
 				.string()
 				.optional()
-				.describe(
-					'Only this status: "active", "pending", "revoked", "undone" or "awaiting_secret". Matches exactly.',
-				),
+				.describe('Exact status: "active", "pending", "revoked", "undone" or "awaiting_secret".'),
 			q: z
 				.string()
 				.optional()
-				.describe(
-					'Words to look for in the provider or the saved name, for example "google" or "stripe". Every word must appear.',
-				),
+				.describe('Words in the provider or saved name, e.g. "google". Every word must appear.'),
 			verbose: z
 				.boolean()
 				.optional()
 				.describe(
-					'Return full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
+					'Full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
 				),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` of the previous page.'),
 		}),
 	},
 	list_integration_providers: {
 		description:
-			'List available integration providers, their supported events, and their MCP surface. Each provider that has one returns `{ envKey, autoInject, server }`. `server` is the paste-ready value for the `tools.mcpServers.<provider>` field of an agent — pass it to create_actor/update_actor verbatim, including any `${TOKEN}` placeholders, which are expanded inside the session container. When `autoInject` is true the integration is already wired into every agent session in the workspace and there is nothing to attach — such a provider may return no `server` at all (github is auto-injected as one `github-<owner>` entry per connected organisation, so no single spec describes it). When `autoInject` is false (the default) connecting the integration alone gives the agent NO tools, and attaching `server` to the agent is the required second step.',
+			"List available integration providers, their supported events and MCP surface. Each provider that has one returns `{ envKey, autoInject, server }`. `server` is the paste-ready value for an agent's `tools.mcpServers.<provider>` field: pass it to create_actor/update_actor verbatim, including `${TOKEN}` placeholders. When `autoInject` is true the integration is already wired into every agent session and there is nothing to attach (`server` may be absent; github is auto-injected as one `github-<owner>` entry per connected organisation). When `autoInject` is false (the default), connecting the integration alone gives the agent NO tools: attaching `server` to the agent is the required second step.",
 		inputSchema: z.object({}),
 	},
 	connect_integration: {
 		description:
-			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect; see list_integrations): call it with that provider instead of sending the user to Settings. In a chat it shows a Connect card (a sign-in button for OAuth providers, an input for API-key providers) where the user finishes the connection; end your turn afterwards. Never ask for an API key or paste a connection link yourself. It is the only way to show a Connect card: post_conversation_message cannot render one, so never write card text or claim a card is shown without calling this. Outside a chat (an autonomous session or external MCP client) it falls back to the direct flow: OAuth providers return an install_url to open in a browser (the server handles the callback), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect; see list_integrations): call it with that provider instead of sending the user to Settings. In a chat it shows a Connect card (sign-in button for OAuth, an input for API-key providers) where the user finishes; end your turn afterwards. Never ask for an API key or paste a connection link yourself. It is the only way to show a Connect card: post_conversation_message cannot, so never claim a card is shown without calling this tool. Outside a chat it falls back to the direct flow: OAuth providers return an install_url to open in a browser, API-key providers (e.g. "posthog") use `api_key` and activate immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
-				.describe(
-					'Provider name (e.g. "github"). Call list_integration_providers to see available providers.',
-				),
+				.describe('Provider name, e.g. "github" (see list_integration_providers).'),
 			api_key: z
 				.string()
 				.optional()
 				.describe(
-					'Only for the non-chat fallback: the API key for providers whose auth type is "api_key" (e.g. "posthog"). Ignored in a chat — the user types the key into the card — so never ask the user for one.',
+					'Non-chat fallback only: the key for "api_key" providers (e.g. "posthog"). Ignored in a chat: the user types it into the card, so never ask for one.',
 				),
 		}),
 	},
