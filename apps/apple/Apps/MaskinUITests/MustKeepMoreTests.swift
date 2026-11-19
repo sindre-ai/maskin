@@ -285,16 +285,19 @@ final class MustKeepMoreTests: XCTestCase {
 
 	// MARK: MK-15 Edit, react to, and delete a message
 
-	/// MK-15a: your newest message offers Edit. The words go back into the field under "Editing message",
-	/// and sending the change shows the new words.
-	func testMK15a_EditOwnNewestMessage() throws {
+	/// MK-15a: any message you wrote offers Edit, not only the newest. Here an older one of yours (a newer one
+	/// of yours sits below it). The words go back into the field under "Editing message", and sending the
+	/// change shows the new words with the "edited" mark.
+	func testMK15a_EditOwnMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
-		let mine = anyLabel(containing: "Draft the counter offer for Contoso")
-		expectExists(mine, "the chat shows your newest message", dump: "mk15a-message")
-		openMessageMenu(on: mine)
+		expectExists(
+			anyLabel(containing: "Draft the counter offer for Contoso"), "the chat shows your newer message", dump: "mk15a-newer")
+		let older = anyLabel(containing: "Which clause did Legal flag?")
+		expectExists(older, "the chat shows your older message", dump: "mk15a-message")
+		openMessageMenu(on: older)
 		let edit = element(labelled: "Edit")
-		expectExists(edit, "your newest message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
+		expectExists(edit, "your older message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
 		edit.tap()
 		expectExists(app.buttons["Cancel editing"], "the composer says it is editing the message", dump: "mk15a-strip", timeout: 5)
 		let field = composerField()
@@ -307,7 +310,7 @@ final class MustKeepMoreTests: XCTestCase {
 		XCTAssertTrue(send.waitForExistence(timeout: 5), "the composer offers Send for the edit")
 		send.tap()
 		expectExists(
-			anyLabel(containing: "Draft the counter offer for Contoso. (edited by the test)"), "the chat shows the edited words", dump: "mk15a-after",
+			anyLabel(containing: "Which clause did Legal flag? (edited by the test)"), "the chat shows the edited words", dump: "mk15a-after",
 			timeout: 15)
 	}
 

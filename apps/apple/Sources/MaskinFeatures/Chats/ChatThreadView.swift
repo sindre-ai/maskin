@@ -1156,14 +1156,13 @@ struct ThreadTranscript: View {
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
 			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
 			inlineTranscript: false)
-		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		let namesAgents = namesAgents
 		let runs = ThreadLayout.runs(in: items)
 		ForEach(items) { item in
 			row(
-				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				item, answers: answers, anchors: anchors, statusIDs: statusIDs,
 				cardOwners: cardOwners, namesAgents: namesAgents, runs: runs)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
@@ -1247,7 +1246,7 @@ struct ThreadTranscript: View {
 		}
 	}
 
-	private func actions(for message: ChatMessage, isOwn: Bool, isLatestOwn: Bool) -> MessageMenuActions {
+	private func actions(for message: ChatMessage, isOwn: Bool) -> MessageMenuActions {
 		var actions = MessageMenuActions()
 		let hasText = !message.content.isEmpty
 		if hasText {
@@ -1268,7 +1267,7 @@ struct ThreadTranscript: View {
 			actions.isPinned = store.isPinned(message)
 			actions.onPin = { if store.isPinned(message) { store.unpin() } else { store.pin(message) } }
 		}
-		if isLatestOwn, message.canEdit(by: store.currentActorID) {
+		if message.canEdit(by: store.currentActorID) {
 			actions.onEdit = { onEdit(message) }
 		}
 		if message.author == .agent, message.serverID != nil {
@@ -1313,7 +1312,7 @@ struct ThreadTranscript: View {
 
 	@ViewBuilder
 	private func row(
-		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
 		statusIDs: Set<String>, cardOwners: [String: String], namesAgents: Bool, runs: [String: ThreadLayout.Run]
 	) -> some View {
 		switch item {
@@ -1335,7 +1334,6 @@ struct ThreadTranscript: View {
 			HandoffRow(session: session, behind: behind)
 		case .message(let message, let showsAuthor):
 			let isOwn = message.actorID == store.currentActorID
-			let isLatestOwn = message.id == latestOwnID
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn).padding(.bottom, MaskinSpace.s3)
 			}
@@ -1352,7 +1350,7 @@ struct ThreadTranscript: View {
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,
-				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
+				actions: actions(for: message, isOwn: isOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: canOpenThread(message) ? { onOpenThread(message) } : nil,
 				onQuoteTap: message.quotedReply == nil
