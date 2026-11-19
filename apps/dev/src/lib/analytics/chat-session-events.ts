@@ -25,6 +25,13 @@ export interface ChatSessionSeededProps {
  */
 export async function trackChatSessionSeeded(p: ChatSessionSeededProps): Promise<void> {
 	try {
+		logger.info('GATE_TEST event chat_session_seeded', {
+			workspace_id: p.workspaceId,
+			conversation_id: p.conversationId,
+			agent_id: p.agentId,
+			thread_root_id: p.threadRootId,
+			files_listed_count: p.filesListedCount,
+		})
 		await capturePosthogEvent(CHAT_SESSION_SEEDED_EVENT, p.agentId, {
 			workspace_id: p.workspaceId,
 			conversation_id: p.conversationId,
@@ -64,6 +71,14 @@ export interface ChatSessionRotatedProps {
  */
 export async function trackChatSessionRotated(p: ChatSessionRotatedProps): Promise<void> {
 	try {
+		logger.info('GATE_TEST event chat_session_rotated', {
+			reason: p.reason,
+			route: p.route,
+			agent_id: p.agentId,
+			workspace_id: p.workspaceId,
+			size_bucket: p.sizeBucket,
+			handoff: p.handoff,
+		})
 		await capturePosthogEvent(CHAT_SESSION_ROTATED_EVENT, p.agentId, {
 			reason: p.reason,
 			route: p.route,
