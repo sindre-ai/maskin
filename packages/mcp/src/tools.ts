@@ -4,7 +4,6 @@ import {
 	DATA_QUERY_PAGE_SIZE,
 	FOR_YOU_TOOL_DEFAULT_LIMIT,
 	FOR_YOU_TOOL_MAX_LIMIT,
-	HUMAN_MESSAGE_STYLE_SHORT,
 	LOOP_STATUSES,
 	MAX_CONVERSATION_PARTICIPANTS,
 	MESSAGE_MAX_LENGTH,
@@ -77,13 +76,25 @@ const optionalDesktopAgentId = z
 		'Whose computer. Leave out if you are an agent (you always get your own). A person must pass the agent ID.',
 	)
 
+// Only the keys an agent writes are spelled out. Card and other server-owned keys still pass
+// through (passthrough) so the handler can reject card keys by name, and the API validates the
+// whole object against the full messageMetadataSchema, so nothing is accepted that was not before.
+const agentMessageMetadataSchema = messageMetadataSchema
+	.pick({
+		attachments: true,
+		mentions: true,
+		context_objects: true,
+		context_notifications: true,
+		plan: true,
+		proposed_edit: true,
+	})
+	.passthrough()
+
 const optionalWorkspaceId = z
 	.string()
 	.uuid()
 	.optional()
-	.describe(
-		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
-	)
+	.describe('Workspace ID. Defaults to your current workspace.')
 
 // Used by writes/reads that create or enumerate ambiguously-scoped
 // resources (a brand-new loop with no existing id to inherit a workspace
@@ -357,7 +368,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects with optional relationships in a single atomic operation. ALWAYS call get_workspace_schema first: it returns the authoritative, live list of valid statuses per object type, metadata fields and relationship types, which vary between workspaces. To create a Loop use create_loop instead; it wires trigger and membership metadata correctly. For a single object provide one node with no edges. For related objects use $id references in edges; edges can also reference existing object UUIDs. To attach files, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node; they appear under the object and in get_objects. In human-facing output (comments, summaries, notifications, descriptions) use the object\'s title, not its UUID; returned nodes include the title and edges include sourceTitle and targetTitle. Append a short id suffix (e.g. "Bets and Threads v4 (ca957490)") only when two titles are near-identical. Use UUIDs freely inside tool arguments.',
+			"Create one or more objects with optional relationships in one atomic operation. Call get_workspace_schema first: it returns the live valid statuses, metadata fields and relationship types, which vary by workspace. To create a Loop use create_loop instead. For one object give one node and no edges; for related objects use $id references in edges (edges can also reference existing object UUIDs). To attach files, upload them first with create_file (or pick them with list_files) and pass the ids in `file_ids` on the node. In human-facing text use an object's title, not its UUID (add a short id suffix only when two titles are near-identical); returned nodes carry the title and edges carry sourceTitle and targetTitle. UUIDs are fine inside tool arguments.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string(createObjectsMissingKey('workspace_id', 'call'))
@@ -431,7 +442,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`), a readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through. Opt into more with `include:` (each adds only its own block): `content` (body/description); `metadata` (custom field values); `relationships` (inbound and outbound edges with sourceTitle and targetTitle); `connected_objects` (the objects on the other end of those edges); both are capped at 100 rows per object, with a `relationships_page` / `connected_objects_page` block giving returned count, total and a hint, and the rest paged with list_relationships using `object_id`; `events` (recent lifecycle changes and comments); `files` (metadata for files attached to the object or its comments). For a loop\'s deeper setup check (steps, connectors, members) call get_loop. In human-facing output refer to objects by `title`, not UUID; append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide. Before you tell anyone whether something was sent, done, approved or on hold, read the task and the contact it belongs to with this tool: a drafts page, target list or search snapshot can lag, and if it disagrees with the task, the task wins; say so and fix the page.',
+			"Get one or more objects by ID. Each object returns `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) that flags gaps (thin content, no driver, entry-status objects). Add blocks with `include:` `content` (body), `metadata` (custom fields), `relationships` (inbound and outbound edges with sourceTitle and targetTitle), `connected_objects` (the objects on the other end), `events` (recent lifecycle changes and comments), `files` (files attached to the object or its comments). Relationships and connected objects are capped at 100 rows per object; a `relationships_page` / `connected_objects_page` block gives returned count, total and a hint, and list_relationships with `object_id` pages the rest. For a loop's steps, connectors and members call get_loop. In human-facing text refer to objects by `title`, not UUID. Before you say whether something was sent, done, approved or on hold, read the task and its contact with this tool: a drafts page, target list or search snapshot can lag, and the task wins.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
@@ -472,7 +483,7 @@ export const tools = {
 	},
 	update_objects: {
 		description:
-			'Update one or more objects and/or create relationships between existing objects. Provide updates to change object fields (title, content, status, metadata) and/or edges to create new relationships. To edit part of a long body, send `append` (text added to the end) or `replace` ({find, with, all?}: one exact piece swapped) instead of `content`; a `replace` that is missing or ambiguous writes nothing and says why. To attach or detach files on an object, pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry — attached files appear under the object in the UI and are returned by get_objects. Either updates or edges (or both) must be provided. Call get_workspace_schema first to discover valid metadata fields and relationship types. Updated objects are returned with their title; created relationships include sourceTitle and targetTitle. In human-facing output (comments, summaries, notifications, descriptions) use the object\'s title, not its UUID; add a short id suffix only when two titles collide (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. When you move a draft or task to done because something was sent, also update every page that lists it (a drafts page, a target list, a contact) in the same turn, so no copy still says "unsent" or "on hold". When a human tells you they sent something themselves (their own mail or LinkedIn), log it on the contact and the task.',
+			'Update one or more objects and/or create relationships between existing objects. `updates` change fields (title, content, status, metadata); `edges` add relationships; at least one is required. Call get_workspace_schema first for valid metadata fields and relationship types. To edit part of a long body send `append` (text added to the end) or `replace` ({find, with, all?}) instead of `content`; a `replace` that is missing or ambiguous writes nothing and says why. To attach or detach files pass `attach_file_ids` (upload first with create_file) and/or `detach_file_ids` on the update entry. Results carry titles (sourceTitle and targetTitle on relationships); in human-facing text use titles, not UUIDs. When you move a draft or task to done because something was sent, also update every page that lists it (a drafts page, target list, contact) in the same turn. When a human says they sent something themselves, log it on the contact and the task.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			updates: z
@@ -568,7 +579,7 @@ export const tools = {
 	},
 	schedule_next_step: {
 		description:
-			'End a turn with a next step that is backed by something. Use this instead of saying you will check back later with nothing behind it. Pass object_id, action (one short sentence) and due_at (an ISO time with a timezone, at least 5 minutes away). By default you are the owner: the step is stored and you are woken at due_at on that object, with the object and the step in the prompt. Pass owner_id for another agent and a task is created with that agent as driver; the step then waits on that task and no timer is set. A person as owner is stored and nobody is woken. Closing or replacing the step (update_next_step, or replace: true here) cancels the wake-up. Refused (409) while the object has an open or blocked step unless replace is true. Refused (429) when a run that started on its own already has its limit of wake-ups waiting; a run a person started is not limited. A wake-up that starts more than 1 hour late does nothing and leaves the step open. Use set_next_step instead when nobody should be woken.',
+			'End a turn with a next step backed by something, instead of saying you will check back later with nothing behind it. Pass object_id, action (one short sentence) and due_at (ISO time with a timezone, at least 5 minutes away). By default you own it: the step is stored and you are woken at due_at on that object with the step in the prompt. With owner_id for another agent, a task is created with that agent as driver, the step waits on that task and no timer is set. A person as owner is stored and nobody is woken. Closing or replacing the step (update_next_step, or replace: true here) cancels the wake-up. Refused with 409 while the object has an open or blocked step unless replace is true, and with 429 when a self-started run already has its limit of wake-ups waiting. A wake-up that starts more than 1 hour late does nothing and leaves the step open. Use set_next_step when nobody should be woken.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z.string().uuid().describe('The object the step belongs to.'),
@@ -785,12 +796,7 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	delete_relationship: {
@@ -803,7 +809,7 @@ export const tools = {
 	},
 	traverse_graph: {
 		description:
-			"Bounded multi-hop breadth-first traversal from a single object across the workspace `relationships` table. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use this to resolve supersedes/contradicts chains, walk breaks_into hierarchies, or gather an object's multi-hop context in a single call — instead of chaining `get_objects` + `list_relationships` yourself. Bounded by `max_depth` (default 3), `max_nodes` (default 200), and their product (server ceiling: 5000). Cycles terminate via a visited set keyed on node id. Nodes can be objects, files, chats (`conversation`) and sessions inside the caller's workspace; cross-workspace ids are skipped. The start node must be an object — a chat or file id returns 404. A default call follows every edge type, so on a loop item the sibling items fill the result and cut it off at `max_nodes`: pass `edge_type_allow_list` (for example `attached` to find an object's files, `produced_by` for what a session made, `spawned` for the sessions a chat started, `in_loop` for loop membership) or a smaller `max_depth`. Prefer `get_objects` when you already know the ids you need — this tool is for discovering the surrounding graph.",
+			"Bounded breadth-first traversal from one object across the workspace relationships. Returns a flat `{ nodes: [{id, type, title}], edges: [{source, target, type}] }` subgraph plus a `truncated` flag. Use it to resolve supersedes/contradicts chains, walk breaks_into hierarchies or gather multi-hop context in one call instead of chaining get_objects and list_relationships. Bounded by `max_depth` (default 3), `max_nodes` (default 200) and their product (ceiling 5000). Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object (a chat or file id returns 404). A default call follows every edge type, so on a loop item the siblings fill the result and cut it off at `max_nodes`: pass `edge_type_allow_list` (for example `attached` for an object's files, `produced_by` for what a session made, `spawned` for a chat's sessions, `in_loop` for loop membership) or a smaller `max_depth`. Prefer get_objects when you already know the ids.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -862,7 +868,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (shown once). With workspace_id, an agent joins as a member in the same step (role is ignored: always member) and a human is emailed an invitation they must accept. Agents default to auto_create_workspace=false, so workspace_id is effectively required for type "agent"; omitting both fails the call. For humans, auto_create_workspace defaults to true and creates a new empty workspace instead. To add an existing agent to a workspace use update_actor. Setting tools or llm_config needs a human admin or owner caller; a member or agent caller gets a 403 and nothing is created, so leave them out (the agent gets the Maskin MCP only) and set them later with update_actor. Use attach_skill_ids (needs workspace_id; ignored with auto_create_workspace) so the agent has its skills from the start. The requester automatically gets a "Meet {name}" chat from the new agent, so do not send a second hello. Pass first_steps (2 to 3, specific to the agent\'s job, phrased as things the person can say): action "send" only for a step that reads and reports (prompt must equal label), "fill" for anything that needs the person\'s words or that writes, sends, spends or deletes. Pass needed_integrations for tools the agent cannot work without. Details: docs/reference/mcp-tools.md.',
+			'Create a new actor (human or agent). Returns the actor details and API key (shown once). With workspace_id an agent joins as a member in the same step (role is ignored) and a human is emailed an invitation. Agents default to auto_create_workspace=false, so workspace_id is effectively required for type "agent"; humans default to true and get a new empty workspace. To add an existing agent to a workspace use update_actor. Setting tools or llm_config needs a human admin or owner caller; others get 403 and nothing is created, so leave them out (the agent gets the Maskin MCP only) and set them later with update_actor. attach_skill_ids (needs workspace_id) gives the agent its skills from the start. The requester automatically gets a "Meet {name}" chat from the new agent, so send no second hello. Pass first_steps (2 to 3, specific to the agent\'s job, phrased as things the person can say): action "send" only for a step that reads and reports (prompt must equal label), "fill" for anything that needs the person\'s words or writes, sends, spends or deletes. Pass needed_integrations for tools the agent cannot work without. Details: docs/reference/mcp-tools.md.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -1002,7 +1008,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). With workspace_id, returns that workspace's members with their role; without it, returns actors across all workspaces the caller belongs to, annotated with memberships. Each row is short: id, type, `title` (the name), status, role, the one-line `description` and a link. Agent rows in a workspace listing also carry `skills` (names of valid workspace skills, sorted; omitted for humans or when none). Call `get_actor` for the full `system_prompt` and one agent's triggers and loops; it is also how to pick up context on a human teammate @mentioned in a comment. For many agents' `connectedTriggers`/`connectedLoops` at once, pass `include=triggers,loops` with a `workspace_id`; each is a list of `{ name, url }` (omitted when empty; never returned by the cross-workspace listing). To find one agent without paging, pass `name` (exact, case-insensitive) or `name_prefix` (case-insensitive prefix), not both; both are workspace-scoped (default workspace when `workspace_id` is omitted), return an empty list on no match, and return every agent sharing an exact name. The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25): pass `next_cursor` as `cursor`. The cross-workspace listing does not support cursors; use `offset`.",
+			"List actors (humans and agents). With workspace_id it returns that workspace's members with their role; without it, actors across all the caller's workspaces with memberships. Each row is short: id, type, `title` (the name), status, role, one-line `description` and a link; agent rows in a workspace listing also carry `skills` (sorted names). Call get_actor for the full system_prompt and one agent's triggers and loops, or to pick up context on a human @mentioned in a comment. With `workspace_id`, `include=triggers,loops` adds each agent's `connectedTriggers`/`connectedLoops` as `{ name, url }` lists. To find one agent without paging pass `name` (exact, case-insensitive) or `name_prefix`, not both; both are workspace-scoped and return an empty list on no match. The workspace listing pages via a snapshot-consistent cursor (default page: 25): pass `next_cursor` as `cursor`. The cross-workspace listing has no cursors; use `offset`.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -1061,7 +1067,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. For an agent, `access` lists what it can use: each integration with its level (`none`, `read`, `read_write`), whether the level is the agent's own (`grant`) or the integration's default, and whether its MCP server is attached, plus each saved Keychain credential and whether it has access. It is the same access shown on the Integrations, Keychain and agent pages; change it with `update_integration_access`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`. In `tools`, every env and header value is shown as `********` unless you are that actor or an owner/admin of a workspace it belongs to; keys, commands, args and urls stay visible.",
+			"Get an actor by ID. Returns `actor`, the full record: `description` (one-liner), `system_prompt` (longer context on who they are and how to work with them), `skills` (id and name), and `connectedTriggers`/`connectedLoops` (as in list_actors), plus `heroCard`, a display-only summary of the same actor; read `actor`. For an agent, `access` lists what it can use: each integration with its level (`none`, `read`, `read_write`), whether that level is the agent's own (`grant`) or the integration's default, whether its MCP server is attached, and each saved Keychain credential and whether it has access (the same as the Integrations, Keychain and agent pages; change it with update_integration_access). With `workspace_id`, `status` is the actor's membership role there (owner/admin/member). When a human is @mentioned on a comment, call this to pick up their instructions. Read-only: to change `system_prompt`, `tools` or skills use update_actor. In `tools`, env and header values show as `********` unless you are that actor or an owner/admin of a workspace it belongs to.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -1114,12 +1120,7 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 			include_settings: z
 				.boolean()
 				.optional()
@@ -1238,12 +1239,7 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	get_workspace_skill: {
@@ -1351,7 +1347,7 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring, `kind: "briefing"` to list only the briefings shown in For you, or `tags` to find files by tag (`tags_match: "all"`, the default, keeps files that carry every listed tag; "any" keeps files that carry at least one). Each file in the result shows its `tags`. Call list_file_tags to see which tags exist. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. To see which files belong to one chat, pass `conversation_id` (a chat you are in): it returns the 50 newest files attached to messages in that chat, each with name, mime type, size, who attached it and when, plus `total` and `omitted` for the rest, however old the chat is. Narrow it with `type` (a mime type or prefix, e.g. "video") and `uploaded_by` (an actor id). With `conversation_id` the other filters and paging do not apply. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. `q` filters by name substring, `kind: "briefing"` lists only the briefings shown in For you, `tags` finds files by tag (`tags_match`: "all", the default, needs every tag; "any" needs at least one); list_file_tags shows which tags exist. Each file shows its `tags`. Any file in the workspace is listed, including ones attached to a chat message; when a name search finds nothing, narrow by tag or page on with `next_cursor` rather than asking for a re-upload. To see the files of one chat pass `conversation_id` (a chat you are in): the 50 newest files attached to its messages, each with name, mime type, size, who attached it and when, plus `total` and `omitted`; narrow with `type` (a mime type or prefix, e.g. "video") and `uploaded_by`. With `conversation_id` the other filters and paging do not apply. Paginated via a snapshot-consistent cursor (default page: 25): pass `next_cursor` as `cursor`.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
@@ -1396,12 +1392,7 @@ export const tools = {
 				.max(200)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	list_file_tags: {
@@ -1431,7 +1422,7 @@ export const tools = {
 	},
 	get_file: {
 		description:
-			'Get a file with its content and a viewer URL. Over 50 MB: `content` is empty, `contentOmitted: true`, and a short-lived `downloadUrl` is given. `encoding` is "utf8" for text types (`content` is the raw string) or "base64" for binary. `annotations` are pinned review comments humans left on the rendered file (CSS `selector`, `bounds`, `comment`); read them to see what a reviewer flagged. `contentHash` goes in `if_match` on update_file so your write is refused if someone saved in between. Any HTML page (deck, website, dashboard, custom view) can be mostly embedded fonts and inline CSS or script, so raw `content` is huge and unreadable: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, bullets, tables, links, button and field labels, slide blocks with notes for a deck), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read that is mostly embedded data opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. To change a file use update_file with `edits` or `content`. There is no offset or limit; use format "text" rather than paging raw bytes.',
+			'Get a file with its content and a viewer URL. Over 50 MB, `content` is empty, `contentOmitted: true`, and a short-lived `downloadUrl` is given. `encoding` is "utf8" for text types (`content` is the raw string) or "base64" for binary. `annotations` are pinned review comments left on the rendered file (CSS `selector`, `bounds`, `comment`). `contentHash` goes in `if_match` on update_file so your write is refused if someone saved in between. An HTML page (deck, website, dashboard, custom view) is often mostly embedded fonts and inline CSS or script, so raw `content` is huge: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, bullets, tables, links, button and field labels, slide blocks with notes), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. There is no offset or limit; use format "text" rather than paging raw bytes. To change a file use update_file.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1445,7 +1436,7 @@ export const tools = {
 	},
 	transcribe_file: {
 		description:
-			'Transcribe an uploaded audio or video file to text; use it when someone has uploaded a recording (a meeting, voice memo, interview, video) and you need the words. Pass the file `id` (from list_files or create_file). Audio (mp3, m4a, wav, ogg, flac, webm) and video (mp4, mov, mkv, webm) both work: the audio track is extracted for you, so do not download or convert the file first. Up to 60 minutes of audio per call; for a longer recording, cut it into parts and transcribe each. Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, next_step, timed, audio_seconds, chunks, model }`. The transcript is saved as a .txt workspace file, one line per speaker turn in the form `[mm:ss] Speaker 1: text` (`timed` is true), or plain text when the speech model returned no timing (`timed` is false). It is not in the response: call get_file with `transcript_file_id` to read it, and share `transcript_file_url`. `text` is null unless saving failed (then it holds the transcript) or no speech was found (then no file is saved). Pass `language` (for example "en" or "nb-NO") when you know it, otherwise it is detected. The call runs on the workspace plan and counts toward its usage, and a long file can take a minute or more. Fails with 402 when the plan cap is reached (enterprise workspaces have no cap), and 400 for a file that is not audio or video, has no audio track, or is over the limit.',
+			'Transcribe an uploaded audio or video file to text, for a recording someone uploaded (meeting, voice memo, interview). Pass the file `id` (from list_files or create_file). Audio (mp3, m4a, wav, ogg, flac, webm) and video (mp4, mov, mkv, webm) work and the audio track is extracted for you. Up to 60 minutes per call; cut a longer recording into parts. Returns `{ file_id, name, transcript_file_id, transcript_file_url, text, next_step, timed, audio_seconds, chunks, model }`. The transcript is saved as a .txt workspace file, one line per speaker turn as `[mm:ss] Speaker 1: text` (`timed` true), or plain text when the speech model returned no timing. It is not in the response: call get_file with `transcript_file_id` to read it and share `transcript_file_url`. `text` is null unless saving failed (it then holds the transcript) or no speech was found (no file is saved). Pass `language` (e.g. "en", "nb-NO") when you know it, else it is detected. It counts toward the workspace plan usage and a long file can take a minute or more. Fails with 402 at the plan cap (enterprise has none), and 400 for a file that is not audio or video, has no audio track, or is over the limit.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID of the uploaded audio or video file.'),
@@ -1458,7 +1449,7 @@ export const tools = {
 	},
 	update_file: {
 		description:
-			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text content pass `content` as a raw string (encoding defaults to "utf8"); for binary content set `encoding` to "base64". At least one field must be provided. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409 conflict, writes nothing, and the error carries the current hash. Re-read the file with get_file, merge, and retry with the new hash. Without `if_match` the last write wins. To change part of a text file (a typo, one slide, one number) pass `edits` instead of `content`: a list of `{old, new, replace_all?}`, applied in order on the server against the stored text, so you do not re-send the whole file. `old` must match exactly once (include enough surrounding text to be unique) unless `replace_all` is true; an edit that matches nothing or matches more than once fails with a 400 and nothing is written. `edits` and `content` cannot be combined, and `edits` work on text files only (HTML, markdown, JSON, code). It works with `if_match`. Read the text to copy `old` from with get_file (raw), since `old` must match the stored bytes, not the `format: "text"` extract.',
+			'Update a file. Pass any subset of name, description, kind, mime_type, content. Updating content re-uploads the bytes; other fields update metadata only. For text pass `content` as a raw string (encoding defaults to "utf8"); for binary set `encoding` to "base64". At least one field is required. To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with 409, writes nothing and the error carries the current hash; re-read, merge, retry. Without `if_match` the last write wins. To change part of a text file (HTML, markdown, JSON, code) pass `edits`, a list of `{old, new, replace_all?}`, instead of `content`: applied in order on the server, so you do not re-send the whole file. `old` must match the stored text exactly once (include enough surrounding text) unless `replace_all` is true; an edit that matches nothing or more than once fails with 400 and nothing is written. `edits` and `content` cannot be combined; `edits` work with `if_match`. Copy `old` from get_file raw, not from the `format: "text"` extract.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('File ID.'),
@@ -1571,12 +1562,7 @@ export const tools = {
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	get_comments: {
@@ -1586,16 +1572,12 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
 			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	create_comment: {
-		description: `One way to communicate with humans, alongside chat: a comment stays on an object (bet, task, insight) as a visible record. Use it for status updates, questions, findings, decisions and blockers. Do NOT bury that dialogue in \`bet.content\`, \`task.content\` or titles; those are the durable spec and nobody scans them for news.\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it makes a comment clearer or shorter.\n\nTo get a human to make a call, put them in \`mentions\` and fill in \`decision\`; that pair is the only way an ask reaches their For You feed as a one-tap decision. The \`decision\` param docs give the shape; the API rejects a decision that breaks its rules, listing every violation.\n\nThreading: when this session was dispatched from a comment, your reply is threaded into that comment automatically. Pass \`parent_event_id\` only to reply under a DIFFERENT comment; set \`no_thread: true\` for a fresh top-level comment.\n\nWho gets woken: only agents in \`mentions\`. A comment with no mentions wakes nobody, so mention the agent when you hand off or need a reply. Mentioned humans are notified.`,
+		description:
+			'Comment on an object (bet, task, insight): a visible record for status updates, questions, findings, decisions and blockers. Do not bury that dialogue in `bet.content`, `task.content` or titles.\n\nTo get a human to make a call, put them in `mentions` and fill in `decision`; that pair is the only way an ask reaches their For You feed as a one-tap decision.\n\nA reply is threaded into the comment that dispatched this session automatically. Pass `parent_event_id` to reply under a different comment, or `no_thread: true` for a new top-level comment.\n\nOnly agents in `mentions` are woken, so mention the agent when you hand off or need a reply. Mentioned humans are notified.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1603,13 +1585,13 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
+					'Force a new top-level comment instead of replying in the thread that dispatched this session. Ignored if `parent_event_id` is set.',
 				),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until each agent in `mentions` has replied to this comment (in its thread) and return the replies. Ends early with settled false if an agent never starts or the wait runs out. Nothing is waited for when no agent is mentioned.',
+					'Hold until each mentioned agent has replied in the thread and return the replies. Ends early with settled false if an agent never starts or the wait runs out.',
 				),
 		}),
 	},
@@ -1669,25 +1651,25 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need it for your actual reply: whatever you write at the end of your turn is posted automatically. Use it only when blocked on a person or to bring in another agent. Never for progress notes ("got it", "still on it", what you do next). Read recent messages with list_conversation_messages if you need context. To make another agent respond, pass its name in \`mention_names\` (or its actorId from get_conversation in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer inside a thread pass \`thread_root_id\` (the top-level message id; threads do not nest); use a thread for side conversations or long-running work and keep \`also_in_channel\` off unless the whole chat should see it. If your turn was started by a reply in a thread, an interim post lands in that thread; if it was started by a top-level message, it goes to the main timeline. Your final reply is posted automatically. Pass \`top_level: true\` only when the whole chat must see a post made during a thread turn. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and you must never write card text yourself; for a Connect card call connect_integration. An unmatched mentioned actor ID is listed in \`unresolved_mentions\` and the message is still posted, so look the actor up and post a correction. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are in, mid-turn. You do not need it for your reply: what you write at the end of your turn is posted automatically. Use it only when blocked on a person or to bring in another agent, never for progress notes. To make another agent respond, pass its name in \`mention_names\` (or its actorId in \`metadata.mentions\`); writing its name in \`content\` does not wake it. Humans see every message without a mention. To answer in a thread pass \`thread_root_id\` (the top-level message id; threads do not nest). A mid-turn post lands in the thread if your turn started in one, else in the main timeline; \`top_level: true\` overrides that. It cannot render cards (Connect, Keychain, computer or question cards): a card key in \`metadata\` is rejected, and for a Connect card call connect_integration. Unmatched mentions are listed in \`unresolved_mentions\` and the message is still posted. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
 			content: z.string().min(1).max(MESSAGE_MAX_LENGTH),
-			metadata: messageMetadataSchema.optional(),
+			metadata: agentMessageMetadataSchema.optional(),
 			mention_names: z
 				.array(z.string().min(1).max(200))
 				.max(20)
 				.optional()
 				.describe(
-					'Display names of conversation participants to @mention, as get_conversation lists them (for example "Strategist"). Resolved server-side to actor IDs and merged into `metadata.mentions`, so you do not have to copy a UUID. Names that match nobody, or more than one participant, are returned in `unresolved_mentions` and are not mentioned.',
+					'Participant names to @mention, as get_conversation lists them ("Strategist"). Resolved to actor IDs server-side; names matching nobody or several are returned in `unresolved_mentions`.',
 				),
 			sub_chat_session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Talk to a sub-chat you started with create_sub_chat: the message goes in its thread and to its agent, which takes it while it runs or starts a follow-up if it has ended. `conversation_id` is the chat the sub-chat lives in. The response says how it got there (`delivered_to_session`: live, continued or not_delivered). Fails if the sub-chat is not attached to a message yet; it is once the reply that started it has been posted.',
+					'Talk to a sub-chat you started with create_sub_chat: the message goes to its agent (live, or a follow-up if it ended; see `delivered_to_session` in the response). `conversation_id` is the chat the sub-chat lives in. Fails until the reply that started it is posted.',
 				),
 			thread_root_id: z
 				.number()
@@ -1695,30 +1677,28 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					"Reply inside the thread under this message of the chat instead of posting at the top level. The root must be a top-level message of this conversation; replying to a reply is not possible, so pass the thread's root. If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.",
+					"Reply in the thread under this top-level message of the chat. Pass the thread's root, not a reply. A sub-chat hanging from it gets the reply too; most callers want sub_chat_session_id instead.",
 				),
 			also_in_channel: z
 				.boolean()
 				.optional()
-				.describe(
-					'With thread_root_id: also show the reply in the main timeline. Leave off unless the whole chat should see it.',
-				),
+				.describe('With thread_root_id: also show the reply in the main timeline.'),
 			top_level: z
 				.boolean()
 				.optional()
 				.describe(
-					'Post in the main timeline even though the message that started your turn was written in a thread. Without it, a post made during such a turn goes into that thread; a turn started by a top-level message always posts to the main timeline. People start threads, you continue them. Ignored when thread_root_id or sub_chat_session_id is given.',
+					'Post in the main timeline although your turn started in a thread. Ignored when thread_root_id or sub_chat_session_id is given.',
 				),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'After posting, hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has finished its reply, and return those replies. Ends early with settled false if an agent never starts or the wait runs out; read the chat later with list_conversation_messages. Only use this when you cannot go on without the answer.',
+					'After posting, hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has replied, and return the replies. Ends early with settled false if an agent never starts or the wait runs out. Only when you cannot go on without the answer.',
 				),
 		}),
 	},
 	create_chat: {
-		description: `Start a top-level chat with other agents and/or people, with you in it. It shows up in the chat list on its own, separate from the chat you are in now. With one other actor and no subject this opens your direct message with them: every pair has exactly one, so asking again returns it instead of making a new chat. Set \`topical: true\` for a new topic that deserves its own room; with two or more others it is always a new chat. To hand a task to an agent from inside the chat you are already in, use create_sub_chat instead: that stays in a thread under your message rather than opening a new chat. Give \`participant_actor_ids\` (agents are woken by \`first_message\` automatically; people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request. Set \`wait: true\` to hold until the agents have replied. After that, talk in it with post_conversation_message, add people with add_chat_participant, and read it with list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open (or rejoin) the chat that belongs to a bet, task, insight or loop. Hard limit on the first message: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Start a top-level chat with other agents and/or people, with you in it, separate from the chat you are in. With one other actor and no subject it opens your direct message with them (every pair has exactly one, so asking again returns it); set \`topical: true\` for a new topic that deserves its own room. With two or more others it is always a new chat. To hand a task to an agent from inside your current chat use create_sub_chat instead. Give \`participant_actor_ids\` (agents are woken by \`first_message\`, people just see it) and a \`title\`. The first message is posted as you, so write it as a clear request; \`wait: true\` holds until the agents have replied. Afterwards use post_conversation_message, add_chat_participant and list_conversation_messages. Pass \`subject_type\` and \`subject_id\` to open or rejoin the chat of a bet, task, insight or loop. First message limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			title: z.string().min(1).max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -1813,7 +1793,7 @@ export const tools = {
 
 	create_trigger: {
 		description:
-			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events, and the trigger form shows it as Driver. To start whoever drives the item, put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it). For something that should run once, pass `run_at` instead of `type` and `config`: the trigger runs once at that time, then disables itself and shows as one-time in list_triggers. Do not use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first to see what the agent already has, and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. Otherwise target_actor_id is required and must be an agent. The model route (llm_route, llm_oauth_slot) is not set on triggers: it is resolved at dispatch from the target agent and workspace settings, and sending either in config is rejected.",
+			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). To fire only for items with a given driver add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] } (driver works on created, updated, status_changed and commented). To start whoever drives the item put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it). For a one-off pass `run_at` instead of `type` and `config`: it runs once, then disables itself and shows as one-time in list_triggers; do not use a cron with a fixed day and month for that, it repeats yearly. Say in the prompt what to do if the run starts late. Call list_triggers first and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. Otherwise target_actor_id is required and must be an agent. llm_route and llm_oauth_slot are resolved at dispatch from the agent and workspace settings; sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string(),
@@ -1867,7 +1847,7 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List triggers in the workspace, newest first. Call this before creating a trigger, to see what already runs. Each row is short: id, name, status, kind (recurring, one-time or event), schedule, next_run, last_run, agent (id and name), purpose (first line of the prompt) and url. The full prompt and config are left out; read one trigger in full with get_trigger, or set `compact` to false. Filter by `agent_id` (the agent a trigger runs), `status` (enabled or disabled) and `q`; `q` matches the trigger name, agent name or id, kind, status, schedule and the name of a loop it belongs to (never the prompt), each word of `q` has to match, and filters combine with AND and carry through the cursor. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page. If a page is too long for one response it is cut, `truncated` is true and `hint` says how to get the rest. Any parameter not listed here is rejected with an error.',
+			'List triggers in the workspace, newest first. Call it before creating a trigger to see what already runs. Each row is short: id, name, status, kind (recurring, one-time or event), schedule, next_run, last_run, agent (id and name), purpose (first line of the prompt) and url; read one trigger in full with get_trigger, or set `compact` to false. Filter by `agent_id`, `status` (enabled or disabled) and `q`; `q` matches the trigger name, agent name or id, kind, status, schedule and the name of a loop it belongs to (never the prompt), each word of `q` has to match, and filters combine with AND and carry through the cursor. Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, total counting rows matching your filters) and `next_cursor` while `has_more` is true; pass it back as `cursor`. A page that is too long is cut: `truncated` is true and `hint` says how to get the rest. Parameters not listed here are rejected.',
 		// Strict: an unknown parameter is an error, never a silently ignored filter.
 		inputSchema: z
 			.object({
@@ -1879,12 +1859,7 @@ export const tools = {
 					.max(100)
 					.optional()
 					.describe('Max rows to return. Defaults to 25.'),
-				cursor: z
-					.string()
-					.optional()
-					.describe(
-						'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-					),
+				cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 				agent_id: z
 					.string()
 					.uuid()
@@ -1935,7 +1910,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author new steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent under it. Before adding a step, check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work. Never default to an unrelated agent; if nothing fits, create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live, or paused. Draft, paused and archived (terminal) turn every trigger off; the others leave them on. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, ideally the main target's owner. Details: docs/reference/loops.md.",
+			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent. Before adding a step check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work; never default to an unrelated agent, and if none fits create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live, or paused. Draft, paused and archived (terminal) turn every trigger off; the others leave them on. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, ideally the main target's owner. Details: docs/reference/loops.md.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
@@ -1991,7 +1966,7 @@ export const tools = {
 	},
 	update_loop: {
 		description:
-			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types (or closed_when for metadata-based done rules). A step and a trigger are the same thing — see create_loop's description for how `steps`/`trigger_ids` relate and how to pick an agent that actually fits before authoring or attaching one; the same guidance applies to add_steps/add_trigger_ids here. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Setting `status` to `draft`, `paused` or `archived` disables every trigger on the loop (including ones just added in this call); moving to a running status re-enables them. Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Pass driver_id to change the loop's driver (see create_loop); it cannot be cleared. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
+			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types (or closed_when for metadata-based done rules). A step and a trigger are the same thing: see create_loop for how `steps`/`trigger_ids` relate and how to pick an agent that fits; the same applies to add_steps/add_trigger_ids here. To CLOSE an open loop use add_steps with an event `when` on the close condition: the feedback step that captures learnings and seeds the next object when a member reaches its end state. Trigger membership is stored on the loop as metadata.trigger_ids; add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Setting `status` to `draft`, `paused` or `archived` disables every trigger on the loop (including ones just added in this call); a running status re-enables them. Object membership is an `in_loop` edge: add_object_ids creates edges (idempotent), remove_object_ids deletes them. Pass driver_id to change the driver (see create_loop); it cannot be cleared. Find loop ids with list_loops. Fails if the target is not a loop; use update_objects for regular objects.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
@@ -2081,12 +2056,7 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	get_loop: {
@@ -2131,7 +2101,7 @@ export const tools = {
 	},
 	query_data: {
 		description:
-			'Read-only totals over objects (not SQL: no `sql` or `query` argument), computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field, or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound that is re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current, e.g. { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is one query for "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by`, read `total`. Every matching object is counted and a query has no group limit, but groups come back a page at a time (`limit`, default 50, at most 1000): while `next_cursor` is set, call again with the same query and `cursor: <next_cursor>` for the next page. In a loop view, window.maskin.query returns every group. Use it to test a query before declaring it as a source in a loop view (set_loop_view). It returns no object rows; use list_objects.',
+			'Read-only totals over objects (not SQL: no `sql` or `query` argument), computed in the database: count, or sum/avg of one numeric metadata field, for one object type, optionally filtered and grouped by status, type, a metadata field or a time bucket (`created_at.day`, also updated_at and hour/week/month; keys like "2026-10-30", oldest first, only buckets that have rows). `scope` is "workspace" (default) or a loop id to look only at that loop\'s members (in_loop). Date filters (created_after/before, updated_after/before) take a fixed ISO datetime or a moving bound re-evaluated every run: "now-7d", "now-24h", "now-4w", "now-3mo" (rolling) or "today", "today-7d" (from midnight today). Use the moving form for anything that should stay current: { filters: { created_after: "now-14d" }, group_by: "created_at.day" } is "new per day, last 14 days". `timezone` (IANA, default UTC) sets where days start. Returns `{ groups: [{ key, count, value }], total: { count, value }, next_cursor }`; with no `group_by` read `total`. Every matching object is counted and there is no group limit, but groups come a page at a time (`limit`, default 50, max 1000): while `next_cursor` is set, call again with the same query and `cursor`. In a loop view, window.maskin.query returns every group; use this tool to test a query before declaring it as a source in set_loop_view. It returns no object rows; use list_objects.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...dataQuerySpecSchema.shape,
@@ -2153,7 +2123,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_sub_chat: {
 		description:
-			"Hand a task to another agent from inside the chat you are in. The agent works in a thread under your reply, not in a new chat: the person sees it as a handoff card with live status, can open it, carry on the conversation with that agent there, and break it out into its own chat. Use this when the work belongs to the conversation you are in; to open a separate top-level chat instead, use create_chat. The call returns straight away with the sub-chat's details (its `id` is the `session_id` other chat tools take), so you can carry on with the conversation. When the agent finishes, its final message comes back to you as a new turn in your own chat: do not poll, and this cannot be switched off. Check on it with get_chat_activity or get_session, stop it with stop_chat_agent, talk to it with send_session_message, carry on after it ended, failed or paused with resume_session. Do not @mention the agent in a chat for this: a mention reaches a different session of that agent. Give `action_prompt` a clear first line: it becomes the card's title.",
+			"Hand a task to another agent from inside the chat you are in. The agent works in a thread under your reply, not a new chat: the person sees a handoff card with live status, can open it, talk to that agent there and break it out into its own chat. For a separate top-level chat use create_chat. The call returns at once with the sub-chat's details (its `id` is the `session_id` other chat tools take). When the agent finishes, its final message comes back to you as a new turn in your own chat: do not poll, and this cannot be switched off. Check on it with get_chat_activity or get_session, stop it with stop_chat_agent, talk to it with send_session_message, continue after it ended, failed or paused with resume_session. Do not @mention the agent in a chat for this: a mention reaches a different session of that agent. Give `action_prompt` a clear first line: it becomes the card's title.",
 		inputSchema: startAgentInputSchema,
 	},
 	list_sessions: {
@@ -2311,7 +2281,7 @@ export const tools = {
 	},
 	ask_user_question: {
 		description:
-			'Ask the person you are working with anything they can answer by tapping a button, and wait for the answer. Prefer this over a free-text question whenever the reply fits in a few options: confirmations and approvals, timing, choosing between alternatives, picking a direction or default, resolving ambiguity, and permission before something risky, expensive or hard to undo. Also use it for any detail only they can give when a default would be a guess. Do not ask in prose when buttons would do, and do not ask when you can reasonably decide yourself. The question appears in their chat with your options as buttons; their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, so do not wait: decide, state your assumption and continue. If there is nobody to ask, the tool says so; do the same. Give 2 to 4 options each, with a one- or two-word label and a description only when the label is unclear; write options that fit the question ("Yes" / "No" and "Approve" / "Request changes" are only examples). A person can always type something else. For a simple yes/no put the one-line question in `question` and a short `header` such as "Confirm". Set `multi_select` to allow several picks, and ask up to 4 related questions in one call.',
+			'Ask the person you are working with anything they can answer by tapping a button, and wait for the answer. Prefer it over a free-text question whenever the reply fits a few options: confirmations, approvals, timing, choosing between alternatives, picking a direction, resolving ambiguity, permission before something risky, expensive or hard to undo, and any detail only they can give when a default would be a guess. Do not ask when you can reasonably decide yourself. The question appears in their chat with your options as buttons and their pick comes back as your next turn. After calling it, end your turn without a closing message and do not repeat the question. In a session that runs on its own (a trigger, a schedule) the question goes to the chat between the person and the Chief of Staff, so do not wait: decide, state your assumption and continue; if there is nobody to ask, the tool says so and you do the same. Give 2 to 4 options each, with a one- or two-word label and a description only when the label is unclear; a person can always type something else. For a simple yes/no put the one-line question in `question` and a short `header` such as "Confirm". `multi_select` allows several picks, and one call can ask up to 4 related questions.',
 		inputSchema: z.object({
 			questions: z
 				.array(
@@ -2350,7 +2320,7 @@ export const tools = {
 	},
 	resume_session: {
 		description:
-			"Carry on with a sub-chat that is not running (for an ordinary chat, @mention the agent with post_conversation_message instead, which wakes it whatever state it was in): one that was paused, finished, failed, timed out, ran out of tokens, died while starting, or was stopped. You do not need to know which it is. A paused session continues exactly where it stopped. One that has ended gets a follow-up session for the same agent in the same thread, which starts from your `message` (it does not get the old session's files or full history, only a short reminder of what it was asked to do). Without a `message` an ended session is told to carry on where it left off, so for one that failed or ran out of tokens you can call this with just the id; say what you want if you want something different. If the session is still running, use send_session_message instead. Set `wait: true` to hold until the agent has finished and get its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (it has not failed); it also ends early with `settled: false` if the agent is waiting for input or paused. For a session that ended, the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in the chat it belongs to, can do this.",
+			'Continue a sub-chat that is not running: paused, finished, failed, timed out, out of tokens, died while starting, or stopped; you need not know which. (For an ordinary chat @mention the agent with post_conversation_message instead.) A paused session continues exactly where it stopped. An ended one gets a follow-up session for the same agent in the same thread, starting from your `message` (it gets only a short reminder of what it was asked, not the old files or history); without a `message` it is told to carry on where it left off, so for one that failed or ran out of tokens just pass the id. If the session is still running use send_session_message. `wait: true` holds until the agent has finished and returns its output; it stops after 2 hours with `settled: false` (not failed), and ends early with `settled: false` if the agent is waiting for input or paused. For an ended session the response is the new follow-up session (`continued_from_session_id` names the old one). Only the person or agent that started the session, or someone in its chat, can do this.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The session to carry on with'),
@@ -2371,7 +2341,7 @@ export const tools = {
 	},
 	send_session_message: {
 		description:
-			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if you typed it into its thread. You can also reach it by posting with post_conversation_message and its `sub_chat_session_id`, which works whether or not it is still running. In an ordinary chat do not use this: post with post_conversation_message and @mention the agent instead. Use it to answer a question the agent asked, give it more direction, or change course while it works. It only works while the session is running: if it has ended, failed or been paused, use resume_session instead, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session of that agent. The call returns as soon as the message is delivered; read the agent's reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. The wait stops after 2 hours and returns `settled: false` with a message that the session has not finished (not failed); it also ends early with `settled: false` if the session is waiting for input or paused. `wait` only works for sessions that end after replying, such as an agent you started with create_sub_chat from a chat; for a session that stays open the message is still delivered but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403 (session started by a different actor): comment on the task or start your own with create_sub_chat instead.",
+			"Send a message to a sub-chat you started with create_sub_chat while it is running, as if typed into its thread. post_conversation_message with its `sub_chat_session_id` also reaches it, running or not. In an ordinary chat post with post_conversation_message and @mention the agent instead. Use it to answer the agent's question, give more direction or change course. It only works while the session is running: if it ended, failed or paused use resume_session, which also takes a message. Do not @mention the agent in a chat for this; a mention reaches a different session. It returns once the message is delivered; read the reply with get_session_activity, or set `wait: true` to hold until the session has finished and get its output. The wait stops after 2 hours with `settled: false` (not failed), and ends early with `settled: false` if the session is waiting for input or paused. `wait` only works for sessions that end after replying, such as one from create_sub_chat in a chat; a session that stays open still gets the message but nothing is waited for. Only the actor that started the session can message it; anyone else gets 403: comment on the task or start your own with create_sub_chat.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('The running session to talk to'),
@@ -2545,12 +2515,7 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	// ─── Integrations ─────────────────────────────────────────
@@ -2590,12 +2555,7 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous page.'),
 		}),
 	},
 	list_integration_providers: {
@@ -2605,7 +2565,7 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect — see list_integrations): call it with that provider instead of telling the user to go to Settings. In a chat this shows a Connect card in the conversation — a sign-in button for OAuth providers, an input for API-key providers — and the user finishes the connection there; end your turn afterwards. Never ask the user for an API key or paste a connection link yourself. This is the only way to show a Connect card: post_conversation_message cannot render one, so never write card text or claim a card is shown without calling this tool. Outside a chat (an autonomous session, or an external MCP client) there is nobody to show a card to, so it falls back to the direct flow: OAuth providers return an install_url that must be opened in a browser (the callback is handled automatically by the server), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
+			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect; see list_integrations): call it with that provider instead of sending the user to Settings. In a chat it shows a Connect card (a sign-in button for OAuth providers, an input for API-key providers) where the user finishes the connection; end your turn afterwards. Never ask for an API key or paste a connection link yourself. It is the only way to show a Connect card: post_conversation_message cannot render one, so never write card text or claim a card is shown without calling this. Outside a chat (an autonomous session or external MCP client) it falls back to the direct flow: OAuth providers return an install_url to open in a browser (the server handles the callback), and API-key providers (e.g. "posthog") use `api_key` and are activated immediately.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
@@ -2623,7 +2583,7 @@ export const tools = {
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail; with "Read" or no access you cannot send. What happens next depends on the email send setting a person set for you. Always allow: pass `to`, `subject` and `body` (and optional `cc`) and it sends at once, or pass `object_id` to send a kept email object. Ask first: keep the email as an object. create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content`, then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview (editing it first if they want), or say yes in the chat (then call approve_draft_from_chat); any edit withdraws the approval. Attach files with create_file and list the ids in `metadata.attachment_file_ids` (max 5, 20 MB total); changing the list withdraws an approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If refused because no one approved it, end your turn; you will be woken after approval. Older route: a decision comment whose `draft` holds the email; after the person chose its send option, call this tool with only `approval_comment_id` (plus `draft_id` for several drafts). Deny: sending is refused. If the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
+			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail. What happens next depends on the email send setting a person set for you. Always allow: pass `to`, `subject` and `body` (optional `cc`) and it sends at once, or pass `object_id` to send a kept email object. Ask first: keep the email as an object (create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the text as `content`), then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview (editing it first if they want) or say yes in the chat (then call approve_draft_from_chat); any edit withdraws the approval. Attach files with create_file and list the ids in `metadata.attachment_file_ids` (max 5, 20 MB total); changing the list withdraws an approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If refused for lack of approval, end your turn; you are woken after approval. Older route: after the person chose the send option on a decision comment whose `draft` holds the email, call this with only `approval_comment_id` (plus `draft_id` for several drafts). Deny: sending is refused. If the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
@@ -2685,7 +2645,7 @@ export const tools = {
 	},
 	resend_send_email: {
 		description:
-			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the email text as `content` (relate it to the contact or bet it concerns). Call this tool with only `object_id`: it sends the object as it reads now, once. If a person set your send setting for emails to ask first, it is sent only after a person approved that exact text: mention them with create_comment (no `decision` needed); the object shows as a preview with an Approve button in For You and in chat, they can edit the text before approving, or say yes in the chat (then call approve_draft_from_chat). Any edit withdraws the approval. If it is refused because no one approved it, end your turn; the person will approve it and you will be woken. If your setting is always allow it sends at once, and if it is deny it is refused. To send files, save each as a workspace file (create_file) and list the ids in `metadata.attachment_file_ids` (at most 5 files, 20 MB in total). The sender is your own mailbox, set by a workspace admin, and cannot be passed: if none is recorded the send is refused. Never pass `to`, `subject`, `body` or `from`. If the answer says the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same send.',
+			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the text as `content` (relate it to the contact or bet it concerns). Call this tool with only `object_id`: it sends the object as it reads now, once. Never pass `to`, `subject`, `body` or `from`. If your send setting for emails is ask first, it is sent only after a person approved that exact text: mention them with create_comment (no `decision` needed); they approve the preview in For You or chat (editing the text first if they want) or say yes in the chat (then call approve_draft_from_chat). Any edit withdraws the approval. If refused for lack of approval, end your turn; you are woken after approval. Always allow sends at once; deny is refused. To send files save each with create_file and list the ids in `metadata.attachment_file_ids` (max 5 files, 20 MB total). The sender is your own mailbox, set by a workspace admin; if none is recorded the send is refused. If the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same send.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -2698,7 +2658,7 @@ export const tools = {
 	},
 	approve_draft_from_chat: {
 		description:
-			"Count a person's \"send it\" in a chat as the Approve on a draft (an email, a LinkedIn message, post, comment, reply, edit or invitation, or a Slack message). It is for agents whose send setting is ask first; an agent that sends directly does not need it. Use it only when a person has just said yes to sending, in a chat you are in, and you have shown them the draft in that chat. Show it by posting a message there that links the draft object (the chat draws its card with the recipients, text and files), then wait for their reply. Pass the draft's object_id and the id of the person's reply (a message id in the chat, from the chat messages you can read). The server checks the message itself and refuses unless a person wrote it (never an agent), in a chat you are in, as their latest message there, after the draft's last edit and after a message in that chat linked the draft. You cannot approve on a person's behalf from your own reading of the chat: if it refuses, post the link again and ask, or ask them to press Approve on the card. When it succeeds, call the send tool for that kind (resend_send_email or gmail_send_email for an email, the LinkedIn tool, slack_send_message) with the same object_id. Any edit to the recipients, subject, text or files withdraws the approval.",
+			"Count a person's \"send it\" in a chat as the Approve on a draft (an email, LinkedIn message, post, comment, reply, edit or invitation, or a Slack message). For agents whose send setting is ask first; an agent that sends directly does not need it. Use it only when a person has just said yes to sending, in a chat you are in, and you showed them the draft there by posting a message that links the draft object (the chat draws its card with recipients, text and files). Pass the draft's object_id and the id of the person's reply (a message id in the chat). The server refuses unless a person (never an agent) wrote that message, in a chat you are in, as their latest message there, after the draft's last edit and after a message in that chat linked the draft. You cannot approve on a person's behalf from your own reading of the chat: if refused, post the link again and ask, or ask them to press Approve on the card. On success call the send tool for that kind (resend_send_email or gmail_send_email for email, the LinkedIn tool, slack_send_message) with the same object_id. Any edit to recipients, subject, text or files withdraws the approval.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -2728,7 +2688,7 @@ export const tools = {
 	},
 	request_keychain_credential: {
 		description:
-			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app. For a provider Maskin integrates with directly (GitHub, Slack, Linear and the like) use `connect_integration` instead. If the user offers a login, password or API key, call this right away with kind "login" or "api_key": do not refuse, warn about passwords in chat, or send them to Settings. This applies even when the site also has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask them to paste a secret into chat. It is saved for the whole workspace but shared only with the agents in this chat unless you name others in `target_agent_ids` (ids from `list_actors`); name the agent that will actually use it. The user can untick any and change it later in Settings → Keychain. After calling, end your turn without a closing message; you are restarted when it is saved. An API key is then in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>` (name in capitals, other characters as underscores: e-conomic → E_CONOMIC). A login is never in your environment: type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise say in your reply what you need.',
+			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app. For a provider Maskin integrates with directly (GitHub, Slack, Linear and the like) use `connect_integration` instead. If the user offers a login, password or API key call this right away with kind "login" or "api_key": do not refuse, warn about passwords in chat or send them to Settings, even when the site has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask them to paste a secret into chat. It is saved for the whole workspace but shared only with the agents in this chat unless you name others in `target_agent_ids` (ids from `list_actors`); name the agent that will use it. The user can change it later in Settings → Keychain. After calling, end your turn without a closing message; you are restarted when it is saved. An API key is then in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>` (name in capitals, other characters as underscores: e-conomic → E_CONOMIC). A login is never in your environment: type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise say in your reply what you need.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
@@ -2812,7 +2772,7 @@ export const tools = {
 	},
 	add_mcp_server: {
 		description:
-			'Add a tool (MCP) server for the user when you already know how to run or reach it. Use it when the user asks for a tool you do not have and you know the server (a package to run with npx, or an https address), or when you find one that would do the job. It shows an Add card with the details filled in; once the user checks it and presses Add, the server is saved, given to you, and you are restarted with it. Do not explain how to add a server in Settings: call this tool. Before calling, check that it is not already added with `list_integrations` (if it is but you cannot use it, call `request_integration_access`). Give either `command` (with `args`) for a server that runs inside you, or `url` for a remote one, never both. Never put a key, token or password in any value or in `args`: name each one the server needs in `secret_env` (an environment variable) or `secret_headers` (a header such as "Authorization"), and the user types it into the card, so you never see it. If the user already saved the key in the Keychain, write it as a reference in the value instead, like `${KEYCHAIN_BYO_APIKEY_LINEAR}` (see `list_keychain_credentials`). If you are not sure of the exact command, URL or variable names, check the server\'s own documentation first rather than guessing. After calling, end your turn without a closing message. Only works in a chat with a person; otherwise say in your reply what you need.',
+			'Add a tool (MCP) server for the user when you already know how to run or reach it: they asked for a tool you do not have and you know the server (a package to run with npx, or an https address), or you found one that would do the job. It shows an Add card with the details filled in; once the user checks it and presses Add the server is saved, given to you, and you are restarted with it. Do not explain how to add a server in Settings: call this. First check with `list_integrations` that it is not already added (if it is but you cannot use it, call `request_integration_access`). Give either `command` (with `args`) for a server that runs inside you, or `url` for a remote one, never both. Never put a key, token or password in any value or in `args`: name each in `secret_env` (environment variable) or `secret_headers` (a header such as "Authorization") and the user types it into the card. If the key is already in the Keychain write a reference instead, like `${KEYCHAIN_BYO_APIKEY_LINEAR}` (see `list_keychain_credentials`). If unsure of the command, URL or variable names, check the server\'s documentation rather than guessing. After calling, end your turn without a closing message. Only works in a chat with a person; otherwise say in your reply what you need.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
@@ -2875,7 +2835,7 @@ export const tools = {
 	},
 	show_computer: {
 		description:
-			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you are not able to use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one of these: you are acting for the person, so tick it yourself and carry on. Only hand it over if the check then turns into an image or puzzle challenge. Before calling it, get the computer to the right place with the desktop tools (open the site, go to the page) so the user lands on the screen where they need to act, and so the card does not open on an empty desktop. `task` is shown on the card as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when what you need is a secret you can then use yourself. It is always your own computer: you cannot show another agent\'s. After calling this, end your turn without a closing message. The user presses Done on the card, which sends you a message saying they finished, with a screenshot of your computer. Look at it before carrying on; if none came, call `desktop_screenshot`. If they close the card without acting, they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you cannot use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one of these: you act for the person, so tick it yourself and carry on, and hand over only if it turns into an image or puzzle challenge. Before calling, use the desktop tools to get the computer to the right place (open the site, go to the page) so the card does not open on an empty desktop. `task` is shown as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when you need a secret you can then use yourself. It is always your own computer; you cannot show another agent\'s. After calling, end your turn without a closing message. The user presses Done, which sends you a message with a screenshot of your computer; look at it before carrying on, and if none came call `desktop_screenshot`. If they close the card without acting they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			task: z
@@ -2889,7 +2849,7 @@ export const tools = {
 	},
 	update_integration_access: {
 		description:
-			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin): an agent calling it is refused, and should tell the user what it needs instead. `default_agent_access` is what every agent without its own entry gets: "read", "read_write" (every agent may also write) or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (read & write; an action that cannot be undone, such as sending an email through Gmail, still waits for a person to approve it), or "none" (an explicit no that beats a read default), or "default" to remove the agent own entry. A saved key or login is on or off per agent: use "read_write" to give it, "default" to take it away. This is the same access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see the current access, use `list_integrations` (each row has `defaultAgentAccess` and `agentGrants`) or `get_actor` (`access`).',
+			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin); an agent calling it is refused and should tell the user what it needs. `default_agent_access` is what every agent without its own entry gets: "read", "read_write" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (an action that cannot be undone, such as sending email through Gmail, still waits for a person to approve it), "none" (an explicit no that beats a read default), or "default" to remove the agent\'s own entry. A saved key or login is on or off per agent: "read_write" gives it, "default" takes it away. This is the access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see current access use `list_integrations` (`defaultAgentAccess`, `agentGrants`) or `get_actor` (`access`).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			integration_id: z
@@ -3146,7 +3106,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error) and free_space_bytes, the room left on the computer. Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. Files an earlier desktop_put_file left on the computer are cleaned up first: those over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first. Files you made and files Chromium downloaded are never removed. If there is still no room the call is refused with how much is needed and how much is free, and nothing is downloaded. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or the workspace is not on it until you call this. The computer downloads it directly (content never passes through you, so photos and videos are fine). Returns the path, size and sha256 as landed (a mismatch with the stored file is an error) and free_space_bytes. Default folder is ~/Downloads; a same-named file is overwritten and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes. Files an earlier desktop_put_file left are cleaned up first: those over 24 hours old always and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first; files you made and Chromium downloads are never removed. If there is still no room the call is refused with the needed and free space and nothing is downloaded. To upload in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path returned, then click Open (or press alt+O). Do not press Enter or double click: both close the chooser without choosing the file. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3181,7 +3141,7 @@ export const tools = {
 	},
 	desktop_save_file: {
 		description:
-			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file, and get its file id back. Do this the moment a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost, but a saved file is safe in the workspace. After a reset, bring a saved file back with desktop_put_file. The computer uploads the file straight to storage: its content never passes through you, so videos and large files are fine. Returns file_id, name, size_bytes, sha256 and a url a person can open. Every call makes a new file, it never overwrites an earlier one. Limits: only a regular file under your home folder (for example ~/Downloads or ~/renders), not inside a hidden folder (a name starting with a dot, where the browser keeps its logins); up to 100 MB (a bigger file is refused and nothing is uploaded, so cut it down or split it; raw footage over the limit stays re-fetchable from where it came from, such as Drive); an empty file is refused; at most 20 saves per hour from your computer, so zip several small files into one. If the call fails nothing is saved, and you can call it again. A file over 50 MB is not returned inline by get_file: you get a download link, which is expected. Only your own computer is reachable.',
+			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file and get its file id back. Do it the moment a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost, but a saved file is safe; bring it back with desktop_put_file. The computer uploads straight to storage (content never passes through you, so videos and large files are fine). Returns file_id, name, size_bytes, sha256 and a url a person can open. Every call makes a new file and never overwrites one. Limits: a regular file under your home folder (e.g. ~/Downloads or ~/renders), not in a hidden folder (a name starting with a dot, where the browser keeps its logins); up to 100 MB (a bigger file is refused and nothing uploaded, so cut or split it; raw footage over the limit stays re-fetchable from its source, such as Drive); not empty; at most 20 saves per hour, so zip several small files into one. If the call fails nothing is saved and you can call it again. A file over 50 MB is not returned inline by get_file: you get a download link, which is expected. Only your own computer is reachable.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

@@ -28,34 +28,32 @@ export const createCommentSchema = z.object({
 			`Comment must be ${COMMENT_MAX_LENGTH} characters or fewer. Split long messages into multiple comments or replies.`,
 		)
 		.describe(
-			`${HUMAN_MESSAGE_STYLE_SHORT} Write it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs. Hard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. You can embed an inline chart by writing a fenced \`\`\`chart block whose body is a JSON spec — \`{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }\`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment.`,
+			`${HUMAN_MESSAGE_STYLE_SHORT} Write it like a Slack message: one thought per comment, no headers, bold labels or bulleted sections. Link other objects as \`[title](link)\`, never partial UUIDs. Max ${COMMENT_MAX_LENGTH} characters. A fenced \`\`\`chart block with a JSON spec \`{ "type": "bar"|"line"|"area", "x": "<field>", "series": ["<field>", ...], "data": [{ ... }], "caption": "..." }\` renders an inline chart.`,
 		),
 	mentions: z
 		.array(z.string().uuid())
 		.max(50)
 		.optional()
 		.describe(
-			"Array of actor UUIDs. For each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. Every id must come from a live list_actors call — never retype a UUID from memory, from your system prompt, or from an earlier message, because a single wrong character silently mentions nobody. Ids that match no actor are dropped and reported back in the response's `unresolved_mentions`; if you see that field, look the actor up with list_actors and post a follow-up comment with the corrected mention.",
+			'Actor UUIDs to @mention. A mentioned agent gets a session to read and reply on the object; a mentioned human is notified, so mention people whose input would unblock you. Take every id from a live list_actors call, never from memory: a wrong id silently mentions nobody. Unmatched ids are dropped and listed in `unresolved_mentions`; look the actor up and post a correction.',
 		),
 	parent_event_id: z
 		.number()
 		.int()
 		.positive()
 		.optional()
-		.describe(
-			'Set this to thread a reply under an existing comment (use the id returned by get_comments). If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply instead of one long comment.',
-		),
+		.describe('Thread a reply under an existing comment (an id from get_comments).'),
 	attachment_file_ids: z
 		.array(z.string().uuid())
 		.max(COMMENT_MAX_ATTACHMENTS)
 		.optional()
 		.describe(
-			`First upload files with create_file (or pick existing ones with list_files) and pass the returned file ids here (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment.`,
+			`File ids from create_file or list_files, shown as cards under the comment (max ${COMMENT_MAX_ATTACHMENTS}).`,
 		),
 	metadata: safeMetadataSchema
 		.optional()
 		.describe(
-			'To surface a live task checklist, pass { tasks: ["<task-uuid>", ...] } — each row renders as a checkbox (checked iff the task\'s status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes. This field does not carry options for the human to pick from: asking for a call is what `decision` is for, and it is the only way to do it.',
+			'For a live task checklist pass { tasks: ["<task-uuid>", ...] }: each row shows a checkbox (checked when the task is done), a link and its driver. Options for a human to pick go in `decision`, not here.',
 		),
 	decision: commentDecisionSchema.optional(),
 	attention: z
@@ -65,12 +63,6 @@ export const createCommentSchema = z.object({
 		.max(5)
 		.optional()
 		.describe(
-			"How important and urgent this comment is for the human reading it, on a 1-5 scale. Score it yourself, from the human's point of view — this drives the ordering of their For You feed, so score consistently rather than defaulting to the middle every time:\n" +
-				'5 = Critical — blocks progress right now or needs an urgent human decision (e.g. something is broken, a deadline/money is at risk, an approval is blocking work).\n' +
-				"4 = High — an important decision or blocker coming up that the human should look at today, but it isn't on fire.\n" +
-				'3 = Normal — a noteworthy update, finding, or question; worth a look when convenient, no rush.\n' +
-				'2 = Low — a minor note, context, or non-blocking observation.\n' +
-				'1 = FYI — nice to know, purely informational, no action expected.\n' +
-				"Leave unset if you genuinely can't judge urgency; an unset score sorts below any scored comment. Reserve 5 for things that are genuinely business-critical — inflating scores buries the comments that actually need it.",
+			'Importance for the human reading it, 1-5, ordering their For You feed. 5 = critical, blocks progress or needs an urgent decision; 4 = high, look today; 3 = normal update or question; 2 = minor note; 1 = FYI. Reserve 5 for what is business-critical. Unset sorts below any scored comment.',
 		),
 })
