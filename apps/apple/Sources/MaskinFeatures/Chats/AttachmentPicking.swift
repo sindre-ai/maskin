@@ -72,53 +72,84 @@ extension ChatComposerModel {
 private struct ItemBox: @unchecked Sendable { let item: PhotosPickerItem }
 
 enum AttachmentLoading {
-	/// A photo: copy to a temp file, downsample with ImageIO, upload as JPEG (or the original when
-	/// it is already small).
-	static func photo(_ item: PhotosPickerItem, name: String) -> @Sendable () async throws -> PreparedChatFile {
-		let box = ItemBox(item: item)
-		return {
-			guard let picked = try await box.item.loadTransferable(type: PickedImageFile.self) else {
-				throw ChatAttachmentError("Couldn't read that photo.")
-			}
-			defer { try? FileManager.default.removeItem(at: picked.url) }
-			guard let result = ImageDownsampler.prepare(fileAt: picked.url) else {
-				throw ChatAttachmentError("That photo can't be attached.")
-			}
-			let base = (name as NSString).deletingPathExtension
-			return PreparedChatFile(
-				name: "\(base).\(result.fileExtension)", mimeType: result.mimeType, data: result.data)
-		}
-	}
-
 	/// True when the picker item is a video rather than a picture.
-	static func isMovie(_ item: PhotosPickerItem) -> Bool {
-		item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+	static func isMovie(_ item: PhotosPickerItem) -> Bool { isMovie(types: item.supportedContentTypes) }
+
+	/// The picker reports a video as a movie, a video or plain audiovisual content, depending on how it
+	/// was recorded or shared, so any of them counts.
+	static func isMovie(types: [UTType]) -> Bool {
+		types.contains { $0.conforms(to: .movie) || $0.conforms(to: .video) || $0.conforms(to: .audiovisualContent) }
 	}
 
 	/// A photo or a video from the picker. Pictures are downsampled; a video is sent as it is, if it
 	/// is under the size cap. One too big for the JSON route stays on disk and goes up in parts.
-	static func media(_ item: PhotosPickerItem, name: String) -> @Sendable () async throws -> PreparedChatFile {
-		guard isMovie(item) else { return photo(item, name: name) }
+	/// The item's reported type picks the first try; when that fails the other way is tried before the
+	/// person sees an error, since a video the phone reports as a picture still plays as a video.
+	static func media(_ item: PhotosPickerItem, index: Int) -> @Sendable () async throws -> PreparedChatFile {
 		let box = ItemBox(item: item)
+		let stillName = photoName(index: index)
+		let clipName = videoName(index: index)
+		let movieFirst = isMovie(item)
 		return {
-			guard let picked = try await box.item.loadTransferable(type: PickedMovieFile.self) else {
-				throw ChatAttachmentError("Couldn't read that video.")
+			if movieFirst {
+				do {
+					return try await loadMovie(box, name: clipName)
+				} catch let first {
+					guard let still = try? await loadPhoto(box, name: stillName) else { throw first }
+					return still
+				}
 			}
-			// The composer removes the file itself once a large one has been uploaded.
-			var handedOff = false
-			defer { if !handedOff { try? FileManager.default.removeItem(at: picked.url) } }
-			let size = (try? picked.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-			guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 1 GB limit.") }
-			let base = (name as NSString).deletingPathExtension
-			let ext = picked.url.pathExtension.isEmpty ? "mov" : picked.url.pathExtension
-			let mime = mimeType(for: picked.url)
-			if FileUploadLimits.needsDirectUpload(sizeBytes: size, mimeType: mime) {
-				handedOff = true
-				return PreparedChatFile(name: "\(base).\(ext)", mimeType: mime, fileURL: picked.url, sizeBytes: size)
+			do {
+				return try await loadPhoto(box, name: stillName)
+			} catch let first {
+				guard let movie = try? await loadMovie(box, name: clipName) else { throw first }
+				return movie
 			}
-			let data = try Data(contentsOf: picked.url, options: .mappedIfSafe)
-			return PreparedChatFile(name: "\(base).\(ext)", mimeType: mime, data: data)
 		}
+	}
+
+	private static func loadPhoto(_ box: ItemBox, name: String) async throws -> PreparedChatFile {
+		let picked: PickedImageFile?
+		do {
+			picked = try await box.item.loadTransferable(type: PickedImageFile.self)
+		} catch is CancellationError {
+			throw CancellationError()
+		} catch {
+			throw ChatAttachmentError("Couldn't read that photo.")
+		}
+		guard let picked else { throw ChatAttachmentError("Couldn't read that photo.") }
+		defer { try? FileManager.default.removeItem(at: picked.url) }
+		guard let result = ImageDownsampler.prepare(fileAt: picked.url) else {
+			throw ChatAttachmentError("That photo can't be attached.")
+		}
+		let base = (name as NSString).deletingPathExtension
+		return PreparedChatFile(name: "\(base).\(result.fileExtension)", mimeType: result.mimeType, data: result.data)
+	}
+
+	private static func loadMovie(_ box: ItemBox, name: String) async throws -> PreparedChatFile {
+		let picked: PickedMovieFile?
+		do {
+			picked = try await box.item.loadTransferable(type: PickedMovieFile.self)
+		} catch is CancellationError {
+			throw CancellationError()
+		} catch {
+			throw ChatAttachmentError("Couldn't read that video.")
+		}
+		guard let picked else { throw ChatAttachmentError("Couldn't read that video.") }
+		// The composer removes the file itself once a large one has been uploaded.
+		var handedOff = false
+		defer { if !handedOff { try? FileManager.default.removeItem(at: picked.url) } }
+		let size = (try? picked.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+		guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 1 GB limit.") }
+		let base = (name as NSString).deletingPathExtension
+		let ext = picked.url.pathExtension.isEmpty ? "mov" : picked.url.pathExtension
+		let mime = mimeType(for: picked.url)
+		if FileUploadLimits.needsDirectUpload(sizeBytes: size, mimeType: mime) {
+			handedOff = true
+			return PreparedChatFile(name: "\(base).\(ext)", mimeType: mime, fileURL: picked.url, sizeBytes: size)
+		}
+		let data = try Data(contentsOf: picked.url, options: .mappedIfSafe)
+		return PreparedChatFile(name: "\(base).\(ext)", mimeType: mime, data: data)
 	}
 
 	/// A picture already in memory (a camera shot, an image pasted from the clipboard): written to a temp
@@ -169,8 +200,17 @@ enum AttachmentLoading {
 	}
 
 	static func photoName(index: Int, now: Date = Date()) -> String {
-		let stamp = now.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits).hour().minute())
+		let time = stamp(now)
+		return index == 0 ? "Photo \(time).jpg" : "Photo \(time) (\(index + 1)).jpg"
+	}
+
+	static func videoName(index: Int, now: Date = Date()) -> String {
+		let time = stamp(now)
+		return index == 0 ? "Video \(time).mov" : "Video \(time) (\(index + 1)).mov"
+	}
+
+	private static func stamp(_ now: Date) -> String {
+		now.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits).hour().minute())
 			.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: ".")
-		return index == 0 ? "Photo \(stamp).jpg" : "Photo \(stamp) (\(index + 1)).jpg"
 	}
 }
