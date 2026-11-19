@@ -35,6 +35,8 @@ function reading(overrides: Partial<TurnSizeReading> = {}): TurnSizeReading {
 		isError: false,
 		text: 'a reply',
 		subtype: 'success',
+		apiError: null,
+		terminalReason: null,
 		...overrides,
 	}
 }

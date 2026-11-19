@@ -53,6 +53,44 @@ describe('TurnSizeObserver', () => {
 		expect(readings[0]?.contextWindowTokens).toBe(1_000_000)
 	})
 
+	it('treats zero usage as no reading, as on the 16 Oct DeepSeek runs', () => {
+		const observer = new TurnSizeObserver()
+		const zero = `${JSON.stringify({
+			type: 'assistant',
+			message: {
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_creation_input_tokens: null,
+					cache_read_input_tokens: null,
+				},
+			},
+		})}\n`
+		const readings = observer.feed(zero + zero + resultLine())
+		expect(readings[0]?.lastTurnWindowTokens).toBeNull()
+		// A zero line never wipes a real reading from an earlier call of the same turn.
+		const mixed = new TurnSizeObserver().feed(
+			assistantLine({ input: 10_000, read: 50_000 }) + zero + resultLine(),
+		)
+		expect(mixed[0]?.lastTurnWindowTokens).toBe(60_000)
+	})
+
+	it('reads the failure codes off the result line', () => {
+		const observer = new TurnSizeObserver()
+		const [reading] = observer.feed(
+			resultLine({
+				is_error: true,
+				api_error: 'autocompact_thrashing',
+				terminal_reason: 'rapid_refill_breaker',
+			}),
+		)
+		expect(reading?.apiError).toBe('autocompact_thrashing')
+		expect(reading?.terminalReason).toBe('rapid_refill_breaker')
+		const [clean] = new TurnSizeObserver().feed(resultLine())
+		expect(clean?.apiError).toBeNull()
+		expect(clean?.terminalReason).toBeNull()
+	})
+
 	it('ignores sub-agent assistant lines', () => {
 		const observer = new TurnSizeObserver()
 		const readings = observer.feed(
@@ -155,6 +193,24 @@ describe('classifyContextFailure', () => {
 		expect(classifyContextFailure(turn('autocompact returned an empty summarisation'))).toBe(
 			'compaction_failed',
 		)
+	})
+
+	it('reads the thrashing text and codes from the 16 Oct DeepSeek failure', () => {
+		const text =
+			'Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous compact, 3 times in a row.'
+		expect(classifyContextFailure(turn(text))).toBe('compaction_failed')
+		// The codes decide even when the wording changes.
+		expect(
+			classifyContextFailure({ ...turn('Something else'), apiError: 'autocompact_thrashing' }),
+		).toBe('compaction_failed')
+		expect(
+			classifyContextFailure({ ...turn('Something else'), terminalReason: 'rapid_refill_breaker' }),
+		).toBe('compaction_failed')
+		expect(
+			classifyContextFailure(
+				turn('automatic compaction failed: summarization produced empty response'),
+			),
+		).toBe('compaction_failed')
 	})
 
 	it('reads a full window from the error text', () => {

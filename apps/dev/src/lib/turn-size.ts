@@ -21,6 +21,10 @@ export interface TurnSizeReading {
 	/** The turn's final text. Read in memory only, never put on an event. */
 	text: string
 	subtype: string | null
+	/** The result line's `api_error` code (for example `autocompact_thrashing`), when it carries one. */
+	apiError: string | null
+	/** The result line's `terminal_reason` code (for example `rapid_refill_breaker`), when it carries one. */
+	terminalReason: string | null
 }
 
 const MAX_BUFFERED_BYTES = 256 * 1024
@@ -75,6 +79,7 @@ export class TurnSizeObserver {
 				isError: result.isError,
 				text: result.text,
 				subtype: result.subtype,
+				...readFailureCodes(result.raw),
 			}
 			this.lastCallTokens = null
 			this.compactions = 0
@@ -103,9 +108,27 @@ export class TurnSizeObserver {
 			finiteOrNull(usage.cache_creation_input_tokens),
 			finiteOrNull(usage.cache_read_input_tokens),
 		]
-		if (parts.every((p) => p === null)) return null
-		this.lastCallTokens = parts.reduce<number>((sum, p) => sum + (p ?? 0), 0)
+		const total = parts.reduce<number>((sum, p) => sum + (p ?? 0), 0)
+		// Some routes (DeepSeek through OpenRouter, 16 Oct) write every assistant line with zero
+		// input tokens and null cache fields: that is a missing reading, not an empty window.
+		// Keeping it would read 0 and size rotation would never fire.
+		if (total <= 0) return null
+		this.lastCallTokens = total
 		return null
+	}
+}
+
+function readFailureCodes(
+	rawResultLine: string,
+): Pick<TurnSizeReading, 'apiError' | 'terminalReason'> {
+	try {
+		const obj = JSON.parse(rawResultLine) as { api_error?: unknown; terminal_reason?: unknown }
+		return {
+			apiError: typeof obj.api_error === 'string' ? obj.api_error : null,
+			terminalReason: typeof obj.terminal_reason === 'string' ? obj.terminal_reason : null,
+		}
+	} catch {
+		return { apiError: null, terminalReason: null }
 	}
 }
 
@@ -174,13 +197,21 @@ export const COMPACTION_LOOP_THRESHOLD = 2
  * session ending as it does today, never wrongly restarted.
  */
 export function classifyContextFailure(
-	reading: Pick<TurnSizeReading, 'isError' | 'text' | 'compactionsInTurn'>,
+	reading: Pick<TurnSizeReading, 'isError' | 'text' | 'compactionsInTurn'> &
+		Partial<Pick<TurnSizeReading, 'apiError' | 'terminalReason'>>,
 ): 'compaction_failed' | 'context_full' | null {
 	if (reading.compactionsInTurn >= COMPACTION_LOOP_THRESHOLD) return 'compaction_failed'
 	if (!reading.isError) return null
+	// The CLI's own codes, seen on the 16 Oct failed DeepSeek runs: steadier than its wording.
+	if (
+		reading.apiError === 'autocompact_thrashing' ||
+		reading.terminalReason === 'rapid_refill_breaker'
+	) {
+		return 'compaction_failed'
+	}
 	const text = reading.text
 	if (
-		/(?:auto-?)?compact\w*[^.\n]{0,80}(?:fail|error|empty|unable|could not|interrupt)|(?:fail|error)[^.\n]{0,60}compact|not enough messages to compact/i.test(
+		/(?:auto-?)?compact\w*[^.\n]{0,80}(?:fail|error|empty|unable|could not|interrupt|thrash)|(?:fail|error)[^.\n]{0,60}compact|not enough messages to compact/i.test(
 			text,
 		)
 	) {
