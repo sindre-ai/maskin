@@ -17,6 +17,7 @@ vi.mock('../../lib/openrouter-pricing', () => ({
 import {
 	parseAssistantUsageFromLogChunks,
 	parseUsageFromLogChunks,
+	resolveRecordedCostUsd,
 	resolveSessionCostUsd,
 	sumResultUsageFromLogChunks,
 } from '../../services/usage-parser'
@@ -346,5 +347,92 @@ describe('resolveSessionCostUsd', () => {
 			usage: usage({ totalCostUsd: null }),
 		})
 		expect(resolved).toBeNull()
+	})
+})
+
+describe('resolveRecordedCostUsd', () => {
+	beforeEach(() => {
+		getModelPricingMock.mockReset()
+		getServedModelPricingMock.mockClear()
+	})
+
+	it.each(['claude_oauth', 'workspace_api_key', 'agent_api_key'])(
+		'keeps the CLI figure on %s, which reaches Anthropic',
+		async (route) => {
+			const recorded = await resolveRecordedCostUsd({
+				route,
+				modelName: null,
+				usage: usage({ totalCostUsd: 0.42, inputTokens: 1000, outputTokens: 500 }),
+			})
+			expect(recorded).toBe(0.42)
+			expect(getModelPricingMock).not.toHaveBeenCalled()
+		},
+	)
+
+	it('prices maskin_plan from the served hosts and workspace_custom from the catalogue', async () => {
+		getModelPricingMock.mockResolvedValue(DEEPSEEK_PRICING)
+		const plan = await resolveRecordedCostUsd({
+			route: 'maskin_plan',
+			modelName: 'deepseek/deepseek-v4-flash',
+			usage: usage({ totalCostUsd: 9, inputTokens: 1000, outputTokens: 500 }),
+		})
+		const custom = await resolveRecordedCostUsd({
+			route: 'workspace_custom',
+			modelName: 'deepseek/deepseek-v4.1-flash',
+			usage: usage({ totalCostUsd: 9, inputTokens: 1000, outputTokens: 500 }),
+		})
+		// 1000*7e-8 + 500*1.4e-7 = 0.00014, ignoring the CLI's 9.
+		expect(plan).toBeCloseTo(0.00014, 12)
+		expect(custom).toBeCloseTo(0.00014, 12)
+		expect(getServedModelPricingMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('leaves the cost empty on a custom endpoint whose model has no published price', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const recorded = await resolveRecordedCostUsd({
+			route: 'workspace_custom',
+			modelName: 'my-company/private-model',
+			usage: usage({ totalCostUsd: 0.5, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(recorded).toBeNull()
+	})
+
+	it('leaves the cost empty on a custom endpoint with no recorded model name', async () => {
+		const recorded = await resolveRecordedCostUsd({
+			route: 'workspace_custom',
+			modelName: null,
+			usage: usage({ totalCostUsd: 0.5, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(recorded).toBeNull()
+		expect(getModelPricingMock).not.toHaveBeenCalled()
+	})
+
+	it('leaves the cost empty on maskin_plan with no published price, not the blended-rate guess', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const recorded = await resolveRecordedCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(recorded).toBeNull()
+	})
+
+	it('leaves the cost empty on maskin_plan with no recorded model name', async () => {
+		const recorded = await resolveRecordedCostUsd({
+			route: 'maskin_plan',
+			modelName: null,
+			usage: usage({ inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(recorded).toBeNull()
+		expect(getModelPricingMock).not.toHaveBeenCalled()
+	})
+
+	it('leaves the cost empty on a route it does not know', async () => {
+		const recorded = await resolveRecordedCostUsd({
+			route: '',
+			modelName: null,
+			usage: usage({ totalCostUsd: 0.5, inputTokens: 1000 }),
+		})
+		expect(recorded).toBeNull()
 	})
 })
