@@ -6,7 +6,7 @@ import {
 	ANALYTICS_METRICS,
 	type AnalyticsInput,
 	buildAnalyticsQuery,
-} from '../../../lib/integrations/providers/youtube/analytics'
+} from '../../../../lib/integrations/providers/youtube/analytics'
 
 const base: AnalyticsInput = {
 	start_date: '2026-10-01',
