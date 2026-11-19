@@ -13,8 +13,8 @@ import { YoutubeError } from './errors'
  *    Until the real number is read from the console (smoke S2) the global cap is the spec's 200
  *    calls a day and a workspace gets a quarter of it. Both are ASSUMED: set them from a fraction
  *    of the real number when it is posted on the part 3 task.
- * Search, upload and analytics are counted in calls (1 unit each). The caps are conservative on purpose, so
- * one looping agent cannot drain the shared budget for everyone.
+ * Search, upload and analytics are counted in calls (1 unit each). The caps are conservative on
+ * purpose, so one looping agent cannot drain the shared budget for everyone.
  */
 export type YoutubeQuotaBucket = 'data' | 'search' | 'upload' | 'analytics'
 
