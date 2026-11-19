@@ -345,8 +345,8 @@ final class MustKeepTests: XCTestCase {
 
 	// MARK: MK-07 The composer offers Paste when a picture is on the clipboard
 
-	/// MK-07a: long-press in the message field: the system menu offers Paste. Keyboard paste of a screenshot
-	/// is the same path.
+	/// MK-07a: long-press in the message field with a picture on the clipboard: the system menu does not offer
+	/// Paste for a picture. The + menu's "Paste image" (MK-07b) is the supported way. Text paste is MK-09.
 	func testMK07a_FieldMenuOffersPasteForImage() throws {
 		putImageOnClipboard()
 		openChat("Priya Rao")
@@ -355,7 +355,11 @@ final class MustKeepTests: XCTestCase {
 		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
 		field.tap()
 		let paste = fieldMenuPaste(field, dump: "mk07a-menu")
-		XCTAssertTrue(paste.exists, "with a picture on the clipboard, the message field's menu offers Paste")
+		// Say what the menu did offer, so the log tells the app from the test if this ever flips.
+		let offered = (app.menuItems.allElementsBoundByIndex + app.menus.buttons.allElementsBoundByIndex).map(\.label)
+		XCTAssertFalse(
+			paste.exists,
+			"with a picture on the clipboard, the message field's menu does not offer Paste; use the + menu (the menu showed: \(offered))")
 	}
 
 	/// MK-07b: the + menu lists "Paste image" while the clipboard holds a picture.
