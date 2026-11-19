@@ -38,18 +38,19 @@ name: iOS TestFlight
 # Internal testers get the build automatically once App Store Connect finishes processing it,
 # if the internal TestFlight group has "Automatic distribution" switched on.
 #
-# Apple TV: the TV app (io.maskin.app.tv, Top Shelf io.maskin.app.tv.topshelf) is its own App Store
-# record, so the iOS archive never contains it. Job testflight-tv archives the MaskinTV scheme for
-# tvOS and uploads it after the iPhone upload, with the same build number, secrets and certificate
-# clean-up. It runs after the iPhone job (not beside it) so the two never revoke each other's
-# development certificates, and it is a separate job so a failed TV upload never blocks the iPhone
-# App Review submission and can be re-run alone from Actions. Needs the Apple TV app record in App
-# Store Connect; without it the upload is rejected. TV is not sent to App Review (app-review below
+# Apple TV: the TV app (io.maskin.app, the same bundle id as iPhone, Top Shelf io.maskin.app.topshelf)
+# is the tvOS platform of the one Maskin App Store record, so the iOS archive never contains it. Job
+# testflight-tv archives the MaskinTV scheme for tvOS and uploads it after the iPhone upload, with the
+# same build number, secrets and certificate clean-up. It runs after the iPhone job (not beside it) so
+# the two never revoke each other's development certificates, and it is a separate job so a failed TV
+# upload never blocks the iPhone App Review submission and can be re-run alone from Actions. Needs the
+# tvOS platform added to the Maskin app record in App Store Connect; without it the upload is
+# rejected. TV is not sent to App Review (app-review below
 # stays iPhone only). dSYMs are kept as Maskin-TV-dSYMs-<build number>.
 #
 # The TV job is off until the repository variable APPLE_TV_UPLOAD is set to true (Settings, Secrets
-# and variables, Actions, Variables). Infra & DevOps sets it once the Apple TV app record exists in
-# App Store Connect, so a version bump before that does not turn main red or spend a second Mac run.
+# and variables, Actions, Variables). Infra & DevOps sets it once the tvOS platform exists on the Maskin app
+# record in App Store Connect, so a version bump before that does not turn main red or spend a second Mac run.
 #
 # App Review: a merge that changes MARKETING_VERSION in apps/apple/project.yml also sends that
 # version to App Review, once the upload is processed (job app-review, .github/scripts/
@@ -302,7 +303,7 @@ jobs:
   # Apple TV archive and upload, after the iPhone upload (see the header). Same build number as the
   # iPhone build, taken from that job. When the iPhone job did not archive (secrets not set) the
   # build number is empty and this job is skipped. Also skipped until the repository variable
-  # APPLE_TV_UPLOAD is true, which is set once the Apple TV app record exists in App Store Connect.
+  # APPLE_TV_UPLOAD is true, which is set once the tvOS platform exists on the Maskin app record in App Store Connect.
   # A fresh Mac, so it records and revokes its own development certificates; running after the
   # iPhone job means the two never see each other's.
   testflight-tv:
