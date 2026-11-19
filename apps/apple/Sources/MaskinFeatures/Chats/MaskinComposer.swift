@@ -130,6 +130,8 @@ struct MaskinComposer: View {
 	@State private var showCamera = false
 	@Environment(\.openURL) private var openURL
 	#endif
+	/// Present in the app; absent in previews, where the alert falls back to iOS Settings.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// 40pt circles, each inside a 44pt hit frame.
@@ -514,6 +516,16 @@ struct MaskinComposer: View {
 		addFiles([.image(data)])
 	}
 
+	/// The Permissions page in Settings, where every phone permission is fixed. Without the app's
+	/// runtime (a preview) it goes to iOS Settings directly.
+	fileprivate func openPermissions() {
+		if let runtime {
+			runtime.openPermissions()
+		} else if let url = URL(string: UIApplication.openSettingsURLString) {
+			openURL(url)
+		}
+	}
+
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
@@ -644,9 +656,7 @@ struct MaskinComposer: View {
 				.alert(
 					"Microphone", isPresented: Binding(get: { composer.voiceProblem != nil }, set: { if !$0 { composer.voiceProblem = nil } })
 				) {
-					Button("Open Settings") {
-						if let url = URL(string: UIApplication.openSettingsURLString) { composer.openURL(url) }
-					}
+					Button("Open Permissions") { composer.openPermissions() }
 					Button("OK", role: .cancel) {}
 				} message: {
 					Text(composer.voiceProblem ?? "")

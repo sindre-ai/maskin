@@ -5,12 +5,9 @@ import SwiftUI
 #if canImport(UserNotifications)
 import UserNotifications
 #endif
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// Notifications, pushed from Settings. Whether this device can notify is the system's
-/// call, so this shows its answer and leads to the system Settings page to change it.
+/// call, so this shows its answer and leads to Permissions to change it.
 struct NotificationsPage: View {
 	/// The running flows the person can follow on the Lock Screen. Empty hides the group.
 	var flows: [LoopSummary] = []
@@ -21,7 +18,6 @@ struct NotificationsPage: View {
 	/// Present in the app; absent in previews and snapshots, where the preferences are left out.
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var status: Status = .unknown
-	@Environment(\.openURL) private var openURL
 	@Environment(\.scenePhase) private var scenePhase
 
 	enum Status { case unknown, on, off, notAsked }
@@ -51,8 +47,12 @@ struct NotificationsPage: View {
 			if status == .off {
 				PageFootnote(text: "Notifications are off for Maskin on this device.")
 			}
-			if status == .off || status == .notAsked {
-				Button(status == .off ? "Open Settings" : "Turn on notifications") { act() }
+			if status == .notAsked {
+				Button("Turn on notifications") { askForPermission() }
+					.buttonStyle(.primaryAction)
+			}
+			if status == .off {
+				NavigationLink(value: SettingsRoute.permissions) { Text("Open Permissions") }
 					.buttonStyle(.primaryAction)
 			}
 		}
@@ -83,19 +83,11 @@ struct NotificationsPage: View {
 		#endif
 	}
 
-	private func act() {
-		#if canImport(UserNotifications)
-		if status == .notAsked {
-			Task {
-				// The registrar asks, then registers for remote notifications once granted.
-				await runtime?.requestPushPermission()
-				await refresh()
-			}
-			return
+	private func askForPermission() {
+		Task {
+			// The registrar asks, then registers for remote notifications once granted.
+			await runtime?.requestPushPermission()
+			await refresh()
 		}
-		#endif
-		#if canImport(UIKit) && !os(watchOS)
-		if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-		#endif
 	}
 }
