@@ -15,10 +15,15 @@
 // unbuffered. It fails open: anything it cannot safely rewrite is forwarded
 // byte for byte.
 //
+// With MASKIN_TOOL_LOADER=1 (set by llm-routing.ts for the Maskin-funded route)
+// it also sends MCP tools by name only, with a load_tool tool to bring in the
+// ones the agent needs (tool-loader.js).
+//
 // Usage: node strip-images-proxy.js <localPort> <upstreamBaseUrl>
 
 const http = require('node:http')
 const https = require('node:https')
+const { applyToolLoader } = require('./tool-loader.js')
 
 const LISTEN_HOST = '127.0.0.1'
 const PLACEHOLDER = '[image omitted: this model cannot read images]'
@@ -71,15 +76,18 @@ function readProviderPrefs(raw) {
 	}
 }
 
-// Body to send upstream: rewritten JSON when it holds images or provider
-// preferences are configured, else the original bytes untouched.
-function rewriteBody(req, bytes, providerPrefs = null) {
+// Body to send upstream: rewritten JSON when it holds images, provider
+// preferences are configured or the tool loader trims the tool list, else the
+// original bytes untouched.
+function rewriteBody(req, bytes, providerPrefs = null, toolLoader = false) {
 	const pathname = (req.url || '').split('?')[0]
 	if (req.method !== 'POST' || !MESSAGES_PATH.test(pathname)) return bytes
 	if (req.headers['content-encoding'] || bytes.length > MAX_PARSE_BYTES) return bytes
 	try {
 		let { payload, count } = stripImages(JSON.parse(bytes.toString('utf8')))
-		if (count === 0 && !providerPrefs) return bytes
+		const withLoader = toolLoader ? applyToolLoader(payload) : payload
+		if (count === 0 && !providerPrefs && withLoader === payload) return bytes
+		payload = withLoader
 		if (providerPrefs) payload = { ...payload, provider: { ...payload.provider, ...providerPrefs } }
 		if (count > 0) console.log(`strip-images-proxy: stripped ${count} image(s)`)
 		return Buffer.from(JSON.stringify(payload))
@@ -342,6 +350,7 @@ function createProxyServer(
 	upstreamBaseUrl,
 	providerPrefs = readProviderPrefs(process.env.MASKIN_PROVIDER_PREFS),
 	ttft = readTtftConfig(),
+	toolLoader = process.env.MASKIN_TOOL_LOADER === '1',
 ) {
 	const target = new URL(upstreamBaseUrl)
 	return http.createServer((req, res) => {
@@ -357,14 +366,14 @@ function createProxyServer(
 					forwardGuarded(
 						req,
 						res,
-						(prefs) => rewriteBody(req, bytes, prefs),
+						(prefs) => rewriteBody(req, bytes, prefs, toolLoader),
 						plan,
 						target,
 						ttft.timeoutMs,
 					)
 					return
 				}
-				forward(req, res, rewriteBody(req, bytes, providerPrefs), target)
+				forward(req, res, rewriteBody(req, bytes, providerPrefs, toolLoader), target)
 			} catch (err) {
 				console.error(`strip-images-proxy: request failed: ${err.message}`)
 				if (res.headersSent) res.destroy()

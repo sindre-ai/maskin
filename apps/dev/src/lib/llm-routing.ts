@@ -144,6 +144,14 @@ export interface FallbackConfig {
 	 * 0 or "none" turns the guard off. Undefined here means off.
 	 */
 	ttftTimeoutMs?: number
+	/**
+	 * Send MCP tools to the model by name only and let the agent load a
+	 * definition when it needs one (tool-loader.js, in the agent container). The
+	 * funded route has no tool search of its own. Off unless
+	 * MASKIN_FALLBACK_TOOL_LOADER is "true" or "1" (unsetting it is the
+	 * rollback, no image rebuild).
+	 */
+	toolLoader?: boolean
 }
 
 /** The subset of OpenRouter's request-body "provider" object Maskin sends. */
@@ -248,6 +256,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			.map((p) => p.trim())
 			.filter(Boolean),
 		ttftTimeoutMs: readTtftTimeoutMs(env),
+		toolLoader: ['true', '1'].includes(env.MASKIN_FALLBACK_TOOL_LOADER?.trim().toLowerCase() ?? ''),
 	}
 }
 
@@ -878,6 +887,8 @@ function buildMaskinPlanEnv(
 	if (fallback.ttftTimeoutMs && fallback.ttftTimeoutMs > 0) {
 		env.MASKIN_TTFT_TIMEOUT_MS = String(fallback.ttftTimeoutMs)
 	}
+	// And sends MCP tools by name, with a load_tool tool, instead of every definition.
+	if (fallback.toolLoader) env.MASKIN_TOOL_LOADER = '1'
 	return { env, resolved }
 }
 
