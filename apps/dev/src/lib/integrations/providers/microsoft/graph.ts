@@ -120,3 +120,27 @@ export async function graphPages<T>(
 	}
 	return out
 }
+
+/**
+ * POST a JSON body to Graph. Never retried: a gateway error can arrive after Graph already
+ * created the item, and a second attempt would make a duplicate. Non-2xx throws a GraphError.
+ */
+export async function graphPostJson<T>(
+	url: string,
+	accessToken: string,
+	body: unknown,
+	deps: GraphDeps = {},
+): Promise<T> {
+	const doFetch = deps.fetch ?? fetch
+	const res = await doFetch(url, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify(body),
+	})
+	if (!res.ok) throw await toGraphError(res)
+	return (await res.json()) as T
+}

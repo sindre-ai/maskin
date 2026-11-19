@@ -31,12 +31,13 @@ describe('Microsoft provider config', () => {
 		expect(config.auth.config.clientSecretEnv).toBe('MICROSOFT_CLIENT_SECRET')
 	})
 
-	it('asks for exactly the delegated scopes the poll job uses', () => {
+	it('asks for exactly the delegated scopes the poll job and the Outlook tools use', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2')
 		expect(config.auth.config.scopes).toEqual([
 			'offline_access',
 			'User.Read',
 			'Calendars.Read',
+			'Mail.ReadWrite',
 			'OnlineMeetings.Read',
 			'OnlineMeetingTranscript.Read.All',
 		])
