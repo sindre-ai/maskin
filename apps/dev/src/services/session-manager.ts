@@ -74,6 +74,7 @@ import {
 	trackSessionLaunchModel,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { FirstCallObserver, type FirstTurnResult } from '../lib/analytics/first-call-size'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -301,6 +302,12 @@ const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
  * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
  */
 const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** A launch's session-start event, held until its first turn shows the first-call size. */
+interface PendingLaunchStart {
+	props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0]
+	observer: FirstCallObserver
+}
 
 /** Per-session MCP health record: what has been said about each server. */
 interface McpHealthSession {
@@ -715,6 +722,14 @@ export class SessionManager extends EventEmitter {
 	 * since connected. Deleted only in clearActiveSession.
 	 */
 	private readonly mcpHealth = new Map<string, McpHealthSession>()
+
+	/**
+	 * Per-launch `agent_session_started_with_prompt` waiting for the first turn.
+	 * Taking the entry out of the map is what makes the event go out once per
+	 * launch, whichever of the first `result` and the teardown gets there first.
+	 * In memory only: a backend restart mid-launch drops the entry and the event.
+	 */
+	private readonly pendingLaunchStarts = new Map<string, PendingLaunchStart>()
 
 	constructor(
 		private db: Database,
@@ -2992,7 +3007,11 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 		// the start-event's `skills_staged` at 0 for both paths keeps queries
 		// simple: `skills_attached > 0 AND session_skill_load_failed absent`
 		// is a passing session on either path.
-		void trackAgentSessionStartedWithPrompt({
+		// The event is held until the first turn has run, because the size of the
+		// first call (tools, tokens, cost, cache) only exists then. It goes out once
+		// per launch: at the first `result`, or empty from clearActiveSession if the
+		// launch ends before any turn. `launchedAt` keeps its timestamp at launch.
+		this.holdLaunchStartEvent(session.id, {
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
@@ -3005,6 +3024,7 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 			skillsStaged: 0,
 			triggerType,
 			triggerId: session.triggerId ?? undefined,
+			launchedAt: new Date(),
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -4410,6 +4430,7 @@ ${cont.continues_prompt}
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
 								await this.recordTurnUsage(sessionId, chunk.data)
+								this.observeFirstCallSize(sessionId, chunk.data)
 							}
 						}
 
@@ -5315,6 +5336,73 @@ ${cont.continues_prompt}
 		} catch (err) {
 			logger.warn('Failed to record per-turn session usage', { sessionId, error: String(err) })
 		}
+	}
+
+	/** Holds this launch's session-start event until its first turn has run. */
+	private holdLaunchStartEvent(
+		sessionId: string,
+		props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0],
+	): void {
+		// A launch whose teardown never ran still owes its event: send it empty.
+		this.flushLaunchStartEvent(sessionId)
+		this.pendingLaunchStarts.set(sessionId, { props, observer: new FirstCallObserver() })
+	}
+
+	/** Sends a held event with the first-call fields empty. A no-op once it has gone out. */
+	private flushLaunchStartEvent(sessionId: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void trackAgentSessionStartedWithPrompt(pending.props)
+	}
+
+	/**
+	 * Feeds stdout to the launch's first-call observer and sends the held
+	 * session-start event, with the first-call size on it, when the first turn's
+	 * `result` arrives. Sync and cheap on the hot path: no pending launch, no work.
+	 */
+	private observeFirstCallSize(sessionId: string, chunk: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		let first: FirstTurnResult | null
+		try {
+			first = pending.observer.feed(chunk)
+		} catch (err) {
+			logger.warn('Failed to read first-call size', { sessionId, error: String(err) })
+			return
+		}
+		if (!first) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void this.emitLaunchStartWithFirstCall(sessionId, pending, first).catch((err) =>
+			logger.warn('Failed to emit first-call size', { sessionId, error: String(err) }),
+		)
+	}
+
+	private async emitLaunchStartWithFirstCall(
+		sessionId: string,
+		pending: PendingLaunchStart,
+		first: FirstTurnResult,
+	): Promise<void> {
+		let firstTurnCostUsd = first.size.firstTurnCostUsd
+		try {
+			// The CLI prices every turn against Anthropic's rate card, which is wrong
+			// for a non-Anthropic route; price the turn the way the session row does.
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			firstTurnCostUsd = await resolveSessionCostUsd({
+				route,
+				modelName,
+				usage: { ...first.resultUsage, durationMs: null },
+			})
+		} catch (err) {
+			logger.warn('Failed to price the first turn, using the CLI cost', {
+				sessionId,
+				error: String(err),
+			})
+		}
+		await trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			firstCall: { ...first.size, firstTurnCostUsd },
+		})
 	}
 
 	/**
@@ -6735,6 +6823,7 @@ ${cont.continues_prompt}
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
 					await this.recordTurnUsage(sessionId, line.content)
+					this.observeFirstCallSize(sessionId, line.content)
 				}
 			}
 		}
@@ -7493,6 +7582,7 @@ ${cont.continues_prompt}
 	}
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
+		this.flushLaunchStartEvent(sessionId)
 		this.turnFinalizer.forgetSession(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
 		clearTimeout(this.mcpHealth.get(sessionId)?.timer)

@@ -63,7 +63,54 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 				system_prompt_tokens: 300,
 				source_session_id: null,
 			},
+			{ timestamp: undefined },
 		)
+	})
+
+	it('carries the first-call size and the launch time when the first turn ran', async () => {
+		const launchedAt = new Date('2026-11-19T10:00:00Z')
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'ok',
+			launchedAt,
+			firstCall: {
+				toolCount: 551,
+				firstCallInputTokens: 59_004,
+				firstTurnCostUsd: 0.14,
+				cacheHit: false,
+			},
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-1',
+			expect.objectContaining({
+				tool_count: 551,
+				first_call_input_tokens: 59_004,
+				first_turn_cost: 0.14,
+				cache_hit: false,
+			}),
+			{ timestamp: launchedAt },
+		)
+	})
+
+	it('leaves the four first-call properties off when the launch ended before any turn', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'ok',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.tool_count).toBeUndefined()
+		expect(props.first_call_input_tokens).toBeUndefined()
+		expect(props.first_turn_cost).toBeUndefined()
+		expect(props.cache_hit).toBeUndefined()
 	})
 
 	it('carries source_session_id when the session was spawned by another session', async () => {

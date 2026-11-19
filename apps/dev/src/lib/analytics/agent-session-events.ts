@@ -60,6 +60,31 @@ interface AgentSessionStartedWithPromptProps {
 	 * the exact trigger that fired it.
 	 */
 	triggerId?: string
+	/**
+	 * When the launch happened. Becomes the event's timestamp, so an event that is
+	 * sent later (at the first turn result, or at the end of a launch that had no
+	 * turn) still lands at launch time and the prompt-size and skills charts do not
+	 * shift. Defaults to now.
+	 */
+	launchedAt?: Date
+	/**
+	 * What the first turn showed, for the session-start baseline of the "smaller
+	 * agent context" bet. Absent on a launch that ended before any turn: the four
+	 * properties are then left off the event, which PostHog reads as empty.
+	 */
+	firstCall?: {
+		toolCount: number | null
+		/**
+		 * Input tokens + cache creation tokens + cache read tokens of the first
+		 * model call. Never the bare input-token count, which leaves out cache
+		 * reads and would make a cache change look like a win.
+		 */
+		firstCallInputTokens: number | null
+		/** Cost of the first turn in USD, priced for the route the session ran on. */
+		firstTurnCostUsd: number | null
+		/** Whether the first call read from the prompt cache. */
+		cacheHit: boolean | null
+	}
 }
 
 /**
@@ -77,7 +102,11 @@ export function approximatePromptTokens(text: string): number {
  * start or resume). Carries the agent's identity and the size of its
  * `systemPrompt` at launch, so PostHog can plot mean preamble tokens per agent
  * over time — the missing measurement gate for the "simplify agent prompts"
- * bet.
+ * bet. It also carries the size of the first call (`tool_count`,
+ * `first_call_input_tokens`, `first_turn_cost`, `cache_hit`), which only exists
+ * once the first turn has run: the session manager sends the event then, or at
+ * the end of the launch with those four left empty, and `launchedAt` keeps the
+ * timestamp at launch either way.
  *
  * Best-effort: any PostHog failure is swallowed so analytics can never block a
  * session launch.
@@ -88,21 +117,30 @@ export async function trackAgentSessionStartedWithPrompt(
 	try {
 		const chars = p.systemPrompt.length
 		const tokens = approximatePromptTokens(p.systemPrompt)
-		await capturePosthogEvent('agent_session_started_with_prompt', p.agentId, {
-			workspace_id: p.workspaceId,
-			session_id: p.sessionId,
-			agent_id: p.agentId,
-			agent_name: p.agentName,
-			system_prompt_chars: chars,
-			system_prompt_tokens: tokens,
-			source_session_id: p.sourceSessionId ?? null,
-			trigger_source: p.triggerSource,
-			source_comment_event_id: p.sourceCommentEventId,
-			skills_attached: p.skillsAttached,
-			skills_staged: p.skillsStaged,
-			trigger_type: p.triggerType,
-			trigger_id: p.triggerId,
-		})
+		await capturePosthogEvent(
+			'agent_session_started_with_prompt',
+			p.agentId,
+			{
+				workspace_id: p.workspaceId,
+				session_id: p.sessionId,
+				agent_id: p.agentId,
+				agent_name: p.agentName,
+				system_prompt_chars: chars,
+				system_prompt_tokens: tokens,
+				source_session_id: p.sourceSessionId ?? null,
+				trigger_source: p.triggerSource,
+				source_comment_event_id: p.sourceCommentEventId,
+				skills_attached: p.skillsAttached,
+				skills_staged: p.skillsStaged,
+				trigger_type: p.triggerType,
+				trigger_id: p.triggerId,
+				tool_count: p.firstCall?.toolCount ?? undefined,
+				first_call_input_tokens: p.firstCall?.firstCallInputTokens ?? undefined,
+				first_turn_cost: p.firstCall?.firstTurnCostUsd ?? undefined,
+				cache_hit: p.firstCall?.cacheHit ?? undefined,
+			},
+			{ timestamp: p.launchedAt },
+		)
 	} catch (err) {
 		logger.warn('Failed to emit agent_session_started_with_prompt', {
 			sessionId: p.sessionId,
