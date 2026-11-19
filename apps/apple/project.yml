@@ -132,6 +132,15 @@ targets:
           - io.maskin.app.refresh
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+        # The menu a long press on the icon opens (HomeScreenQuickAction; QuickActionSceneDelegate
+        # handles the tap). The type strings must match HomeScreenQuickAction's raw values.
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: io.maskin.app.quick-action.new-message
+            UIApplicationShortcutItemTitle: New message
+            UIApplicationShortcutItemIconType: UIApplicationShortcutIconTypeCompose
+          - UIApplicationShortcutItemType: io.maskin.app.quick-action.for-you
+            UIApplicationShortcutItemTitle: For you
+            UIApplicationShortcutItemIconSymbolName: text.alignleft
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

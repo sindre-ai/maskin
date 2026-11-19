@@ -76,6 +76,10 @@ struct MaskinApp: App {
 				pushDelegate.attach(registrar: push, router: runtime.router)
 				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
 				IntentDeepLinkRelay.attach(openAgent: { runtime.openAgent($0) }) { runtime.router.open($0) }
+				// A tap on the home screen icon's menu; dropped when nobody is signed in.
+				HomeScreenQuickActionRelay.attach { action in
+					if environment.auth.session != nil { runtime.perform(action) }
+				}
 				#if os(iOS)
 					// The wrist's offline copy of Needs you, the briefing and the flows.
 					watchPublisher?.stop()
