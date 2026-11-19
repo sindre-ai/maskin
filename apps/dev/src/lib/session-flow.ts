@@ -88,12 +88,8 @@ export async function loadFlowLookup(
 	}
 }
 
-/**
- * The stored statuses of a flow in pilot: agents run, but nothing leaves the company unasked.
- * 'learning' is the old name of pilot, still stored until the status ladder rename lands (the
- * flow status ladder task, migration 0166). Drop it with that change.
- */
-export const PILOT_FLOW_STATUSES: readonly string[] = ['pilot', 'learning']
+/** The stored statuses of a flow in pilot: agents run, but nothing leaves the company unasked. */
+export const PILOT_FLOW_STATUSES: readonly string[] = ['pilot']
 
 /**
  * The session a send call comes from. A session key names its session and cannot be left off or

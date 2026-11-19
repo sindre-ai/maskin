@@ -77,10 +77,11 @@ describe('Flow status decides whether the triggers run', () => {
 
 	async function enabledStates(triggerIds: string[]) {
 		const rows = await db
-			.select({ enabled: triggersTable.enabled })
+			.select({ id: triggersTable.id, enabled: triggersTable.enabled })
 			.from(triggersTable)
 			.where(inArray(triggersTable.id, triggerIds))
-		return rows.map((r) => r.enabled)
+		const byId = new Map(rows.map((r) => [r.id, r.enabled]))
+		return triggerIds.map((id) => byId.get(id))
 	}
 
 	async function setStatus(flowId: string, status: string) {
