@@ -82,7 +82,7 @@ public final class ChatComposerModel {
 	public private(set) var focusRequest = 0
 	public private(set) var mentions: [ChatMention] = []
 	public private(set) var attachments: [ChatAttachmentDraft] = []
-	/// A rule the last action ran into ("That file is over 1 GB."), shown once then cleared.
+	/// A rule the last action ran into ("That file is over 5 GB."), shown once then cleared.
 	public var notice: String?
 	/// The message being replied to or edited, shown as a strip inside the bar (7-Chat §1).
 	public private(set) var quote: Quote?
@@ -503,7 +503,7 @@ public final class ChatComposerModel {
 				// A file on disk is ours to remove once this attempt is over; a retry prepares it again.
 				defer { if let url = file.fileURL { try? FileManager.default.removeItem(at: url) } }
 				guard file.sizeBytes <= ChatLimits.maxFileBytes else {
-					self?.finish(id, .failed("Over the 1 GB limit."))
+					self?.finish(id, .failed("Over the 5 GB limit."))
 					return
 				}
 				let ref: ChatAttachmentRef
