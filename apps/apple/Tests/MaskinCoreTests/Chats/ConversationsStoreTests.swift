@@ -305,7 +305,8 @@ struct ConversationsStoreTests {
 	func liveReload() async {
 		let api = FakeListAPI([chatConvo("a")])
 		let hub = scriptedHub([conversationFrame(1, conversation: "a")])
-		let store = ConversationsStore(api: api, events: hub)
+		let store = ConversationsStore(
+			api: api, events: hub, chatRefetch: instantRefetch(), peopleRefetch: instantRefetch())
 		await store.start()
 		await api.set([chatConvo("a"), chatConvo("b")])
 		hub.connect(workspaceId: "w1")
@@ -318,7 +319,8 @@ struct ConversationsStoreTests {
 		let api = FakeListAPI([chatConvo("a")])
 		// First body ends (a drop), the hub reconnects and broadcasts .reconnected.
 		let hub = scriptedHub(["id: 1\nevent: x\ndata: {\"entity_type\":\"object\",\"workspace_id\":\"w1\",\"event_id\":\"1\"}\n\n", ""])
-		let store = ConversationsStore(api: api, events: hub)
+		let store = ConversationsStore(
+			api: api, events: hub, chatRefetch: instantRefetch(), peopleRefetch: instantRefetch())
 		await store.start()
 		await api.set([chatConvo("a"), chatConvo("b"), chatConvo("c")])
 		hub.connect(workspaceId: "w1")

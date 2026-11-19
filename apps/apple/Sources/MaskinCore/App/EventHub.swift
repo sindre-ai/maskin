@@ -40,6 +40,9 @@ public final class EventHub {
 	public private(set) var workspaceId: String?
 	/// Why the stream last `failed` (nil otherwise).
 	public private(set) var failure: SSEError?
+	/// `false` while the app is in the background (set by `SyncCoordinator`). Stores skip the
+	/// refetches their events would cause until it is `true` again.
+	public private(set) var isForeground = true
 	/// The stream was refused with 401: the stored key is dead. Wired to `AuthSession` by
 	/// `AppEnvironment`, so a revoked key ends the session even when no other request is made.
 	///
@@ -61,6 +64,8 @@ public final class EventHub {
 	@ObservationIgnored private static let maxRetry: Duration = .seconds(300)
 	@ObservationIgnored private var retryTask: Task<Void, Never>?
 	@ObservationIgnored private var consecutiveFailures = 0
+	/// A store skipped an event because the app was in the background.
+	@ObservationIgnored private var skippedInBackground = false
 
 	/// `client == nil` makes an inert hub (previews, tests that don't need a stream).
 	public init(client: SSEClient?, retryAfterFailure: Duration = .seconds(30)) {
@@ -143,6 +148,20 @@ public final class EventHub {
 		broadcast(.reconnected)
 	}
 
+	/// The app moved to or from the background. Coming back after a store skipped an event asks
+	/// every subscriber to refetch once, with the existing `.reconnected` signal.
+	public func setForeground(_ foreground: Bool) {
+		guard foreground != isForeground else { return }
+		isForeground = foreground
+		if foreground, skippedInBackground {
+			skippedInBackground = false
+			broadcast(.reconnected)
+		}
+	}
+
+	/// A store skipped the refetch for an event because `isForeground` is `false`.
+	public func noteSkippedInBackground() { skippedInBackground = true }
+
 	/// A new stream of signals. Ends when its consumer stops iterating or is cancelled.
 	public func subscribe() -> AsyncStream<HubSignal> {
 		let id = UUID()
@@ -154,7 +173,7 @@ public final class EventHub {
 		return stream
 	}
 
-	private func broadcast(_ signal: HubSignal) {
+	func broadcast(_ signal: HubSignal) {
 		for continuation in subscribers.values { continuation.yield(signal) }
 	}
 
