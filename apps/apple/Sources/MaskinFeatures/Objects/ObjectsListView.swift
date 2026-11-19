@@ -117,9 +117,9 @@ struct ObjectsListView: View {
 	/// The large title (tap for Go to), type tabs and the active filter chip.
 	private var header: some View {
 		VStack(alignment: .leading, spacing: 0) {
-			// iPad: the left bar already says "Items", so the plain scope shows no title of its own.
+			// iPad with the left bar: it already says "Items", so the plain scope shows no title of its own.
 			// A type or saved view still names itself.
-			if !(ShellIdiom.isPad && store.scope == .all) {
+			if !(ShellIdiom.hasRail && store.scope == .all) {
 				Text(store.title)
 					.maskinText(.largeTitle)
 					.foregroundStyle(MaskinColor.ink)
