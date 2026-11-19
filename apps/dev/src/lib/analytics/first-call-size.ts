@@ -57,6 +57,35 @@ export interface FirstTurnResult {
 	}
 }
 
+/**
+ * What agent-run.sh says about the size of the start prompt it built, from its one
+ * `[system] start prompt size:` line. Numbers and a boolean, never text.
+ */
+export interface StartPromptSize {
+	/** Bytes of the persona prompt (the system prompt the agent started with). */
+	personaBytes: number
+	/** Bytes of the whole start prompt: context file plus the opening action prompt. */
+	totalBytes: number
+	/** Bytes of the consolidated learnings file actually pasted. */
+	learningsBytes: number
+	/** True when the file was longer than the cap and was cut. */
+	learningsCapped: boolean
+}
+
+const START_PROMPT_SIZE_RE =
+	/\[system\] start prompt size: persona_bytes=(\d+) total_bytes=(\d+) learnings_bytes=(\d+) learnings_capped=(true|false)/
+
+export function parseStartPromptSizeLine(line: string): StartPromptSize | null {
+	const m = START_PROMPT_SIZE_RE.exec(line)
+	if (!m) return null
+	return {
+		personaBytes: Number(m[1]),
+		totalBytes: Number(m[2]),
+		learningsBytes: Number(m[3]),
+		learningsCapped: m[4] === 'true',
+	}
+}
+
 const MAX_BUFFERED_BYTES = 256 * 1024
 
 const finiteOrNull = (v: unknown): number | null => {
@@ -84,9 +113,15 @@ export class FirstCallObserver {
 	private cacheHit: boolean | null = null
 	private firstMessageId: string | null = null
 	private finished = false
+	private startPrompt: StartPromptSize | null = null
 
 	get done(): boolean {
 		return this.finished
+	}
+
+	/** The start prompt size agent-run.sh reported, once its line has gone by. */
+	get startPromptSize(): StartPromptSize | null {
+		return this.startPrompt
 	}
 
 	feed(chunk: string): FirstTurnResult | null {
@@ -105,7 +140,11 @@ export class FirstCallObserver {
 	}
 
 	private readLine(line: string): FirstTurnResult | null {
-		// Cheap string checks first: almost every line is none of the three.
+		// Cheap string checks first: almost every line is none of the four.
+		if (this.startPrompt === null && line.includes('[system] start prompt size:')) {
+			this.startPrompt = parseStartPromptSizeLine(line)
+			return null
+		}
 		if (line.includes('"type":"result"')) {
 			const result = parseResultLine(line)
 			if (!result) return null

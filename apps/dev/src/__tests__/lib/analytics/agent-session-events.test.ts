@@ -8,11 +8,14 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 }))
 
 import {
+	PERSONA_PROMPT_WARN_BYTES,
+	START_PROMPT_WARN_BYTES,
 	approximatePromptTokens,
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
 	trackSessionLaunchModel,
 } from '../../../lib/analytics/agent-session-events'
+import { logger } from '../../../lib/logger'
 
 beforeEach(() => {
 	capturePosthogEventMock.mockClear()
@@ -111,6 +114,82 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 		expect(props.first_call_input_tokens).toBeUndefined()
 		expect(props.first_turn_cost).toBeUndefined()
 		expect(props.cache_hit).toBeUndefined()
+	})
+
+	describe('start prompt size', () => {
+		const base = {
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			agentId: 'agent-1',
+			agentName: 'Rune',
+			systemPrompt: 'ok',
+		}
+		const size = (
+			over: Partial<
+				NonNullable<Parameters<typeof trackAgentSessionStartedWithPrompt>[0]['startPrompt']>
+			>,
+		) => ({
+			personaBytes: 1_000,
+			totalBytes: 5_000,
+			learningsBytes: 2_000,
+			learningsCapped: false,
+			...over,
+		})
+
+		it('carries learnings_bytes and learnings_capped as a number and a boolean', async () => {
+			const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			await trackAgentSessionStartedWithPrompt({
+				...base,
+				startPrompt: size({ learningsBytes: 20_291, learningsCapped: true }),
+			})
+
+			const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+			expect(props.learnings_bytes).toBe(20_291)
+			expect(props.learnings_capped).toBe(true)
+			expect(warn).not.toHaveBeenCalled()
+		})
+
+		it('leaves both properties off when the size line was never read', async () => {
+			await trackAgentSessionStartedWithPrompt(base)
+
+			const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+			expect(props.learnings_bytes).toBeUndefined()
+			expect(props.learnings_capped).toBeUndefined()
+		})
+
+		it('warns once, naming the agent and the size, when the persona prompt is over 30 KB', async () => {
+			const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			await trackAgentSessionStartedWithPrompt({
+				...base,
+				startPrompt: size({ personaBytes: PERSONA_PROMPT_WARN_BYTES + 1 }),
+			})
+
+			expect(warn).toHaveBeenCalledOnce()
+			expect(warn).toHaveBeenCalledWith(
+				'Agent persona prompt is very large',
+				expect.objectContaining({ agentName: 'Rune', personaBytes: PERSONA_PROMPT_WARN_BYTES + 1 }),
+			)
+			expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		})
+
+		it('warns when the whole start prompt is over 100 KB, and not at exactly 100 KB', async () => {
+			const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			await trackAgentSessionStartedWithPrompt({
+				...base,
+				startPrompt: size({ totalBytes: START_PROMPT_WARN_BYTES }),
+			})
+			expect(warn).not.toHaveBeenCalled()
+
+			await trackAgentSessionStartedWithPrompt({
+				...base,
+				startPrompt: size({ totalBytes: START_PROMPT_WARN_BYTES + 1 }),
+			})
+			expect(warn).toHaveBeenCalledOnce()
+			expect(warn).toHaveBeenCalledWith(
+				'Agent start prompt is very large',
+				expect.objectContaining({ agentName: 'Rune', totalBytes: START_PROMPT_WARN_BYTES + 1 }),
+			)
+		})
 	})
 
 	it('carries source_session_id when the session was spawned by another session', async () => {
