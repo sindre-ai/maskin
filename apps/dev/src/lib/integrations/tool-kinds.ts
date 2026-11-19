@@ -60,8 +60,6 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'youtube__list_comments',
 		'youtube__get_own_captions',
 	]),
-	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
-	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
 	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list
 	// (19 Nov 2026, not yet checked against a live tools/list). Its tools are dispatchers that take an
 	// `action`, and the read and write sides are separate tools (the writes end in `_write`, or are
@@ -99,6 +97,16 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'get_meeting_assets',
 		'get_recording_resource',
 		'recordings_list',
+	]),
+	// Outlook calendar and mail, served by Maskin. Curated, so a tool added later (outlook_create_draft
+	// included) is a write until it is listed here.
+	microsoft: new Set([
+		'outlook_list_events',
+		'outlook_get_event',
+		'outlook_search_events',
+		'outlook_list_messages',
+		'outlook_get_message',
+		'outlook_search_messages',
 	]),
 	// Stripe's hosted tool names are not read verbs (stripe_api_read), and stripe_api_write takes
 	// any POST, PATCH, PUT or DELETE, so only these exact tools are reads. Left out on purpose
