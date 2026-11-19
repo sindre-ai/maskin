@@ -1844,12 +1844,34 @@ describe('SessionManager', () => {
 					firstTurnCostUsd: 0.14,
 					cacheHit: true,
 				},
+				startPrompt: null,
 			})
 
 			// Later turns and the teardown add nothing.
 			internals.observeFirstCallSize('sess-first-call', resultLine(0.3))
 			await internals.clearActiveSession('sess-first-call')
 			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+		})
+
+		it('passes the start prompt size line from the launch output into the event', async () => {
+			const sizeLine =
+				'[system] start prompt size: persona_bytes=900 total_bytes=25000 learnings_bytes=20291 learnings_capped=true\n'
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize(
+				'sess-first-call',
+				sizeLine + initLine + assistantLine + resultLine(0.14),
+			)
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					startPrompt: {
+						personaBytes: 900,
+						totalBytes: 25_000,
+						learningsBytes: 20_291,
+						learningsCapped: true,
+					},
+				}),
+			)
 		})
 
 		it('leaves the first-turn cost empty on maskin_plan with no priced model, never the CLI figure', async () => {
@@ -1868,6 +1890,7 @@ describe('SessionManager', () => {
 					firstTurnCostUsd: null,
 					cacheHit: true,
 				},
+				startPrompt: null,
 			})
 		})
 
@@ -1892,7 +1915,7 @@ describe('SessionManager', () => {
 			await internals.clearActiveSession('sess-first-call')
 
 			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
-			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(props)
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({ ...props, startPrompt: null })
 		})
 
 		it('sends a launch that was never torn down before it holds the next one', () => {
@@ -1900,7 +1923,7 @@ describe('SessionManager', () => {
 			internals.holdLaunchStartEvent('sess-first-call', { ...props, launchedAt: new Date() })
 
 			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
-			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(props)
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({ ...props, startPrompt: null })
 		})
 	})
 
