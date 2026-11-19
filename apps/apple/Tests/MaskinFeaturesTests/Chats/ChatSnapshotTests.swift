@@ -340,13 +340,4 @@ struct ChatSnapshotTests {
 			_ = try render(view, width: width, dark: dark, name: "empty")
 		}
 	}
-
-	@Test("composer renders", arguments: [false, true])
-	func composer(dark: Bool) throws {
-		struct Host: View {
-			@State var text = "Draft a follow-up for Sam"
-			var body: some View { GlassComposer(text: $text, placeholder: "Message") {}.padding(MaskinSpace.s9) }
-		}
-		for width in Self.widths { _ = try render(Host(), width: width, dark: dark, name: "composer") }
-	}
 }

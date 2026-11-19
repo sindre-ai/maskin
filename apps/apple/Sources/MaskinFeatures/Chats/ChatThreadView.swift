@@ -424,10 +424,16 @@ struct ChatThreadView: View {
 		}
 	}
 
+	/// What the thread's `+` menu uploads through; the same source the chat's own composer uses.
+	private var threadUploader: (any ChatFileUploading)? {
+		guard let env = runtime?.environment else { return nil }
+		return APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? "", largeUploads: env.largeUploads)
+	}
+
 	@ViewBuilder
 	private func threadDestination(_ route: ThreadRoute) -> some View {
 		if let root = store.threadRoot(route.rootID) {
-			ThreadScreen(store: store, root: root)
+			ThreadScreen(store: store, root: root, uploader: threadUploader)
 		} else {
 			// The root is older than the page held: fetch it rather than show an empty screen.
 			ProgressView()
