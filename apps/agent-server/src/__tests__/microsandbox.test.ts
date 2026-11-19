@@ -38,15 +38,29 @@ describe('assertValidSessionId', () => {
 })
 
 describe('sanitizeEnvForMicroVM', () => {
-	it('strips non-printable ASCII (bet constraint #1)', () => {
+	it('keeps non-printable ASCII out of the inline env but does not strip it (bet constraint #1)', () => {
 		const { inline, overflow, sanitizedCount } = sanitizeEnvForMicroVM({
 			NORWEGIAN: 'pølse-æøå',
 			ASCII: 'plain',
 		})
-		expect(inline.NORWEGIAN).toBe('plse-')
-		expect(inline.ASCII).toBe('plain')
+		expect(inline).toEqual({ ASCII: 'plain' })
+		expect(overflow).toEqual([{ key: 'NORWEGIAN', value: 'pølse-æøå' }])
+		expect(sanitizedCount).toBe(0)
+	})
+
+	it('keeps newlines, tabs and em dashes of a multi-line prompt intact', () => {
+		const prompt = '## Title\n\n- one\n- two\tcol — dash'
+		const { inline, overflow } = sanitizeEnvForMicroVM({ SYSTEM_PROMPT: prompt })
+		expect(inline).toEqual({})
+		expect(overflow).toEqual([{ key: 'SYSTEM_PROMPT', value: prompt }])
+	})
+
+	it('drops NUL and other control characters, counting the value once', () => {
+		const { overflow, sanitizedCount } = sanitizeEnvForMicroVM({
+			X: 'a\u0000b\r\nc\u001bd',
+		})
+		expect(overflow).toEqual([{ key: 'X', value: 'ab\ncd' }])
 		expect(sanitizedCount).toBe(1)
-		expect(overflow).toEqual([])
 	})
 
 	it('spills values over the 1500-char threshold (bet constraint #2)', () => {
@@ -57,11 +71,6 @@ describe('sanitizeEnvForMicroVM', () => {
 		})
 		expect(inline).toEqual({ SMALL: 'ok' })
 		expect(overflow).toEqual([{ key: 'HUGE', value: big }])
-	})
-
-	it('counts sanitization once per value, regardless of how many bytes were stripped', () => {
-		const { sanitizedCount } = sanitizeEnvForMicroVM({ X: 'æøåæøå' })
-		expect(sanitizedCount).toBe(1)
 	})
 
 	it('throws on an invalid env var key (shell injection guard)', () => {

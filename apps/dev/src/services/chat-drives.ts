@@ -4,7 +4,6 @@ import {
 	LOOP_RUNNING_STATUSES,
 	TERMINAL_STATUSES_BY_TYPE,
 	buildWebAppHref,
-	loopTargetSchema,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
@@ -14,7 +13,6 @@ export const CHAT_DRIVES_MAX = 2000
 
 const MORE_MARKER = '\n(more on the objects you drive)'
 const MAX_LOOPS = 3
-const MAX_TARGETS_PER_LOOP = 4
 const MAX_OPEN_OBJECTS = 5
 const CLOSE_CONDITION_MAX = 200
 const TITLE_MAX = 80
@@ -43,20 +41,6 @@ function oneLine(text: string, max: number): string {
 	return flat.length <= max ? flat : `${flat.slice(0, max).trimEnd()}…`
 }
 
-function describeTargets(metadata: unknown): string {
-	const raw = (metadata as Record<string, unknown> | null)?.targets
-	if (!Array.isArray(raw)) return ''
-	return raw
-		.flatMap((row) => {
-			const parsed = loopTargetSchema.safeParse(row)
-			return parsed.success
-				? [`${parsed.data.label}: ${parsed.data.actual} of ${parsed.data.target}`]
-				: []
-		})
-		.slice(0, MAX_TARGETS_PER_LOOP)
-		.join('; ')
-}
-
 function describeCloseCondition(metadata: unknown): string {
 	const cond = (metadata as Record<string, unknown> | null)?.close_condition
 	return typeof cond === 'string' && cond.trim() ? oneLine(cond, CLOSE_CONDITION_MAX) : ''
@@ -64,9 +48,11 @@ function describeCloseCondition(metadata: unknown): string {
 
 /**
  * The "What you drive" block for a chat session: the live loops and open
- * objects the agent is the driver of, each loop's targets (actual of target)
- * and close condition, and one line saying the agent owns these outcomes and
- * the person in the chat supports. When the chat is about an object or loop,
+ * objects the agent is the driver of, each loop's close condition, and one
+ * line saying the agent owns these outcomes and the person in the chat
+ * supports. Targets are not listed here: the "Jobs you are handed" block
+ * (chat-job-target.ts) already lists each flow's targets, and listing them in
+ * both put every target table in the prompt twice. When the chat is about an object or loop,
  * that one leads. Returns '' when the agent drives nothing. Capped at
  * CHAT_DRIVES_MAX characters: lines are dropped from the end, never cut in half.
  */
@@ -152,9 +138,8 @@ export async function buildChatDrivesBlock(
 	).slice(0, MAX_LOOPS)
 	const open = drivenOpen.filter((o) => o.id !== subject?.id).slice(0, MAX_OPEN_OBJECTS)
 	const loopLines = loops.map((l) => {
-		const targets = describeTargets(l.metadata)
 		const closes = describeCloseCondition(l.metadata)
-		return `- ${link(l.id, l.title)} (${l.status})${targets ? `. Targets: ${targets}` : ''}${closes ? `. Closes when: ${closes}` : ''}`
+		return `- ${link(l.id, l.title)} (${l.status})${closes ? `. Closes when: ${closes}` : ''}`
 	})
 	const openLines = open.map((o) => `- ${link(o.id, o.title)} (${o.type}, ${o.status})`)
 
@@ -166,7 +151,7 @@ export async function buildChatDrivesBlock(
 					`This chat is about ${link(subject.id, subject.title)} (${subject.type}, ${subject.status}).`,
 				]
 			: []),
-		...(loopLines.length ? ['Flows, with targets as actual of target:', ...loopLines] : []),
+		...(loopLines.length ? ['Flows:', ...loopLines] : []),
 		...(openLines.length ? ['Open items:', ...openLines] : []),
 	]
 
