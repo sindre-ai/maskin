@@ -201,7 +201,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		server,
 		ctx,
 		'get_own_captions',
-		'Get the caption text of a video on the connected channel, as SRT or VTT. Only videos owned by the connected channel: any other video is refused with PERMISSION_DENIED before any caption call. Costs about 252 quota units (2 ownership reads, the caption list at 50, the download at 200), so use it sparingly: a workspace has 1,000 units a day. The result is never cached and is returned to you only. Needs the youtube.force-ssl permission: a connection made before it was added fails with RECONSENT_REQUIRED until it is reconnected.',
+		'Get the caption text of a video on the connected channel, as SRT or VTT. Only videos owned by the connected channel: any other video is refused with PERMISSION_DENIED before any caption call. Costs about 252 quota units (2 ownership reads, the caption list at 50, the download at 200), so use it sparingly: a workspace has 1,000 units a day. The result is never cached and is returned to you only. Needs the youtube.force-ssl permission, which a connection only has when the workspace asked for write scopes: without it the call fails with RECONSENT_REQUIRED until the channel is reconnected.',
 		{
 			video_id: z.string().min(1).max(32).describe('The video id of one of your own videos.'),
 			language: z
