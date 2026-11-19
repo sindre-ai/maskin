@@ -148,10 +148,18 @@ public final class ChatComposerModel {
 	/// whether a send can go through (`canSend`).
 	public var hasContent: Bool { !trimmedText.isEmpty || !attachments.isEmpty }
 
-	/// Text is required (the API rejects an empty message); every attachment must have settled.
+	/// Text or an attachment is required (the API accepts an empty message only with an attachment);
+	/// every attachment must have settled.
 	public var canSend: Bool {
-		!trimmedText.isEmpty && (!isOverLength || sendsAsFile) && !isUploading && !hasFailedAttachment
+		hasContent && (!isOverLength || sendsAsFile) && !isUploading && !hasFailedAttachment
 			&& !isSplitting
+	}
+
+	/// The words of a comment, or the attachments' names when there are none. Object comments carry
+	/// text (the comment API has no empty body), so a picture sent alone goes with its file name.
+	public var commentText: String {
+		if !trimmedText.isEmpty { return trimmedText }
+		return attachments.map(\.name).joined(separator: ", ")
 	}
 
 	/// Over the cap and able to go as a file: a chat host, an uploader, room for one more attachment,
