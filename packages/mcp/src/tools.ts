@@ -42,19 +42,19 @@ const notificationMetadataInput = z
 			.array(notificationActionSchema)
 			.optional()
 			.describe(
-				'Clickable buttons rendered on the notification card. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Merged, continue", "response": "merged_continue" }, { "label": "Not ready yet", "response": "not_ready" }].',
+				'Buttons on the card: a native JSON array (not stringified) of { label, response }.',
 			),
 		input_type: z
 			.enum(['confirmation', 'single_choice', 'multiple_choice', 'text'])
 			.optional()
 			.describe(
-				'Renders a structured picker instead of action buttons. Pair with options (for single/multiple_choice) or placeholder/multiline (for text). NOTE: setting input_type disables the free-text "Reply to agent" input — only set it when you want a structured picker.',
+				'Renders a structured picker instead of buttons; pair with options (single/multiple_choice) or placeholder/multiline (text). It disables the free-text "Reply to agent" input.',
 			),
 		options: z
 			.array(notificationOptionSchema)
 			.optional()
 			.describe(
-				'Options for single_choice / multiple_choice input_type. MUST be a native JSON array of objects — do NOT stringify. Example: [{ "label": "Yes", "value": "yes" }, { "label": "No", "value": "no" }].',
+				'Options for single_choice / multiple_choice: a native JSON array (not stringified) of { label, value }.',
 			),
 		question: z.string().optional(),
 		placeholder: z.string().optional(),
@@ -72,9 +72,7 @@ const optionalDesktopAgentId = z
 	.string()
 	.uuid()
 	.optional()
-	.describe(
-		'Whose computer. Leave out if you are an agent (you always get your own). A person must pass the agent ID.',
-	)
+	.describe('Agent whose computer; agents omit it (own computer), a person must pass it.')
 
 // Only the keys an agent writes are spelled out. Card and other server-owned keys still pass
 // through (passthrough) so the handler can reject card keys by name, and the API validates the
@@ -94,7 +92,7 @@ const optionalWorkspaceId = z
 	.string()
 	.uuid()
 	.optional()
-	.describe('Workspace ID. Defaults to your current workspace.')
+	.describe('Defaults to the current workspace.')
 
 // Used by writes/reads that create or enumerate ambiguously-scoped
 // resources (a brand-new loop with no existing id to inherit a workspace
@@ -126,30 +124,27 @@ const createObjectsMissingKey = (key: string, where: 'call' | 'node') => ({
 // you send in.
 const actorLlmConfigSchema = z
 	.object({
-		provider: z
-			.string()
-			.optional()
-			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
-		model: z.string().optional().describe('Model identifier to use, e.g. "claude-sonnet-5-5".'),
+		provider: z.string().optional(),
+		model: z.string().optional(),
 	})
 	.passthrough()
 	.optional()
 	.describe(
-		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
+		"Agents only. The LLM provider and model this agent runs on. It always uses the workspace's connected LLM credentials (Settings → Keys); per-agent API key overrides are not supported. Extra keys pass through.",
 	)
 
 // Optional sentence on the close_condition field of create_loop / update_loop.
 // Runs woken on a loop are shown this text as their finish line, so it says
 // what a good one looks like. A suggestion only; nothing validates it.
 const CLOSE_CONDITION_GUIDANCE =
-	'Runs in this loop are shown this text, so say what done looks like. It can be a status reached, a summary written, a report posted, or a check that found nothing to do. Short is fine.'
+	'Runs in this loop are shown this text, so say what done looks like (a status reached, a summary written, a check that found nothing to do). Short is fine.'
 
 // Optional suggestion shown on every field an agent writes a trigger prompt
 // into (create_trigger, update_trigger, and the inline steps of create_loop /
 // update_loop). A suggestion only: nothing validates or rejects a prompt that
 // ignores it. One constant so the places can't drift apart.
 const TRIGGER_PROMPT_GUIDANCE =
-	'A good trigger prompt starts with what the run is for. You can say: the outcome (what is true when it is done), how anyone can see that it is true, what to leave alone, and when to stop and ask a person. Done can be a status that moves, but it can also be a summary written, a report posted, or a check that found nothing to do. Use whichever fits. Short is fine.'
+	'A good trigger prompt starts with what the run is for. Say the outcome, how anyone can see it is true, what to leave alone, and when to stop and ask a person. Done can be a status that moves, a summary written, a report posted, or a check that found nothing to do.'
 
 /**
  * Inline loop-step definition accepted by create_loop / update_loop. Each step
@@ -168,7 +163,7 @@ const loopStepSchema = z.object({
 		.string()
 		.uuid()
 		.describe(
-			"Agent actor that performs this step. Must be an agent, not a human — a human is put on the loop by having a step's agent notify/@mention them. See the tool description for how to pick or create the right agent.",
+			'Agent that performs this step (an agent, not a human: put a human on the loop with a step whose agent @mentions them).',
 		),
 	prompt: z
 		.string()
@@ -180,10 +175,7 @@ const loopStepSchema = z.object({
 		.union([
 			z
 				.object({
-					cron: z
-						.string()
-						.min(1)
-						.describe('Cron expression, e.g. "*/30 * * * *" — the step runs on this schedule.'),
+					cron: z.string().min(1),
 				})
 				.strict(),
 			z
@@ -192,22 +184,22 @@ const loopStepSchema = z.object({
 						.string()
 						.min(1)
 						.describe(
-							'Object type whose events fire this step — any type, including custom ones (call get_workspace_schema to see them).',
+							'Object type whose events fire the step, including custom types (see get_workspace_schema).',
 						),
 					action: z
 						.enum(['created', 'updated', 'status_changed', 'deleted'])
-						.describe('Which mutation fires the step. `status_changed` drives most loop steps.'),
+						.describe('Which mutation fires the step; `status_changed` drives most steps.'),
 					filter: z
 						.record(z.unknown())
 						.optional()
 						.describe(
-							'Equality filter evaluated against the current object row, e.g. { "status": "qualified" } or { "metadata.segment": "enterprise" }. Dot paths reach into metadata.',
+							'Equality filter on the current object row, e.g. { "status": "qualified" } or { "metadata.segment": "enterprise" }.',
 						),
 				})
 				.strict(),
 		])
 		.describe(
-			'When the step fires — exactly one of: { "cron": "<expression>" } for a schedule, or { "object_type", "action", "filter"? } to react to objects changing state. Do not mix fields from both forms; extra/mismatched keys are rejected.',
+			'When the step fires, exactly one of: { "cron": "<expression>" } for a schedule, or { "object_type", "action", "filter"? } to react to object changes. Do not mix the two forms.',
 		),
 })
 
@@ -221,14 +213,14 @@ const loopTagsSchema = z
 	.array(z.string().trim().min(1).max(40))
 	.max(10)
 	.describe(
-		'Short labels saying which team, business unit or part of the business this loop belongs to, e.g. ["Sales", "EMEA"]. Shown as filter pills and chips on Flows. Replaces the current tags; pass [] to clear.',
+		'Short labels for the team or part of the business this loop belongs to, e.g. ["Sales", "EMEA"], shown as filters on Flows. Replaces the current tags; [] clears.',
 	)
 
 const loopTargetsSchema = z
 	.array(loopTargetSchema)
 	.max(50)
 	.describe(
-		'Targets the loop is measured against: a list of rows { label, source, actual, target }, optionally with ownerActorId and pace_policy ("strict" | "window"). Replaces the current targets; pass [] to clear. Must be a list, not a string. A bad row is rejected with its position and field.',
+		'Targets the loop is measured against: a list of { label, source, actual, target } rows, optionally with ownerActorId and pace_policy ("strict" | "window"). Replaces the current targets; [] clears. A bad row is rejected with its position and field.',
 	)
 
 const loopDriverIdSchema = z
@@ -238,14 +230,14 @@ const loopDriverIdSchema = z
 	})
 	.uuid('driver_id must be the UUID of an agent actor (find one with list_actors).')
 	.describe(
-		"The agent accountable for the loop: an agent whose job covers the loop's outcome, preferably the owner of its main target. Must be an active agent in this workspace, not a human. Does not have to match a target's ownerActorId.",
+		'The agent accountable for the loop: one whose job covers its outcome, preferably the owner of its main target. Must be an active agent in this workspace.',
 	)
 
 const closedStatusesSchema = z
 	.record(z.array(z.string().min(1)))
 	.optional()
 	.describe(
-		'Map of object type → statuses that count as "done"/closed for THIS loop, e.g. {"lead": ["won", "lost"]}. Required for correct closed counts when custom object types flow through the loop; built-in types (bet/task/insight) have sensible defaults. Types and statuses are validated against the workspace schema.',
+		'Map of object type → statuses that count as closed for THIS loop, e.g. {"lead": ["won", "lost"]}. Needed for custom object types; bet, task and insight have defaults.',
 	)
 
 const isClosedWhenRule = (rule: string): boolean => {
@@ -264,7 +256,7 @@ const closedWhenSchema = z
 	)
 	.optional()
 	.describe(
-		'Map of object type → metadata rules that also count a member as "done"/closed for THIS loop, without a status change, e.g. {"insight": ["loop_stage=live"]}. A member is closed when its status is in closed_statuses OR any rule for its type matches (two rules on one field read as "either value"). Rules are "field=value" strings. Types are validated against the workspace schema. Pass {} to clear.',
+		'Map of object type → "field=value" metadata rules that also count a member as closed without a status change, e.g. {"insight": ["loop_stage=live"]}. A member is closed when its status is in closed_statuses OR a rule matches. Pass {} to clear.',
 	)
 
 /**
@@ -277,7 +269,7 @@ const metadataEqSchema = z
 	.record(z.string(), z.string())
 	.optional()
 	.describe(
-		'Equality filter on custom metadata fields, e.g. {"segment": "enterprise"}. Call get_workspace_schema first to see which fields exist per object type.',
+		'Equality filter on custom metadata fields, e.g. {"segment": "enterprise"} (see get_workspace_schema).',
 	)
 
 const LIST_ACTORS_INCLUDE_VALUES = ['triggers', 'loops']
@@ -385,7 +377,7 @@ export const tools = {
 							.describe(
 								"Object type. Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
 							),
-						title: z.string().optional().describe('Short, human-readable title for the object.'),
+						title: z.string().optional(),
 						content: z
 							.string()
 							.optional()
@@ -403,11 +395,7 @@ export const tools = {
 							.describe(
 								'Key-value metadata. Call get_workspace_schema to discover available fields and types.',
 							),
-						driver: z
-							.string()
-							.uuid()
-							.optional()
-							.describe('UUID of the driver actor responsible for this object'),
+						driver: z.string().uuid().optional(),
 						file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -418,8 +406,7 @@ export const tools = {
 					createObjectsMissingKey('nodes', 'call'),
 				)
 				.min(1)
-				.max(50)
-				.describe('Objects to create'),
+				.max(50),
 			edges: z
 				.array(
 					z.object({
@@ -432,12 +419,11 @@ export const tools = {
 						type: z
 							.string()
 							.describe(
-								'Relationship type as configured in this workspace (get_workspace_schema). Defaults include informs, breaks_into, blocks, relates_to, duplicates.',
+								'Relationship type (see get_workspace_schema), e.g. informs, breaks_into, blocks, relates_to.',
 							),
 					}),
 				)
-				.default([])
-				.describe('Relationships to create between new and/or existing objects'),
+				.default([]),
 		}),
 	},
 	get_objects: {
@@ -445,7 +431,7 @@ export const tools = {
 			"Get objects by ID. Returns {id, type, title, status, contextLine, url, workspaceId} plus an always-on `setup` block ({checks, next_steps, prose}) flagging gaps such as thin content or no driver. Add blocks with `include`: `content`, `metadata`, `relationships` (edges with sourceTitle and targetTitle), `connected_objects`, `events` (recent changes and comments), `files`. Relationships and connected objects cap at 100 per object (see `relationships_page` / `connected_objects_page`); page the rest with list_relationships and `object_id`. For a loop's deeper setup check call get_loop. In human-facing text use `title`, not the UUID. Before telling anyone whether something was sent, done, approved or on hold, read the task and its contact here: drafts pages, target lists and search snapshots can lag, and the task wins.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
+			ids: z.array(z.string().uuid()).min(1).max(50),
 			include: z
 				.array(
 					z.enum([
@@ -468,7 +454,7 @@ export const tools = {
 				.max(20)
 				.optional()
 				.describe(
-					'Hold until every object in `ids` has one of these statuses (e.g. ["done", "cancelled"]), then return as usual. List every status you would accept: an object that never reaches one holds the call for all of `wait_timeout_seconds`. The response carries `wait: { settled, waited_seconds, reason? }`; settled false means the wait stopped first (reason: timeout, not_found with `missing_ids`, or status_check_failed). Use only when you cannot go on without it.',
+					'Hold until every object in `ids` has one of these statuses (e.g. ["done", "cancelled"]), then return as usual. List every status you would accept: an object that never reaches one holds the call for all of `wait_timeout_seconds`. The response carries `wait: { settled, waited_seconds, reason? }`; settled false means the wait stopped first (timeout, not_found with `missing_ids`, or status_check_failed).',
 				),
 			wait_timeout_seconds: z
 				.number()
@@ -532,7 +518,7 @@ export const tools = {
 							.describe(
 								'IDs of existing files to attach (upload first with create_file); already-attached files are skipped.',
 							),
-						driver: z.string().uuid().nullable().optional().describe('Set or clear the driver'),
+						driver: z.string().uuid().nullable().optional(),
 						detach_file_ids: z
 							.array(z.string().uuid())
 							.optional()
@@ -541,22 +527,20 @@ export const tools = {
 							),
 					}),
 				)
-				.default([])
-				.describe('Objects to update, each with id and fields to change'),
+				.default([]),
 			edges: z
 				.array(
 					z.object({
-						source_id: z.string().uuid().describe('Source object UUID'),
-						target_id: z.string().uuid().describe('Target object UUID'),
+						source_id: z.string().uuid(),
+						target_id: z.string().uuid(),
 						type: z
 							.string()
 							.describe(
-								'Relationship type as configured in this workspace (get_workspace_schema). Defaults include informs, breaks_into, blocks, relates_to, duplicates.',
+								'Relationship type (see get_workspace_schema), e.g. informs, breaks_into, blocks, relates_to.',
 							),
 					}),
 				)
-				.default([])
-				.describe('Relationships to create between existing objects'),
+				.default([]),
 		}),
 	},
 	set_next_step: {
@@ -564,7 +548,7 @@ export const tools = {
 			'Give an object you drive its next step: what happens, who does it, by when. At most one open or blocked step per object; a second is refused (409) unless replace: true, which closes the old one as skipped. Pass action (one short sentence), due_at (ISO time with timezone) and optionally owner_id (defaults to you). If it waits on something, pass exactly one of blocked_on_object_id, blocked_on_actor_id (blocked_reason holds the question) or blocked_on_decision_comment_id. Stores the step and wakes no one. Change or close it with update_next_step.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			object_id: z.string().uuid(),
 			...setNextStepSchema.shape,
 		}),
 	},
@@ -573,7 +557,7 @@ export const tools = {
 			"Change or close an object's open or blocked next step; pass only what changes (action, due_at, owner_id, status). done or skipped closes it and needs evidence (link or result; reason for skipped). blocked needs exactly one of blocked_on_object_id, blocked_on_actor_id (with blocked_reason) or blocked_on_decision_comment_id; open clears it. 404 when there is no open or blocked step: use set_next_step. To close and plan the next, set done, then call set_next_step.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			object_id: z.string().uuid(),
 			...updateNextStepSchema.shape,
 		}),
 	},
@@ -582,7 +566,7 @@ export const tools = {
 			'End a turn with a next step that is backed by something, instead of promising to check back. Pass object_id, action (one short sentence) and due_at (ISO time with timezone, at least 5 minutes away). By default you own it: the step is stored and you are woken at due_at on that object. With owner_id for another agent, a task is created with that agent as driver and the step waits on it; no timer is set. A person as owner is stored and nobody is woken. update_next_step or replace: true cancels the wake-up. Refused (409) while an open or blocked step exists unless replace is true; refused (429) when a self-started run already has its limit of wake-ups waiting. A wake-up more than 1 hour late does nothing. Use set_next_step when nobody should be woken.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			object_id: z.string().uuid().describe('The object the step belongs to.'),
+			object_id: z.string().uuid(),
 			...scheduleNextStepSchema.shape,
 		}),
 	},
@@ -641,11 +625,7 @@ export const tools = {
 				.describe(
 					'One status, or a list of statuses meaning "any of these", e.g. ["todo", "in_progress"].',
 				),
-			driver: z
-				.string()
-				.uuid()
-				.optional()
-				.describe('Filter to objects with this driver actor UUID'),
+			driver: z.string().uuid().optional(),
 			updated_before: z
 				.string()
 				.datetime({ offset: true })
@@ -709,11 +689,7 @@ export const tools = {
 				.describe('Object type. Call get_workspace_schema to see the live list.')
 				.optional(),
 			status: z.string().optional(),
-			driver_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe('Filter to objects with this driver actor UUID'),
+			driver_id: z.string().uuid().optional(),
 			updated_after: z
 				.string()
 				.datetime({ offset: true })
@@ -865,7 +841,7 @@ export const tools = {
 			'Create an actor (human or agent); returns it with an API key (shown once). With workspace_id an agent joins as a member (role ignored) and a human is emailed an invitation. Agents default to auto_create_workspace=false, so workspace_id is effectively required for type "agent"; omitting both fails. Humans default to auto_create_workspace=true, which creates a new empty workspace. To add an existing agent to a workspace use update_actor. Setting tools or llm_config needs a human admin or owner caller (otherwise 403 and nothing is created): leave them out and set them later with update_actor. attach_skill_ids (needs workspace_id) gives the agent skills from the start. The requester automatically gets a "Meet {name}" chat from the new agent, so do not send another hello. Pass first_steps (2 to 3, specific to the agent\'s job) and needed_integrations. Details: docs/reference/mcp-tools.md.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
-			name: z.string().min(1).describe('Name of actor'),
+			name: z.string().min(1),
 			email: z.string().email().optional().describe('Required for humans'),
 			auto_create_workspace: z
 				.boolean()
@@ -903,7 +879,7 @@ export const tools = {
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. Needed for any agent that acts outside Maskin. For a connected integration, copy that provider\'s `mcp.server` from list_integration_providers in under the provider name (connecting alone exposes no tools unless its `mcp.autoInject` is true). `type` ("stdio" or "http") is required on each entry; omitting it fails with a bare "Invalid input".',
+					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. For a connected integration copy that provider\'s `mcp.server` from list_integration_providers in under the provider name (connecting alone exposes no tools unless its `mcp.autoInject` is true). `type` ("stdio" or "http") is required on each entry.',
 				),
 			llm_config: actorLlmConfigSchema,
 			first_steps: z
@@ -912,7 +888,7 @@ export const tools = {
 				.max(4)
 				.optional()
 				.describe(
-					'Agents only. 2 to 3 steps specific to the agent\'s job, shown as buttons in its intro chat, each { label (max 60), prompt (max 200), action }. "send" sends the prompt as written when tapped (prompt must equal label, no trailing space): only for steps that read and report. "fill" puts the prompt in the message box for the person to finish: use it for anything that needs their words or that writes, sends, spends or deletes. Plain text, no line breaks. Not stored on the agent.',
+					'Agents only. 2 to 3 steps specific to the agent\'s job, shown as buttons in its intro chat, each { label (max 60), prompt (max 200), action }. "send" sends the prompt as written (prompt must equal label, no trailing space) and is only for steps that read and report. "fill" puts the prompt in the message box for the person to finish: use it for anything that needs their words or writes, sends, spends or deletes. Plain text, no line breaks.',
 				),
 			needed_integrations: z
 				.array(z.string().min(1).max(100))
@@ -935,7 +911,7 @@ export const tools = {
 			"Update an actor by ID: name, email, description (max 80 chars), system_prompt / instructions (agents only), tools, llm_config (agents only), skill attachments (attach_skill_ids / detach_skill_ids), starter_prompts (agents only), and optionally add the actor to a workspace (workspace_id + role). This is how to add an existing agent created in this workspace to a workspace (a person or an agent created elsewhere gets 403; people join by accepting an email invitation); to add a brand-new actor while creating it, use create_actor. Changing another actor's `tools` needs owner or admin. A `tools` config read back from get_actor can be sent as-is: env and header values shown as `********` keep their stored value if the server command, args and url are unchanged.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
-			name: z.string().min(1).optional().describe('New name for the actor.'),
+			name: z.string().min(1).optional(),
 			email: z
 				.string()
 				.email()
@@ -1129,7 +1105,7 @@ export const tools = {
 			'Add a metadata field to an object type (built-in or custom). Once added, it shows in get_workspace_schema and is accepted in create_objects and update_objects metadata. Names must be unique within a type.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type to attach the field to.'),
+			type: z.string().min(1),
 			name: z.string().min(1).describe('Field name. Must be unique within the type.'),
 			field_type: z
 				.enum(['text', 'number', 'date', 'enum', 'boolean'])
@@ -1149,8 +1125,8 @@ export const tools = {
 			'Update a metadata field on an object type: rename, change type, toggle required, or edit enum values. Pass only what changes. For enum values prefer add_values/remove_values (idempotent); use values only to replace the whole list. Objects keep values already stored even after they are removed from the list; only new writes are constrained.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Existing field name to update.'),
+			type: z.string().min(1),
+			name: z.string().min(1),
 			new_name: z
 				.string()
 				.min(1)
@@ -1184,8 +1160,8 @@ export const tools = {
 			'Remove a metadata field from an object type. Existing objects keep data already stored under it; new writes cannot set it. Idempotent: deleting a missing field succeeds.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Field name to delete.'),
+			type: z.string().min(1),
+			name: z.string().min(1),
 		}),
 	},
 	// ─── Workspace Skills ─────────────────────────────────────
@@ -1362,7 +1338,7 @@ export const tools = {
 			'Get a file with its content and a viewer URL. Over 50 MB: `content` is empty, `contentOmitted: true` and a short-lived `downloadUrl` is given. `encoding` is "utf8" (`content` is the raw string) or "base64". `annotations` are pinned reviewer comments (CSS `selector`, `bounds`, `comment`). Pass `contentHash` as `if_match` to update_file to refuse your write if someone saved in between. HTML pages (deck, website, dashboard, custom view) are mostly embedded fonts and inline CSS or script, so raw `content` is huge: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, tables, links, labels, slide notes), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. There is no offset or limit; use format "text" rather than paging raw bytes.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('File ID.'),
+			id: z.string().uuid(),
 			format: z
 				.enum(['raw', 'text'])
 				.optional()
@@ -1389,7 +1365,7 @@ export const tools = {
 			'Update a file. Pass any subset of name, description, kind, mime_type, content (at least one). Updating content re-uploads the bytes; other fields update metadata only. Text: pass `content` as a raw string; binary: `encoding` "base64". To avoid overwriting a save made since you read the file, pass the `contentHash` from get_file as `if_match`: a stale hash fails with a 409, writes nothing and returns the current hash; re-read, merge, retry. Without `if_match` the last write wins. To change part of a text file pass `edits` instead of `content`: a list of `{old, new, replace_all?}` applied in order on the server. `old` must match exactly once (add context to be unique) unless `replace_all` is true; an edit that matches nothing or more than once fails with a 400 and nothing is written. `edits` and `content` cannot be combined. `edits` works with `if_match`. Copy `old` from the raw text of get_file, not the `format: "text"` extract.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('File ID.'),
+			id: z.string().uuid(),
 			name: z.string().min(1).max(255).optional(),
 			description: z.string().max(1000).nullable().optional(),
 			kind: z
@@ -1455,7 +1431,7 @@ export const tools = {
 			'Propose text changes to a markdown file for review instead of overwriting it. Pass the file `id` and `changes`, each with `old_text` (exact text from the file), `new_text` and optional `reason`. Each `old_text` is matched against the raw markdown and must occur exactly once (add context to be unique); changes may not overlap. If any change fails the whole call is rejected with the change index and nothing is stored. Limits: 50 changes, `old_text` up to 4000 characters, `new_text` up to 8000. Markdown files only. The file itself is not changed: the proposal is stored and the driver of each attached object is notified. Returns the proposal id and file URL. For a new file or a full rewrite, use update_file.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('File ID.'),
+			id: z.string().uuid(),
 			summary: z
 				.string()
 				.max(1000)
@@ -1482,7 +1458,7 @@ export const tools = {
 		description: 'Delete a file from the workspace. Bytes are removed from storage.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('File ID.'),
+			id: z.string().uuid(),
 		}),
 	},
 	get_events: {
@@ -1507,13 +1483,14 @@ export const tools = {
 			'Get comments on an object, newest first. Replies point to the comment they answer through data.parentEventId. Pass `next_cursor` back as `cursor` for the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
+			entity_id: z.string().uuid(),
 			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
 			cursor: z.string().optional().describe('The `next_cursor` from a prior response.'),
 		}),
 	},
 	create_comment: {
-		description: `A comment stays on an object (bet, task, insight) as a visible record, alongside chat. Use it for status updates, questions, findings, decisions and blockers, not \`bet.content\`, \`task.content\` or titles (the durable spec, which nobody scans for news).\n\n${HUMAN_MESSAGE_STYLE_SHORT} A chart or task checklist (see the \`content\` and \`metadata\` param docs) is available when it helps.\n\nTo get a human to make a call, put them in \`mentions\` and fill in \`decision\`: that pair is the only way an ask reaches their For You feed as a one-tap decision. The API rejects a decision that breaks its rules and lists every violation.\n\nA reply to the comment that dispatched this session is threaded automatically. Pass \`parent_event_id\` to reply under a different comment; \`no_thread: true\` starts a top-level comment.\n\nOnly agents in \`mentions\` are woken, so mention the agent when you hand off or need a reply. Mentioned humans are notified.`,
+		description:
+			'Comment on an object (bet, task, insight): a visible record for status updates, questions, findings, decisions and blockers. Do not bury that dialogue in `bet.content`, `task.content` or titles.\n\nTo get a human to make a call, put them in `mentions` and fill in `decision`; that pair is the only way an ask reaches their For You feed as a one-tap decision.\n\nA reply is threaded into the comment that dispatched this session automatically. Pass `parent_event_id` to reply under a different comment, or `no_thread: true` for a new top-level comment.\n\nOnly agents in `mentions` are woken, so mention the agent when you hand off or need a reply. Mentioned humans are notified.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1521,13 +1498,13 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Force a new top-level comment on `entity_id` instead of replying in the dispatching thread. Ignored if `parent_event_id` is set.',
+					'New top-level comment instead of replying in the dispatching thread. Ignored if `parent_event_id` is set.',
 				),
 			wait: z
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until each agent in `mentions` has replied in the thread and return the replies. Ends early with settled false if an agent never starts or the wait runs out. No agent mentioned, no wait.',
+					'Hold until each mentioned agent has replied in the thread and return the replies. Ends early with settled false if an agent never starts or the wait runs out.',
 				),
 		}),
 	},
@@ -1608,7 +1585,7 @@ export const tools = {
 				.positive()
 				.optional()
 				.describe(
-					"Reply in the thread under this message instead of at the top level. Must be a top-level message of this conversation (pass the thread's root, not a reply). If a sub-chat hangs from that message, the reply also goes to its agent. Most callers want sub_chat_session_id instead.",
+					"Reply in the thread under this top-level message of the conversation (pass the thread's root, not a reply). A sub-chat hanging from it gets the reply too; most callers want sub_chat_session_id instead.",
 				),
 			also_in_channel: z
 				.boolean()
@@ -1624,7 +1601,7 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has replied, and return the replies. Ends early with settled false if an agent never starts or the wait runs out; read the chat later with list_conversation_messages. Use only when you cannot go on without the answer.',
+					'Hold until every agent you @mentioned (or, with no mention, every other agent in the chat) has replied, and return the replies. Ends early with settled false if an agent never starts or the wait runs out; read the chat later with list_conversation_messages.',
 				),
 		}),
 	},
@@ -1683,7 +1660,7 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
-			actor_id: z.string().uuid().describe('The participant to remove'),
+			actor_id: z.string().uuid(),
 		}),
 	},
 	get_chat_activity: {
@@ -1692,7 +1669,7 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid().optional(),
-			actor_id: z.string().uuid().optional().describe('Only this agent'),
+			actor_id: z.string().uuid().optional(),
 			session_id: z
 				.string()
 				.uuid()
@@ -1713,7 +1690,7 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid().optional(),
-			actor_id: z.string().uuid().optional().describe('The agent to stop'),
+			actor_id: z.string().uuid().optional(),
 			session_id: z
 				.string()
 				.uuid()
@@ -1814,7 +1791,7 @@ export const tools = {
 			'Read one trigger in full by id, including its action prompt and config. Find ids with list_triggers.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('From list_triggers.'),
+			id: z.string().uuid(),
 		}),
 	},
 	// ─── Loops ───────────────────────────────────────────────
@@ -1833,9 +1810,9 @@ export const tools = {
 			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. A STEP is a trigger that fires an agent on an object event or a schedule; add steps inline with `steps` or attach existing triggers with `trigger_ids`. Before adding a step, check with list_actors and list_triggers that the agent's role and system_prompt fit; never default to an unrelated agent, create one with create_actor if none fits. Member objects (any type) are linked by `in_loop` edges. Draft, paused and archived turn every trigger off. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. Add more later with update_loop; read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome. Details: docs/reference/loops.md.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
-			name: z.string().min(1).describe('Loop name.'),
+			name: z.string().min(1),
 			driver_id: loopDriverIdSchema,
-			content: z.string().optional().describe('What the loop is for, in plain language.'),
+			content: z.string().optional(),
 			status: z
 				.enum(MCP_LOOP_STATUSES)
 				.default('draft')
@@ -1886,8 +1863,8 @@ export const tools = {
 			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach or detach triggers (the loop's steps), add or remove member objects, and set closed_statuses (or closed_when) for custom object types. A step and a trigger are the same thing: see create_loop for `steps`/`trigger_ids` and how to pick a fitting agent. Use add_steps with an event `when` on the close condition to CLOSE an open loop (the feedback step that captures learnings and seeds the next object). Added trigger ids are validated against the workspace. Setting `status` to `draft`, `paused` or `archived` disables every trigger on the loop (including ones added in this call); a running status re-enables them. add_object_ids creates `in_loop` edges (idempotent), remove_object_ids deletes them. driver_id changes the driver (it cannot be cleared). Find loop ids with list_loops. Fails if the id is not a loop: use update_objects for other objects.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('Loop id (from list_loops).'),
-			name: z.string().min(1).optional().describe('New loop name.'),
+			id: z.string().uuid(),
+			name: z.string().min(1).optional(),
 			driver_id: loopDriverIdSchema.optional(),
 			content: z.string().optional().describe('New description (replaces the current one).'),
 			status: z
@@ -1964,7 +1941,7 @@ export const tools = {
 			'Get one Loop by id: status pill, entry/close conditions, in-progress and closed member counts, median time-to-close, and `steps` (each trigger with its agent). Find ids with list_loops. Fails if the id is not a loop.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('Loop id (from list_loops).'),
+			id: z.string().uuid(),
 		}),
 	},
 	delete_loop: {
@@ -1972,7 +1949,7 @@ export const tools = {
 			'Delete a Loop and its `in_loop` edges. Member objects and step triggers are kept (remove unused triggers with delete_trigger). Fails if the id is not a loop. Cannot be undone.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid().describe('Loop id (from list_loops).'),
+			id: z.string().uuid(),
 		}),
 	},
 
@@ -1982,12 +1959,10 @@ export const tools = {
 			'A view answers one question: are we reaching the outcome? Open with the outcome in one plain sentence and the headline number vs its target, then the three to five metrics that matter most (name, value with unit, comparison, source), then what needs a person now.',
 			'Build: one self-contained HTML file (create_file, mime_type text/html), no network calls, an empty and an error state for every number (show the error message), readable in light and dark. A source returns every group, so page or scroll long tables.',
 			'Data: declare sources in <script id="maskin-sources" type="application/json">{ "<name>": <query_data input without workspace_id> }</script> and read them with window.maskin.query("<name>") (a promise). The page reloads itself when its numbers change: query once, never poll. Use moving date bounds ("now-7d", "today-30d"), never fixed dates.',
-			'Example:',
-			'<script id="maskin-sources" type="application/json">{"done":{"scope":"<loop id>","type":"task","filters":{"status":"done"}}}</script>',
 		].join('\n'),
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			loop_id: z.string().uuid().describe('Loop id (from list_loops).'),
+			loop_id: z.string().uuid(),
 			file_id: z
 				.string()
 				.uuid()
@@ -2925,11 +2900,7 @@ export const legacyListTools = {
 				.describe('Object type. Call get_workspace_schema to see the live list.')
 				.optional(),
 			status: z.string().optional(),
-			driver: z
-				.string()
-				.uuid()
-				.optional()
-				.describe('Filter to objects with this driver actor UUID'),
+			driver: z.string().uuid().optional(),
 			updated_before: z
 				.string()
 				.datetime({ offset: true })
@@ -2978,11 +2949,7 @@ export const legacyListTools = {
 				.describe('Object type, built-in or custom. See get_workspace_schema.')
 				.optional(),
 			status: z.string().optional(),
-			driver_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe('Filter to objects with this driver actor UUID'),
+			driver_id: z.string().uuid().optional(),
 			updated_after: z
 				.string()
 				.datetime({ offset: true })

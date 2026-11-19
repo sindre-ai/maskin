@@ -19,7 +19,7 @@ export const COMMENT_MAX_LENGTH = 50000
 export const COMMENT_MAX_ATTACHMENTS = 10
 
 export const createCommentSchema = z.object({
-	entity_id: z.string().uuid().describe('Object ID to post the comment on.'),
+	entity_id: z.string().uuid(),
 	content: z
 		.string()
 		.min(1, 'Comment cannot be empty')
@@ -28,14 +28,14 @@ export const createCommentSchema = z.object({
 			`Comment must be ${COMMENT_MAX_LENGTH} characters or fewer. Split long messages into multiple comments or replies.`,
 		)
 		.describe(
-			`${HUMAN_MESSAGE_STYLE_SHORT} Write it like a Slack message: one thought per comment, no headers, bold labels or bulleted sections. Link other objects as \`[title](link)\`, never partial UUIDs. Max ${COMMENT_MAX_LENGTH} characters. A fenced \`\`\`chart block with a JSON spec \`{ "type": "bar"|"line"|"area", "x": "<field>", "series": ["<field>", ...], "data": [{ ... }], "caption": "..." }\` renders an inline chart.`,
+			`${HUMAN_MESSAGE_STYLE_SHORT} Write it like a Slack message: one thought per comment, no headers, bold labels or bulleted sections. Link other objects as \`[title](link)\`, never partial UUIDs. A fenced \`\`\`chart block holding JSON { type: bar|line|area, x, series, data, caption } renders an inline chart.`,
 		),
 	mentions: z
 		.array(z.string().uuid())
 		.max(50)
 		.optional()
 		.describe(
-			'Actor UUIDs to @mention. A mentioned agent gets a session to read and reply on the object; a mentioned human is notified, so mention people whose input would unblock you. Take every id from a live list_actors call, never from memory: a wrong id silently mentions nobody. Unmatched ids are dropped and listed in `unresolved_mentions`; look the actor up and post a correction.',
+			'Actor UUIDs to @mention, from a live list_actors call and never from memory (a wrong id silently mentions nobody). A mentioned agent gets a session to reply; a human is notified. Unmatched ids are dropped and listed in `unresolved_mentions`.',
 		),
 	parent_event_id: z
 		.number()
@@ -47,13 +47,11 @@ export const createCommentSchema = z.object({
 		.array(z.string().uuid())
 		.max(COMMENT_MAX_ATTACHMENTS)
 		.optional()
-		.describe(
-			`File ids from create_file or list_files, shown as cards under the comment (max ${COMMENT_MAX_ATTACHMENTS}).`,
-		),
+		.describe('File ids (create_file, list_files), shown as cards.'),
 	metadata: safeMetadataSchema
 		.optional()
 		.describe(
-			'For a live task checklist pass { tasks: ["<task-uuid>", ...] }: each row shows a checkbox (checked when the task is done), a link and its driver. Options for a human to pick go in `decision`, not here.',
+			'For a live task checklist pass { tasks: ["<task-uuid>", ...] }. Options for a human to pick go in `decision`, not here.',
 		),
 	decision: commentDecisionSchema.optional(),
 	attention: z
@@ -63,6 +61,6 @@ export const createCommentSchema = z.object({
 		.max(5)
 		.optional()
 		.describe(
-			'Importance for the human reading it, 1-5, ordering their For You feed. 5 = critical, blocks progress or needs an urgent decision; 4 = high, look today; 3 = normal update or question; 2 = minor note; 1 = FYI. Reserve 5 for what is business-critical. Unset sorts below any scored comment.',
+			'Importance for the human, 1-5, ordering their For You feed: 5 critical (urgent decision or blocks work), 4 look today, 3 normal, 2 minor, 1 FYI.',
 		),
 })

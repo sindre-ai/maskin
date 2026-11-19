@@ -35,7 +35,7 @@ export const doneWhenLineInputSchema = z.object({
 		.boolean()
 		.optional()
 		.describe(
-			"True when making the line true sends something in a person’s name, spends money or deletes something. The card's go-ahead never covers it.",
+			"True when making the line true sends in a person’s name, spends or deletes; the card's go-ahead never covers it.",
 		),
 	reading: z
 		.string()
@@ -43,12 +43,7 @@ export const doneWhenLineInputSchema = z.object({
 		.max(300)
 		.optional()
 		.describe('code lines only: what the system reads, e.g. "Stripe payments in the last 7 days".'),
-	comparison: z
-		.string()
-		.min(1)
-		.max(100)
-		.optional()
-		.describe('code lines only: how the reading is compared, e.g. ">= 3".'),
+	comparison: z.string().min(1).max(100).optional(),
 })
 
 /**
@@ -61,15 +56,13 @@ export const doneWhenBlockSchema = z.object({
 		.max(DONE_WHEN_QUESTIONS_MAX)
 		.optional()
 		.describe(
-			`Questions about the goal to answer before writing the lines, all at once, shown at the top of the card (up to ${DONE_WHEN_QUESTIONS_MAX}).`,
+			`Questions to answer before writing the lines, all at once (up to ${DONE_WHEN_QUESTIONS_MAX}).`,
 		),
 	lines: z
 		.array(doneWhenLineInputSchema)
 		.min(DONE_WHEN_LINES_MIN)
 		.max(DONE_WHEN_LINES_MAX)
-		.describe(
-			`The done-when list, ${DONE_WHEN_LINES_MIN} to ${DONE_WHEN_LINES_MAX} lines: what "done" means for this job.`,
-		),
+		.describe(`${DONE_WHEN_LINES_MIN} to ${DONE_WHEN_LINES_MAX} lines.`),
 })
 
 export type DoneWhenBlock = z.infer<typeof doneWhenBlockSchema>

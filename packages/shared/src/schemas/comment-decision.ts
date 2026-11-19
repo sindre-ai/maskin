@@ -86,48 +86,41 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			`${CONSEQUENCES_MIN}-${CONSEQUENCES_MAX} lines, present tense, one clause each ("Ships with cycle 1 tomorrow"). Put guardrails here and make one a downside. No semicolons and no ", and".`,
 		),
-	recommended: z
-		.boolean()
-		.optional()
-		.describe('Set true on exactly one option, the one you would take.'),
+	recommended: z.boolean().optional(),
 	destructive: z
 		.boolean()
 		.optional()
 		.describe(
-			'Set true on an option that cannot be undone or reaches real people (sends, deletes, spends, ships). The human must confirm it.',
+			'Set true on an option that cannot be undone or reaches real people (sends, deletes, spends, ships); the human must confirm it.',
 		),
 	default_on_silence: z
 		.boolean()
 		.optional()
 		.describe(
-			'Set true on the one option taken if nobody answers by expires_at (needs expires_at). You are woken once at the deadline. Reversible options only: refused on a card with a destructive or delete_agent option, a draft, or a set_status default.',
+			'Set true on the one option taken if nobody answers by expires_at (needs expires_at). Reversible only: refused with a destructive or delete_agent option, a draft or a set_status default.',
 		),
 	set_status: z
 		.object({
-			status: z.string().min(1).describe('The status to put the object in, e.g. "active".'),
-			object_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe('The object to move, if not the one this comment is on.'),
+			status: z.string().min(1),
+			object_id: z.string().uuid().optional().describe("Object to move, if not this comment's."),
 		})
 		.optional()
 		.describe(
-			'On the option that moves an object to a new status. The tap makes the change as the person, only if the object is still in the status it had when you posted. Do not also flip it yourself. All set_status options on a card name the same object.',
+			'On the option that moves an object to a new status. The tap makes the change as the person if the object is still in the status it had when you posted; do not also flip it yourself. All set_status options name the same object.',
 		),
 	approve_done_when: z
 		.boolean()
 		.optional()
 		.describe(
-			'Set true on the one option that approves the done-when list (needs done_when). Only a person tapping it approves; it also gives the go-ahead for every line that does not send, spend or delete.',
+			'Set true on the one option that approves the done-when list (needs done_when). Only a person tapping it approves.',
 		),
 	delete_agent: z
 		.object({
-			actor_id: z.string().uuid().describe('The agent to delete: its id from list_actors.'),
+			actor_id: z.string().uuid(),
 		})
 		.optional()
 		.describe(
-			'On the option that approves deleting another agent; mark it destructive. The tap only records approval: the reply wakes you, then call delete_agent with the same id within 24 hours. Not for yourself or a system agent. All delete_agent options on a card name the same agent.',
+			'On the option that approves deleting another agent; mark it destructive. The tap only records approval: the reply wakes you, then call delete_agent with the same id within 24 hours. All delete_agent options name the same agent.',
 		),
 })
 
@@ -156,44 +149,33 @@ function buildDecisionDraftSchema() {
 				.min(1)
 				.max(40)
 				.optional()
-				.describe(
-					'Only in `drafts`: a short key for this message ("dan-1"), unique within the card. The reply to Send or Skip carries it.',
-				),
+				.describe('Only in `drafts`: a short key, unique in the card.'),
 			object_id: z
 				.string()
 				.uuid()
 				.optional()
-				.describe(
-					'The object whose description IS the draft and nothing else. The card shows it live. Preferred over body.',
-				),
+				.describe('Object whose description IS the draft (preferred over body).'),
 			file_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'The workspace file the card is about (HTML page, markdown, image, text), shown live above the buttons. Save it first with create_file. For a message to send use object_id.',
+					'Workspace file the card is about (HTML, markdown, image). Save it with create_file first.',
 				),
 			label: z
 				.string()
 				.min(1)
 				.max(30)
 				.optional()
-				.describe(
-					'Short label shown above it ("Email to Hans"), 30 characters at most. Defaults to "Draft" or the file name.',
-				),
-			to: z
-				.string()
-				.min(1)
-				.max(300)
-				.optional()
-				.describe('Who it goes to ("Hans Jensen, Netwerk"). Leave out for a public post.'),
+				.describe('Label above it, 30 characters at most (default "Draft" or the file name).'),
+			to: z.string().min(1).max(300).optional(),
 			body: z
 				.string()
 				.min(1)
 				.max(20_000)
 				.optional()
 				.describe(
-					'Only when the draft is not an object: the exact text you will send, not a summary. Ignored when object_id is set and the object has a description.',
+					'Only if the draft is not an object: the exact text. Ignored when object_id is set.',
 				),
 		})
 		.refine(
@@ -224,14 +206,14 @@ export const commentDecisionSchema = z
 			.min(1)
 			.optional()
 			.describe(
-				"Leave out when the title is already the question. Otherwise first person, one sentence: the single call you cannot make alone and why it is the human's. No hedging or apologising.",
+				"Leave out when the title is already the question. Otherwise first person, one sentence: the call you cannot make alone and why it is the human's. No hedging.",
 			),
 		options: z
 			.array(decisionOptionSchema)
 			.min(OPTIONS_MIN)
 			.max(OPTIONS_MAX)
 			.describe(
-				`${OPTIONS_MIN} or ${OPTIONS_MAX} options, exactly one marked recommended. They render as the buttons the human taps, so make them the real choices.`,
+				`${OPTIONS_MIN} or ${OPTIONS_MAX} options, exactly one marked recommended. They render as the buttons the human taps.`,
 			),
 		drafts: z
 			.array(buildDecisionDraftSchema())
@@ -239,57 +221,55 @@ export const commentDecisionSchema = z
 			.max(DRAFTS_MAX)
 			.optional()
 			.describe(
-				`Use instead of \`draft\` for several messages (up to ${DRAFTS_MAX}). Each gets its own preview with Send and Skip, and the reply names it by \`id\`, so give every message one. The card's options apply to the whole batch.`,
+				`Use instead of \`draft\` for several messages (up to ${DRAFTS_MAX}), each with its own Send and Skip. Give every message an \`id\`. The card's options apply to the whole batch.`,
 			),
 		only_while_status: z
 			.array(z.string().min(1))
 			.min(1)
 			.optional()
 			.describe(
-				'Statuses the object must still be in for the ask to make sense, e.g. ["define"]. The card drops from For You once it is in any other status. Leave out and it drops when the object leaves the status it had when you posted (see keep_on_status_change).',
+				'Statuses the object must still be in, e.g. ["define"]; the card drops once it is in any other. Without it the card drops when the object leaves the status it had when you posted (see keep_on_status_change).',
 			),
 		keep_on_status_change: z
 			.boolean()
 			.optional()
 			.describe(
-				'Set true only when the card must stay on For You after the object changes status, e.g. you move the task on while the person is still deciding.',
+				'Set true only when the card must stay on For You after the object changes status.',
 			),
 		expires_at: z
 			.string()
 			.datetime({ offset: true })
 			.optional()
 			.describe(
-				'ISO 8601 date-time after which the ask is moot, e.g. "2026-10-29T17:00:00Z". Set it whenever an option or the ask names a deadline; the card then leaves For You. Must be in the future.',
+				'ISO 8601 date-time after which the ask is moot. Set it whenever an option or the ask names a deadline; the card then leaves For You. Must be in the future.',
 			),
 		no_status_action: z
 			.boolean()
 			.optional()
 			.describe(
-				'Set true only when the API rejected the card for asking to change a status but the ask is about something else.',
+				'Set true only when the API rejected the card for a status change but the ask is about something else.',
 			),
 		status_stamp: z
 			.object({ object_id: z.string().uuid(), status: z.string().min(1) })
 			.optional()
-			.describe(
-				"Set by the API: the card's object and its status when posted. Do not set it; any value you send is replaced.",
-			),
+			.describe('Set by the API; any value you send is replaced.'),
 		done_when: doneWhenBlockSchema
 			.optional()
 			.describe(
-				"Propose the done-when list for a job: what will be true when the work is done, each line tagged Code, Checker or You. Posting saves a draft; a person tapping the approve_done_when option approves it. You cannot approve or edit an approved list; if they reply with changes, post a new card. The job is the comment's object.",
+				"Propose the done-when list for a job (this comment's object): what will be true when it is done, each line tagged Code, Checker or You. A person tapping the approve_done_when option approves it; an approved list cannot be edited, so post a new card if they reply with changes.",
 			),
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
-				"Attach this whenever the call is whether to send something in a person's name or to the outside world, so the human reads exactly what would go out. Give object_id (preferred), file_id or the exact text as body. Never put the text in the summary.",
+				"Attach this whenever the call is whether to send something in a person's name or to the outside world, so the human reads what would go out. Give object_id (preferred), file_id or the text as body, never in the summary.",
 			),
 	})
 	.describe(
 		[
-			'Attach this when you need a human to make a call, together with that human in `mentions` (a decision with empty `mentions` reaches nobody). It renders as a card in their For You feed: title as headline, summary and ask as body, each option a button.',
-			'To ask approval of a message, save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and its recipient fields; set `draft.object_id` to that task and mark exactly one option `destructive: true`, the send option. See the `draft-approval-tasks` skill.',
-			'A new card withdraws your earlier cards on the same object. To ask whether an object should change status, put `set_status` on the option that does it; a card that talks about a status change without it is rejected.',
-			'The API rejects a decision that breaks its rules and lists every violation: title 9 words or fewer ending in "?", summary at most 2 sentences, 2-3 options with 2-3 one-clause consequences each, no em-dash, en-dash, emoji or hedge word ("several", "many") standing in for a number.',
+			'Attach this when you need a human to make a call, together with that human in `mentions` (a decision with empty `mentions` reaches nobody). It renders as a card in their For You feed, each option a button.',
+			'To ask approval of a message, save it first as a task whose content is only the exact text, with `metadata.kind` (email, linkedin_message, linkedin_post, slack_message) and recipient fields; set `draft.object_id` to it and mark the send option `destructive: true`. See the `draft-approval-tasks` skill.',
+			'A new card withdraws your earlier cards on the same object. To ask whether an object should change status, put `set_status` on that option; a card that talks about a status change without it is rejected.',
+			'The API rejects a decision that breaks its rules (no em-dash, en-dash, emoji or hedge word such as "several" standing in for a number) and lists every violation.',
 		].join('\n'),
 	)
 
