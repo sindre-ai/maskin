@@ -130,7 +130,7 @@ export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 /** Rotate at this share of the window the session reports... */
 export const ROTATION_WINDOW_SHARE = 0.6
 /** ...but never later than this many tokens. A judgment number: tune after the first week of events. */
-export const ROTATION_MAX_TOKENS = 150_000
+export const ROTATION_MAX_TOKENS = 8_000
 
 /**
  * The size, in tokens, at which a chat session is restarted: 60% of the window the session
