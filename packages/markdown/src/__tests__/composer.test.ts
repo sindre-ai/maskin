@@ -158,6 +158,56 @@ function pressEnter(editor: Editor): boolean {
 	return editor.view.someProp('handleKeyDown', (f) => f(editor.view, event)) === true
 }
 
+function pressKey(editor: Editor, init: KeyboardEventInit): boolean {
+	const event = new KeyboardEvent('keydown', init)
+	return editor.view.someProp('handleKeyDown', (f) => f(editor.view, event)) === true
+}
+
+describe('message box lists', () => {
+	// The caret at the end of the document, in the last (empty) item.
+	async function inEmptyItem(list: string) {
+		const box = await open(`${list}one\n${list.startsWith('1') ? '2. ' : '- '}`)
+		box.editor.commands.focus('end')
+		return box
+	}
+
+	for (const [name, list] of [
+		['bullet', '- '],
+		['numbered', '1. '],
+	] as const) {
+		it(`leaves a ${name} list on Shift+Enter in an empty item`, async () => {
+			const { editor } = await inEmptyItem(list)
+			expect(editor.isActive('listItem')).toBe(true)
+			expect(pressKey(editor, { key: 'Enter', shiftKey: true })).toBe(true)
+			expect(editor.isActive('listItem')).toBe(false)
+			expect(editor.state.selection.$from.parent.type.name).toBe('paragraph')
+			editor.destroy()
+		})
+
+		it(`leaves a ${name} list on Enter in an empty item`, async () => {
+			const { editor } = await inEmptyItem(list)
+			editor.commands.keyboardShortcut('Enter')
+			expect(editor.isActive('listItem')).toBe(false)
+			editor.destroy()
+		})
+	}
+
+	it('leaves Shift+Enter in an item with text to the editor', async () => {
+		const { editor } = await open('- one')
+		editor.commands.focus('end')
+		expect(pressKey(editor, { key: 'Enter', shiftKey: true })).toBe(false)
+		expect(editor.isActive('listItem')).toBe(true)
+		editor.destroy()
+	})
+
+	it('leaves Shift+Enter in a code block to the editor', async () => {
+		const { editor } = await open('```\ncode\n```')
+		editor.commands.focus('end')
+		expect(pressKey(editor, { key: 'Enter', shiftKey: true })).toBe(false)
+		editor.destroy()
+	})
+})
+
 describe('message box emoji list', () => {
 	function withEmojiView() {
 		const states: EmojiMenuState[] = []
