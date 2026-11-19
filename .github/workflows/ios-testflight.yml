@@ -47,6 +47,10 @@ name: iOS TestFlight
 # Store Connect; without it the upload is rejected. TV is not sent to App Review (app-review below
 # stays iPhone only). dSYMs are kept as Maskin-TV-dSYMs-<build number>.
 #
+# The TV job is off until the repository variable APPLE_TV_UPLOAD is set to true (Settings, Secrets
+# and variables, Actions, Variables). Infra & DevOps sets it once the Apple TV app record exists in
+# App Store Connect, so a version bump before that does not turn main red or spend a second Mac run.
+#
 # App Review: a merge that changes MARKETING_VERSION in apps/apple/project.yml also sends that
 # version to App Review, once the upload is processed (job app-review, .github/scripts/
 # asc-submit-review.mjs). The what's-new text comes from
@@ -297,11 +301,13 @@ jobs:
 
   # Apple TV archive and upload, after the iPhone upload (see the header). Same build number as the
   # iPhone build, taken from that job. When the iPhone job did not archive (secrets not set) the
-  # build number is empty and this job is skipped. A fresh Mac, so it records and revokes its own
-  # development certificates; running after the iPhone job means the two never see each other's.
+  # build number is empty and this job is skipped. Also skipped until the repository variable
+  # APPLE_TV_UPLOAD is true, which is set once the Apple TV app record exists in App Store Connect.
+  # A fresh Mac, so it records and revokes its own development certificates; running after the
+  # iPhone job means the two never see each other's.
   testflight-tv:
     needs: testflight
-    if: needs.testflight.result == 'success' && needs.testflight.outputs.build_number != ''
+    if: needs.testflight.result == 'success' && needs.testflight.outputs.build_number != '' && vars.APPLE_TV_UPLOAD == 'true'
     runs-on: macos-26
     timeout-minutes: 90
     env:
