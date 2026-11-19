@@ -51,7 +51,7 @@ export const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
  * `supervised` → `live`), can be `paused` from any point, and is `archived`
  * once retired.
  *
- * Status decides whether the loop runs: `draft` and `paused` turn every
+ * Status decides whether the loop runs: `draft`, `paused` and `archived` turn every
  * trigger referenced in the loop's `metadata.trigger_ids` off, and moving to
  * any other status turns them back on (see the loop-status hook in
  * `apps/dev/src/lib/object-update.ts`). Kept here alongside the extension
@@ -65,7 +65,7 @@ export type LoopStatus = (typeof LOOP_STATUSES)[number]
 export const LOOP_RUNNING_STATUSES = ['pilot', 'supervised', 'live'] as const
 
 /** Statuses that keep every trigger of the loop switched off. */
-export const LOOP_TRIGGERS_OFF_STATUSES = ['draft', 'paused'] as const
+export const LOOP_TRIGGERS_OFF_STATUSES = ['draft', 'paused', 'archived'] as const
 
 /** True when a loop in this status must have its triggers switched off. */
 export function loopStatusTurnsTriggersOff(status: string | null | undefined): boolean {

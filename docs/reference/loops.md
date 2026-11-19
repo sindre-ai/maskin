@@ -42,11 +42,11 @@ screens, chat routing and next steps.
 | `supervised` | Running, second rung: triggers on, for a flow that has earned some trust. |
 | `live` | Running, top rung: triggers on, fully trusted. |
 | `paused` | Stopped on purpose from any rung: every trigger is off until the loop moves to another status. |
-| `archived` | Retired. Terminal; it keeps its triggers as they were and drops out of the running views. |
+| `archived` | Retired. Terminal: every trigger the loop references is off, and it drops out of the running views. |
 
-`draft` and `paused` turn every trigger in the loop's `metadata.trigger_ids` off, and moving to any
-other status turns them back on. Moving between `draft` and `paused`, or between the running rungs,
-changes nothing. That behavior lives in `PATCH /api/objects/:id` (`apps/dev/src/lib/object-update.ts`),
+`draft`, `paused` and `archived` turn every trigger in the loop's `metadata.trigger_ids` off, and
+moving to a running status (`pilot`, `supervised`, `live`) turns them back on. Moving between two off
+statuses, or between the running rungs, changes nothing. That behavior lives in `PATCH /api/objects/:id` (`apps/dev/src/lib/object-update.ts`),
 so it applies uniformly whether the status change comes from the web UI, the iPhone app or the MCP
 `update_loop` tool. Whether `pilot` also holds back steps that leave the company is not decided yet.
 
@@ -103,7 +103,7 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
   created; if the loop insert fails, just-created step triggers are rolled back. The response
   returns `steps` — each trigger with its resolved agent nested directly under it — rather than a
   flat trigger-id list plus a separate agent-id list. Creating (or updating) a loop with an
-  effective status of `draft` or `paused` starts its triggers disabled.
+  effective status of `draft`, `paused` or `archived` starts its triggers disabled.
   The call fails, before anything is created, when `driver_id` is missing or is not an
   unpaused agent in the workspace (a human or unknown actor is refused). Pick an agent whose job
   covers the outcome, preferably the owner of the main target; the first target's `ownerActorId`

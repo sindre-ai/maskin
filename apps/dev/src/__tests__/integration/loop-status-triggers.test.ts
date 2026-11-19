@@ -111,6 +111,25 @@ describe('Flow status decides whether the triggers run', () => {
 		expect(await enabledStates(triggerIds)).toEqual([true, true])
 	})
 
+	it('turns every trigger off when a running flow is archived', async () => {
+		const { flow, triggerIds } = await flowWithTriggers('live', true)
+		await setStatus(flow.id, 'archived')
+		expect(await enabledStates(triggerIds)).toEqual([false, false])
+	})
+
+	it('turns every trigger off when a draft flow is archived', async () => {
+		const { flow, triggerIds } = await flowWithTriggers('draft', false)
+		await setStatus(flow.id, 'archived')
+		expect(await enabledStates(triggerIds)).toEqual([false, false])
+	})
+
+	it('keeps triggers off when a paused flow is archived', async () => {
+		const { flow, triggerIds } = await flowWithTriggers('live', true)
+		await setStatus(flow.id, 'paused')
+		await setStatus(flow.id, 'archived')
+		expect(await enabledStates(triggerIds)).toEqual([false, false])
+	})
+
 	it('leaves triggers alone when moving between two off statuses', async () => {
 		const { flow, triggerIds } = await flowWithTriggers('draft', false)
 		await setStatus(flow.id, 'paused')

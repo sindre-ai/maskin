@@ -218,10 +218,11 @@ export async function applyObjectUpdate(
 	}
 
 	// A loop's status decides whether it runs: every trigger referenced in the
-	// loop's metadata.trigger_ids stops firing while the loop is draft or
-	// paused, and resumes when the loop moves to any other status (pilot,
-	// supervised, live or archived). Moving between two off statuses (draft to
-	// paused) or two on statuses changes nothing. This PATCH is the single choke
+	// loop's metadata.trigger_ids stops firing while the loop is draft, paused
+	// or archived, and resumes when the loop moves to a running status (pilot,
+	// supervised or live). Moving between two off statuses (draft to paused,
+	// or any status to archived from an off one) or two on statuses changes
+	// nothing. This PATCH is the single choke
 	// point for loop status writes — the frontend's pause/resume button and
 	// the MCP update_loop tool both land here — so it's implemented once
 	// rather than duplicated per caller.

@@ -19,15 +19,16 @@ describe('loop statuses', () => {
 		])
 	})
 
-	it('puts every status in exactly one of running, triggers-off or archived', () => {
-		const grouped = [...LOOP_RUNNING_STATUSES, ...LOOP_TRIGGERS_OFF_STATUSES, 'archived']
+	it('puts every status in exactly one of running or triggers-off', () => {
+		const grouped = [...LOOP_RUNNING_STATUSES, ...LOOP_TRIGGERS_OFF_STATUSES]
 		expect([...grouped].sort()).toEqual([...LOOP_STATUSES].sort())
 	})
 
-	it('turns triggers off for draft and paused only', () => {
-		expect(loopStatusTurnsTriggersOff('draft')).toBe(true)
-		expect(loopStatusTurnsTriggersOff('paused')).toBe(true)
-		for (const status of ['pilot', 'supervised', 'live', 'archived']) {
+	it('turns triggers off for draft, paused and archived only', () => {
+		for (const status of ['draft', 'paused', 'archived']) {
+			expect(loopStatusTurnsTriggersOff(status)).toBe(true)
+		}
+		for (const status of ['pilot', 'supervised', 'live']) {
 			expect(loopStatusTurnsTriggersOff(status)).toBe(false)
 		}
 		expect(loopStatusTurnsTriggersOff(undefined)).toBe(false)

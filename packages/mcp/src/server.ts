@@ -7699,7 +7699,7 @@ export function createMcpServer(config: McpConfig) {
 			const existingTriggerIds = args.trigger_ids ?? []
 			const memberObjectIds = args.object_ids ?? []
 			// `status` always has a value here — the schema defaults it to
-			// 'draft'. Draft and paused start a loop's triggers disabled.
+			// 'draft'. Draft, paused and archived start a loop's triggers disabled.
 			const startEnabled = !loopStatusTurnsTriggersOff(status)
 
 			// Validate everything up-front so nothing is created on a bad request.
@@ -7816,7 +7816,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 			if (disableFailures.length > 0) {
-				responseBody.trigger_pause_warnings = `Loop created with its triggers off (draft or paused), but these pre-existing triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
+				responseBody.trigger_pause_warnings = `Loop created with its triggers off (draft, paused or archived), but these pre-existing triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 			}
 
 			// Same setup block update_loop/get_loop return. graphResult.edges.length
@@ -7890,7 +7890,7 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// The loop's status after this call — its own PATCH if `status` was
-				// passed, else whatever it already was. Draft and paused mean new
+				// passed, else whatever it already was. Draft, paused and archived mean new
 				// steps should start disabled; an explicit status transition
 				// into or out of those is handled centrally by the PATCH /api/objects/:id
 				// hook (apps/dev/src/routes/objects.ts), which also covers the
@@ -8086,7 +8086,7 @@ export function createMcpServer(config: McpConfig) {
 				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
 				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
 				if (disableFailures.length > 0) {
-					responseBody.trigger_pause_warnings = `Loop has its triggers off (draft or paused), but these newly-attached triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
+					responseBody.trigger_pause_warnings = `Loop has its triggers off (draft, paused or archived), but these newly-attached triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 				}
 
 				responseBody.setup = await buildLoopSetupBlockFromApi(
