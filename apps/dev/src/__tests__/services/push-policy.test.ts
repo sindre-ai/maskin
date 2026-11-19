@@ -228,6 +228,17 @@ describe('rate limits', () => {
 		})
 	})
 
+	it('never rate-limits a message a person wrote', () => {
+		const human = note({
+			metadata: { push_category: 'conversation', push_collapse_key: 'chat:1', from_human: true },
+		})
+		const busy = [
+			...Array.from({ length: 8 }, (_, i) => recent({ at: NOW.getTime() - (i + 3) * MIN })),
+			recent({ collapseKey: 'chat:1', at: NOW.getTime() - 30_000 }),
+		]
+		expect(run(human, { recentPushes: busy }).action).toBe('send')
+	})
+
 	it('forgets pushes older than an hour and other actors’ pushes', () => {
 		const old = Array.from({ length: 6 }, () => recent({ at: NOW.getTime() - 61 * MIN }))
 		expect(run(conv(), { recentPushes: old }).action).toBe('send')

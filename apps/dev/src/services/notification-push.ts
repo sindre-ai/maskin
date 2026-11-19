@@ -296,7 +296,17 @@ export class NotificationPushFanout {
 		})
 
 		if (verdict.action === 'skip') {
-			logger.debug('Push skipped by policy', { notificationId: n.id, reason: verdict.reason })
+			// Info for the categories a person waits on, so a missing push can be traced.
+			const log =
+				category === 'conversation' || category === 'needs_you' ? logger.info : logger.debug
+			log.call(logger, 'Push skipped by policy', {
+				notificationId: n.id,
+				targetActorId,
+				category,
+				reason: verdict.reason,
+				conversationId: typeof meta.conversation_id === 'string' ? meta.conversation_id : null,
+				messageId: typeof meta.message_id === 'number' ? meta.message_id : null,
+			})
 			return
 		}
 		if (verdict.action === 'delay') {

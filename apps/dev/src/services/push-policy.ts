@@ -14,6 +14,7 @@
  *   priority 'critical' / blocking true   a For You card that bypasses the rollup.
  *   source, from_agent  'comment_mention' and whether an agent wrote it, on the row an @mention
  *                       of a person creates.
+ *   from_human          true when a person wrote the chat message; exempt from the rate limits.
  *   due_at              ISO time a needs_you item expires; the push text leads with it.
  *
  * ── The "recent pushes" ledger ──────────────────────────────────────────────
@@ -285,7 +286,9 @@ export function evaluatePush({
 	let interruption: PushInterruption =
 		category === 'needs_you' ? (muted ? 'active' : 'time-sensitive') : 'active'
 
-	if (category !== 'needs_you') {
+	// A person wrote this to another person: the rate limits exist to quiet agent chatter and
+	// must never swallow it.
+	if (category !== 'needs_you' && meta.from_human !== true) {
 		const sent = mine.filter((r) => r.sent)
 		if (category === 'conversation') {
 			const lastHour = sent.filter((r) => r.category === 'conversation' && nowMs - r.at < HOUR_MS)
