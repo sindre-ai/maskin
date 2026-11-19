@@ -226,7 +226,7 @@ private struct ChatsContainer: View {
 	/// and no title; iPhone and Mac keep the title, the pill of actions and the page search.
 	@ViewBuilder
 	private func listChrome(_ list: some View) -> some View {
-		if ShellIdiom.isPad {
+		if ShellIdiom.hasRail {
 			list
 				.safeAreaInset(edge: .top, spacing: 0) {
 					ChatsListHeader(
