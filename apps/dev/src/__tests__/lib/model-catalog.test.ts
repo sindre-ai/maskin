@@ -101,7 +101,9 @@ describe('modelRefusal', () => {
 
 describe('withContextWindow', () => {
 	it('marks DeepSeek V4 ids, with or without a provider prefix, as 1M', () => {
-		expect(withContextWindow('deepseek/deepseek-v4.1-flash')).toBe('deepseek/deepseek-v4.1-flash[1m]')
+		expect(withContextWindow('deepseek/deepseek-v4.1-flash')).toBe(
+			'deepseek/deepseek-v4.1-flash[1m]',
+		)
 		expect(withContextWindow('deepseek-v4-pro')).toBe('deepseek-v4-pro[1m]')
 		expect(withContextWindow('DeepSeek/DeepSeek-V4-Flash')).toBe('DeepSeek/DeepSeek-V4-Flash[1m]')
 	})
