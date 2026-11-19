@@ -37,10 +37,8 @@ const TABLE: Array<[type: string, status: string, group: StatusGroupKey]> = [
 
 	['loop', 'draft', 'new'],
 	['loop', 'pilot', 'in_progress'],
-	['loop', 'learning', 'in_progress'],
 	['loop', 'supervised', 'in_progress'],
 	['loop', 'live', 'in_progress'],
-	['loop', 'fully_autonomous', 'in_progress'],
 	['loop', 'paused', 'archived'],
 	['loop', 'archived', 'archived'],
 

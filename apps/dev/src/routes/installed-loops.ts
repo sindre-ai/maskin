@@ -547,10 +547,10 @@ app.openapi(installLoopRoute, async (c) => {
 					title: loop.name,
 					content: loop.description,
 					// Marketplace templates are pre-vetted, but the loop is still new to
-					// this workspace's data — start it at `learning` rather than
-					// `fully_autonomous` so its first runs get a look before it's fully
+					// this workspace's data — start it at `pilot` rather than
+					// `live` so its first runs get a look before it's fully
 					// trusted here.
-					status: 'learning',
+					status: 'pilot',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,

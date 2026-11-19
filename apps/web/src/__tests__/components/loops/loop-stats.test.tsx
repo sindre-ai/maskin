@@ -39,7 +39,7 @@ describe('LoopStats (v4 5-tile)', () => {
 		render(
 			<LoopStats
 				loop={buildLoopSummary({
-					pill: 'learning',
+					pill: 'pilot',
 					closedCount: 128,
 					medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
 				})}
@@ -64,7 +64,7 @@ describe('LoopStats (v4 5-tile)', () => {
 	it('renders a pulsing dot next to Cycles running when the loop is live and the count is > 0', () => {
 		const { container } = render(
 			<LoopStats
-				loop={buildLoopSummary({ pill: 'fully_autonomous' })}
+				loop={buildLoopSummary({ pill: 'live' })}
 				cyclesRunning={4}
 				asksWaiting={0}
 				nextFire={null}
@@ -77,7 +77,7 @@ describe('LoopStats (v4 5-tile)', () => {
 	it('does not render the pulsing dot when cyclesRunning is zero, even on a live loop', () => {
 		const { container } = render(
 			<LoopStats
-				loop={buildLoopSummary({ pill: 'learning' })}
+				loop={buildLoopSummary({ pill: 'pilot' })}
 				cyclesRunning={0}
 				asksWaiting={0}
 				nextFire={null}

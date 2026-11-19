@@ -170,7 +170,7 @@ public struct APILoopsSource: LoopsAPI {
 					body: .json(
 						.init(
 							_type: "loop", title: name, content: content.isEmpty ? nil : content,
-							status: LoopPill.learning.rawValue))))
+							status: LoopPill.pilot.rawValue))))
 		}
 		guard case .created(let created) = output else {
 			throw AutomationError("Couldn't create the flow.")

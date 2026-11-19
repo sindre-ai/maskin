@@ -35,7 +35,7 @@ async function seedFlow(
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title: opts.title,
-		status: 'learning',
+		status: 'pilot',
 	})
 	await account.api.updateObject(loop.id, account.workspaceId, {
 		metadata: { trigger_ids: [trigger.id], ...(targets.length > 0 ? { targets } : {}) },

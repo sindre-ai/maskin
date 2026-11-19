@@ -34,7 +34,7 @@ test.describe('Chat — a linked agent draws like an object and a loop', () => {
 			const loop = await account.api.createObject(ws, {
 				type: 'loop',
 				title: 'Customer feedback',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			// A pending session counts as active, so the agent reads Working now.
