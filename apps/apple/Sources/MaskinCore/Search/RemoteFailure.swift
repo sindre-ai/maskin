@@ -1,9 +1,11 @@
 import Foundation
+import MaskinAPI
 import OpenAPIRuntime
 
 /// Maps whatever a generated-client call threw onto the small error types Search and Files show.
 enum RemoteFailure {
 	static func describe(_ error: Error) -> (message: String, isOffline: Bool) {
+		ErrorReporter.shared.reportThrown(error)
 		var current: Error? = error
 		while let e = current {
 			if let url = e as? URLError {
