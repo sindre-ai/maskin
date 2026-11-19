@@ -16,6 +16,7 @@ struct ThreadScreen: View {
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
 	@State private var listening = false
+	@State private var engineNote: String?
 	@State private var selectingText: ChatMessage?
 	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -200,7 +201,7 @@ struct ThreadScreen: View {
 					.onSubmit(send)
 					.padding(.leading, MaskinSpace.s10)
 					.padding(.vertical, MaskinSpace.s6)
-				DictationButton(text: $draft, listening: $listening)
+				DictationButton(text: $draft, listening: $listening, engineNote: $engineNote)
 				// While the mic is open it keeps the send slot, as in the chat composer.
 				if !listening {
 					Button(action: send) {
@@ -218,6 +219,11 @@ struct ThreadScreen: View {
 			}
 			.background(MaskinSurface.card, in: Capsule())
 			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+			// Only when something is wrong (the phone took over, the server heard nothing): stays after the mic closes.
+			if let engineNote {
+				Text(engineNote).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
 		}
 		.padding(.horizontal, MaskinSpace.s8)
 		.padding(.top, MaskinSpace.s4)
