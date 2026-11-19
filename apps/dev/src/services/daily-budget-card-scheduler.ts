@@ -83,7 +83,10 @@ type WorkspaceRow = {
 export function startOfLocalDay(at: Date, timezone: string): Date | null {
 	const clock = localClock(at, timezone)
 	if (!clock) return null
-	let guess = new Date(at.getTime() - clock.minute * 60_000)
+	// `clock.minute` has minute resolution, so start from the whole minute: otherwise the
+	// seconds and milliseconds of `at` carry into the result.
+	const atMinute = Math.floor(at.getTime() / 60_000) * 60_000
+	let guess = new Date(atMinute - clock.minute * 60_000)
 	// A DST change between midnight and `at` shifts the guess by an hour; walk it back.
 	for (let i = 0; i < 3; i++) {
 		const c = localClock(guess, timezone)

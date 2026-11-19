@@ -13,12 +13,26 @@ import type { SessionManager } from '../services/session-manager'
 import { provisionWorkspace } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import {
+	CUSTOMER_VOICE_ACTOR_IDS,
+	CUSTOMER_VOICE_LOOP,
+	CUSTOMER_VOICE_SKILL_IDS,
+	CUSTOMER_VOICE_TRIGGER_IDS,
+	CUSTOMER_VOICE_VIEW_IDS,
+} from './marketplace-loops/customer-voice-loop'
+import {
 	DISCOVERY_ACTOR_IDS,
 	DISCOVERY_LOOP,
 	DISCOVERY_SKILL_IDS,
 	DISCOVERY_TRIGGER_IDS,
 	DISCOVERY_VIEW_IDS,
 } from './marketplace-loops/discovery-loop'
+import {
+	KNOWLEDGE_WIKI_ACTOR_IDS,
+	KNOWLEDGE_WIKI_LOOP,
+	KNOWLEDGE_WIKI_SKILL_IDS,
+	KNOWLEDGE_WIKI_TRIGGER_IDS,
+	KNOWLEDGE_WIKI_VIEW_IDS,
+} from './marketplace-loops/knowledge-wiki-loop'
 import {
 	type MarketplaceLoopSeedConfig,
 	getActorData,
@@ -40,6 +54,19 @@ import {
 	MEETING_LOOP_SKILL_IDS,
 	MEETING_LOOP_TRIGGER_IDS,
 } from './marketplace-loops/meeting-loop'
+import {
+	PRODUCT_RELEASE_ACTOR_IDS,
+	PRODUCT_RELEASE_LOOP,
+	PRODUCT_RELEASE_SKILL_IDS,
+	PRODUCT_RELEASE_TRIGGER_IDS,
+} from './marketplace-loops/product-release-loop'
+import {
+	PRODUCT_USAGE_ACTOR_IDS,
+	PRODUCT_USAGE_LOOP,
+	PRODUCT_USAGE_SKILL_IDS,
+	PRODUCT_USAGE_TRIGGER_IDS,
+	PRODUCT_USAGE_VIEW_IDS,
+} from './marketplace-loops/product-usage-loop'
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
@@ -62,6 +89,33 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		triggerIds: MEETING_LOOP_TRIGGER_IDS,
 		skillIds: MEETING_LOOP_SKILL_IDS,
 	},
+	{
+		loop: PRODUCT_RELEASE_LOOP,
+		actorIds: PRODUCT_RELEASE_ACTOR_IDS,
+		triggerIds: PRODUCT_RELEASE_TRIGGER_IDS,
+		skillIds: PRODUCT_RELEASE_SKILL_IDS,
+	},
+	{
+		loop: CUSTOMER_VOICE_LOOP,
+		actorIds: CUSTOMER_VOICE_ACTOR_IDS,
+		triggerIds: CUSTOMER_VOICE_TRIGGER_IDS,
+		skillIds: CUSTOMER_VOICE_SKILL_IDS,
+		viewIds: CUSTOMER_VOICE_VIEW_IDS,
+	},
+	{
+		loop: KNOWLEDGE_WIKI_LOOP,
+		actorIds: KNOWLEDGE_WIKI_ACTOR_IDS,
+		triggerIds: KNOWLEDGE_WIKI_TRIGGER_IDS,
+		skillIds: KNOWLEDGE_WIKI_SKILL_IDS,
+		viewIds: KNOWLEDGE_WIKI_VIEW_IDS,
+	},
+	{
+		loop: PRODUCT_USAGE_LOOP,
+		actorIds: PRODUCT_USAGE_ACTOR_IDS,
+		triggerIds: PRODUCT_USAGE_TRIGGER_IDS,
+		skillIds: PRODUCT_USAGE_SKILL_IDS,
+		viewIds: PRODUCT_USAGE_VIEW_IDS,
+	},
 ]
 
 export interface MarketplaceSyncResult {
@@ -74,7 +128,7 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Market & Competitor Watch, Meeting Loop), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.

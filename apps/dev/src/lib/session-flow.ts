@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { objects, relationships } from '@maskin/db/schema'
+import { objects, relationships, sessions } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 
 /** Ids per `in_loop` edge lookup, well under Postgres' bind-parameter limit. */
@@ -86,4 +86,95 @@ export async function loadFlowLookup(
 			(s.initiatedFromObjectId ? loopByItem.get(s.initiatedFromObjectId) : undefined) ??
 			null,
 	}
+}
+
+/**
+ * The stored statuses of a flow in pilot: agents run, but nothing leaves the company unasked.
+ * 'learning' is the old name of pilot, still stored until the status ladder rename lands (the
+ * flow status ladder task, migration 0166). Drop it with that change.
+ */
+export const PILOT_FLOW_STATUSES: readonly string[] = ['pilot', 'learning']
+
+/**
+ * The session a send call comes from. A session key names its session and cannot be left off or
+ * forged, so it comes first; the header is only the fallback for a call whose key is not a
+ * session key (a person chatting sends none).
+ */
+export function callingSessionId(
+	apiKeySessionId: string | null | undefined,
+	headerSessionId: string | undefined,
+): string | undefined {
+	return apiKeySessionId ?? headerSessionId
+}
+
+/** How far up the helper chain a session inherits its flow from. */
+const MAX_SPAWN_HOPS = 5
+
+export type SessionFlow = { id: string; status: string }
+
+/**
+ * The flows one running session belongs to, read now. The same rules as `loadFlowLookup`
+ * (the flow that lists the session's trigger, else the flow its source item sits in), with two
+ * differences on purpose: a helper session inherits the flows of the session that started it
+ * (up to 5 hops), and when several flows qualify all of them are returned, so a caller can hold
+ * on the strictest.
+ *
+ * The session id is a claim from a header, so it counts only when the session is in this
+ * workspace and belongs to this agent. Anything else ties to no flow, like a call with no id.
+ * A database error is thrown: the caller decides what an unreadable answer means.
+ */
+export async function flowsOfSession(
+	db: Database,
+	params: { workspaceId: string; agentId: string; sessionId: string },
+): Promise<SessionFlow[]> {
+	const { workspaceId, agentId, sessionId } = params
+	const found = new Map<string, SessionFlow>()
+	let currentId: string | null = sessionId
+	for (let hop = 0; currentId && hop <= MAX_SPAWN_HOPS; hop++) {
+		const [session] = await db
+			.select({
+				actorId: sessions.actorId,
+				triggerId: sessions.triggerId,
+				initiatedFromObjectId: sessions.initiatedFromObjectId,
+				spawnedBySessionId: sessions.spawnedBySessionId,
+			})
+			.from(sessions)
+			.where(and(eq(sessions.id, currentId), eq(sessions.workspaceId, workspaceId)))
+			.limit(1)
+		if (!session) break
+		// Only the session the caller named has to be the caller's own; a helper's parent is
+		// whoever started it.
+		if (hop === 0 && session.actorId !== agentId) break
+
+		const byTrigger = session.triggerId
+			? await db
+					.select({ id: objects.id, status: objects.status })
+					.from(objects)
+					.where(
+						and(
+							eq(objects.workspaceId, workspaceId),
+							eq(objects.type, 'loop'),
+							sql`${objects.metadata}->'trigger_ids' @> ${JSON.stringify([session.triggerId])}::jsonb`,
+						),
+					)
+			: []
+		const flows =
+			byTrigger.length > 0 || !session.initiatedFromObjectId
+				? byTrigger
+				: await db
+						.select({ id: objects.id, status: objects.status })
+						.from(relationships)
+						.innerJoin(objects, eq(objects.id, relationships.sourceId))
+						.where(
+							and(
+								eq(relationships.type, 'in_loop'),
+								eq(relationships.targetId, session.initiatedFromObjectId),
+								eq(objects.workspaceId, workspaceId),
+								eq(objects.type, 'loop'),
+							),
+						)
+		for (const flow of flows) found.set(flow.id, flow)
+		currentId = session.spawnedBySessionId
+	}
+	return [...found.values()]
 }

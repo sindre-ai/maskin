@@ -27,7 +27,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useCanWrite } from '@/hooks/use-can-write'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useGithubPendingSelection,
 	useIntegrations,
@@ -80,10 +79,8 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
-	// Deepdots stays out of the list until its flag is on for this person.
-	const deepdotsOn = useFeatureFlag('deepdots-connect')
 	const visibleProviders = sortBy(
-		(providers ?? []).filter((p) => p.name !== 'deepdots' || deepdotsOn),
+		providers ?? [],
 		(p) => p.displayName,
 		(p) => p.name,
 	)

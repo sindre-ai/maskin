@@ -17,9 +17,8 @@ vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
-const flag = vi.hoisted(() => ({ on: true }))
 vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'foryou-card-context' && flag.on,
+	useFeatureFlag: () => false,
 }))
 
 // The real composer pulls in uploads, drafts, pickers and dictation. The card only needs to
@@ -38,9 +37,6 @@ vi.mock('@/components/chat/chat', () => ({
 			</button>
 		</div>
 	),
-}))
-vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: () => <div data-testid="comment-input" />,
 }))
 
 import { FeedCard } from '@/components/foryou/feed-card'
@@ -111,9 +107,8 @@ function renderCard(
 	return { props, ...render(<FeedCard {...props} />, { wrapper: TestWrapper }) }
 }
 
-describe('FeedCard with the simpler card on', () => {
+describe('FeedCard', () => {
 	it('puts the object on the first line, as a link, and not under the summary', () => {
-		flag.on = true
 		const { container } = renderCard(buildItem())
 		const link = screen.getByRole('link', { name: /Ask Alan to hold Republikken/ })
 		expect(screen.getAllByRole('link', { name: /Ask Alan to hold Republikken/ })).toHaveLength(1)
@@ -122,18 +117,15 @@ describe('FeedCard with the simpler card on', () => {
 		expect(card?.querySelector('a')).toBe(link)
 	})
 
-	it('shows the chat composer, named for the agent, instead of the comment box', () => {
-		flag.on = true
+	it('shows the chat composer, named for the agent', () => {
 		renderCard(buildItem())
 		expect(screen.getByTestId('chat-composer')).toHaveAttribute(
 			'data-placeholder',
 			'Message Chief of Staff',
 		)
-		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
 	})
 
 	it('draws the summary as plain text, with no grey box', () => {
-		flag.on = true
 		renderCard(buildItem())
 		const summary = screen.getByText(/Free product evening/)
 		expect(summary.parentElement?.className).not.toContain('bg-muted')
@@ -141,46 +133,31 @@ describe('FeedCard with the simpler card on', () => {
 	})
 
 	it('shows no Recommended tag on a lone answer', () => {
-		flag.on = true
 		renderCard(buildItem())
 		expect(screen.getByRole('button', { name: 'Send to Alan' }).textContent).toBe('Send to Alan')
 	})
 
 	it('shows Open the task to decide, and no answer button, when the card has no buttons', () => {
-		flag.on = true
 		renderCard(buildItem(decision({ options: [] })))
 		expect(screen.getByRole('link', { name: 'Open the task to decide' })).toBeInTheDocument()
 	})
 
 	it('hides the message box when the card has no author', () => {
-		flag.on = true
 		renderCard(buildItem(decision({ options: [] }), null))
 		expect(screen.queryByTestId('chat-composer')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Open the task to decide' })).toBeInTheDocument()
 	})
 
 	it('tells the card a reply was sent', async () => {
-		flag.on = true
 		const { props } = renderCard(buildItem())
 		await userEvent.click(screen.getByRole('button', { name: 'mock send' }))
 		expect(props.onReplied).toHaveBeenCalledWith('Not this one')
 	})
 
 	it('offers Open chat on the reply receipt, with the typed message in the link', () => {
-		flag.on = true
 		renderCard(buildItem(), { replied: true, repliedText: 'Not this one' })
 		const open = screen.getByRole('link', { name: 'Open chat with Chief of Staff' })
 		expect(open).toBeInTheDocument()
 		expect(screen.getByText('Not this one')).toBeInTheDocument()
-	})
-
-	it('leaves the card as it was with the flag off', () => {
-		flag.on = false
-		renderCard(buildItem())
-		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
-		expect(screen.queryByTestId('chat-composer')).not.toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Send to Alan' }).textContent).toContain(
-			'Recommended',
-		)
 	})
 })

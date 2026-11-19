@@ -14,16 +14,31 @@
 // are merged into one lookup per entity type below — every loop config calls
 // the same getActorData/getTriggerData/getSkillData.
 
+import customerVoiceActorsData from './data/customer-voice-actors.json'
+import customerVoiceSkillsData from './data/customer-voice-skills.json'
+import customerVoiceTriggersData from './data/customer-voice-triggers.json'
+import customerVoiceViewsData from './data/customer-voice-views.json'
 import discoveryActorsData from './data/discovery-actors.json'
 import discoverySkillsData from './data/discovery-skills.json'
 import discoveryTriggersData from './data/discovery-triggers.json'
 import discoveryViewsData from './data/discovery-views.json'
+import knowledgeWikiActorsData from './data/knowledge-wiki-actors.json'
+import knowledgeWikiSkillsData from './data/knowledge-wiki-skills.json'
+import knowledgeWikiTriggersData from './data/knowledge-wiki-triggers.json'
+import knowledgeWikiViewsData from './data/knowledge-wiki-views.json'
 import marketWatchActorsData from './data/market-watch-actors.json'
 import marketWatchSkillsData from './data/market-watch-skills.json'
 import marketWatchTriggersData from './data/market-watch-triggers.json'
 import meetingLoopActorsData from './data/meeting-loop-actors.json'
 import meetingLoopSkillsData from './data/meeting-loop-skills.json'
 import meetingLoopTriggersData from './data/meeting-loop-triggers.json'
+import productReleaseActorsData from './data/product-release-actors.json'
+import productReleaseSkillsData from './data/product-release-skills.json'
+import productReleaseTriggersData from './data/product-release-triggers.json'
+import productUsageActorsData from './data/product-usage-actors.json'
+import productUsageSkillsData from './data/product-usage-skills.json'
+import productUsageTriggersData from './data/product-usage-triggers.json'
+import productUsageViewsData from './data/product-usage-views.json'
 import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
@@ -57,7 +72,7 @@ export interface ViewData extends ViewSnapshotSource {
 }
 
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
-// ./market-watch-loop, ./meeting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
+// ./market-watch-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop, ./product-usage-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
 export interface MarketplaceLoopSeedConfig {
 	loop: {
@@ -80,22 +95,37 @@ const actorsById: Record<string, ActorData> = {
 	...(marketWatchActorsData as Record<string, ActorData>),
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
+	...(productReleaseActorsData as Record<string, ActorData>),
+	...(customerVoiceActorsData as Record<string, ActorData>),
+	...(knowledgeWikiActorsData as Record<string, ActorData>),
+	...(productUsageActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
 	...(marketWatchTriggersData as Record<string, TriggerData>),
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
+	...(productReleaseTriggersData as Record<string, TriggerData>),
+	...(customerVoiceTriggersData as Record<string, TriggerData>),
+	...(knowledgeWikiTriggersData as Record<string, TriggerData>),
+	...(productUsageTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
+	...(productReleaseSkillsData as Record<string, SkillData>),
+	...(customerVoiceSkillsData as Record<string, SkillData>),
+	...(knowledgeWikiSkillsData as Record<string, SkillData>),
+	...(productUsageSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {
 	...(discoveryViewsData as Record<string, ViewData>),
+	...(customerVoiceViewsData as Record<string, ViewData>),
+	...(knowledgeWikiViewsData as Record<string, ViewData>),
+	...(productUsageViewsData as Record<string, ViewData>),
 }
 
 export function getActorData(id: string): ActorData {

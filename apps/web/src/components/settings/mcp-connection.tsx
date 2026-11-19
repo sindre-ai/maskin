@@ -1,4 +1,4 @@
-import { ClaudeTabPanel, useClaudeTab } from '@/components/settings/claude-connection'
+import { ClaudeTabPanel, useClaudeConnected } from '@/components/settings/claude-connection'
 import { Steps } from '@/components/settings/mcp-steps'
 import { CodeBlock } from '@/components/shared/code-block'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 
 type PanelTab = 'claude-code' | 'cursor' | 'vscode' | 'claude-desktop' | 'other'
 
-// The Claude tab is added in front of these when the person may use it (see useClaudeTab).
+// The Claude tab sits in front of these.
 type TabValue = 'claude' | PanelTab
 
 const tabs: { value: PanelTab; label: string }[] = [
@@ -179,15 +179,12 @@ function NoKeyNotice() {
 }
 
 export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
-	const claude = useClaudeTab()
+	const claudeConnected = useClaudeConnected()
 	const [chosenTab, setChosenTab] = useState<TabValue | null>(null)
 	const listRef = useRef<HTMLDivElement>(null)
 
-	// The Claude tab opens first when it is there; until the person picks a tab, the default follows it.
-	const activeTab: TabValue =
-		chosenTab === 'claude' && !claude.visible
-			? 'claude-code'
-			: (chosenTab ?? (claude.visible ? 'claude' : 'claude-code'))
+	// The Claude tab opens first, until the person picks another.
+	const activeTab: TabValue = chosenTab ?? 'claude'
 
 	// getApiKey is read on each render and again at click time for the install links, so the
 	// key is never held in state and never rendered into an href.
@@ -223,20 +220,18 @@ export function McpConnectionSection({ workspaceId }: { workspaceId: string }) {
 			<div className="overflow-hidden rounded-xl border border-border">
 				<Tabs value={activeTab} onValueChange={(v) => setChosenTab(v as TabValue)}>
 					<TabsList ref={listRef} variant="line" aria-label="App" className="px-2">
-						{claude.visible && (
-							<TabsTrigger value="claude">
-								Claude
-								<span
-									className={
-										claude.connected
-											? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
-											: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
-									}
-								>
-									{claude.connected ? 'Connected' : 'Sign in'}
-								</span>
-							</TabsTrigger>
-						)}
+						<TabsTrigger value="claude">
+							Claude
+							<span
+								className={
+									claudeConnected
+										? 'eyebrow ml-1.5 rounded bg-status-live-bg px-1.5 py-0.5 text-status-live-text!'
+										: 'eyebrow ml-1.5 rounded bg-brand-subtle px-1.5 py-0.5 text-brand-subtle-foreground!'
+								}
+							>
+								{claudeConnected ? 'Connected' : 'Sign in'}
+							</span>
+						</TabsTrigger>
 						{tabs.map((tab) => (
 							<TabsTrigger key={tab.value} value={tab.value}>
 								{tab.label}
