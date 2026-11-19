@@ -748,7 +748,7 @@ export class SessionManager extends EventEmitter {
 	 */
 	private readonly turnSizeObservers = new Map<string, TurnSizeObserver>()
 
-	/** Background sessions already stopped for compacting in a loop, so one is stopped once. */
+	/** Sessions already checked for a compaction loop, so the row is read and the stop sent once. */
 	private readonly compactionLoopStopped = new Set<string>()
 
 	/**
@@ -5437,8 +5437,8 @@ ${cont.continues_prompt}
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
-		if (!session || session.status !== 'running' || session.conversationId) return
 		this.compactionLoopStopped.add(sessionId)
+		if (!session || session.status !== 'running' || session.conversationId) return
 		recordSessionContextSize(sessionId, { endCause: 'compaction_failed' })
 		logger.warn('Stopping a background session that keeps compacting', { sessionId })
 		await this.insertSystemLog(
