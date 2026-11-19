@@ -15,7 +15,7 @@ const WRITE_SCOPES = [
 /** Read only unless YOUTUBE_WRITE_SCOPES_ENABLED is "true" (default off). */
 export function youtubeScopes(env: Record<string, string | undefined> = process.env): string[] {
 	if (env.YOUTUBE_WRITE_SCOPES_ENABLED !== 'true') return [...READ_SCOPES]
-	return [READ_SCOPES[0], ...WRITE_SCOPES, ...READ_SCOPES.slice(1)]
+	return [...READ_SCOPES.slice(0, 1), ...WRITE_SCOPES, ...READ_SCOPES.slice(1)]
 }
 
 /**
