@@ -259,6 +259,7 @@ import {
 	type SessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
+	resolveRecordedCostUsd,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
 	sumUncountedResultUsage,
@@ -5383,13 +5384,14 @@ ${cont.continues_prompt}
 		pending: PendingLaunchStart,
 		first: FirstTurnResult,
 	): Promise<void> {
-		// Priced the way the session row is (resolveSessionCostUsd): a non-Anthropic
-		// route is priced from tokens, not from the CLI's Anthropic rate card. If the
-		// price cannot be resolved the cost is left empty, never the CLI's own figure.
+		// Only a recorded cost goes on the event (resolveRecordedCostUsd): the CLI's
+		// figure on a route that reaches Anthropic, or tokens times a published price.
+		// A custom endpoint with no price, or a maskin_plan session with no priced
+		// model, leaves it empty: the session row's own fallbacks are estimates.
 		let firstTurnCostUsd: number | null = null
 		try {
 			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
-			firstTurnCostUsd = await resolveSessionCostUsd({
+			firstTurnCostUsd = await resolveRecordedCostUsd({
 				route,
 				modelName,
 				usage: { ...first.resultUsage, durationMs: null },

@@ -4,8 +4,11 @@ import { parseResultLine } from '@maskin/shared'
 import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import {
 	LEGACY_TOKENS_PER_USD_CENT,
+	LLM_ROUTE_AGENT,
+	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
+	LLM_ROUTE_OAUTH,
 	readFallbackConfig,
 } from '../lib/llm-routing'
 import { getModelPricing, getServedModelPricing } from '../lib/openrouter-pricing'
@@ -424,6 +427,50 @@ export async function resolveSessionCostUsd({
 	const cacheOnly = cacheReadTokens + cacheWriteTokens
 	if (cacheOnly > 0) return cacheOnly / LEGACY_TOKENS_PER_USD_CENT / 100
 	return null
+}
+
+/**
+ * The USD cost of usage only when the cost is on record, otherwise null.
+ *
+ * `resolveSessionCostUsd` always returns a number for real usage, because the
+ * session row needs one: a custom endpoint whose model has no published price
+ * keeps the CLI's own figure (made up, off by up to 200x), and a `maskin_plan`
+ * session with no priced model gets the legacy blended-rate guess. Both are
+ * estimates, and an analytics property must not carry one. This returns:
+ *
+ * - the CLI's `total_cost_usd` on the routes that reach Anthropic
+ *   (`claude_oauth`, `workspace_api_key`, `agent_api_key`), where the CLI's rate
+ *   card is the right one;
+ * - tokens times the model's published per-token price on `maskin_plan` (the
+ *   hosts the request is pinned to) and `workspace_custom` (the catalogue);
+ * - null in every other case: no model name, no published price, or a route
+ *   this does not know.
+ *
+ * Kept next to `resolveSessionCostUsd` and not folded into it, so the session
+ * row's cost does not change.
+ */
+export async function resolveRecordedCostUsd({
+	route,
+	modelName,
+	usage,
+}: SessionCostInput): Promise<number | null> {
+	if (route === LLM_ROUTE_OAUTH || route === LLM_ROUTE_API_KEY || route === LLM_ROUTE_AGENT) {
+		return usage.totalCostUsd
+	}
+	if (route !== LLM_ROUTE_MASKIN_PLAN && route !== LLM_ROUTE_CUSTOM) return null
+	if (!modelName) return null
+
+	const pricing =
+		route === LLM_ROUTE_MASKIN_PLAN
+			? await getServedModelPricing(modelName, readFallbackConfig().onlyProviders)
+			: await getModelPricing(modelName)
+	if (!pricing) return null
+	return (
+		(usage.inputTokens ?? 0) * pricing.prompt +
+		(usage.outputTokens ?? 0) * pricing.completion +
+		(usage.cacheReadInputTokens ?? 0) * pricing.cacheRead +
+		(usage.cacheCreationInputTokens ?? 0) * pricing.cacheWrite
+	)
 }
 
 /**

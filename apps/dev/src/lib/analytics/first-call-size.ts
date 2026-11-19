@@ -16,11 +16,29 @@ export interface FirstCallSize {
 	 * tokens against about 1.19M cache reads) and a cache change would look like a
 	 * win. Equal to the first turn's total for a one-call turn, and not summed over
 	 * the later calls of a turn that uses tools.
+	 *
+	 * Why summing is right on each route (read from the code, not from a live
+	 * session): every route runs the same Claude CLI and reads the same Anthropic
+	 * usage block, where input, cache creation and cache read are three separate
+	 * buckets and input leaves out what came from the cache.
+	 * - claude_oauth, workspace_api_key, agent_api_key: the Anthropic API itself.
+	 *   The 94,032 input against 1.19M cache reads above only fits separate buckets.
+	 * - maskin_plan (DeepSeek and others, through OpenRouter's Anthropic-compatible
+	 *   endpoint) and workspace_custom: same block. resolveSessionCostUsd in
+	 *   usage-parser.ts bills the three at separate prices, and
+	 *   scripts/openrouter-conformance.mjs adds the three as the prompt total of a
+	 *   DeepSeek run. So the repo treats cached tokens as separate from input on
+	 *   that route too, and nothing is added twice. A recorded DeepSeek session shows input 15 with
+	 *   both cache fields 0 (claude-empty-completion-turn.jsonl).
+	 * Still to confirm on a real DeepSeek session with cache reads: see the
+	 * post-deploy check in the PR.
 	 */
 	firstCallInputTokens: number | null
 	/**
 	 * The `total_cost_usd` the first turn's `result` envelope reported, as the CLI priced it.
-	 * The session manager re-prices the turn for its route before it is sent.
+	 * Not safe to send: on a route that does not reach Anthropic it is a made-up figure.
+	 * The session manager replaces it with `resolveRecordedCostUsd` (a recorded cost, or
+	 * empty) before the event goes out.
 	 */
 	firstTurnCostUsd: number | null
 	/** Whether the first call read anything from the prompt cache. */

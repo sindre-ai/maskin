@@ -1852,6 +1852,38 @@ describe('SessionManager', () => {
 			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
 		})
 
+		it('leaves the first-turn cost empty on maskin_plan with no priced model, never the CLI figure', async () => {
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'maskin_plan',
+				modelName: null,
+			})
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine + resultLine(0.14))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({
+				...props,
+				firstCall: {
+					toolCount: 3,
+					firstCallInputTokens: 59_004,
+					firstTurnCostUsd: null,
+					cacheHit: true,
+				},
+			})
+		})
+
+		it('leaves the first-turn cost empty on a custom endpoint with no recorded model', async () => {
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'workspace_custom',
+				modelName: null,
+			})
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine + resultLine(1.91))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(
+				expect.objectContaining({ firstCall: expect.objectContaining({ firstTurnCostUsd: null }) }),
+			)
+		})
+
 		it('sends the event once at teardown, without first-call fields, when no turn ran', async () => {
 			internals.holdLaunchStartEvent('sess-first-call', props)
 			internals.observeFirstCallSize('sess-first-call', initLine)
