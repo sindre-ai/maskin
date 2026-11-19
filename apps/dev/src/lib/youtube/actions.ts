@@ -26,6 +26,8 @@ export const YOUTUBE_ACTION_KINDS = [
 	'post_comment',
 	'reply_to_comment',
 	'like',
+	'upload_video',
+	'publish_video',
 ] as const
 export type YoutubeActionKind = (typeof YOUTUBE_ACTION_KINDS)[number]
 
@@ -320,6 +322,8 @@ export async function endYoutubeAction(
 			resultCode: end.resultCode,
 			payload: null,
 			agentNote: null,
+			// The upload session address lets anyone holding it add bytes to that upload: drop it with the payload.
+			uploadSessionUri: null,
 			...(end.status === 'executed' ? { executedAt: now } : {}),
 		})
 		.where(eq(youtubePendingActions.id, row.id))
@@ -332,7 +336,13 @@ export async function endYoutubeAction(
 export async function expireYoutubeActions(writer: Writer, opts: { actionId?: string } = {}) {
 	const expired = await writer
 		.update(youtubePendingActions)
-		.set({ status: 'expired', resultCode: 'expired', payload: null, agentNote: null })
+		.set({
+			status: 'expired',
+			resultCode: 'expired',
+			payload: null,
+			agentNote: null,
+			uploadSessionUri: null,
+		})
 		.where(
 			and(
 				inArray(youtubePendingActions.status, ['pending', 'approved']),

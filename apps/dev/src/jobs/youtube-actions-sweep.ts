@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
 import { youtubeActionAudit, youtubePendingActions } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
-import { and, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
 	YOUTUBE_ACTION_ROW_RETENTION_MS,
@@ -11,13 +12,14 @@ import {
 	expireYoutubeActions,
 	writeYoutubeAudit,
 } from '../lib/youtube/actions'
-import { executeApprovedYoutubeAction } from '../lib/youtube/executor'
+import { resumeInterruptedYoutubeUploads, scheduleYoutubeExecution } from '../lib/youtube/executor'
 
 /**
  * Housekeeping for the YouTube approval gate, every 5 minutes:
  * - expires held actions nobody decided in 7 days (payload cleared, audit row written),
  * - runs an approved action the server never started (a restart between the tap and the run),
- * - marks a claimed action with no result as failed instead of running it twice,
+ * - carries on an upload that was cut off from the progress stored with it,
+ * - marks any other claimed action with no result as failed instead of running it twice,
  * - deletes ended actions after 30 days (their payload is already gone) and the decision audit
  *   after 12 months.
  * Mirrors PurgeIdempotencyJob: a swallowed-error tick, guarded against overlapping runs.
@@ -33,6 +35,8 @@ export class YoutubeActionsSweepJob {
 	constructor(
 		private db: Database,
 		private cronExpression: string = CRON_EXPRESSION,
+		/** Where an upload that is carried on reads its video from. */
+		private storage?: StorageProvider,
 	) {}
 
 	start(): void {
@@ -65,7 +69,12 @@ export class YoutubeActionsSweepJob {
 						lt(youtubePendingActions.decidedAt, new Date(Date.now() - APPROVAL_GRACE_MS)),
 					),
 				)
-			for (const { id } of orphans) await executeApprovedYoutubeAction(this.db, id)
+			// Started in the background: an upload can run for a long time, and this tick must not wait for it.
+			for (const { id } of orphans) scheduleYoutubeExecution(this.db, id, this.storage)
+
+			const resumedUploads = await resumeInterruptedYoutubeUploads(this.db, {
+				storage: this.storage,
+			})
 
 			const stuck = await this.db
 				.select()
@@ -75,6 +84,8 @@ export class YoutubeActionsSweepJob {
 						eq(youtubePendingActions.status, 'approved'),
 						isNotNull(youtubePendingActions.claimedAt),
 						lt(youtubePendingActions.claimedAt, new Date(Date.now() - YOUTUBE_CLAIM_STALE_MS)),
+						// An upload with a session is resumed above, not failed: its bytes are safe at Google.
+						sql`NOT (${youtubePendingActions.kind} = 'upload_video' AND ${youtubePendingActions.uploadSessionUri} IS NOT NULL)`,
 					),
 				)
 			for (const row of stuck) {
@@ -99,10 +110,14 @@ export class YoutubeActionsSweepJob {
 				.where(lt(youtubeActionAudit.createdAt, new Date(Date.now() - YOUTUBE_AUDIT_RETENTION_MS)))
 				.returning({ id: youtubeActionAudit.id })
 
-			if (expired + orphans.length + stuck.length + rows.length + audit.length > 0) {
+			if (
+				expired + orphans.length + resumedUploads + stuck.length + rows.length + audit.length >
+				0
+			) {
 				logger.info('YouTube actions sweep tick', {
 					expired,
 					resumed: orphans.length,
+					resumedUploads,
 					interrupted: stuck.length,
 					rowsDeleted: rows.length,
 					auditDeleted: audit.length,

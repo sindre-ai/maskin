@@ -25,6 +25,8 @@ const TOOL_PART = {
 	reply_to_comment: 4,
 	like: 4,
 	upload_video: 5,
+	publish_video: 5,
+	get_upload_status: 5,
 } as const
 
 export type YoutubeToolName = keyof typeof TOOL_PART
@@ -39,6 +41,7 @@ export type YoutubeActionKind =
 	| 'reply_to_comment'
 	| 'like'
 	| 'upload_video'
+	| 'publish_video'
 
 /** How a tool call ended. A category, never an error string. */
 export type YoutubeOutcome =

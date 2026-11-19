@@ -3762,6 +3762,11 @@ export const youtubePendingActions = pgTable(
 		claimedAt: timestamp('claimed_at', { withTimezone: true }),
 		executedAt: timestamp('executed_at', { withTimezone: true }),
 		resultCode: text('result_code'),
+		// Upload progress (kind upload_video), written back so a cut-off upload resumes. The session
+		// address is cleared when the action ends. See 0169_youtube_upload_progress.sql.
+		uploadSessionUri: text('upload_session_uri'),
+		uploadBytesSent: bigint('upload_bytes_sent', { mode: 'number' }),
+		uploadAttempts: integer('upload_attempts').notNull().default(0),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

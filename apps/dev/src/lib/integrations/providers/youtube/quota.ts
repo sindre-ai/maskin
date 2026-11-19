@@ -86,3 +86,47 @@ export async function chargeYoutubeQuota(
 		throw err
 	}
 }
+
+/**
+ * Upload bucket (videos.insert): Google allows 100 uploads a day for the project, so Maskin caps
+ * it at 20 a day globally and 5 a day per workspace, one unit per upload. The rows live in the
+ * same table under their own scope names, so an upload never eats into the data budget and the
+ * data budget never blocks an upload.
+ */
+export const UPLOAD_GLOBAL_DAILY_CAP = 20
+export const UPLOAD_WORKSPACE_DAILY_CAP = 5
+export const UPLOAD_GLOBAL_SCOPE = 'upload:global'
+export const uploadWorkspaceScope = (workspaceId: string) => `upload:${workspaceId}`
+
+/** Charges one upload to the workspace row, then the global row, like chargeYoutubeQuota. */
+export async function chargeYoutubeUploadQuota(
+	db: Database,
+	workspaceId: string,
+	at?: Date,
+): Promise<void> {
+	try {
+		await db.transaction(async (tx) => {
+			if (
+				!(await chargeRow(tx, uploadWorkspaceScope(workspaceId), 1, UPLOAD_WORKSPACE_DAILY_CAP, at))
+			) {
+				throw new YoutubeError({
+					code: 'WORKSPACE_QUOTA_EXHAUSTED',
+					message: "This workspace's daily YouTube upload limit is used up.",
+					hint: 'The limit resets at midnight Pacific time.',
+				})
+			}
+			if (!(await chargeRow(tx, UPLOAD_GLOBAL_SCOPE, 1, UPLOAD_GLOBAL_DAILY_CAP, at))) {
+				throw new GlobalCapReached()
+			}
+		})
+	} catch (err) {
+		if (err instanceof GlobalCapReached) {
+			throw new YoutubeError({
+				code: 'QUOTA_EXHAUSTED',
+				message: "Maskin's daily YouTube upload limit is used up.",
+				hint: 'The limit resets at midnight Pacific time.',
+			})
+		}
+		throw err
+	}
+}
