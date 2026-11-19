@@ -61,7 +61,25 @@ describe('youtubeRead', () => {
 			'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
 		)
 		expect((init as RequestInit).headers).toEqual({ Authorization: 'Bearer ya29.token' })
-		expect(chargeYoutubeQuota).toHaveBeenCalledWith(ctx.db, 'ws-1', 1)
+		expect(chargeYoutubeQuota).toHaveBeenCalledWith(ctx.db, 'ws-1', 1, 'data')
+	})
+
+	it('charges the bucket the read names, and a repeated search costs nothing', async () => {
+		const search = {
+			tool: 'youtube__search',
+			path: 'search',
+			params: { part: 'snippet', q: 'ai agents', type: 'video', maxResults: '10' },
+			units: 1,
+			bucket: 'search' as const,
+		}
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [] }))
+
+		await youtubeRead(ctx, search)
+		await youtubeRead(ctx, search)
+
+		expect(fetchSpy).toHaveBeenCalledTimes(1)
+		expect(chargeYoutubeQuota).toHaveBeenCalledTimes(1)
+		expect(chargeYoutubeQuota).toHaveBeenCalledWith(ctx.db, 'ws-1', 1, 'search')
 	})
 
 	it('serves a repeat read from the cache at zero quota cost', async () => {

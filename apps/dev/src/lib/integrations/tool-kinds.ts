@@ -50,6 +50,9 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 	// Maskin-hosted and read-only. Curated, so a tool added later is a write until it is listed here.
 	youtube: new Set([
 		'youtube__get_channel',
+		'youtube__search',
+		'youtube__get_public_channel',
+		'youtube__get_public_videos',
 		'youtube__get_upload_status',
 		'youtube__list_comments',
 		'youtube__get_own_captions',

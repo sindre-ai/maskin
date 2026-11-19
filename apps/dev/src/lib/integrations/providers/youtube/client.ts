@@ -4,7 +4,7 @@ import { TokenManager } from '../../oauth/token-manager'
 import { getCachedRead, getPurgeEpoch, setCachedRead } from './cache'
 import { YoutubeError, classifyYoutubeError } from './errors'
 import { purgeYoutubeData } from './purge'
-import { chargeYoutubeQuota } from './quota'
+import { type YoutubeQuotaBucket, chargeYoutubeQuota } from './quota'
 import { getYoutubeAccessToken, getYoutubeIntegrationId } from './token'
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3'
@@ -24,6 +24,8 @@ export interface YoutubeRead {
 	params: Record<string, string>
 	/** Quota units the call costs. */
 	units: number
+	/** Which Google quota bucket the units count against. Defaults to data. */
+	bucket?: YoutubeQuotaBucket
 	/** False for reads that must never be cached, such as caption text. Default true. */
 	cache?: boolean
 	/** How to read a successful body. Default json; captions.download answers plain text. */
@@ -54,7 +56,7 @@ export async function youtubeRead<T = unknown>(
 	}
 
 	const epoch = getPurgeEpoch(integrationId)
-	await chargeYoutubeQuota(db, workspaceId, read.units)
+	await chargeYoutubeQuota(db, workspaceId, read.units, read.bucket ?? 'data')
 
 	const accessToken = await getYoutubeAccessToken(db, integrationId, workspaceId)
 	const url = `${YOUTUBE_API_BASE}/${read.path}?${new URLSearchParams(read.params).toString()}`

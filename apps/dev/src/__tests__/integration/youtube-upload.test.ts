@@ -392,6 +392,7 @@ describe('YouTube upload and publish', () => {
 			await db.insert(youtubeQuotaUsage).values({
 				quotaDate: '2026-10-15',
 				scope: UPLOAD_GLOBAL_SCOPE,
+				bucket: 'upload',
 				unitsUsed: UPLOAD_GLOBAL_DAILY_CAP,
 			})
 			await expect(chargeYoutubeUploadQuota(db, ws, DAY)).rejects.toMatchObject({

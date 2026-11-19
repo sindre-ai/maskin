@@ -67,12 +67,15 @@ describe('maskin-youtube tool server', () => {
 			'youtube__create_playlist',
 			'youtube__get_channel',
 			'youtube__get_own_captions',
+			'youtube__get_public_channel',
+			'youtube__get_public_videos',
 			'youtube__get_upload_status',
 			'youtube__like',
 			'youtube__list_comments',
 			'youtube__post_comment',
 			'youtube__publish_video',
 			'youtube__reply_to_comment',
+			'youtube__search',
 			'youtube__set_thumbnail',
 			'youtube__update_video_metadata',
 			'youtube__upload_video',
@@ -174,6 +177,154 @@ describe('maskin-youtube tool server', () => {
 			params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
 			units: 1,
 		})
+	})
+
+	it('search reads search.list in the search bucket for 1 unit, 10 results by default', async () => {
+		youtubeRead.mockResolvedValueOnce({ items: [{ id: { videoId: 'abcdefghijk' } }] })
+		const { client, ctx } = await connect()
+
+		const result = await client.callTool({
+			name: 'youtube__search',
+			arguments: { q: 'ai agents' },
+		})
+
+		expect(text(result)).toEqual({ items: [{ id: { videoId: 'abcdefghijk' } }] })
+		expect(youtubeRead).toHaveBeenCalledWith(ctx, {
+			tool: 'youtube__search',
+			path: 'search',
+			params: { part: 'snippet', q: 'ai agents', type: 'video', maxResults: '10' },
+			units: 1,
+			bucket: 'search',
+		})
+	})
+
+	it('search passes the type and a smaller result count through', async () => {
+		youtubeRead.mockResolvedValueOnce({ items: [] })
+		const { client } = await connect()
+
+		await client.callTool({
+			name: 'youtube__search',
+			arguments: { q: 'maskin', type: 'channel', max_results: 3 },
+		})
+
+		expect(youtubeRead.mock.calls[0][1].params).toEqual({
+			part: 'snippet',
+			q: 'maskin',
+			type: 'channel',
+			maxResults: '3',
+		})
+	})
+
+	it.each([
+		['more than 10 results', { q: 'x', max_results: 11 }],
+		['an empty query', { q: '   ' }],
+		['a type other than video or channel', { q: 'x', type: 'playlist' }],
+	])('search refuses %s before any YouTube call', async (_name, args) => {
+		const { client } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__search', arguments: args })
+
+		expect(result.isError).toBe(true)
+		expect(youtubeRead).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		['a channel id', 'UCabcdefghijklmnopqrstuv', { id: 'UCabcdefghijklmnopqrstuv' }],
+		['a handle', '@maskin', { forHandle: '@maskin' }],
+		['a channel URL', 'https://www.youtube.com/@maskin', { forHandle: '@maskin' }],
+	])(
+		'get_public_channel resolves %s with channels.list, 1 data unit',
+		async (_n, channel, lookup) => {
+			youtubeRead.mockResolvedValueOnce({ items: [{ id: 'UC1' }] })
+			const { client, ctx } = await connect()
+
+			const result = await client.callTool({
+				name: 'youtube__get_public_channel',
+				arguments: { channel },
+			})
+
+			expect(text(result)).toEqual({ items: [{ id: 'UC1' }] })
+			expect(youtubeRead).toHaveBeenCalledWith(ctx, {
+				tool: 'youtube__get_public_channel',
+				path: 'channels',
+				params: { part: 'snippet,statistics', ...lookup },
+				units: 1,
+			})
+		},
+	)
+
+	it('get_public_channel refuses a custom URL as INVALID_INPUT and reports it as invalid_input', async () => {
+		const { client } = await connect()
+
+		const result = await client.callTool({
+			name: 'youtube__get_public_channel',
+			arguments: { channel: 'https://www.youtube.com/c/maskin' },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(text(result).error.code).toBe('INVALID_INPUT')
+		expect(youtubeRead).not.toHaveBeenCalled()
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ tool: 'get_public_channel', outcome: 'invalid_input' }),
+		)
+	})
+
+	it('get_public_videos reads videos.list for the ids, sorted and de-duplicated, 1 unit', async () => {
+		youtubeRead.mockResolvedValueOnce({ items: [] })
+		const { client, ctx } = await connect()
+
+		await client.callTool({
+			name: 'youtube__get_public_videos',
+			arguments: { ids: ['bbbbbbbbbbb', 'aaaaaaaaaaa', 'bbbbbbbbbbb'] },
+		})
+
+		expect(youtubeRead).toHaveBeenCalledWith(ctx, {
+			tool: 'youtube__get_public_videos',
+			path: 'videos',
+			params: { part: 'snippet,statistics', id: 'aaaaaaaaaaa,bbbbbbbbbbb' },
+			units: 1,
+		})
+	})
+
+	it('get_public_videos accepts 50 ids and refuses 51, an empty list and a URL', async () => {
+		youtubeRead.mockResolvedValue({ items: [] })
+		const { client } = await connect()
+		const ids = (n: number) =>
+			Array.from({ length: n }, (_, i) => `id${String(i).padStart(9, '0')}`)
+
+		const fifty = await client.callTool({
+			name: 'youtube__get_public_videos',
+			arguments: { ids: ids(50) },
+		})
+		expect(fifty.isError).toBeUndefined()
+		expect(youtubeRead).toHaveBeenCalledTimes(1)
+
+		for (const bad of [ids(51), [], ['https://www.youtube.com/watch?v=dQw4w9WgXcQ']]) {
+			const result = await client.callTool({
+				name: 'youtube__get_public_videos',
+				arguments: { ids: bad },
+			})
+			expect(result.isError).toBe(true)
+		}
+		expect(youtubeRead).toHaveBeenCalledTimes(1)
+	})
+
+	it('reports one event per new tool with its short name and never the query or ids', async () => {
+		youtubeRead.mockResolvedValue({ items: [] })
+		const { client } = await connect()
+
+		await client.callTool({ name: 'youtube__search', arguments: { q: 'secret topic' } })
+		await client.callTool({
+			name: 'youtube__get_public_videos',
+			arguments: { ids: ['aaaaaaaaaaa'] },
+		})
+
+		expect(trackYoutubeToolCalled.mock.calls.map(([e]) => e.tool)).toEqual([
+			'search',
+			'get_public_videos',
+		])
+		expect(JSON.stringify(trackYoutubeToolCalled.mock.calls)).not.toContain('secret topic')
+		expect(JSON.stringify(trackYoutubeToolCalled.mock.calls)).not.toContain('aaaaaaaaaaa')
 	})
 
 	it('returns a client error as a normalized tool error', async () => {
@@ -309,8 +460,13 @@ describe('youtube_tool_called event', () => {
 })
 
 describe('youtube tool kinds', () => {
-	it('classifies get_channel as a read, so a read-only agent may call it', () => {
-		expect(classifyTool('youtube', 'youtube__get_channel')).toBe('read')
+	it.each([
+		'youtube__get_channel',
+		'youtube__search',
+		'youtube__get_public_channel',
+		'youtube__get_public_videos',
+	])('classifies %s as a read, so a read-only agent may call it', (tool) => {
+		expect(classifyTool('youtube', tool)).toBe('read')
 	})
 
 	it('treats a youtube tool nobody classified as a write', () => {
@@ -370,9 +526,12 @@ describe('youtube write tools', () => {
 		const byName = new Map(tools.map((t) => [t.name, t]))
 		const reads = [
 			'youtube__get_channel',
+			'youtube__get_own_captions',
+			'youtube__get_public_channel',
+			'youtube__get_public_videos',
 			'youtube__get_upload_status',
 			'youtube__list_comments',
-			'youtube__get_own_captions',
+			'youtube__search',
 		]
 		for (const [name, tool] of byName) {
 			expect(tool.annotations?.readOnlyHint).toBe(reads.includes(name))

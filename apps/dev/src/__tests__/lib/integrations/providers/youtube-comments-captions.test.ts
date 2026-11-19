@@ -86,7 +86,7 @@ describe('youtube__list_comments', () => {
 			order: 'time',
 			textFormat: 'plainText',
 		})
-		expect(chargeYoutubeQuota).toHaveBeenCalledWith(expect.anything(), 'ws-1', 1)
+		expect(chargeYoutubeQuota).toHaveBeenCalledWith(expect.anything(), 'ws-1', 1, 'data')
 	})
 
 	it('follows next page tokens up to the requested pages and hands back the rest', async () => {
