@@ -239,7 +239,7 @@ jobs:
       - name: Keep the debug symbols
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Maskin-dSYMs-${{ env.BUILD_NUMBER }}
           path: ${{ runner.temp }}/Maskin.xcarchive/dSYMs
@@ -291,7 +291,7 @@ jobs:
 
       - name: Upload logs
         if: (failure() || cancelled()) && steps.gate.outputs.enabled == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-testflight-logs
           path: |
@@ -394,7 +394,7 @@ jobs:
       - name: Keep the debug symbols
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Maskin-TV-dSYMs-${{ env.BUILD_NUMBER }}
           path: ${{ runner.temp }}/MaskinTV.xcarchive/dSYMs
@@ -444,7 +444,7 @@ jobs:
 
       - name: Upload logs
         if: (failure() || cancelled()) && steps.gate.outputs.enabled == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tvos-testflight-logs
           path: |
