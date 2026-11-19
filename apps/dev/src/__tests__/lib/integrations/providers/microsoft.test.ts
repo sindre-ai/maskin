@@ -69,7 +69,7 @@ describe('parseTokenResponse', () => {
 			access_token: 'a',
 			refresh_token: 'r',
 			scope:
-				'User.Read Calendars.Read OnlineMeetings.Read OnlineMeetingTranscript.Read.All profile openid email',
+				'User.Read Calendars.Read Mail.ReadWrite OnlineMeetings.Read OnlineMeetingTranscript.Read.All profile openid email',
 		})
 		expect(parsed.scope).toContain('offline_access')
 		expect(integrationScopeGaps(config, { scope: parsed.scope })).toEqual({
