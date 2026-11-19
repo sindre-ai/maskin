@@ -317,10 +317,11 @@ struct ChatSnapshotTests {
 		for width in Self.widths {
 			let view = VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				GroupHeaderPill(participants: [me, relay, sam, ChatParticipant(id: "cpo", name: "CPO", kind: .agent), ChatParticipant(id: "dev", name: "Dev", kind: .agent)], selfID: "me", action: {})
-				HandoffRow(session: queued, behind: ["Sentinel", "Forge"])
-				HandoffRow(session: handoff)
-				HandoffRow(session: done)
-				HandoffRow(session: failed)
+				HandoffGroup(entries: [
+					HandoffEntry(queued, behind: ["Sentinel", "Forge"]), HandoffEntry(handoff), HandoffEntry(done),
+					HandoffEntry(failed),
+				])
+				HandoffGroup(entries: [HandoffEntry(done)])
 				LiveActivityView(agent: relay, turn: turn, startedAt: base.addingTimeInterval(-42))
 				FinishedTraceView(turn: ActivityTurn(sessionID: "s3", messageID: 3, status: .failed, result: ActivityResult(text: "x", isError: true), steps: [ActivityStep(id: "9", kind: .error, label: "Credit balance too low", status: .failed)]))
 			}
