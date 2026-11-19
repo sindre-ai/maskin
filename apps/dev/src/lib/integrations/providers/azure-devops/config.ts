@@ -1,6 +1,8 @@
-import type { ProviderConfig } from '../../types'
+import type { ProviderConfig, StoredCredentials } from '../../types'
 
 export const AZURE_DEVOPS_PROVIDER = 'azure-devops'
+
+const MCP_SCOPE = 'https://mcp.dev.azure.com/.default'
 
 /**
  * Azure DevOps, through Microsoft's hosted MCP server (https://learn.microsoft.com/en-us/azure/devops/mcp-server/remote-mcp-server).
@@ -37,7 +39,7 @@ export const config: ProviderConfig = {
 		config: {
 			authorizationUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize',
 			tokenUrl: 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token',
-			scopes: ['offline_access', 'https://mcp.dev.azure.com/.default'],
+			scopes: ['offline_access', MCP_SCOPE],
 			pkce: true,
 			clientIdEnv: 'MICROSOFT_CLIENT_ID',
 			clientSecretEnv: 'MICROSOFT_CLIENT_SECRET',
@@ -60,4 +62,22 @@ export const config: ProviderConfig = {
 		},
 		readOnlyHeaders: { 'X-MCP-Readonly': 'true' },
 	},
+}
+
+/**
+ * Entra answers a "/.default" request with the delegated scopes it resolved to on that resource,
+ * never with ".default" itself, and never lists offline_access even when it issued a refresh token
+ * because of it. Left alone, the scope-drift check would read both as missing and show "Reconnect
+ * needed" on every healthy connection. A token only comes back for a request that asked for both,
+ * so adding them back is accurate. Written from how the Microsoft provider behaves; not yet seen
+ * against a live Azure DevOps token response.
+ */
+export function parseTokenResponse(raw: unknown): Partial<StoredCredentials> {
+	if (typeof raw !== 'object' || raw === null) return {}
+	const body = raw as Record<string, unknown>
+	if (typeof body.scope !== 'string') return {}
+	const granted = body.scope.split(/\s+/).filter(Boolean)
+	const implied = [MCP_SCOPE, ...(typeof body.refresh_token === 'string' ? ['offline_access'] : [])]
+	const missing = implied.filter((scope) => !granted.includes(scope))
+	return missing.length > 0 ? { scope: [...granted, ...missing].join(' ') } : {}
 }

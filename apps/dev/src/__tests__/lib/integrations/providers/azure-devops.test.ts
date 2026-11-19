@@ -7,8 +7,12 @@ import {
 	rewriteMcpServersForGateway,
 	withReadOnlyHeaders,
 } from '../../../../lib/integrations/mcp-gateway'
-import { config } from '../../../../lib/integrations/providers/azure-devops/config'
+import {
+	config,
+	parseTokenResponse,
+} from '../../../../lib/integrations/providers/azure-devops/config'
 import { getProvider, listProviders } from '../../../../lib/integrations/registry'
+import { integrationScopeGaps } from '../../../../lib/integrations/scope-drift'
 import { classifyTool } from '../../../../lib/integrations/tool-kinds'
 
 describe('Azure DevOps provider config', () => {
@@ -50,8 +54,9 @@ describe('Azure DevOps provider config', () => {
 		})
 	})
 
-	it('is registered', () => {
+	it('is registered with its token parser', () => {
 		expect(getProvider('azure-devops').config).toBe(config)
+		expect(getProvider('azure-devops').parseTokenResponse).toBe(parseTokenResponse)
 		expect(listProviders().map((p) => p.config.name)).toContain('azure-devops')
 	})
 
@@ -128,5 +133,36 @@ describe('Azure DevOps through the gateway', () => {
 		}
 		// A server annotation cannot talk a tool outside the list into being a read.
 		expect(classifyTool('azure-devops', 'pipelines_write', { readOnlyHint: true })).toBe('write')
+	})
+})
+
+describe('Azure DevOps parseTokenResponse', () => {
+	it('adds .default and offline_access, which Entra does not list, so a healthy install is not asked to reconnect', () => {
+		const parsed = parseTokenResponse({
+			access_token: 'a',
+			refresh_token: 'r',
+			scope: '499b84ac-1321-427f-aa17-267ca6975798/user_impersonation',
+		})
+		expect(parsed.scope).toContain('https://mcp.dev.azure.com/.default')
+		expect(parsed.scope).toContain('offline_access')
+		expect(integrationScopeGaps(config, { scope: parsed.scope })).toEqual({
+			missing: [],
+			needsReconnect: false,
+		})
+	})
+
+	it('does not add offline_access when no refresh token came back', () => {
+		const parsed = parseTokenResponse({ access_token: 'a', scope: 'x/user_impersonation' })
+		expect(parsed.scope).not.toContain('offline_access')
+	})
+
+	it('leaves a scope string that already lists both alone, and a missing one unknown', () => {
+		expect(
+			parseTokenResponse({
+				refresh_token: 'r',
+				scope: 'offline_access https://mcp.dev.azure.com/.default',
+			}),
+		).toEqual({})
+		expect(parseTokenResponse({ access_token: 'a', refresh_token: 'r' })).toEqual({})
 	})
 })
