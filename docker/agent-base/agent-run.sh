@@ -286,7 +286,7 @@ setup_strip_images_proxy() {
 # tools by name only; this adds the load_tool server the agent uses to bring in
 # the definitions it needs (tool-loader.js). Skipped when the proxy is not up,
 # so an agent never has tools listed by name with no way to load them. Rollback
-# is MASKIN_FALLBACK_TOOL_LOADER=off on apps/dev, no image rebuild.
+# is unsetting MASKIN_FALLBACK_TOOL_LOADER on apps/dev (it is off unless set), no image rebuild.
 add_tool_loader_server() {
   [ "$MASKIN_TOOL_LOADER" = "1" ] && [ "$STRIP_IMAGES_PROXY_UP" = "1" ] && [ -n "$MCP_CONFIG_FILE" ] || return 0
   local patched

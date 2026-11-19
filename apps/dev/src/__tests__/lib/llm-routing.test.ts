@@ -498,11 +498,16 @@ describe('resolveLlmRoute priority order', () => {
 				return result?.envVars
 			}
 
-			it('asks the container to load MCP tools on demand by default', async () => {
+			it('leaves MCP tool loading off by default', async () => {
+				expect(await resolveEnv()).not.toHaveProperty('MASKIN_TOOL_LOADER')
+			})
+
+			it('MASKIN_FALLBACK_TOOL_LOADER=true asks the container to load MCP tools on demand', async () => {
+				process.env.MASKIN_FALLBACK_TOOL_LOADER = 'true'
 				expect((await resolveEnv())?.MASKIN_TOOL_LOADER).toBe('1')
 			})
 
-			it('MASKIN_FALLBACK_TOOL_LOADER=off turns it off', async () => {
+			it('any other value leaves it off', async () => {
 				process.env.MASKIN_FALLBACK_TOOL_LOADER = 'off'
 				expect(await resolveEnv()).not.toHaveProperty('MASKIN_TOOL_LOADER')
 			})

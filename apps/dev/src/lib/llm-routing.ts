@@ -147,8 +147,9 @@ export interface FallbackConfig {
 	/**
 	 * Send MCP tools to the model by name only and let the agent load a
 	 * definition when it needs one (tool-loader.js, in the agent container). The
-	 * funded route has no tool search of its own. On unless
-	 * MASKIN_FALLBACK_TOOL_LOADER is "off" (the rollback, no image rebuild).
+	 * funded route has no tool search of its own. Off unless
+	 * MASKIN_FALLBACK_TOOL_LOADER is "true" or "1" (unsetting it is the
+	 * rollback, no image rebuild).
 	 */
 	toolLoader?: boolean
 }
@@ -255,7 +256,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			.map((p) => p.trim())
 			.filter(Boolean),
 		ttftTimeoutMs: readTtftTimeoutMs(env),
-		toolLoader: env.MASKIN_FALLBACK_TOOL_LOADER?.trim().toLowerCase() !== 'off',
+		toolLoader: ['true', '1'].includes(env.MASKIN_FALLBACK_TOOL_LOADER?.trim().toLowerCase() ?? ''),
 	}
 }
 
