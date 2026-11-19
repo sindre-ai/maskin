@@ -25,7 +25,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, PanelLeft } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { getActorAvatarPaletteClass } from '../shared/actor-avatar'
 import { NewWorkspaceDialog } from './new-workspace-dialog'
@@ -56,9 +56,10 @@ export function WorkspaceSwitcher() {
 	const currentFromList = workspaces?.find((ws) => ws.id === workspaceId)
 	const displayName = currentFromList?.name ?? workspace?.name ?? workspaceId
 	const initial = displayName.charAt(0).toUpperCase()
-	// On the rail the tile is the expand affordance, not the menu (mockup line
-	// 108's `iconRailMenu` — "{wsName} · expand menu"). The workspace list has
-	// nowhere to render at 60px wide, so opening it there would be a dead end.
+	// On the rail the top button is the expand affordance, not the menu. It
+	// shows the sidebar toggle icon rather than the workspace initial, so the
+	// control reads as what it does. The workspace list has nowhere to render
+	// at 60px wide, so opening it there would be a dead end.
 	// Mobile is excluded: the sidebar is a Sheet, always at full width.
 	const isRail = state === 'collapsed' && !isMobile
 
@@ -89,11 +90,10 @@ export function WorkspaceSwitcher() {
 		navigate({ to: '/$workspaceId', params: { workspaceId: target.id } })
 	}
 
-	// The initial tile leads the row in v11 (24px) and is the whole identity
-	// on the rail (30px).
+	// The initial tile leads the row in v11 (24px).
 	const label = (
 		<>
-			<div className="flex aspect-square size-6 shrink-0 items-center justify-center rounded-[7px] bg-brand-subtle text-xs font-bold text-brand-subtle-foreground group-data-[collapsible=icon]:size-[30px] group-data-[collapsible=icon]:rounded-lg">
+			<div className="flex aspect-square size-6 shrink-0 items-center justify-center rounded-[7px] bg-brand-subtle text-xs font-bold text-brand-subtle-foreground">
 				{initial}
 			</div>
 			<span className="truncate text-[13px] font-semibold group-data-[collapsible=icon]:hidden">
@@ -117,11 +117,11 @@ export function WorkspaceSwitcher() {
 			<SidebarMenu>
 				<SidebarMenuItem>
 					<SidebarMenuButton
-						tooltip={`${displayName} · expand menu`}
+						tooltip="Expand sidebar"
 						aria-label="Expand sidebar"
 						onClick={toggleSidebar}
 					>
-						{label}
+						<PanelLeft />
 					</SidebarMenuButton>
 				</SidebarMenuItem>
 			</SidebarMenu>

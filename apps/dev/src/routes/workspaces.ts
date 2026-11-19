@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { evictMembership, evictOAuthTokens, getOAuthPin } from '@maskin/auth'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
@@ -58,8 +58,11 @@ import {
 import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
+	type WorkspacePurgeResult,
+	describePurgeFailure,
 	evictPurgedWorkspace,
 	purgeWorkspace,
+	purgeWorkspaceInBatches,
 	purgeWorkspaceStorage,
 	stopPurgedSessions,
 } from '../lib/workspace-purge'
@@ -1617,6 +1620,10 @@ const deleteWorkspaceRoute = createRoute({
 			description: 'A paid plan is still live; cancel it first',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Removing the workspace failed; nothing was deleted',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -1633,7 +1640,9 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	const outcome = await db.transaction(async (tx) => {
+	// The checks run twice: first on their own, so a refusal costs nothing, and again in the
+	// transaction that finishes the purge, in case a plan or the name changed in between.
+	const guard = async (tx: Transaction) => {
 		// Lock first: the checks below and the purge must see one consistent workspace, and a
 		// concurrent transfer, plan change or member add waits for this to finish.
 		const [locked] = await tx
@@ -1652,10 +1661,37 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 		if (blocker?.code === 'not_billing_owner') return { kind: 'forbidden' as const }
 		if (confirmName !== facts.workspaceName) return { kind: 'name_mismatch' as const }
 		if (blocker) return { kind: 'blocked' as const, message: blocker.message }
+		return { kind: 'ok' as const, name: facts.workspaceName }
+	}
 
-		const result = await purgeWorkspace(tx, workspaceId)
-		return { kind: 'deleted' as const, result, name: facts.workspaceName }
-	})
+	type Outcome =
+		| Exclude<Awaited<ReturnType<typeof guard>>, { kind: 'ok' }>
+		| { kind: 'deleted'; result: WorkspacePurgeResult; name: string }
+
+	let outcome: Outcome
+	let partial = false
+	try {
+		const first = await db.transaction(guard)
+		if (first.kind !== 'ok') {
+			outcome = first
+		} else {
+			// The bulky rows go in small statements first, so the transaction below stays short. A
+			// workspace with 100k+ events ran past the query timeout as one transaction.
+			partial = true
+			const bulk = await purgeWorkspaceInBatches(db, workspaceId)
+			outcome = await db.transaction(async (tx): Promise<Outcome> => {
+				const again = await guard(tx)
+				if (again.kind !== 'ok') return again
+				const result = await purgeWorkspace(tx, workspaceId)
+				result.storageKeys.push(...bulk.storageKeys)
+				return { kind: 'deleted', result, name: again.name }
+			})
+		}
+	} catch (err) {
+		const failure = describePurgeFailure(err, { partial })
+		logger.error('workspace: delete failed', { workspaceId, actorId, partial, ...failure.log })
+		return c.json(createApiError('INTERNAL_ERROR', failure.message), 500)
+	}
 
 	switch (outcome.kind) {
 		case 'not_found':

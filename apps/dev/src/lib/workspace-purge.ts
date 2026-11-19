@@ -1,5 +1,5 @@
 import { evictActor, evictMembership, revokeActorKeys } from '@maskin/auth'
-import type { Transaction } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
 	actors,
@@ -34,7 +34,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, inArray, notInArray, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, notInArray, or, sql } from 'drizzle-orm'
 import { TERMINAL_STATUSES } from '../services/session-lifecycle'
 import { evictBillingUsage } from './billing-usage-cache'
 import { logger } from './logger'
@@ -178,6 +178,129 @@ export interface LivePurgedSession {
 }
 
 const DELETED_AGENT_NAME = 'Deleted agent'
+
+/** Rows per statement in `purgeWorkspaceInBatches`; small enough that cascades stay quick. */
+const PURGE_BATCH_SIZE = 500
+
+export interface BatchedPurgeResult {
+	/** Snapshot keys of the sessions deleted here, which the final purge can no longer read. */
+	storageKeys: string[]
+}
+
+/**
+ * Removes the bulky rows of a workspace in small statements, each its own short transaction, so
+ * a workspace with hundreds of thousands of events, sessions and objects does not have to be
+ * deleted by one long transaction (which ran past the query timeout and dropped the connection).
+ * Call it before `purgeWorkspace`, which then finds little left and finishes the rest. It is safe
+ * to run again after a failure: it only deletes what is still there.
+ *
+ * Unfinished sessions are left for `purgeWorkspace`, which reads their sandboxes before deleting.
+ */
+export async function purgeWorkspaceInBatches(
+	db: Database,
+	workspaceId: string,
+	{ batchSize = PURGE_BATCH_SIZE }: { batchSize?: number } = {},
+): Promise<BatchedPurgeResult> {
+	const storageKeys: string[] = []
+
+	// installed_loops points at objects with NO ACTION, so it goes before them.
+	await db.delete(installedLoops).where(eq(installedLoops.workspaceId, workspaceId))
+
+	// Objects with the edges that touch them (edges have no foreign keys), a page at a time. The
+	// edge delete is keyed by id, so it uses the source and target indexes.
+	for (;;) {
+		const page = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(eq(objects.workspaceId, workspaceId))
+			.limit(batchSize)
+		if (page.length === 0) break
+		const ids = page.map((r) => r.id)
+		await db
+			.delete(relationships)
+			.where(or(inArray(relationships.sourceId, ids), inArray(relationships.targetId, ids)))
+		await db.delete(objects).where(inArray(objects.id, ids))
+	}
+
+	// Logs of this workspace's sessions, then its events.
+	for (;;) {
+		const page = await db
+			.select({ id: sessionLogs.id })
+			.from(sessionLogs)
+			.innerJoin(sessions, eq(sessions.id, sessionLogs.sessionId))
+			.where(eq(sessions.workspaceId, workspaceId))
+			.limit(batchSize * 4)
+		if (page.length === 0) break
+		await db.delete(sessionLogs).where(
+			inArray(
+				sessionLogs.id,
+				page.map((r) => r.id),
+			),
+		)
+	}
+	for (;;) {
+		const page = await db
+			.select({ id: events.id })
+			.from(events)
+			.where(eq(events.workspaceId, workspaceId))
+			.limit(batchSize * 4)
+		if (page.length === 0) break
+		await db.delete(events).where(
+			inArray(
+				events.id,
+				page.map((r) => r.id),
+			),
+		)
+	}
+
+	// Finished sessions. They point at each other twice (retry_of, retried_session_id, both NO
+	// ACTION, and the seed data shows a retry and its original pointing back at one another), so
+	// no order is safe for a batch. Cut those links first; the sessions are going anyway.
+	for (;;) {
+		const linked = await db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					or(isNotNull(sessions.retryOf), isNotNull(sessions.retriedSessionId)),
+				),
+			)
+			.limit(batchSize)
+		if (linked.length === 0) break
+		await db
+			.update(sessions)
+			.set({ retryOf: null, retriedSessionId: null })
+			.where(
+				inArray(
+					sessions.id,
+					linked.map((r) => r.id),
+				),
+			)
+	}
+	for (;;) {
+		const page = await db
+			.select({ id: sessions.id, snapshotPath: sessions.snapshotPath })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.status, [...TERMINAL_STATUSES]),
+				),
+			)
+			.limit(batchSize)
+		if (page.length === 0) break
+		await db.delete(sessions).where(
+			inArray(
+				sessions.id,
+				page.map((r) => r.id),
+			),
+		)
+		for (const r of page) if (r.snapshotPath) storageKeys.push(r.snapshotPath)
+	}
+
+	return { storageKeys }
+}
 
 /**
  * Removes every row belonging to `workspaceId`. Runs inside the caller's transaction, which must
@@ -353,6 +476,59 @@ export async function purgeWorkspace(
 		memberActorIds: members.map((m) => m.actorId),
 		scrubbedAgentIds,
 		liveSessions: liveSessions.filter((x) => x.containerId || x.agentServerId),
+	}
+}
+
+export interface PurgeFailure {
+	/** What goes in the log: the database's own words, never shown to the caller. */
+	log: Record<string, unknown>
+	/** What the caller is told. The transaction rolled back, so nothing was deleted. */
+	message: string
+}
+
+/**
+ * Reads a failed purge. The driver wraps the database error, so the SQLSTATE, table and
+ * constraint sit on `cause`. The log gets all of it (the unexpected-error page used to hide it);
+ * the caller gets a plain sentence, since a table name means nothing to them. `partial` is for a
+ * failure in the batched step, which commits as it goes: some data may already be gone, and a
+ * second try carries on from there.
+ */
+export function describePurgeFailure(err: unknown, { partial = false } = {}): PurgeFailure {
+	const top = err instanceof Error ? err : undefined
+	const cause = (top?.cause ?? err) as Record<string, unknown> | undefined
+	const pick = (k: string) => (cause && typeof cause === 'object' ? cause[k] : undefined)
+	const code = pick('code')
+	const log = {
+		code,
+		table: pick('table_name'),
+		constraint: pick('constraint_name'),
+		detail: pick('detail'),
+		message: cause instanceof Error ? cause.message : top?.message,
+		query: typeof top?.message === 'string' ? top.message.slice(0, 300) : undefined,
+	}
+	const untouched = partial
+		? 'Part of its data may already be removed, and trying again carries on from there.'
+		: 'Nothing was deleted and the workspace is unchanged.'
+	if (code === '23503') {
+		return {
+			log,
+			message: `The workspace could not be deleted because some of its data is still linked to other data. ${untouched} Support has been given the details.`,
+		}
+	}
+	if (
+		code === '57014' ||
+		code === '55P03' ||
+		code === '40P01' ||
+		top?.name === 'QueryTimeoutError'
+	) {
+		return {
+			log,
+			message: `The workspace could not be deleted because the database took too long or was busy. ${untouched} Try again in a minute.`,
+		}
+	}
+	return {
+		log,
+		message: `The workspace could not be deleted because removing its data failed. ${untouched} Support has been given the details.`,
 	}
 }
 

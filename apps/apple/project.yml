@@ -620,7 +620,7 @@ targets:
           - Fonts/JetBrainsMono.ttf
         # maskin://<workspaceId>/objects/<id>: what the Top Shelf items open.
         CFBundleURLTypes:
-          - CFBundleURLName: io.maskin.app.tv
+          - CFBundleURLName: io.maskin.app
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - maskin
@@ -630,7 +630,7 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app
         CODE_SIGN_ENTITLEMENTS: Apps/MaskinTV/MaskinTV.entitlements
         PRODUCT_NAME: Maskin
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -673,7 +673,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv.topshelf
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.topshelf
         PRODUCT_NAME: MaskinTVTopShelf
         # TVServices hands back non-Sendable content types, which Swift 6 mode rejects; this target
         # is a thin adapter over the system API, so it builds in Swift 5 mode.

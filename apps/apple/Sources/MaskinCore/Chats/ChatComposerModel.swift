@@ -82,7 +82,7 @@ public final class ChatComposerModel {
 	public private(set) var focusRequest = 0
 	public private(set) var mentions: [ChatMention] = []
 	public private(set) var attachments: [ChatAttachmentDraft] = []
-	/// A rule the last action ran into ("That file is over 1 GB."), shown once then cleared.
+	/// A rule the last action ran into ("That file is over 5 GB."), shown once then cleared.
 	public var notice: String?
 	/// The message being replied to or edited, shown as a strip inside the bar (7-Chat §1).
 	public private(set) var quote: Quote?
@@ -148,10 +148,18 @@ public final class ChatComposerModel {
 	/// whether a send can go through (`canSend`).
 	public var hasContent: Bool { !trimmedText.isEmpty || !attachments.isEmpty }
 
-	/// Text is required (the API rejects an empty message); every attachment must have settled.
+	/// Text or an attachment is required (the API accepts an empty message only with an attachment);
+	/// every attachment must have settled.
 	public var canSend: Bool {
-		!trimmedText.isEmpty && (!isOverLength || sendsAsFile) && !isUploading && !hasFailedAttachment
+		hasContent && (!isOverLength || sendsAsFile) && !isUploading && !hasFailedAttachment
 			&& !isSplitting
+	}
+
+	/// The words of a comment, or the attachments' names when there are none. Object comments carry
+	/// text (the comment API has no empty body), so a picture sent alone goes with its file name.
+	public var commentText: String {
+		if !trimmedText.isEmpty { return trimmedText }
+		return attachments.map(\.name).joined(separator: ", ")
 	}
 
 	/// Over the cap and able to go as a file: a chat host, an uploader, room for one more attachment,
@@ -503,7 +511,7 @@ public final class ChatComposerModel {
 				// A file on disk is ours to remove once this attempt is over; a retry prepares it again.
 				defer { if let url = file.fileURL { try? FileManager.default.removeItem(at: url) } }
 				guard file.sizeBytes <= ChatLimits.maxFileBytes else {
-					self?.finish(id, .failed("Over the 1 GB limit."))
+					self?.finish(id, .failed("Over the 5 GB limit."))
 					return
 				}
 				let ref: ChatAttachmentRef
