@@ -1,3 +1,10 @@
+# 1.3
+
+- iPad: a new navigation rail on the left side of the screen.
+- Chat: touch and hold a message to open a menu from the bottom of the screen.
+- A tidier chat list: each chat shows a one-line preview.
+- Fixes: the message field no longer crashes on the newest iOS, dictation in thread replies works, and Settings rows open inside your profile.
+
 # 1.2
 
 - iPad: one simple navigation. The sidebar is gone, your avatar is on every screen, and each screen has a single + button.
