@@ -1761,7 +1761,7 @@ describe('SessionManager', () => {
 				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
 			)
 
-			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash[1m]')
 			for (const u of calls.updates) {
 				if (typeof u === 'object' && u !== null && 'modelName' in u) {
 					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
