@@ -2386,232 +2386,181 @@ export const tools = {
 				.boolean()
 				.optional()
 				.describe(
-					'Full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
+					'Return full rows (config, granted scopes, provider-side ids). Default false: slim rows.',
 				),
-			limit: z.number().int().min(1).max(100).optional().describe('Default 25.'),
-			cursor: z.string().optional().describe('The `next_cursor` of the previous page.'),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous response.'),
 		}),
 	},
 	list_integration_providers: {
 		description:
-			"List available integration providers, their supported events and MCP surface. Each provider that has one returns `{ envKey, autoInject, server }`. `server` is the paste-ready value for an agent's `tools.mcpServers.<provider>` field: pass it to create_actor/update_actor verbatim, including `${TOKEN}` placeholders. When `autoInject` is true the integration is already wired into every agent session and there is nothing to attach (`server` may be absent; github is auto-injected as one `github-<owner>` entry per connected organisation). When `autoInject` is false (the default), connecting the integration alone gives the agent NO tools: attaching `server` to the agent is the required second step.",
+			"List integration providers, their events and MCP surface. A provider with one returns `{ envKey, autoInject, server }`. `server` is the value to paste into an agent's `tools.mcpServers.<provider>` via create_actor/update_actor, `${TOKEN}` placeholders included. If `autoInject` is true it is already in every agent session (github: one `github-<owner>` entry per organisation) and `server` may be absent. If false (the default), connecting gives NO tools until you attach `server` to the agent.",
 		inputSchema: z.object({}),
 	},
 	connect_integration: {
 		description:
-			'Ask the user to connect an integration for a provider (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect; see list_integrations): call it with that provider instead of sending the user to Settings. In a chat it shows a Connect card (sign-in button for OAuth, an input for API-key providers) where the user finishes; end your turn afterwards. Never ask for an API key or paste a connection link yourself. It is the only way to show a Connect card: post_conversation_message cannot, so never claim a card is shown without calling this tool. Outside a chat it falls back to the direct flow: OAuth providers return an install_url to open in a browser, API-key providers (e.g. "posthog") use `api_key` and activate immediately.',
+			'Ask the user to connect an integration (e.g. "linear"). Also the way to re-authenticate a connection whose status is not active (revoked, expired, needs reconnect; see list_integrations): call it instead of sending the user to Settings. In a chat it shows a Connect card; end your turn afterwards. Never ask for an API key or paste a link yourself, and never write card text without calling this tool. Outside a chat, OAuth providers return an install_url to open in a browser; API-key providers (e.g. "posthog") use `api_key` and activate at once.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
-				.describe('Provider name, e.g. "github" (see list_integration_providers).'),
+				.describe('Provider name (e.g. "github"). See list_integration_providers.'),
 			api_key: z
 				.string()
 				.optional()
 				.describe(
-					'Non-chat fallback only: the key for "api_key" providers (e.g. "posthog"). Ignored in a chat: the user types it into the card, so never ask for one.',
+					'Non-chat fallback only: the API key for "api_key" providers (e.g. "posthog"). Ignored in a chat; never ask the user for one.',
 				),
 		}),
 	},
 	gmail_send_email: {
 		description:
-			'Send an email from the workspace\'s connected Gmail account. Sending cannot be undone and is never retried. It needs "Read & write" access to Gmail. What happens next depends on the email send setting a person set for you. Always allow: pass `to`, `subject` and `body` (optional `cc`) and it sends at once, or pass `object_id` to send a kept email object. Ask first: keep the email as an object (create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the text as `content`), then mention the person with create_comment (no `decision` needed). They approve the exact text from the preview (editing it first if they want) or say yes in the chat (then call approve_draft_from_chat); any edit withdraws the approval. Attach files with create_file and list the ids in `metadata.attachment_file_ids` (max 5, 20 MB total); changing the list withdraws an approval. Then call this tool with only `object_id`: it sends the object as it reads now, once. If refused for lack of approval, end your turn; you are woken after approval. Older route: after the person chose the send option on a decision comment whose `draft` holds the email, call this with only `approval_comment_id` (plus `draft_id` for several drafts). Deny: sending is refused. If the outcome is unknown, do not send again: tell the person to check the Sent folder. Details: docs/reference/drafts.md.',
+			'Send an email from the connected Gmail account. Cannot be undone, never retried. Needs "Read & write" Gmail access; your email send setting decides the rest. Always allow: pass `to`, `subject`, `body` (optional `cc`) to send at once, or `object_id` of a kept email object. Ask first: create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, mention the person with create_comment (no `decision` needed); they approve the exact text (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). Then call this with only `object_id`: it sends the object as it reads now, once. If refused for no approval, end your turn; you are woken after approval. Older route: pass only `approval_comment_id` of a decision comment whose `draft` holds the email, after the person chose send (plus `draft_id` for several drafts). Deny: refused. If the outcome is unknown, do not resend: tell the person to check the Sent folder.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			to: z
 				.string()
 				.optional()
-				.describe(
-					'Recipient address, or several separated by commas. "Mette Holm <mette@northwind.dk>" or "mette@northwind.dk". Not used with approval_comment_id.',
-				),
-			cc: z
-				.string()
-				.optional()
-				.describe('Cc addresses, comma separated. Not used with approval_comment_id.'),
-			subject: z.string().optional().describe('Subject line. Not used with approval_comment_id.'),
-			body: z
-				.string()
-				.optional()
-				.describe('The email text, plain text. Not used with approval_comment_id.'),
+				.describe('Recipients, comma separated, e.g. "Mette Holm <mette@northwind.dk>".'),
+			cc: z.string().optional().describe('Cc addresses, comma separated.'),
+			subject: z.string().optional().describe('Subject line.'),
+			body: z.string().optional().describe('Plain-text body.'),
 			object_id: z
 				.string()
 				.uuid()
 				.optional()
-				.describe(
-					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now. Use alone; not with to, subject, body or approval_comment_id.',
-				),
+				.describe('The email object to send (metadata.kind "email"). Use alone.'),
 			approval_comment_id: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe(
-					'The id of the decision comment you posted (create_comment returns it) after a person chose its send option. Sends the draft attached to that card.',
-				),
+				.describe('Id of the decision comment (from create_comment) after a person chose send.'),
 			draft_id: z
 				.string()
 				.optional()
 				.describe(
-					'Only with approval_comment_id, for a card whose `decision.drafts` carries several messages: the `id` of the one message to send. Each message is approved and sent on its own. Leave out for a card with a single `draft`.',
+					'Only with approval_comment_id, when the card has several `decision.drafts`: the `id` of the one to send.',
 				),
 		}),
 	},
 	gmail_save_attachment: {
 		description:
-			'Save one attachment of a Gmail message as a workspace file. Google\'s hosted Gmail tools return no attachment bytes, so this is the way a receipt or document in a mail becomes a file you can use. Pass the message id, the attachment id and the partId from the message you read. Attachment ids change on every read, so the attachment is found by part_id (the partId listed next to the attachment, for example "1"); always pass it.  It reads that one attachment of the connected account and nothing else; the file name and type come from the message. Needs "Read" or "Read & write" access to Gmail. Max 20 MB. Returns file_id, name, mime_type, size_bytes and a url. To send it on, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), then have a person approve it and call gmail_send_email.',
+			'Save one Gmail attachment as a workspace file. Pass message_id, attachment_id and part_id from the message you read; attachment ids change on every read, so always pass part_id (e.g. "1"). Needs "Read" or "Read & write" Gmail access. Max 20 MB. Returns file_id, name, mime_type, size_bytes, url. To send it, put file_id in `attachment_file_ids` on an email object (metadata.kind "email"), get approval, then call gmail_send_email.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			message_id: z.string().min(1).describe('The Gmail message id the attachment belongs to.'),
-			attachment_id: z
-				.string()
-				.min(1)
-				.describe('The Gmail attachment id, as the message lists it (body.attachmentId).'),
+			message_id: z.string().min(1).describe('The Gmail message id.'),
+			attachment_id: z.string().min(1).describe('As the message lists it (body.attachmentId).'),
 			part_id: z
 				.string()
 				.min(1)
 				.optional()
-				.describe(
-					'The partId the Gmail read tool lists next to the attachment, for example "1". Stable between reads, unlike the attachment id, so pass it.',
-				),
+				.describe('The partId next to the attachment, e.g. "1". Stable between reads.'),
 		}),
 	},
 	resend_send_email: {
 		description:
-			'Send an email from your own maskin.io mailbox through Resend. Sending cannot be undone. Keep the email as an object: create_objects with `metadata: { kind: "email", to: "Mette Holm <mette@northwind.dk>", subject: "...", cc: "..." }` and the text as `content` (relate it to the contact or bet it concerns). Call this tool with only `object_id`: it sends the object as it reads now, once. Never pass `to`, `subject`, `body` or `from`. If your send setting for emails is ask first, it is sent only after a person approved that exact text: mention them with create_comment (no `decision` needed); they approve the preview in For You or chat (editing the text first if they want) or say yes in the chat (then call approve_draft_from_chat). Any edit withdraws the approval. If refused for lack of approval, end your turn; you are woken after approval. Always allow sends at once; deny is refused. To send files save each with create_file and list the ids in `metadata.attachment_file_ids` (max 5 files, 20 MB total). The sender is your own mailbox, set by a workspace admin; if none is recorded the send is refused. If the outcome is unclear, calling again with the same object_id is safe: Resend ignores a repeat of the same send.',
+			'Send an email from your own maskin.io mailbox through Resend. Cannot be undone. create_objects with `metadata: { kind: "email", to: "...", subject: "...", cc: "..." }` and the text as `content`, then call this with only `object_id`: it sends the object as it reads now, once. With send setting ask first, a person must approve that exact text: mention them with create_comment (no `decision` needed); they approve it in a preview (may edit first) or say yes in chat (then call approve_draft_from_chat). Any edit withdraws approval. If refused for no approval, end your turn; you are woken after approval. Always allow sends at once; deny is refused. Files: create_file ids in `metadata.attachment_file_ids` (max 5, 20 MB total). The sender is your own mailbox, set by an admin (none recorded: refused). Never pass `to`, `subject`, `body` or `from`. If the outcome is unclear, calling again with the same object_id is safe.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			object_id: z
-				.string()
-				.uuid()
-				.describe(
-					'The email object to send (metadata.kind "email"). Sends it exactly as it reads now (for an agent set to ask first, only if a person approved it).',
-				),
+			object_id: z.string().uuid().describe('The email object to send (metadata.kind "email").'),
 		}),
 	},
 	approve_draft_from_chat: {
 		description:
-			"Count a person's \"send it\" in a chat as the Approve on a draft (an email, LinkedIn message, post, comment, reply, edit or invitation, or a Slack message). For agents whose send setting is ask first; an agent that sends directly does not need it. Use it only when a person has just said yes to sending, in a chat you are in, and you showed them the draft there by posting a message that links the draft object (the chat draws its card with recipients, text and files). Pass the draft's object_id and the id of the person's reply (a message id in the chat). The server refuses unless a person (never an agent) wrote that message, in a chat you are in, as their latest message there, after the draft's last edit and after a message in that chat linked the draft. You cannot approve on a person's behalf from your own reading of the chat: if refused, post the link again and ask, or ask them to press Approve on the card. On success call the send tool for that kind (resend_send_email or gmail_send_email for email, the LinkedIn tool, slack_send_message) with the same object_id. Any edit to recipients, subject, text or files withdraws the approval.",
+			"Count a person's \"send it\" in a chat as the Approve on a draft (email, LinkedIn item, or Slack message). Only for agents whose send setting is ask first, and only after a person just said yes in a chat you are in, having seen the draft in a message there that links the draft object. Pass the draft's object_id and the id of that reply message. The server refuses unless a person wrote it, as their latest message in that chat, after the draft's last edit and after a message linking the draft; if refused, post the link again and ask, or ask them to press Approve on the card. On success call the send tool for that kind (resend_send_email or gmail_send_email, the LinkedIn tool, slack_send_message) with the same object_id. Any edit to recipients, subject, text or files withdraws approval.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			object_id: z
-				.string()
-				.uuid()
-				.describe('The draft object (its metadata.kind, for example "email").'),
+			object_id: z.string().uuid().describe('The draft object.'),
 			message_id: z
 				.number()
 				.int()
 				.positive()
-				.describe("The id of the person's chat message that says yes."),
+				.describe("Id of the person's chat message that says yes."),
 		}),
 	},
 	approve_object_draft: {
 		description:
-			'A person approves a drafted object (an email, a LinkedIn message) exactly as it reads. Called by the Approve button in the preview card, never by an agent: the server refuses any caller that is not a person, and this tool is hidden from the model.',
+			'A person approves a drafted object (email, LinkedIn message) exactly as it reads. Called by the Approve button; agents are refused and the tool is hidden from the model.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z.string().uuid().describe('The draft object.'),
 			content_hash: z
 				.string()
 				.optional()
-				.describe(
-					"The preview's content_hash, so a draft that changed since it was shown is refused.",
-				),
+				.describe("The preview's content_hash; a changed draft is refused."),
 		}),
 	},
 	request_keychain_credential: {
 		description:
-			'Ask the user to add a credential to their Keychain by showing a card in the chat. Use it whenever you need a secret you do not have: an API key, a token, or a username and password for a website or app. For a provider Maskin integrates with directly (GitHub, Slack, Linear and the like) use `connect_integration` instead. If the user offers a login, password or API key call this right away with kind "login" or "api_key": do not refuse, warn about passwords in chat or send them to Settings, even when the site has an integration, if the user wants you to log in as them. The user types the value into the card and it goes straight to the encrypted vault, so you never see it and must never ask them to paste a secret into chat. It is saved for the whole workspace but shared only with the agents in this chat unless you name others in `target_agent_ids` (ids from `list_actors`); name the agent that will use it. The user can change it later in Settings → Keychain. After calling, end your turn without a closing message; you are restarted when it is saved. An API key is then in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>` (name in capitals, other characters as underscores: e-conomic → E_CONOMIC). A login is never in your environment: type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works in a chat with a person; otherwise say in your reply what you need.',
+			'Ask the user to add a credential to their Keychain with a card in the chat: an API key, token, or a username and password for a site or app. For a provider Maskin integrates with (GitHub, Slack, Linear...) use `connect_integration`. If the user offers a login, password or API key, call this right away with kind "login" or "api_key": do not refuse, warn about passwords, or send them to Settings, even if the site also has an integration. The value goes from the card straight to the encrypted vault: you never see it, never ask for it in chat. It is shared with the agents in this chat unless you name others in `target_agent_ids` (from `list_actors`); name the agent that will use it. After calling, end your turn without a closing message; you are restarted when it is saved. An API key is then in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>` (name in capitals, other characters as underscores). A login is never in your environment: type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Chat with a person only; otherwise say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			kind: z
 				.enum(['api_key', 'login'])
-				.describe(
-					'"api_key" for a single secret (API key, token). "login" for a username and password.',
-				),
+				.describe('"api_key" for one secret, "login" for username and password.'),
 			suggested_name: z
 				.string()
 				.min(1)
 				.max(80)
 				.optional()
-				.describe(
-					'A short name the card pre-fills for the credential, naming the service, e.g. "e-conomic". The user can change it.',
-				),
-			hint: z
-				.string()
-				.min(1)
-				.max(300)
-				.optional()
-				.describe(
-					'One line shown on the card on what you need it for, e.g. "To log in and read the latest invoices."',
-				),
+				.describe('Service name the card pre-fills, e.g. "e-conomic".'),
+			hint: z.string().min(1).max(300).optional().describe('What it is for, shown on the card.'),
 			target_agent_ids: z
 				.array(z.string())
 				.max(10)
 				.optional()
-				.describe(
-					'Actor ids of the agents that will use the credential, when that is not (only) the agent in this chat. They are shown ticked on the card. Ids that are not agents in this workspace are ignored.',
-				),
+				.describe('Other agents that will use it. Shown ticked; non-agent ids are ignored.'),
 		}),
 	},
 	list_keychain_credentials: {
 		description:
-			'List the credentials in the workspace Keychain by name, with their kind (api_key or login) and whether you already have access to each. Never returns a value. Use it before asking for a credential: if one with the right name exists, ask to use it with `request_keychain_access` instead of asking the user to add it again with `request_keychain_credential`. An API key you have access to is already in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>`, where <NAME> is the name in capitals with other characters as underscores. A login you have access to is never in your environment: type it on your computer with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works inside an agent session.',
+			'List Keychain credentials by name, with kind (api_key or login) and whether you have access. Never returns a value. Use it before asking: if the credential exists, call `request_keychain_access`, not `request_keychain_credential`. An API key you can use is in your environment as `KEYCHAIN_BYO_APIKEY_<NAME>` (name in capitals, other characters as underscores); a login never is: type it with `desktop_type` using `{{keychain:<Name>.username}}` and `{{keychain:<Name>.password}}`. Only works inside an agent session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	request_keychain_access: {
 		description:
-			'Ask the user to let you use a credential that already exists in their Keychain, by showing an Allow / Not now card in the chat. Use it when `list_keychain_credentials` shows one you need and `has_access` is false. Use `request_keychain_credential` only when no such credential exists yet. You never see the value. The user chooses how long it lasts: for this chat only, or always. If they allow it you are restarted with it (an API key in your environment; a login to type with `desktop_type` as `{{keychain:<Name>.password}}`); if you are asked again in another chat, ask again with this tool. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Ask the user, with an Allow / Not now card in the chat, to let you use an existing Keychain credential. Use it when `list_keychain_credentials` shows one you need with `has_access` false; otherwise `request_keychain_credential`. You never see the value. They choose this chat only, or always; in another chat, ask again. If allowed you are restarted with it (API key in your environment; login typed with `desktop_type` as `{{keychain:<Name>.password}}`). After calling, end your turn without a closing message. Chat with a person only; otherwise say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			credential_name: z
 				.string()
 				.min(1)
 				.max(80)
-				.describe('The credential name exactly as listed by list_keychain_credentials.'),
-			hint: z
-				.string()
-				.min(1)
-				.max(300)
-				.optional()
-				.describe(
-					'One line shown on the card on what you need it for, e.g. "To read the latest invoices."',
-				),
+				.describe('The name as list_keychain_credentials shows it.'),
+			hint: z.string().min(1).max(300).optional().describe('What it is for, shown on the card.'),
 		}),
 	},
 	request_integration_access: {
 		description:
-			'Ask the user to let you use an integration that is already connected but that you are not allowed to use (or not at the level you need), by showing an Allow / Not now card in the chat. Use it when a call to a connected integration was refused for access, or `list_integrations` shows you have no access or only read when you need to write. Use `connect_integration` when it is not connected at all, and `request_keychain_access` for a saved key or login. You cannot change your own access: only the person can allow it, and `update_integration_access` refuses agents. If they allow it you are restarted with the new access. After calling this, end your turn without a closing message. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Ask the user, with an Allow / Not now card in the chat, to let you use a connected integration you may not use (or not at the level you need). Use it when a call was refused for access, or `list_integrations` shows no access or only read when you need to write. Use `connect_integration` when it is not connected, `request_keychain_access` for a saved key or login. Only a person can change your access (`update_integration_access` refuses agents). If allowed you are restarted with it. After calling, end your turn without a closing message. Chat with a person only; otherwise say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			integration_id: z
-				.string()
-				.uuid()
-				.describe('The id of the connected integration, as listed by list_integrations.'),
+			integration_id: z.string().uuid().describe('Id from list_integrations.'),
 			level: z
 				.enum(['read', 'read_write'])
-				.describe('What you need: "read" to look things up, "read_write" to also change things.'),
-			reason: z
-				.string()
-				.min(1)
-				.max(300)
-				.optional()
-				.describe(
-					'One line shown on the card on what you need it for, e.g. "To post the weekly summary in Slack."',
-				),
+				.describe('"read" to look up, "read_write" to also change.'),
+			reason: z.string().min(1).max(300).optional().describe('What it is for, shown on the card.'),
 		}),
 	},
 	add_mcp_server: {
 		description:
-			'Add a tool (MCP) server for the user when you already know how to run or reach it: they asked for a tool you do not have and you know the server (a package to run with npx, or an https address), or you found one that would do the job. It shows an Add card with the details filled in; once the user checks it and presses Add the server is saved, given to you, and you are restarted with it. Do not explain how to add a server in Settings: call this. First check with `list_integrations` that it is not already added (if it is but you cannot use it, call `request_integration_access`). Give either `command` (with `args`) for a server that runs inside you, or `url` for a remote one, never both. Never put a key, token or password in any value or in `args`: name each in `secret_env` (environment variable) or `secret_headers` (a header such as "Authorization") and the user types it into the card. If the key is already in the Keychain write a reference instead, like `${KEYCHAIN_BYO_APIKEY_LINEAR}` (see `list_keychain_credentials`). If unsure of the command, URL or variable names, check the server\'s documentation rather than guessing. After calling, end your turn without a closing message. Only works in a chat with a person; otherwise say in your reply what you need.',
+			'Add a tool (MCP) server for the user when you know how to run or reach it. It shows an Add card; when the user presses Add, the server is saved, given to you, and you are restarted with it. Do not explain Settings: call this tool. First check `list_integrations` that it is not already added (if added but unusable, call `request_integration_access`). Give either `command` (with `args`) for a server that runs inside you, or `url` for a remote one, never both. Never put a key, token or password in any value or in `args`: name each in `secret_env` (environment variable) or `secret_headers` (e.g. "Authorization") and the user types it into the card. A key already in the Keychain can be referenced in the value, like `${KEYCHAIN_BYO_APIKEY_LINEAR}` (see `list_keychain_credentials`). If unsure of exact names, check the server\'s documentation. After calling, end your turn without a closing message. Chat with a person only; otherwise say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z
 				.string()
 				.min(1)
 				.max(60)
-				.describe('What the person will call it, e.g. "Linear". Must not already be in use.'),
+				.describe('What the person will call it, e.g. "Linear". Must be unused.'),
 			command: z
 				.string()
 				.min(1)
@@ -2630,68 +2579,57 @@ export const tools = {
 				.min(1)
 				.max(2048)
 				.optional()
-				.describe('For a remote server: its https address, e.g. "https://mcp.linear.app/mcp".'),
+				.describe('Remote server https address, e.g. "https://mcp.linear.app/mcp".'),
 			env: z
 				.record(z.string().max(100), z.string().max(4096))
 				.optional()
 				.describe(
-					'Environment variables that are not secret, e.g. {"REGION": "eu"}, or a Keychain reference like {"LINEAR_API_KEY": "${KEYCHAIN_BYO_APIKEY_LINEAR}"}.',
+					'Non-secret variables, e.g. {"REGION": "eu"}, or a Keychain reference like {"LINEAR_API_KEY": "${KEYCHAIN_BYO_APIKEY_LINEAR}"}.',
 				),
 			headers: z
 				.record(z.string().max(100), z.string().max(4096))
 				.optional()
-				.describe('Headers that are not secret, or a Keychain reference. Same rule as env.'),
+				.describe('Non-secret headers, or a Keychain reference. Same as env.'),
 			secret_env: z
 				.array(z.string().min(1).max(100))
 				.max(20)
 				.optional()
-				.describe(
-					'Names of environment variables the user must type in, e.g. ["LINEAR_API_KEY"]. No value here.',
-				),
+				.describe('Variable names the user types in, e.g. ["LINEAR_API_KEY"]. No values.'),
 			secret_headers: z
 				.array(z.string().min(1).max(100))
 				.max(20)
 				.optional()
 				.describe(
-					'Names of headers the user must type in, e.g. ["Authorization"] (they type the whole value, such as "Bearer ..."). No value here.',
+					'Header names the user types in, e.g. ["Authorization"] (whole value, such as "Bearer ..."). No values.',
 				),
-			hint: z
-				.string()
-				.min(1)
-				.max(300)
-				.optional()
-				.describe(
-					'One line shown on the card on what you need it for, e.g. "To read and update your Linear issues."',
-				),
+			hint: z.string().min(1).max(300).optional().describe('What it is for, shown on the card.'),
 		}),
 	},
 	show_computer: {
 		description:
-			'Bring your own computer into the chat and ask the user to do something on it, by showing a card they can open to see and control the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you cannot use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one of these: you act for the person, so tick it yourself and carry on, and hand over only if it turns into an image or puzzle challenge. Before calling, use the desktop tools to get the computer to the right place (open the site, go to the page) so the card does not open on an empty desktop. `task` is shown as the instruction: say exactly what to do and when they are done, e.g. "Approve the 2FA prompt on e-conomic, then press Done." Use `request_keychain_credential` instead when you need a secret you can then use yourself. It is always your own computer; you cannot show another agent\'s. After calling, end your turn without a closing message. The user presses Done, which sends you a message with a screenshot of your computer; look at it before carrying on, and if none came call `desktop_screenshot`. If they close the card without acting they will tell you. Only works in a chat with a person; otherwise it fails and you should say what you need in your reply.',
+			'Bring your own computer into the chat and ask the user to act on it, with a card showing the screen. Use it when a step needs a person: approving a two-factor prompt, an image or puzzle challenge, signing in with a login you cannot use, confirming a payment, or any choice you must not make for them. A plain "I\'m not a robot" checkbox is not one: you act for the person, so tick it yourself; hand over only if it turns into an image or puzzle challenge. First use the desktop tools to put the computer on the right page. `task` is the instruction on the card: say exactly what to do and when they are done. For a secret you can then use yourself, use `request_keychain_credential`. After calling, end your turn without a closing message. When the user presses Done you get a message with a screenshot of your computer: look at it before carrying on (if none came, call `desktop_screenshot`). Chat with a person only; otherwise say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			task: z
 				.string()
 				.min(1)
 				.max(500)
-				.describe(
-					'What the user should do on the computer, in one or two sentences, e.g. "Approve the 2FA prompt on e-conomic, then press Done."',
-				),
+				.describe('What the user should do, e.g. "Approve the 2FA prompt, then press Done."'),
 		}),
 	},
 	update_integration_access: {
 		description:
-			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can do this (the person who connected it, or a workspace admin); an agent calling it is refused and should tell the user what it needs. `default_agent_access` is what every agent without its own entry gets: "read", "read_write" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (an action that cannot be undone, such as sending email through Gmail, still waits for a person to approve it), "none" (an explicit no that beats a read default), or "default" to remove the agent\'s own entry. A saved key or login is on or off per agent: "read_write" gives it, "default" takes it away. This is the access shown under Settings → Integrations, Settings → Keychain and on the agent page, and it applies to sessions started afterwards. To see current access use `list_integrations` (`defaultAgentAccess`, `agentGrants`) or `get_actor` (`access`).',
+			'Change which agents may use an integration or a saved Keychain credential, and how. Only a person can (its connector or an admin): an agent is refused and should tell the user what it needs. `default_agent_access` is what agents without their own entry get: "read", "read_write" or "none" (not for a saved key or login, which are always explicit). `agent_access` sets individual agents: "read", "read_write" (an irreversible action such as sending Gmail still waits for a person), "none" (beats a read default), or "default" to remove the agent\'s own entry. A saved key or login is on or off per agent: "read_write" gives it, "default" takes it away. Applies to sessions started afterwards. Current access: `list_integrations` (`defaultAgentAccess`, `agentGrants`) or `get_actor` (`access`).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			integration_id: z
 				.string()
 				.uuid()
-				.describe('The integration or saved credential, from list_integrations.'),
+				.describe('Integration or saved credential id, from list_integrations.'),
 			default_agent_access: z
 				.enum(['read', 'read_write', 'none'])
 				.optional()
-				.describe('What agents without their own entry get. Not allowed for a saved key or login.'),
+				.describe('For agents without their own entry. Not for a saved key or login.'),
 			agent_access: z
 				.array(
 					z.object({
@@ -2701,7 +2639,7 @@ export const tools = {
 				)
 				.max(50)
 				.optional()
-				.describe('Per-agent access. "default" removes the agent own entry.'),
+				.describe('Per-agent access. "default" removes the entry.'),
 		}),
 	},
 	disconnect_integration: {
@@ -2714,52 +2652,25 @@ export const tools = {
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:
-			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create. Narrow the list with `enabled` and `q` (a word of the id or name). Default 25, max 100. Every response carries `page` ({ limit, returned, has_more, total }, where total counts the rows matching your filters) and `next_cursor` while `has_more` is true; pass `next_cursor` back as `cursor` to fetch the next page.',
+			'List extensions and their status: registered (e.g. "work") and custom. Each bundles object types with statuses, fields and relationship types. Filter with `enabled` and `q` (a word of the id or name). Default 25, max 100. Every response has `page` ({ limit, returned, has_more, total }, total counts rows matching your filters) and `next_cursor` while `has_more` is true; pass it back as `cursor`.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			enabled: z
-				.boolean()
-				.optional()
-				.describe(
-					'true: only extensions enabled in the workspace. false: only the ones that are not.',
-				),
-			q: z
-				.string()
-				.min(1)
-				.optional()
-				.describe('Only extensions whose id or name contains this text. Ignores case.'),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
-			cursor: z
-				.string()
-				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the stable-ordered walk started by the first call.',
-				),
+			enabled: z.boolean().optional().describe('true: only enabled. false: only disabled.'),
+			q: z.string().min(1).optional().describe('Matches id or name, ignoring case.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Defaults to 25.'),
+			cursor: z.string().optional().describe('The `next_cursor` from the previous response.'),
 		}),
 	},
 	create_extension: {
 		description:
-			'Add an extension to the workspace. Two modes: (1) Enable a registered extension by ID (e.g. "work"). (2) Create a custom extension — pass id, name, and object_types to define new types from scratch. Call list_extensions first to see available extensions.',
+			'Add an extension to the workspace. Either enable a registered extension by ID (e.g. "work"), or create a custom one: pass id, name and object_types. Call list_extensions first.',
 		inputSchema: z.object({
 			workspace_id: z.string().uuid().describe('Workspace to add the extension to'),
 			id: z
 				.string()
 				.regex(/^[a-z][a-z0-9_]*$/)
-				.describe(
-					'Extension ID. For registered extensions: "work". For custom: any lowercase identifier.',
-				),
-			name: z
-				.string()
-				.optional()
-				.describe(
-					'Human-readable name for a custom extension (e.g. "My CRM"). Not needed when installing a known extension.',
-				),
+				.describe('"work" for a registered extension, any lowercase identifier for a custom one.'),
+			name: z.string().optional().describe('Name of a custom extension, e.g. "My CRM".'),
 			object_types: z
 				.array(
 					z.object({
@@ -2790,21 +2701,16 @@ export const tools = {
 					}),
 				)
 				.optional()
-				.describe(
-					'Object type definitions for a custom extension. Not needed when installing a known extension by ID.',
-				),
+				.describe('Type definitions for a custom extension only.'),
 		}),
 	},
 	update_extension: {
 		description:
-			'Update an extension in the workspace. Use this to enable/disable an extension (set enabled: true/false) or to update the object type definitions of a custom extension (modify statuses, fields, display names).',
+			'Update an extension: enable or disable it (`enabled`), or change the object types of a custom one (statuses, fields, display names).',
 		inputSchema: z.object({
 			workspace_id: z.string().uuid(),
 			id: z.string().describe('Extension ID to update'),
-			enabled: z
-				.boolean()
-				.optional()
-				.describe('Set to false to disable the extension, true to re-enable it'),
+			enabled: z.boolean().optional().describe('false disables, true re-enables.'),
 			object_types: z
 				.array(
 					z.object({
@@ -2833,19 +2739,15 @@ export const tools = {
 					}),
 				)
 				.optional()
-				.describe(
-					'Updated object type definitions (PATCH semantics — only provided fields are changed)',
-				),
+				.describe('Type definitions (PATCH: only provided fields change).'),
 		}),
 	},
 	delete_extension: {
 		description:
-			'Remove an extension from the workspace. Deletes its object type definitions from workspace settings. Existing objects of those types are preserved but no new objects can be created with those types. Cannot delete types provided by registered extensions like "work" — disable them instead with update_extension.',
+			'Remove an extension and its object type definitions from workspace settings. Existing objects of those types are kept but no new ones can be created. Types from registered extensions like "work" cannot be deleted: disable them with update_extension.',
 		inputSchema: z.object({
 			workspace_id: z.string().uuid(),
-			id: z
-				.string()
-				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
+			id: z.string().describe('Extension ID, not a type name.'),
 		}),
 	},
 	// Agent computer: every agent has its own long-lived Linux desktop (1920x1080,
@@ -2854,7 +2756,7 @@ export const tools = {
 	// tools has to say whose (agent_id). Behind the `workspace-desktop` flag.
 	desktop_screenshot: {
 		description:
-			'Take a screenshot of your computer (a 1920x1080 Linux screen with Chromium and a terminal). Starts your computer if it is not running (a sleeping one wakes in a few seconds) — the first call can take up to a minute. Humans can watch this same screen live on the Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
+			'Screenshot your computer (1920x1080 Linux screen with Chromium and a terminal). Starts it if needed (the first call can take a minute). Humans watch this screen live and may take over, so screenshot again before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image, (0,0) top-left.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2862,7 +2764,7 @@ export const tools = {
 	},
 	desktop_click: {
 		description:
-			'Click at a pixel position on your computer. Take a screenshot first to find the target, and another afterwards to confirm the result. Humans watching see the pointer move and click. If a page shows a plain "I\'m not a robot" checkbox, click it yourself; use show_computer only if it turns into an image or puzzle challenge.',
+			'Click at a pixel position on your computer. Take a screenshot first to find the target, and another afterwards to confirm. If a page shows a plain "I\'m not a robot" checkbox, click it yourself; use show_computer only if it turns into an image or puzzle challenge.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2907,7 +2809,7 @@ export const tools = {
 	},
 	desktop_type: {
 		description:
-			'Type text into whatever has keyboard focus on your computer (click a field first). Up to 2000 characters. Use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching the desktop — never type a secret yourself. To log in with a saved login from the Keychain, pass the reference as the whole text: `{{keychain:<Name>.username}}` or `{{keychain:<Name>.password}}` (the name exactly as `list_keychain_credentials` shows it, e.g. `{{keychain:Facebook.password}}`). Maskin types the real value for you and you never see it. Type the username, press Tab or click the password field, then type the password reference, then press Enter with desktop_key. The reference must be the entire text, with nothing before or after it. If you are not allowed to use that login, call `request_keychain_access` and end your turn. The login is not in your environment, so do not look for it there or type it any other way.',
+			'Type text into whatever has keyboard focus on your computer (click a field first). Up to 2000 characters; use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching: never type a secret yourself. To log in with a saved Keychain login, pass the reference as the whole text, nothing before or after: `{{keychain:<Name>.username}}` or `{{keychain:<Name>.password}}` (name as `list_keychain_credentials` shows it). Maskin types the real value and you never see it. Order: username, Tab, password reference, then Enter via desktop_key. If you may not use that login, call `request_keychain_access` and end your turn. The login is not in your environment: do not look for it there.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2916,7 +2818,7 @@ export const tools = {
 	},
 	desktop_key: {
 		description:
-			'Press key combinations on your computer, in order. Each entry is an xdotool key name or "+"-joined combo, e.g. ["ctrl+l"], ["Tab", "Return"], ["alt+Tab"], ["ctrl+shift+t"].',
+			'Press key combinations on your computer, in order. Each entry is an xdotool key name or "+"-joined combo, e.g. ["ctrl+l"], ["Tab", "Return"], ["alt+Tab"].',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2928,7 +2830,7 @@ export const tools = {
 	},
 	desktop_run: {
 		description:
-			'Run a shell command inside your computer (the desktop VM) (not on the host and not in your own sandbox). DISPLAY is already set, so GUI programs launched here appear on your screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each truncated to 20,000 characters). Default timeout 30s, max 120s. Anything meant to keep running after the command returns must be backgrounded with `&`.',
+			'Run a shell command inside your computer (the desktop VM), not the host or your sandbox. DISPLAY is set, so GUI programs appear on your screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each cut at 20,000 characters). Default timeout 30s, max 120s. Background anything that should keep running with `&`.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2938,26 +2840,21 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or the workspace is not on it until you call this. The computer downloads it directly (content never passes through you, so photos and videos are fine). Returns the path, size and sha256 as landed (a mismatch with the stored file is an error) and free_space_bytes. Default folder is ~/Downloads; a same-named file is overwritten and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes. Files an earlier desktop_put_file left are cleaned up first: those over 24 hours old always and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first; files you made and Chromium downloads are never removed. If there is still no room the call is refused with the needed and free space and nothing is downloaded. To upload in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path returned, then click Open (or press alt+O). Do not press Enter or double click: both close the chooser without choosing the file. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by file id, so a browser there can pick it in a file field. Your computer is a separate machine: a file in your session or the workspace is not on it until you call this. Returns the path, size and sha256 as it landed and free_space_bytes. Default folder ~/Downloads; a same-name file is overwritten. Takes up to two minutes. Earlier desktop_put_file files are cleaned up first: over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, over 1 hour old, oldest first (your own and Chromium downloads stay). If there is still no room the call is refused. To upload in Chromium: click the page's file field, press ctrl+L in the chooser, type the returned full path, then click Open (or press alt+O). Do not press Enter or double click: both close the chooser without choosing the file. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
-			file_id: z
-				.string()
-				.uuid()
-				.describe('Id of a workspace file, e.g. from create_file or list_files.'),
+			file_id: z.string().uuid().describe('Workspace file id (create_file, list_files).'),
 			folder: z
 				.string()
 				.max(255)
 				.optional()
-				.describe(
-					'Folder on your computer, absolute or starting with ~/. Created if missing. Defaults to ~/Downloads.',
-				),
+				.describe('Absolute or ~/ path. Created if missing. Defaults to ~/Downloads.'),
 		}),
 	},
 	desktop_apply_settings: {
 		description:
-			"Bring YOUR computer up to date without deleting it, so your saved logins and open pages stay. A computer keeps the image it was created from, so a later fix does not reach it until now. Replaces the computer's control helper when it is older than the server's (run this when typing a saved password says the computer is an older version) and rewrites a fixed list of user settings files (the file chooser's size and position). Nothing else is touched, and the browser is never restarted. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, for example before a saved password can be typed; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
+			"Bring YOUR computer up to date without deleting it (saved logins and open pages stay). It keeps the image it was created from, so later fixes do not reach it until now. Replaces its control helper when older than the server's (run this when typing a saved password says the computer is an older version) and rewrites a fixed list of user settings files. Nothing else is touched; the browser is not restarted. Returns the settings version, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, e.g. before typing a saved password; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2965,7 +2862,7 @@ export const tools = {
 	},
 	desktop_settings: {
 		description:
-			"Read-only look at YOUR computer: the image it was created from (image_tag, null if it predates image tags), its settings version against the current one, the file chooser's size and position, free and total disk in MB, and whether idle computers are suspended to a snapshot on this host (and after how many minutes). Does not start or wake your computer: while it is asleep only the host's answer comes back and the rest is null. If settings_version is null or lower than current_settings_version, run desktop_apply_settings.",
+			"Look at YOUR computer: its image_tag (null if it predates image tags), settings version against the current one, the file chooser's size and position, free and total disk in MB, and whether idle computers are suspended on this host. Does not wake it: while asleep only the host's answer comes back and the rest is null. If settings_version is null or below current_settings_version, run desktop_apply_settings.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2973,28 +2870,17 @@ export const tools = {
 	},
 	desktop_save_file: {
 		description:
-			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file and get its file id back. Do it the moment a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost, but a saved file is safe; bring it back with desktop_put_file. The computer uploads straight to storage (content never passes through you, so videos and large files are fine). Returns file_id, name, size_bytes, sha256 and a url a person can open. Every call makes a new file and never overwrites one. Limits: a regular file under your home folder (e.g. ~/Downloads or ~/renders), not in a hidden folder (a name starting with a dot, where the browser keeps its logins); up to 100 MB (a bigger file is refused and nothing uploaded, so cut or split it; raw footage over the limit stays re-fetchable from its source, such as Drive); not empty; at most 20 saves per hour, so zip several small files into one. If the call fails nothing is saved and you can call it again. A file over 50 MB is not returned inline by get_file: you get a download link, which is expected. Only your own computer is reachable.',
+			'Save a file from YOUR computer (the desktop VM) into the workspace as a new file and get its file id. Do it as soon as a finished render, cut list or working package exists: your computer can be reset at any time and everything on it is lost; a saved file is safe, and desktop_put_file brings it back. Returns file_id, name, size_bytes, sha256 and a url. Every call makes a new file. Limits: a regular, non-empty file under your home folder, not inside a hidden folder (the browser keeps its logins there); up to 100 MB (bigger is refused: cut or split it, or re-fetch raw footage from its source such as Drive); at most 20 saves per hour, so zip small files together. A file over 50 MB is not returned inline by get_file: you get a download link. Only your own computer is reachable.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
-			path: z
-				.string()
-				.min(1)
-				.max(1024)
-				.describe(
-					'Path of the file on your computer, absolute or starting with ~/. Must be under your home folder.',
-				),
-			name: z
-				.string()
-				.min(1)
-				.max(200)
-				.optional()
-				.describe('Name for the new workspace file. Defaults to the name of the file on disk.'),
+			path: z.string().min(1).max(1024).describe('Absolute or ~/ path, under your home folder.'),
+			name: z.string().min(1).max(200).optional().describe('Defaults to the name on disk.'),
 		}),
 	},
 	desktop_expose_port: {
 		description:
-			'Make a dev server running in YOUR session sandbox (for example Vite on 5173) openable in your computer\'s browser. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003 to open in Chromium on your computer (desktop_key ["ctrl+l"], desktop_type the URL, desktop_key ["Return"]). Your computer is a separate machine, so localhost there is NOT your sandbox: always use the returned URL. Idempotent: asking again for the same port returns the same URL. You have a small fixed number of ports at once; close one with desktop_close_port to free a slot. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',
+			'Make a dev server in YOUR session sandbox (e.g. Vite on 5173) openable in the browser on your computer. Start the server first, bound to 0.0.0.0 or 127.0.0.1, then call this with its port. Returns a URL like http://host.microsandbox.internal:20003: open it in Chromium on your computer (ctrl+l, type the URL, Return). Localhost there is NOT your sandbox: use the returned URL. Idempotent per port. Ports are limited; free one with desktop_close_port. Set MASKIN_DEV_EXTERNAL=1 when starting the Maskin web dev server, or Vite rejects the host name. The tunnel closes when your session ends. Only works from inside a session.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3003,12 +2889,12 @@ export const tools = {
 				.int()
 				.min(1)
 				.max(65535)
-				.describe('The port your server listens on inside your sandbox, e.g. 5173.'),
+				.describe('Port your server listens on, e.g. 5173.'),
 		}),
 	},
 	desktop_list_ports: {
 		description:
-			'List the dev-server ports currently open from your computer: your sandbox port, the URL to open on your computer, and the session it belongs to. Does not start your computer.',
+			'List the dev-server ports open from your computer: sandbox port, URL to open on your computer, and session. Does not start your computer.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3016,7 +2902,7 @@ export const tools = {
 	},
 	desktop_close_port: {
 		description:
-			'Close one open dev-server port to free a slot. Pass the number after the colon in the URL desktop_expose_port or desktop_list_ports gave you (relay_port).',
+			'Close one open dev-server port to free a slot. Pass relay_port: the number after the colon in the URL from desktop_expose_port or desktop_list_ports.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3031,7 +2917,7 @@ export const tools = {
 export const legacyListTools = {
 	list_objects: {
 		description:
-			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This applies uniformly to the default creation-date order and to `sort`-overridden updated-at order.',
+			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Newest created first unless `sort` is set. Archived rows are hidden unless `include_archived: true`. Default page 25; pass `next_cursor` as `cursor` for the next page (also with `sort`).',
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			type: z
@@ -3049,59 +2935,47 @@ export const legacyListTools = {
 				.datetime({ offset: true })
 				.optional()
 				.describe(
-					'ISO-8601 timestamp. Half-open: returns rows with `updated_at < updated_before` (the bound itself is excluded). Use to scan for stalled work, e.g. `updated_before = now - 6h`.',
+					'ISO-8601 timestamp, exclusive: rows with `updated_at < updated_before`. Use to scan for stalled work, e.g. now - 6h.',
 				),
 			updated_after: z
 				.string()
 				.datetime({ offset: true })
 				.optional()
 				.describe(
-					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
+					'ISO-8601 timestamp, exclusive: rows with `updated_at > updated_after`. Pairs with `updated_before` for a window.',
 				),
 			sort: z
 				.enum(['updated_at_asc', 'updated_at_desc'])
 				.optional()
 				.describe(
-					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
+					'Sort by `updated_at`: `updated_at_asc` oldest-stalled first, `updated_at_desc` most recent first. Omit for newest created first.',
 				),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under `sort`-overridden order, updated) after that first call cannot leak into the stream.',
-				),
+				.describe('The `next_cursor` from the previous response (snapshot-consistent walk).'),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
 				.boolean()
 				.default(false)
-				.describe(
-					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
-				),
+				.describe('Include rows with `status = "archived"` (excluded by default).'),
 		}),
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via `offset` (default page: 25) — search results are ranked by match quality, which is incompatible with cursor pagination, so there is no `cursor` param here (unlike list_objects). Every page of a multi-page walk is still pinned to the same snapshot, so inserts between calls cannot shift results across pages.',
+			'Search objects by text in title or content, with optional type/status filters. Narrow by a custom metadata field with `metadata_eq`, e.g. `{"promotion_mode": "human_approved"}` (fields per type: get_workspace_schema). Archived rows are hidden unless `include_archived: true`. Paginated via `offset` (default page 25); results are ranked, so there is no `cursor` (unlike list_objects). Pages of one walk share a snapshot.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
 				.string()
 				.min(1)
 				.describe(
-					'Search query — matches against title and content (case-insensitive). Only the first 6 distinct words of 3 or more letters are used; further words are ignored, not an error.',
+					'Matches title and content (case-insensitive). Only the first 6 distinct words of 3 or more letters are used; the rest are ignored.',
 				),
 			type: z
 				.string()
-				.describe(
-					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
-				)
+				.describe('Object type, built-in or custom. See get_workspace_schema.')
 				.optional(),
 			status: z.string().optional(),
 			driver_id: z
@@ -3113,16 +2987,8 @@ export const legacyListTools = {
 				.string()
 				.datetime({ offset: true })
 				.optional()
-				.describe(
-					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
-				),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(100)
-				.optional()
-				.describe('Max rows to return. Defaults to 25.'),
+				.describe('ISO-8601 timestamp, exclusive: rows with `updated_at > updated_after`.'),
+			limit: z.number().int().min(1).max(100).optional().describe('Defaults to 25.'),
 			offset: z
 				.number()
 				.int()
@@ -3133,9 +2999,7 @@ export const legacyListTools = {
 			include_archived: z
 				.boolean()
 				.default(false)
-				.describe(
-					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
-				),
+				.describe('Include rows with `status = "archived"` (excluded by default).'),
 		}),
 	},
 } as const
