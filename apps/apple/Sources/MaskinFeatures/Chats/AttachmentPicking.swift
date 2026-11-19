@@ -108,7 +108,7 @@ enum AttachmentLoading {
 			var handedOff = false
 			defer { if !handedOff { try? FileManager.default.removeItem(at: picked.url) } }
 			let size = (try? picked.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-			guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 1 GB limit.") }
+			guard size <= ChatLimits.maxFileBytes else { throw ChatAttachmentError("Over the 5 GB limit.") }
 			let base = (name as NSString).deletingPathExtension
 			let ext = picked.url.pathExtension.isEmpty ? "mov" : picked.url.pathExtension
 			let mime = mimeType(for: picked.url)
@@ -149,7 +149,7 @@ enum AttachmentLoading {
 			}
 			let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
 			guard size <= ChatLimits.maxFileBytes else {
-				throw ChatAttachmentError("Over the 1 GB limit.")
+				throw ChatAttachmentError("Over the 5 GB limit.")
 			}
 			let mime = mimeType(for: url)
 			if FileUploadLimits.needsDirectUpload(sizeBytes: size, mimeType: mime) {
