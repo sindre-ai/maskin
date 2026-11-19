@@ -114,8 +114,16 @@ export interface PushVerdict {
 	collapseKey?: string
 }
 
+/** Verdict reason for the roll-up of agent chat replies held back by the hourly cap. */
+export const CHAT_ROLLUP_REASON = 'chat-rollup'
+export const CHAT_ROLLUP_KEY_PREFIX = 'chat-rollup:'
+
+export function isChatRollup(verdict: { reason: string }): boolean {
+	return verdict.reason === CHAT_ROLLUP_REASON
+}
+
 export const LIMITS = {
-	conversationPerHour: 6,
+	conversationPerHour: 20,
 	conversationPerKeyMs: 2 * 60_000,
 	tipsPerDay: 2,
 	rollupMinCards: 3,
@@ -292,7 +300,20 @@ export function evaluatePush({
 		const sent = mine.filter((r) => r.sent)
 		if (category === 'conversation') {
 			const lastHour = sent.filter((r) => r.category === 'conversation' && nowMs - r.at < HOUR_MS)
-			if (lastHour.length >= LIMITS.conversationPerHour) return skip('rate-limit-hour')
+			// Past the cap, agent chatter is summarised, never silently dropped: one banner per
+			// workspace that counts the replies held back. The first one buzzes, later ones refresh
+			// the same banner quietly. Those entries are told apart by their collapse key, so the
+			// For You clearing logic (which treats `rollup` as a For You card) never sees them.
+			const held = lastHour.filter((r) => r.collapseKey?.startsWith(CHAT_ROLLUP_KEY_PREFIX))
+			if (lastHour.length - held.length >= LIMITS.conversationPerHour) {
+				return {
+					action: 'rollup',
+					interruption: held.length > 0 ? 'passive' : interruption,
+					reason: CHAT_ROLLUP_REASON,
+					rollupCount: held.length + 1,
+					collapseKey: `${CHAT_ROLLUP_KEY_PREFIX}${n.workspaceId}`,
+				}
+			}
 			if (
 				collapseKey &&
 				lastHour.some(

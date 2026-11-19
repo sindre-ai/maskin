@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	DEFAULT_PUSH_PREFS,
+	LIMITS,
 	type PolicyNotification,
 	PushLedger,
 	type PushPrefs,
@@ -218,14 +219,29 @@ describe('rate limits', () => {
 			metadata: { push_category: 'conversation', ...(key ? { push_collapse_key: key } : {}) },
 		})
 
-	it('allows 6 conversation pushes an hour and skips the 7th', () => {
-		const sent = (n: number) =>
-			Array.from({ length: n }, (_, i) => recent({ at: NOW.getTime() - (i + 3) * MIN }))
-		expect(run(conv(), { recentPushes: sent(5) }).action).toBe('send')
-		expect(run(conv(), { recentPushes: sent(6) })).toMatchObject({
-			action: 'skip',
-			reason: 'rate-limit-hour',
+	const sent = (n: number) =>
+		Array.from({ length: n }, (_, i) => recent({ at: NOW.getTime() - (i + 3) * MIN }))
+
+	it('allows 20 conversation pushes an hour, then summarises instead of dropping', () => {
+		expect(run(conv(), { recentPushes: sent(LIMITS.conversationPerHour - 1) }).action).toBe('send')
+		expect(run(conv(), { recentPushes: sent(LIMITS.conversationPerHour) })).toMatchObject({
+			action: 'rollup',
+			reason: 'chat-rollup',
+			rollupCount: 1,
+			interruption: 'active',
+			collapseKey: 'chat-rollup:ws',
 		})
+	})
+
+	it('counts the replies held back and refreshes the summary quietly', () => {
+		const held = (n: number) =>
+			Array.from({ length: n }, (_, i) =>
+				recent({ collapseKey: 'chat-rollup:ws', at: NOW.getTime() - (i + 1) * MIN }),
+			)
+		const verdict = run(conv(), {
+			recentPushes: [...sent(LIMITS.conversationPerHour), ...held(2)],
+		})
+		expect(verdict).toMatchObject({ action: 'rollup', rollupCount: 3, interruption: 'passive' })
 	})
 
 	it('never rate-limits a message a person wrote', () => {

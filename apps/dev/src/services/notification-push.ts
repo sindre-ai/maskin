@@ -23,6 +23,7 @@ import {
 	delaySecondsOf,
 	dueAtOf,
 	evaluatePush,
+	isChatRollup,
 	isCriticalCard,
 	isForYouCard,
 	pushCategoryOf,
@@ -323,7 +324,9 @@ export class NotificationPushFanout {
 		if (verdict.action === 'rollup') {
 			const badge = await this.pendingCount(targetActorId)
 			message = {
-				title: `${verdict.rollupCount} things need you`,
+				title: isChatRollup(verdict)
+					? `${verdict.rollupCount} more ${verdict.rollupCount === 1 ? 'reply' : 'replies'}`
+					: `${verdict.rollupCount} things need you`,
 				body: null,
 				workspaceId: n.workspaceId,
 				notificationId: n.id,
@@ -394,7 +397,8 @@ export class NotificationPushFanout {
 			sent: true,
 			forYou: isForYouCard({ type: n.type, metadata: meta }),
 			critical: isCriticalCard(meta),
-			rollup: verdict.action === 'rollup',
+			// A chat roll-up is not a For You roll-up: the clearing logic reads `rollup` as the latter.
+			rollup: verdict.action === 'rollup' && !isChatRollup(verdict),
 		})
 	}
 
