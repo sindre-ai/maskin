@@ -272,6 +272,47 @@ describe('Microsoft MCP server', () => {
 		})
 	})
 
+	it('fires integration_tool_called with the microsoft provider for every mail tool', async () => {
+		const { client, trackToolCalled } = await connect(
+			{ fetchImpl: fakeMailGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		for (const [name, args] of [
+			['outlook_list_messages', {}],
+			['outlook_search_messages', { query: 'invoice' }],
+			['outlook_get_message', { id: 'msg-1' }],
+			['outlook_create_draft', DRAFT],
+		] as const) {
+			await client.callTool({ name, arguments: args })
+			expect(trackToolCalled).toHaveBeenLastCalledWith({
+				provider: 'microsoft',
+				tool: name,
+				outcome: 'success',
+				errorCode: null,
+				actorId: 'agent-1',
+				sessionId: 'sess-1',
+				workspaceId: 'ws-1',
+			})
+		}
+		expect(trackToolCalled).toHaveBeenCalledTimes(4)
+	})
+
+	it('reports a failed mail call as outcome error with the code, and no mail text', async () => {
+		const { client, trackToolCalled } = await connect({
+			fetchImpl: fakeMailGraph() as unknown as typeof fetch,
+		})
+		await client.callTool({ name: 'outlook_get_message', arguments: { id: 'nope' } })
+		expect(trackToolCalled).toHaveBeenCalledWith({
+			provider: 'microsoft',
+			tool: 'outlook_get_message',
+			outcome: 'error',
+			errorCode: 'NOT_FOUND',
+			actorId: 'agent-1',
+			sessionId: 'sess-1',
+			workspaceId: 'ws-1',
+		})
+	})
+
 	it('refuses a caller with no access, and never reaches Microsoft', async () => {
 		const { client, fetchImpl } = await connect({}, 'none')
 		const res = await client.callTool({ name: 'outlook_list_events', arguments: {} })
