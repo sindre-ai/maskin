@@ -24,8 +24,10 @@ function stubStorage(): StorageProvider {
 	}
 }
 
+// Every row ends in a newline, as the agent-server transport writes it: the reader holds a row
+// without one back as a partial line.
 const assistantLine = (cacheRead: number) =>
-	JSON.stringify({
+	`${JSON.stringify({
 		type: 'assistant',
 		message: {
 			id: 'gen-1',
@@ -37,17 +39,17 @@ const assistantLine = (cacheRead: number) =>
 				cache_read_input_tokens: cacheRead,
 			},
 		},
-	})
+	})}\n`
 
 const resultLine = (text: string) =>
-	JSON.stringify({
+	`${JSON.stringify({
 		type: 'result',
 		subtype: 'success',
 		is_error: false,
 		result: text,
 		usage: { input_tokens: 5, output_tokens: 5 },
 		modelUsage: { 'deepseek/deepseek-v4.1-flash': { contextWindow: 1_000_000 } },
-	})
+	})}\n`
 
 const NOTE =
 	'HANDOFF NOTE\nGoal: ship the report\nDecisions: use the Q3 numbers\nStanding rules: never email customers\nOpen items: none'
