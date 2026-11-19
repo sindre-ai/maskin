@@ -8,13 +8,17 @@ import { recordEvent } from '../../../events/record-event'
  * email: the claim is taken before Gmail is called, so two calls with the same approval
  * cannot both send.
  *
- * The state lives in `events` rows on the Gmail integration (`data.approval_comment_id`
+ * The state lives in `events` rows on the sending integration (`data.approval_comment_id`
  * names the card), because the draft behind a card is not always an object that could hold
  * a flag. The latest row for an approval is its state:
  *   send_claim    → a send started; blocks every other caller
  *   sent          → Gmail confirmed (written by the route, with the audit details)
  *   send_unknown  → Gmail may or may not have sent; stays locked until a person looks
  *   send_released → Gmail refused it (nothing sent), so the same approval can be used again
+ *
+ * Outlook uses the same claim (`provider: 'microsoft'`). The rows are keyed by the integration
+ * id, so the two providers never see each other's; the `gmail_action` key keeps its name so rows
+ * written before Outlook existed still read as they did.
  *
  * Callers of one approval are serialised with a transaction-scoped advisory lock, so the
  * read of the latest state and the insert of the claim cannot interleave.
@@ -24,8 +28,10 @@ export type ApprovalSendState = (typeof STATES)[number]
 
 export interface ApprovalRef {
 	workspaceId: string
-	/** The Gmail integration the send goes through. */
+	/** The integration the send goes through. */
 	integrationId: string
+	/** Which provider sends. Gmail when left out, so existing callers and rows are unchanged. */
+	provider?: 'gmail' | 'microsoft'
 	actorId: string
 	/** The id of the decision comment (events.id) the person answered. */
 	approvalCommentId: number
@@ -48,7 +54,7 @@ const stateFilter = (ref: ApprovalRef) =>
 export async function claimApprovalForSend(db: Database, ref: ApprovalRef): Promise<boolean> {
 	return db.transaction(async (tx) => {
 		await tx.execute(
-			sql`select pg_advisory_xact_lock(hashtext(${`gmail-send:${ref.integrationId}:${ref.approvalCommentId}:${ref.draftId ?? ''}`}))`,
+			sql`select pg_advisory_xact_lock(hashtext(${`${ref.provider ?? 'gmail'}-send:${ref.integrationId}:${ref.approvalCommentId}:${ref.draftId ?? ''}`}))`,
 		)
 		const [latest] = await tx
 			.select({ action: sql<string>`${events.data}->>'gmail_action'` })
@@ -64,7 +70,7 @@ export async function claimApprovalForSend(db: Database, ref: ApprovalRef): Prom
 			entityType: 'integration',
 			entityId: ref.integrationId,
 			data: {
-				provider: 'gmail',
+				provider: ref.provider ?? 'gmail',
 				gmail_action: 'send_claim',
 				approval_comment_id: ref.approvalCommentId,
 				...(ref.draftId === undefined ? {} : { approval_draft_id: ref.draftId }),
@@ -88,7 +94,7 @@ export async function approvalSendState(
 	return latest?.action ?? null
 }
 
-/** Gmail refused it or the outcome is unknown. A confirmed send is recorded by the route. */
+/** The provider refused it or the outcome is unknown. A confirmed send is recorded by the route. */
 export async function settleApprovalSend(
 	db: Database,
 	ref: ApprovalRef,
@@ -101,7 +107,7 @@ export async function settleApprovalSend(
 		entityType: 'integration',
 		entityId: ref.integrationId,
 		data: {
-			provider: 'gmail',
+			provider: ref.provider ?? 'gmail',
 			gmail_action: outcome === 'released' ? 'send_released' : 'send_unknown',
 			approval_comment_id: ref.approvalCommentId,
 			...(ref.draftId === undefined ? {} : { approval_draft_id: ref.draftId }),

@@ -35,15 +35,16 @@ import {
 	buildSearchMessagesRequest,
 	trimMessage,
 } from './mail'
+import { sendApprovedMail } from './send'
 
 /**
  * In-process MCP server for Outlook, served over Streamable HTTP at
  * `/api/integrations/microsoft/mcp`. Sibling of the Deepdots and Search Console surfaces.
  *
- * Six read tools: list, get and search for calendar events and for mail messages. One write:
- * outlook_create_draft saves a draft in Drafts. Nothing here sends mail (the sign-in holds no
- * Mail.Send), and tool-kinds.ts lists exactly the six read names as reads, so a Read agent never
- * sees the draft tool as callable.
+ * Six read tools: list, get and search for calendar events and for mail messages. Two writes:
+ * outlook_create_draft saves a draft in Drafts, and outlook_send_mail sends one message, only
+ * after a person approved that exact text (send.ts). tool-kinds.ts lists exactly the six read
+ * names as reads, so a Read agent never sees the draft or send tool as callable.
  *
  * The mailbox and calendar are the ones of the person who connected Microsoft. The token is resolved here, on the
  * server: getCredential first (access check plus one audit row, attributed to the calling agent),
@@ -103,10 +104,10 @@ function textResult(payload: unknown, isError = false) {
 type ToolResult = ReturnType<typeof textResult>
 
 // A failure carries its code out so the event can report it without reading the message.
-type Outcome = { result: ToolResult; errorCode: string | null }
+type Outcome = { result: ToolResult; errorCode: string | null; message?: string }
 
 function failure(code: string, message: string): Outcome {
-	return { result: textResult({ error: { code, message } }, true), errorCode: code }
+	return { result: textResult({ error: { code, message } }, true), errorCode: code, message }
 }
 
 const NEEDS_ATTENTION_MESSAGE =
@@ -404,6 +405,72 @@ export function createMicrosoftMcpServer(
 					}
 				}),
 			),
+	)
+
+	server.registerTool(
+		'outlook_send_mail',
+		{
+			description:
+				"Send one email from the connected person's Outlook, only after a person approved that exact email. Pass object_id of an email object (metadata.kind email, with to and subject in its metadata and the text as its content) once the person approved it, or approval_comment_id of the decision card they answered (plus draft_id when the card carries several emails). You cannot pass the text, recipients or subject yourself: what goes out is what the person approved, and if it changed since, nothing is sent. One approval sends once and is never retried. Plain text, no attachments. Irreversible.",
+			inputSchema: {
+				object_id: z.string().uuid().optional().describe('An email object a person approved.'),
+				approval_comment_id: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('The id of the decision comment a person answered with the send option.'),
+				draft_id: z
+					.string()
+					.min(1)
+					.max(40)
+					.optional()
+					.describe('Which email of a card that carries several. Only with approval_comment_id.'),
+			},
+			annotations: { readOnlyHint: false, destructiveHint: true },
+		},
+		(input) =>
+			respond('outlook_send_mail', async () => {
+				const integrationId = ctx.integrationId
+				if (!integrationId) {
+					return failure('NOT_CONNECTED', 'Microsoft is not connected in this workspace.')
+				}
+				const sent = await sendApprovedMail(
+					{
+						db: ctx.db,
+						workspaceId: ctx.workspaceId,
+						actorId: ctx.actorId,
+						sessionId: ctx.sessionId,
+						integrationId,
+						fetchImpl: (url, init) =>
+							(ctx.fetchImpl ?? fetch)(url, {
+								...init,
+								signal: AbortSignal.timeout(MICROSOFT_FETCH_TIMEOUT_MS),
+							}),
+						getToken: async () => {
+							const token = await tokenFor(ctx, 'outlook_send_mail')
+							return typeof token === 'string'
+								? { token }
+								: {
+										code: token.errorCode ?? 'TOKEN_UNAVAILABLE',
+										message: token.message ?? 'Could not use the Microsoft connection.',
+									}
+						},
+					},
+					input,
+				)
+				if (sent.ok) {
+					return {
+						result: textResult({
+							sent: true,
+							note: 'Sent: the email went out exactly as the person approved it. Do not send it again.',
+						}),
+						errorCode: null,
+					}
+				}
+				if ('graph' in sent) return failureForGraph(sent.graph)
+				return failure(sent.code, sent.message)
+			}),
 	)
 
 	return server

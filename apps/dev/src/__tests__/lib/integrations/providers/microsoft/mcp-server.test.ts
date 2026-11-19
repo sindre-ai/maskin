@@ -89,7 +89,7 @@ function payload(result: Awaited<ReturnType<Client['callTool']>>) {
 }
 
 describe('Microsoft MCP server', () => {
-	it('registers the six read tools and the draft tool, classifying only the reads as reads', async () => {
+	it('registers the six read tools, the draft tool and the send tool, classifying only the reads as reads', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		const names = tools.map((t) => t.name).sort()
@@ -101,16 +101,24 @@ describe('Microsoft MCP server', () => {
 			'outlook_list_messages',
 			'outlook_search_events',
 			'outlook_search_messages',
+			'outlook_send_mail',
 		])
-		for (const t of tools.filter((t) => t.name !== 'outlook_create_draft')) {
+		const writes = ['outlook_create_draft', 'outlook_send_mail']
+		for (const t of tools.filter((t) => !writes.includes(t.name))) {
 			expect(classifyTool('microsoft', t.name, undefined)).toBe('read')
 			expect(t.annotations?.readOnlyHint).toBe(true)
 		}
 		// The draft is a write: a Read agent is refused it. So is anything added later and left off the list.
 		expect(classifyTool('microsoft', 'outlook_create_draft', undefined)).toBe('write')
+		expect(classifyTool('microsoft', 'outlook_send_mail', undefined)).toBe('write')
 		expect(classifyTool('microsoft', 'outlook_create_event', undefined)).toBe('write')
-		// Nothing sends mail.
-		expect(names.some((n) => /send/.test(n))).toBe(false)
+		// The one tool that sends takes ids of what a person approved, never the text itself.
+		const send = tools.find((t) => t.name === 'outlook_send_mail')
+		expect(Object.keys(send?.inputSchema.properties ?? {}).sort()).toEqual([
+			'approval_comment_id',
+			'draft_id',
+			'object_id',
+		])
 	})
 
 	it('lists events with the bearer token and UTC preference, and hides the token from the agent', async () => {
@@ -337,6 +345,18 @@ describe('Microsoft MCP server', () => {
 		}
 	})
 
+	it('refuses the send tool to a Read agent, and never reaches Microsoft', async () => {
+		const { client, fetchImpl, getAccessToken } = await connect({}, 'read')
+		const res = await client.callTool({
+			name: 'outlook_send_mail',
+			arguments: { object_id: '00000000-0000-4000-8000-000000000001' },
+		})
+		expect(res.isError).toBe(true)
+		expect(JSON.stringify(res)).toContain('Access denied')
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(getAccessToken).not.toHaveBeenCalled()
+	})
+
 	it('refuses the draft tool to a Read agent, and never reaches Microsoft', async () => {
 		const { client, fetchImpl } = await connect({}, 'read')
 		const res = await client.callTool({ name: 'outlook_create_draft', arguments: DRAFT })
@@ -376,6 +396,35 @@ function fakeMailGraph(messages = [message(1), message(2), message(3)]) {
 		return json({ value: messages.slice(0, Number(u.searchParams.get('$top'))) })
 	})
 }
+
+describe('Microsoft MCP server: send input', () => {
+	it('refuses text, a mix of approvals, or nothing, before any database or Microsoft call', async () => {
+		const { client, fetchImpl, getAccessToken } = await connect({}, 'read_write')
+		const id = '00000000-0000-4000-8000-000000000001'
+		for (const args of [
+			{},
+			{ object_id: id, approval_comment_id: 5 },
+			{ draft_id: 'a' },
+			{ object_id: id, draft_id: 'a' },
+		]) {
+			const res = await client.callTool({ name: 'outlook_send_mail', arguments: args })
+			expect(res.isError).toBe(true)
+			expect(payload(res).error.code).toBe('INVALID_INPUT')
+		}
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(getAccessToken).not.toHaveBeenCalled()
+	})
+
+	it('answers NOT_CONNECTED when there is no integration', async () => {
+		const { client, fetchImpl } = await connect({ integrationId: null })
+		const res = await client.callTool({
+			name: 'outlook_send_mail',
+			arguments: { approval_comment_id: 5 },
+		})
+		expect(payload(res).error.code).toBe('NOT_CONNECTED')
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+})
 
 describe('Microsoft MCP server: mail', () => {
 	it('lists the inbox newest first, with a window that starts at the epoch', async () => {
