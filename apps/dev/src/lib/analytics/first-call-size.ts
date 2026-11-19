@@ -18,7 +18,10 @@ export interface FirstCallSize {
 	 * the later calls of a turn that uses tools.
 	 */
 	firstCallInputTokens: number | null
-	/** The `total_cost_usd` the first turn's `result` envelope reported (CLI-priced). */
+	/**
+	 * The `total_cost_usd` the first turn's `result` envelope reported, as the CLI priced it.
+	 * The session manager re-prices the turn for its route before it is sent.
+	 */
 	firstTurnCostUsd: number | null
 	/** Whether the first call read anything from the prompt cache. */
 	cacheHit: boolean | null

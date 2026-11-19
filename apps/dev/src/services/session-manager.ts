@@ -5383,10 +5383,11 @@ ${cont.continues_prompt}
 		pending: PendingLaunchStart,
 		first: FirstTurnResult,
 	): Promise<void> {
-		let firstTurnCostUsd = first.size.firstTurnCostUsd
+		// Priced the way the session row is (resolveSessionCostUsd): a non-Anthropic
+		// route is priced from tokens, not from the CLI's Anthropic rate card. If the
+		// price cannot be resolved the cost is left empty, never the CLI's own figure.
+		let firstTurnCostUsd: number | null = null
 		try {
-			// The CLI prices every turn against Anthropic's rate card, which is wrong
-			// for a non-Anthropic route; price the turn the way the session row does.
 			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
 			firstTurnCostUsd = await resolveSessionCostUsd({
 				route,
@@ -5394,7 +5395,7 @@ ${cont.continues_prompt}
 				usage: { ...first.resultUsage, durationMs: null },
 			})
 		} catch (err) {
-			logger.warn('Failed to price the first turn, using the CLI cost', {
+			logger.warn('Failed to price the first turn, leaving its cost empty', {
 				sessionId,
 				error: String(err),
 			})
