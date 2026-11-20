@@ -1,3 +1,4 @@
+import { PILOT_REFUSAL } from '@maskin/shared'
 import { type AgentAccess, canRead, canWrite } from './agent-access'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
 import {
@@ -169,10 +170,16 @@ export const RESEND_SEND_TOOLS: ReadonlySet<string> = new Set([
  * The refusal for one of those tools when the agent's send setting for emails is not "always
  * allow". Read & write alone lets an agent send; the setting is what can hold or turn it off.
  */
-export function resendSendRefusal(toolName: string, send: 'needs_approval' | 'denied'): string {
+export function resendSendRefusal(
+	toolName: string,
+	send: 'needs_approval' | 'denied',
+	pilot = false,
+): string {
 	return send === 'denied'
 		? `${toolName} is turned off for this agent: sending emails is set to deny in the workspace's send settings. Nothing was sent. Do not retry or look for another way to send it.`
-		: `${toolName} is not available to this agent because its emails ask first. Nothing was sent. Save the email as a task or object with metadata.kind email (to, subject; the text as its content), show it to a person (link it in the chat or put it on a decision card), and once they approved it (from the card, or by saying yes in the chat, then call approve_draft_from_chat), call resend_send_email with only object_id.`
+		: `${toolName} is not available to this agent because ${
+				pilot ? PILOT_REFUSAL : 'its emails ask first'
+			}. Nothing was sent. Save the email as a task or object with metadata.kind email (to, subject; the text as its content), show it to a person (link it in the chat or put it on a decision card), and once they approved it (from the card, or by saying yes in the chat, then call approve_draft_from_chat), call resend_send_email with only object_id.`
 }
 
 const COMMAND_GATED_HINT =
