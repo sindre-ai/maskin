@@ -101,6 +101,7 @@ import {
 	resendEmailReceivedSchema,
 } from '../lib/integrations/providers/resend/schemas'
 import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
+import { SALES_AUTOMATION_PROVIDERS } from '../lib/integrations/providers/sales-automation'
 import {
 	upsertSkjaldMeeting,
 	upsertSkjaldOutcomeMeeting,
@@ -290,6 +291,10 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
 		name,
 		FLAGS.MEETING_NOTES_INTEGRATIONS,
+	]),
+	...SALES_AUTOMATION_PROVIDERS.map((name): [string, FlagId] => [
+		name,
+		FLAGS.SALES_AUTOMATION_INTEGRATIONS,
 	]),
 ])
 

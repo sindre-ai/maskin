@@ -210,6 +210,16 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	MEETING_NOTES_INTEGRATIONS: 'meeting-notes-integrations',
+	/**
+	 * Gates the eight sales and automation integrations Apollo, ZoomInfo, Outreach, Gong, Clay,
+	 * Calendly, monday.com and Make (task
+	 * [Add sales and automation integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/18a0ef4c-3cd5-468e-a8cb-3ea3b3344599)).
+	 * Actor-scoped, read by the integrations routes: off means the eight are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
