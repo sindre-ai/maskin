@@ -79,4 +79,10 @@ describe('isPermanentFailure', () => {
 		expect(isPermanentFailure(failed({ error_kind: 'transient' }))).toBe(false)
 		expect(isPermanentFailure(failed({ retry: 'unanswered' }))).toBe(false)
 	})
+
+	it('is false for the subscription-moved notice, which the server already answers again', () => {
+		expect(
+			isPermanentFailure(failed({ error_kind: 'permanent', subscription_moved_to: 'backup' })),
+		).toBe(false)
+	})
 })
