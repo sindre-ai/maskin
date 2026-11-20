@@ -153,6 +153,35 @@ check "$label"
 reject "$label" "--effort"
 reject "$label" "--disallowedTools"
 
+# --- Lean context (MASKIN_LEAN_CONTEXT) ----------------------------------------
+# Two staged skills: plain-english-voice is on the default always-on list, other-skill
+# is not. Off (or unset) the session starts as it always has: both pasted in, no
+# extra arguments. On, only the always-on skill is pasted in and the bundled skills
+# and unused built-in tools are switched off.
+STUB_SKILLS="$(native_path "$REPO_ROOT/scripts/checks/fixtures/skills")"
+
+label="lean context off"
+check "$label" -v "$STUB_SKILLS:/agent/skills:ro"
+expect "$label" "STUB_CLAUDE_MD_SKILLS=other-skill,plain-english-voice,"
+expect "$label" "STUB_BUNDLED_SKILLS_OFF=<unset>"
+reject "$label" "--settings"
+reject "$label" "--disallowedTools"
+
+label="lean context on"
+check "$label" -v "$STUB_SKILLS:/agent/skills:ro" -e MASKIN_LEAN_CONTEXT=1
+expect "$label" "STUB_CLAUDE_MD_SKILLS=plain-english-voice,"
+expect "$label" "STUB_BUNDLED_SKILLS_OFF=1"
+expect "$label" "--disallowedTools=CronCreate,CronDelete,CronList,DesignSync,PushNotification,RemoteTrigger"
+expect "$label" "--settings"
+
+label="lean context on with web search off"
+check "$label" -v "$STUB_SKILLS:/agent/skills:ro" -e MASKIN_LEAN_CONTEXT=1 -e MASKIN_DISABLE_WEB_SEARCH=1
+expect "$label" "--disallowedTools=WebSearch,CronCreate"
+
+label="lean context on, no always-on skills"
+check "$label" -v "$STUB_SKILLS:/agent/skills:ro" -e MASKIN_LEAN_CONTEXT=1 -e MASKIN_ALWAYS_ON_SKILLS=
+reject "$label" "STUB_CLAUDE_MD_SKILLS=[a-z]"
+
 # --- Guard wrapper (maskin-mcp-guard) ----------------------------------------
 # One guarded server (the shape the API writes: wrapper first, real command
 # after `--`) next to one plain server and one URL server. Servers are listed
