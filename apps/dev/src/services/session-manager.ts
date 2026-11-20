@@ -104,6 +104,7 @@ import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
+import { githubBackupOwners, preflightWithBackup } from '../lib/github/backup-install'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
 	type GitHubInstallSkip,
@@ -3864,7 +3865,29 @@ ${cont.continues_prompt}
 		}))
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
-			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
+			// Backup rule (off unless MASKIN_GITHUB_BACKUP_OWNERS names an org): the backup
+			// install's server is attached only when the others are refused with 401 or 403.
+			// The org that owns the target repo, and a server the agent lists itself, stay.
+			const backupOwners = githubBackupOwners()
+			const backupNames = new Set(
+				[...backupOwners]
+					.filter((owner) => owner !== targetRepoOwner)
+					.map((owner) => `github-${owner}`)
+					.filter((name) => !(agentToolsMcpServers && name in agentToolsMcpServers)),
+			)
+			const checked = await preflightWithBackup(
+				preflightIdentities,
+				backupNames,
+				runGitHubPreflight,
+			)
+			preflightVerdicts = checked.verdicts
+			for (const name of checked.dropped) delete sessionMcpServers[name]
+			if (checked.dropped.length > 0) {
+				logger.info('Backup GitHub server left out: the others answered', {
+					sessionId: session.id,
+					dropped: checked.dropped,
+				})
+			}
 			const failed = preflightVerdicts.filter((v) => !v.healthy)
 			if (failed.length > 0) {
 				logger.warn('GitHub preflight failed for one or more identities', {
