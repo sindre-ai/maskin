@@ -37,6 +37,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'amplitude',
 	'atlassian',
 	'attio',
+	'azure-devops',
 	'canva',
 	'clickup',
 	'gmail',
@@ -324,4 +325,16 @@ export function buildUpstreamHeaders(
 		if (!/\$\{[^}]*\}/.test(filled)) headers[name] = filled
 	}
 	return headers
+}
+
+/**
+ * The headers with the provider's read-only switch added when the agent may not write, for a
+ * server that has one (Azure DevOps: X-MCP-Readonly). A read and write agent gets them unchanged.
+ */
+export function withReadOnlyHeaders(
+	headers: Record<string, string>,
+	readOnlyHeaders: Record<string, string> | undefined,
+	access: AgentAccess,
+): Record<string, string> {
+	return canWrite(access) ? headers : { ...headers, ...readOnlyHeaders }
 }
