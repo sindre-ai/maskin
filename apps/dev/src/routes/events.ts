@@ -37,6 +37,7 @@ import {
 	eventResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { findAnswerForAgent, recordFlowCallAnswer, resolveFlowCallTap } from '../lib/pilot-hold'
 import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
 import { canReadSession } from '../lib/session-access'
@@ -489,6 +490,17 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 		: null
 
+	// A person answering a pilot hold card approves or rejects that exact call. It only records the
+	// answer; the agent repeats its call after it is woken by this reply.
+	const flowCallTap = mayApprove
+		? await resolveFlowCallTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+
 	// A person tapping Approve on a done-when card approves the draft as themselves, in the same
 	// transaction as their reply. Only a person's own client counts, as above.
 	const doneWhenTap = mayApprove
@@ -524,6 +536,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			!delivery &&
 			!statusTap &&
 			!deletionTap &&
+			!flowCallTap &&
 			!doneWhenTap &&
 			!doneWhenDraft
 				? await post(db)
@@ -533,6 +546,13 @@ app.openapi(createCommentRoute, (async (c) => {
 								workspaceId,
 								approverId: actorId,
 								tap: deletionTap,
+							})
+						}
+						if (flowCallTap) {
+							await recordFlowCallAnswer(tx, {
+								workspaceId,
+								approverId: actorId,
+								tap: flowCallTap,
 							})
 						}
 						if (doneWhenTap) {
@@ -993,16 +1013,31 @@ async function spawnThreadReplySessions(ctx: {
 			})
 			continue
 		}
+		// A person's answer on a pilot hold card this agent's call was refused with: say what to
+		// do next, so the agent repeats the call (or stops) and does not read it as optional.
+		const heldCallAnswer = await findAnswerForAgent(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			entityId: ctx.objectId,
+			cardEventId: ctx.threadRootEventId,
+			agentId,
+		}).catch(() => null)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
 			callerKind: 'trigger',
-			actionPrompt: buildThreadReplyPrompt({
-				objectId: ctx.objectId,
-				commenterActorId: ctx.actorId,
-				content: ctx.newCommentContent,
-				threadRootEventId: ctx.threadRootEventId,
-			}),
+			actionPrompt: heldCallAnswer
+				? buildHeldCallAnswerPrompt({
+						objectId: ctx.objectId,
+						commenterActorId: ctx.actorId,
+						threadRootEventId: ctx.threadRootEventId,
+						...heldCallAnswer,
+					})
+				: buildThreadReplyPrompt({
+						objectId: ctx.objectId,
+						commenterActorId: ctx.actorId,
+						content: ctx.newCommentContent,
+						threadRootEventId: ctx.threadRootEventId,
+					}),
 			config: {
 				// Who asked: launch puts the sender line above the prompt, so the stored
 				// prompt (and the session's title) starts with what the work is.
@@ -1030,6 +1065,32 @@ async function spawnThreadReplySessions(ctx: {
 			})
 		})
 	}
+}
+
+function buildHeldCallAnswerPrompt(ctx: {
+	objectId: string
+	commenterActorId: string
+	threadRootEventId: number
+	answer: 'approve' | 'reject'
+	tool: string
+}): string {
+	const step = ctx.tool.replace(/_/g, ' ')
+	return [
+		commentPromptHeadline(
+			ctx.answer === 'approve'
+				? 'A person approved your held call'
+				: 'A person rejected your held call',
+			ctx.answer === 'approve' ? 'Approve' : 'Reject',
+		),
+		'',
+		ctx.answer === 'approve'
+			? `A flow in pilot held your call to ${ctx.tool} and a person approved that exact call. This is not optional: repeat the same ${ctx.tool} call now, with the same arguments, and it goes through once. Then carry on with the work you were doing. If you change any argument it needs a new approval.`
+			: `A flow in pilot held your call to ${ctx.tool} and a person rejected that exact call (${step}). Do not repeat it or look for another way to do it. Carry on with the rest of your work, or say in a short reply what you could not do.`,
+		'',
+		`Object ID: ${ctx.objectId}`,
+		`Thread root comment event ID: ${ctx.threadRootEventId}`,
+		`Answered by actor ID: ${ctx.commenterActorId}`,
+	].join('\n')
 }
 
 function buildThreadReplyPrompt(ctx: {

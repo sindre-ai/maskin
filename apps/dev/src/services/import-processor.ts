@@ -72,12 +72,29 @@ function decodeBuffer(buffer: Buffer, encoding?: string): string {
 	// Default: try UTF-8
 	const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
 
-	// If no encoding was specified and UTF-8 produced replacement chars, try Latin-1
-	if (!encoding && text.includes('\uFFFD')) {
+	// If no encoding was specified, fall back to Latin-1 only when the file is really Latin-1
+	if (!encoding && isLatin1(text)) {
 		return new TextDecoder('latin1').decode(buffer)
 	}
 
 	return text
+}
+
+/**
+ * Whether a UTF-8-decoded file is really Latin-1. A single stray invalid byte (a truncated
+ * character in one row of a LinkedIn export) must not flip a UTF-8 file to Latin-1: that
+ * turns every \u00F8/\u00E5/\u00E6 in it into "\u00C3\u00B8"-style garbage. Real Latin-1 text has no valid multi-byte
+ * sequences, so it is Latin-1 only when the replacement characters outnumber the valid
+ * non-ASCII characters.
+ */
+function isLatin1(utf8Text: string): boolean {
+	let replacements = 0
+	let validNonAscii = 0
+	for (const ch of utf8Text) {
+		if (ch === '\uFFFD') replacements++
+		else if ((ch.codePointAt(0) ?? 0) > 0x7f) validNonAscii++
+	}
+	return replacements > 0 && replacements > validNonAscii
 }
 
 /**
@@ -130,10 +147,10 @@ function detectDelimiter(text: string): ',' | ';' | '\t' | '|' {
  */
 export function detectCsvOptions(buffer: Buffer): CsvOptions {
 	const utf8Text = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
-	const hasReplacementChars = utf8Text.includes('\uFFFD')
-	const encoding = hasReplacementChars ? ('latin-1' as const) : ('utf-8' as const)
+	const latin1 = isLatin1(utf8Text)
+	const encoding = latin1 ? ('latin-1' as const) : ('utf-8' as const)
 
-	const text = hasReplacementChars ? new TextDecoder('latin1').decode(buffer) : utf8Text
+	const text = latin1 ? new TextDecoder('latin1').decode(buffer) : utf8Text
 	const cleanText = text.replace(/^\uFEFF/, '')
 	const delimiter = detectDelimiter(cleanText)
 

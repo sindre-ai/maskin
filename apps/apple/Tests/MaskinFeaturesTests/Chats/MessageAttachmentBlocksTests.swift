@@ -193,3 +193,22 @@ struct MessageAttachmentBlocksSnapshotTests {
 		try render(content, width: width, dark: dark, name: "attachments-mixed")
 	}
 }
+
+@Suite("Attachment preview plan")
+struct AttachmentPreviewPlanTests {
+	private let photo = ChatAttachmentRef(fileID: "p", name: "a.jpg", mimeType: "image/jpeg")
+	private let pdf = ChatAttachmentRef(fileID: "d1", name: "a.pdf", mimeType: "application/pdf")
+	private let video = ChatAttachmentRef(fileID: "d2", name: "a.mov", mimeType: "video/quicktime")
+
+	@Test("a file card previews the message's files, not its pictures, starting at the one tapped")
+	func filesOnly() {
+		let files = AttachmentPreviewPlan.files(in: [photo, pdf, video], opening: video)
+		#expect(files == [pdf, video])
+		#expect(AttachmentPreviewPlan.startIndex(of: video, in: files) == 1)
+	}
+
+	@Test("a tapped picture that is not in the message's files still opens alone")
+	func pictureAlone() {
+		#expect(AttachmentPreviewPlan.files(in: [photo, pdf], opening: photo) == [photo])
+	}
+}

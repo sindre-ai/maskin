@@ -479,7 +479,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 		})
 	})
 
-	describe('enterprise allowlist bypass', () => {
+	describe('ops allowlist', () => {
 		const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 
 		afterEach(() => {
@@ -491,18 +491,17 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			}
 		})
 
-		it('lets an allowlisted actor exceed the trial ownership cap', async () => {
+		// Enterprise belongs to the workspace: being on the ops list gives no
+		// ownership-cap exemption of its own.
+		it('holds an allowlisted actor to the trial ownership cap', async () => {
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 			const app = createApp()
-			const first = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owned #1' }),
-			)
+			const first = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Ops #1' }))
 			expect(first.status).toBe(201)
 
-			const second = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owned #2' }),
-			)
-			expect(second.status).toBe(201)
+			const second = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Ops #2' }))
+			expect(second.status).toBe(403)
+			expect((await second.json()).error.code).toBe('OWNERSHIP_CAP_EXCEEDED')
 		})
 	})
 })

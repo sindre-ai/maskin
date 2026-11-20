@@ -27,11 +27,43 @@ jobs:
   # runs everything.
   changes:
     runs-on: ubuntu-latest
+    # actions: write is for the cancel step below, and only that.
+    permissions:
+      contents: read
+      actions: write
     outputs:
       backend: ${{ steps.areas.outputs.backend }}
       e2e: ${{ steps.areas.outputs.e2e }}
       apple: ${{ steps.areas.outputs.apple }}
     steps:
+      # The concurrency group above cannot do this on the queue: every rebuild of a queue entry
+      # is a new branch (gh-readonly-queue/main/pr-<N>-<base sha>), so each run is alone in its
+      # group, and GitHub does not cancel the run on the branch it replaces. On 19 Nov seven
+      # rebuilds of one PR left six full runs (about 14 jobs each) holding runners. A newer run
+      # for the same PR number supersedes every older one. Never fails the job.
+      - name: Cancel superseded runs of this queue entry
+        if: github.event_name == 'merge_group'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          pr=$(echo "$HEAD_REF" | sed -n 's#^refs/heads/gh-readonly-queue/.*/pr-\([0-9][0-9]*\)-[0-9a-f]*$#\1#p')
+          if [ -z "$pr" ]; then
+            echo "No PR number in $HEAD_REF, nothing to cancel"
+            exit 0
+          fi
+          for status in queued in_progress; do
+            gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=merge_group&status=$status&per_page=100" |
+              jq -r --arg pr "$pr" --argjson id "$RUN_ID" \
+                '.workflow_runs[] | select(.id < $id) | select(.head_branch | test("/pr-" + $pr + "-[0-9a-f]+$")) | .id'
+          done | while read -r old; do
+            echo "Cancelling run $old, superseded by $RUN_ID for PR $pr"
+            gh api -X POST "repos/$REPO/actions/runs/$old/cancel" > /dev/null || true
+          done
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -155,7 +187,7 @@ jobs:
       # The GitHub MCP supervisor ships in the agent image (docker/agent-base), outside the pnpm
       # workspace, so turbo does not see its tests. Plain node:test, no dependencies.
       - name: GitHub MCP supervisor tests
-        run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs
+        run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs scripts/checks/github-mcp-supervisor/github-mcp-pilot-hold.test.cjs
 
       - name: OAuth client registration script tests
         run: node --test scripts/register-oauth-client.test.mjs

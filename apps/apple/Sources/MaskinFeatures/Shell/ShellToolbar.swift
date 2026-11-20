@@ -7,9 +7,9 @@ import SwiftUI
 	import UIKit
 #endif
 
-/// The iPad is the one device with a single navigation: a bar of destinations at the top and no
-/// sidebar, so each screen's own controls carry the avatar and the one "+". iPhone and Mac keep
-/// their layouts. Gated on the device, not the width, so Slide Over does not change what is where.
+/// The iPad is the one device with a single navigation: a rail of destinations down the left and no
+/// sidebar or top tab bar. iPhone and Mac keep their layouts. Gated on the device, not the width, so
+/// Slide Over does not change what is where.
 enum ShellIdiom {
 	static var isPad: Bool {
 		#if os(iOS)
@@ -17,6 +17,15 @@ enum ShellIdiom {
 		#else
 			false
 		#endif
+	}
+
+	/// The iPad shows the rail. The system tab bar can only be hidden on iOS 18 and later, so an iPad on
+	/// iOS 17 keeps the top tab bar and each screen's own avatar.
+	static var hasRail: Bool {
+		#if os(iOS)
+			if #available(iOS 18, *) { return isPad }
+		#endif
+		return false
 	}
 }
 
@@ -62,8 +71,8 @@ public struct ShellActions {
 	public var displaySymbol: String
 	/// The display options are off their defaults: the Display button tints Patina (specs 7 §6, 8).
 	public var displayActive: Bool
-	/// Hides the profile avatar on this screen (Team, Objects) on iPhone and Mac. The iPad shows it
-	/// on every screen: its tab sidebar, which held the profile row, is gone.
+	/// Hides the profile avatar on this screen (Team, Objects) on iPhone and Mac. An iPad with no rail
+	/// (iOS 17) shows it on every screen: it has no sidebar to hold the profile row.
 	public var hidesAvatar: Bool
 	/// Keeps the "+" button in the bar while the content scrolls (Team).
 	public var newAlwaysVisible: Bool
@@ -122,10 +131,11 @@ private struct ShellToolbarModifier: ViewModifier {
 	/// True once the content has scrolled away from the top: New folds away.
 	@State private var scrolled = false
 
-	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it).
+	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it), and
+	/// not where the iPad's rail holds it.
 	private var showsAvatar: Bool {
 		runtime != nil && avatarAllowed && environment.auth.session != nil
-			&& (!actions.hidesAvatar || ShellIdiom.isPad)
+			&& !ShellIdiom.hasRail && (!actions.hidesAvatar || ShellIdiom.isPad)
 	}
 
 	func body(content: Content) -> some View {

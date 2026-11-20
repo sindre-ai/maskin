@@ -13,6 +13,7 @@ import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import TableRow from '@tiptap/extension-table-row'
 import TaskItem from '@tiptap/extension-task-item'
+import { Plugin } from '@tiptap/pm/state'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 import { Markdown } from 'tiptap-markdown'
@@ -93,6 +94,45 @@ const KeepAngleBrackets = Extension.create({
 	},
 })
 
+// A tap on a link opens it. The Link mark has openOnClick off so a mouse click puts the cursor in
+// the link text to edit it, and that is what a tap did too, which left a link on an iPad with no
+// way to open it. A touch press on an http(s) link opens it in a new tab, as the read view does.
+// A mouse or pen press is left alone, and so is a chip, which is its own link.
+export function openLinkOnTouch(
+	target: EventTarget | null,
+	pointerType: string,
+	open: (href: string) => void = (href) => window.open(href, '_blank', 'noopener,noreferrer'),
+): boolean {
+	if (pointerType !== 'touch' || !(target instanceof Element)) return false
+	if (target.closest('.maskin-link-chip')) return false
+	const href = target.closest('a')?.getAttribute('href')
+	if (!href || !/^https?:\/\//.test(href)) return false
+	open(href)
+	return true
+}
+
+const OpenLinksOnTouch = Extension.create({
+	name: 'openLinksOnTouch',
+	addProseMirrorPlugins() {
+		// ProseMirror calls handleClick from a mouse event, which does not say what pressed. The
+		// pointer event just before it does.
+		let pointerType = ''
+		return [
+			new Plugin({
+				props: {
+					handleDOMEvents: {
+						pointerdown: (_view, event) => {
+							pointerType = (event as PointerEvent).pointerType
+							return false
+						},
+					},
+					handleClick: (_view, _pos, event) => openLinkOnTouch(event.target, pointerType),
+				},
+			}),
+		]
+	},
+})
+
 export function buildExtensions(
 	variant: EditorVariant,
 	disallowedNodes: EditorDisallowedNode[] | undefined,
@@ -121,6 +161,7 @@ export function buildExtensions(
 		}),
 		InlineImage,
 		KeepAngleBrackets,
+		OpenLinksOnTouch,
 		Link.configure({
 			openOnClick: false,
 			autolink: true,

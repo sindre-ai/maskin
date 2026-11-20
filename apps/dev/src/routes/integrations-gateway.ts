@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
+import { isPilotHeldIntegrationTool } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
@@ -19,12 +20,14 @@ import {
 	resendSendRefusal,
 	toSse,
 	toolsCallName,
+	withReadOnlyHeaders,
 } from '../lib/integrations/mcp-gateway'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
 import { logger } from '../lib/logger'
-import { decideSend } from '../lib/send-gate'
+import { checkPilotHold } from '../lib/pilot-hold'
+import { decideSend, pilotIsReason } from '../lib/send-gate'
 import { callingSessionId } from '../lib/session-flow'
 import type { IntegrationConfig } from '../lib/types'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
@@ -165,7 +168,11 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 					`${label} needs to be reconnected. Ask a workspace admin to reconnect it under Settings → Integrations.`,
 				)
 			}
-			return buildUpstreamHeaders(server.headers, envKey, token)
+			return withReadOnlyHeaders(
+				buildUpstreamHeaders(server.headers, envKey, token),
+				resolved.config.mcp?.readOnlyHeaders,
+				access,
+			)
 		},
 	})
 }
@@ -250,7 +257,38 @@ export async function proxyMcp(
 				sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 			})
 			if (send !== 'send_now') {
-				decision = { ...decision, allowed: false, message: resendSendRefusal(toolName, send) }
+				const pilot =
+					send === 'needs_approval' &&
+					(await pilotIsReason(db, {
+						workspaceId,
+						agentId: actorId,
+						kind: 'email',
+						sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+					}))
+				decision = {
+					...decision,
+					allowed: false,
+					message: resendSendRefusal(toolName, send, pilot),
+				}
+			}
+		}
+		// A write waits for a person while the calling session runs under a flow in pilot, unless the
+		// provider has a hold of its own (Gmail, Resend). Asked on every call, so a flow moved out of
+		// pilot applies to the next one. Not an access denial, so no denied-call event.
+		const sessionId = callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId'))
+		if (decision.allowed && sessionId && isPilotHeldIntegrationTool(provider, decision.kind)) {
+			const hold = await checkPilotHold(db, {
+				workspaceId,
+				agentId: actorId,
+				sessionId,
+				tool: `${provider}__${toolName}`,
+				args: rpc?.params?.arguments,
+			})
+			if (hold.held) {
+				return new Response(JSON.stringify(denialResult(rpc?.id, hold.message)), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
 			}
 		}
 		if (!decision.allowed) {
