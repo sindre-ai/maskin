@@ -5,6 +5,9 @@ import SwiftUI
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
+#if os(iOS)
+import Speech
+#endif
 #if canImport(UserNotifications)
 import UserNotifications
 #endif
@@ -73,6 +76,14 @@ struct PermissionsPage: View {
 		case .authorized: read[.camera] = .allowed
 		case .denied, .restricted: read[.camera] = .denied
 		case .notDetermined: read[.camera] = .notAsked
+		@unknown default: break
+		}
+		#endif
+		#if os(iOS)
+		switch SFSpeechRecognizer.authorizationStatus() {
+		case .authorized: read[.speechRecognition] = .allowed
+		case .denied, .restricted: read[.speechRecognition] = .denied
+		case .notDetermined: read[.speechRecognition] = .notAsked
 		@unknown default: break
 		}
 		#endif

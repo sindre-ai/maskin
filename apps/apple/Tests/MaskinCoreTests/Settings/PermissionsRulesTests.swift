@@ -5,16 +5,22 @@ import Testing
 
 @Suite("PermissionsRules")
 struct PermissionsRulesTests {
-	@Test("lists the five permissions in order")
+	@Test("lists the permissions in order")
 	func order() {
 		#expect(
 			PermissionKind.allCases.map(\.title)
-				== ["Microphone", "Camera", "Photos", "Notifications", "Paste from other apps"])
+				== [
+					"Microphone", "Speech Recognition", "Camera", "Photos", "Face ID", "Notifications",
+					"Live Activities", "Background App Refresh", "Cellular Data", "Paste from other apps",
+				])
 	}
 
 	@Test("only the choices iOS lets an app read show a state")
 	func readable() {
-		#expect(PermissionKind.allCases.filter(\.isReadable) == [.microphone, .camera, .notifications])
+		#expect(
+			PermissionKind.allCases.filter(\.isReadable)
+				== [.microphone, .speechRecognition, .camera, .notifications])
+		#expect(!PermissionKind.faceID.isReadable)
 		#expect(!PermissionKind.paste.isReadable)
 	}
 
