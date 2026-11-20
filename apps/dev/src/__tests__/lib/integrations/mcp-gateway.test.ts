@@ -42,6 +42,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'vercel',
 			'webflow',
 			'zapier',
+			'zoom',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {
 			expect(GATEWAY_PROVIDERS.has(other)).toBe(false)
