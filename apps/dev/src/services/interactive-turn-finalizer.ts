@@ -250,9 +250,16 @@ const EMPTY_TURN_UNAVAILABLE_MESSAGE =
 const EMPTY_TURN_UNANSWERED_MESSAGE =
 	"I couldn't complete that turn — the model came back empty, I asked it again, and the run never came back. Send your message again and I'll pick it up."
 
-/** What the human reads for a failure no replay would fix. */
-const permanentErrorMessage = (detail: string): string =>
-	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
+/** Longest provider error text kept on a failed turn's message for admins and support. */
+const ERROR_DETAIL_MAX_LENGTH = 4000
+
+/**
+ * What the human reads for a failure no replay would fix. Plain on purpose: the provider's own
+ * text (status code, token counts, key links) is kept on the message as `error_detail`, not shown.
+ * Claims nothing was created only when the turn ran no tool calls.
+ */
+const permanentErrorMessage = (ranTools: boolean): string =>
+	`Maskin could not run this. ${ranTools ? 'Some steps may already be done.' : 'Nothing was created.'}`
 
 /**
  * The workspace's active subscription has moved onto the next slot AND this
@@ -1724,15 +1731,20 @@ export class InteractiveTurnFinalizer {
 			// Session-exit failover never sees an interactive turn (see
 			// turn-error-classifier.ts), so route the same move from here.
 			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
+			// A failed look-up must not hide the failure from the human: assume work may have run.
+			const ranTools = movedTo
+				? false
+				: await this.turnRanTools(sessionId, logId, result.raw).catch(() => true)
 			await this.postTurnMessage(
 				sessionId,
 				gate,
 				conversationId,
 				result,
 				logId,
-				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
+				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(ranTools),
 				{
 					error_kind: 'permanent',
+					...(movedTo ? {} : { error_detail: detail.slice(0, ERROR_DETAIL_MAX_LENGTH) }),
 					// Lets the idle close tell a chat that only ever hit a dead key from one
 					// that did real work (session-manager onlyCreditErrorTurns).
 					...(isCreditBalanceLowText(detail) ? { credit_balance_low: true } : {}),

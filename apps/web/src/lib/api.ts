@@ -3202,6 +3202,8 @@ export interface MessageFinalOutput {
 	 * Mirrors messageFinalOutputSchema in packages/shared.
 	 */
 	error_kind?: 'transient' | 'permanent'
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail?: string
 	/** Replays spent before giving up on a transient failure. */
 	retries?: number
 	/**
