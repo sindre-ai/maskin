@@ -160,6 +160,9 @@ test('a write that Maskin holds is refused with the pilot text and never reaches
 		await h.list()
 		const response = await h.call('create_or_update_file', { path: 'index.html' })
 		assert.equal(response.result.isError, true)
+		// A client on protocol 2026-07-28 rejects a result with no resultType as malformed, which
+		// hid the pilot text behind a schema error.
+		assert.equal(response.result.resultType, 'complete')
 		assert.ok(h.text(response).startsWith(PILOT))
 		assert.equal(h.check.calls.length, 1)
 		const [call] = h.check.calls

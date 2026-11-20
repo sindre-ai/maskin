@@ -422,7 +422,11 @@ function createSupervisor(options) {
 						`${JSON.stringify({
 							jsonrpc: '2.0',
 							id: message.id,
-							result: { isError: true, content: [{ type: 'text', text: verdict.message }] },
+							result: {
+								isError: true,
+								resultType: 'complete',
+								content: [{ type: 'text', text: verdict.message }],
+							},
 						})}\n`,
 					)
 					return
