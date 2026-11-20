@@ -142,20 +142,6 @@ public struct MainShell: View {
 				}
 			}
 		}
-		// The one-time usage question. Waits its turn behind any other sheet. Swiping it away counts as no.
-		.background {
-			Color.clear.sheet(
-				isPresented: Binding(
-					get: {
-						analytics.needsConsentPrompt && runtime.presentation == nil
-							&& runtime.notificationPrompt?.isPresented != true
-					},
-					set: { if !$0, analytics.consent == .undecided { analytics.setConsent(false) } })
-			) {
-				AnalyticsConsentSheet(
-					onShare: { analytics.setConsent(true) }, onNoThanks: { analytics.setConsent(false) })
-			}
-		}
 		// Screen views: the tab on show, and the two sheets that are screens of their own.
 		.onChange(of: runtime.selectedTab, initial: true) { _, tab in Self.trackScreen(tab) }
 		.onChange(of: runtime.presentation) { _, presentation in

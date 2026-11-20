@@ -107,6 +107,22 @@ describe('POST /api/telemetry/client', () => {
 		expect(bodies[1]?.properties).toMatchObject({ surface: 'iphone', workspace_id: wsId })
 	})
 
+	it('accepts the two Chats list events with their bucket values', async () => {
+		const res = await post([
+			event({
+				name: 'chat_opened_from_list',
+				properties: { source: 'list', section: 'recent', position_bucket: '2_3' },
+			}),
+			event({ name: 'chat_list_search_used', properties: { result_count_bucket: '26_plus' } }),
+		])
+
+		expect(res.status).toBe(202)
+		expect(sent().map((body) => body.event)).toEqual([
+			'chat_opened_from_list',
+			'chat_list_search_used',
+		])
+	})
+
 	it('rejects an unknown event name with a 400 that names it, and sends nothing', async () => {
 		const res = await post([event(), event({ name: 'secret_event', properties: {} })])
 

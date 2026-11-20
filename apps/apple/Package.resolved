@@ -11,15 +11,6 @@
       }
     },
     {
-      "identity" : "posthog-ios",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/PostHog/posthog-ios.git",
-      "state" : {
-        "revision" : "4e9850f767988f394e8584b0bf61ce85674775eb",
-        "version" : "3.93.6"
-      }
-    },
-    {
       "identity" : "swift-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-algorithms",

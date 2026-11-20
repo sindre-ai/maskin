@@ -21,8 +21,8 @@
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
-		<!-- The signed-in actor id, sent with every API request, and with product usage events once
-		     the person has agreed to share usage (Settings, Privacy). -->
+		<!-- The signed-in actor id, sent with every API request, and with product usage events (on by
+		     default, off in Settings or when the workspace turns usage sharing off). -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeUserID</string>
@@ -36,8 +36,8 @@
 				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
 			</array>
 		</dict>
-		<!-- Which screens and features are used, sent only once the person has agreed to share usage.
-		     Ids and short labels, never names, emails or message text. -->
+		<!-- Which screens and features are used, on by default and off in Settings or when the
+		     workspace turns usage sharing off. Ids and short labels, never names, emails or message text. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
