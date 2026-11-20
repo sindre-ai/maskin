@@ -29,6 +29,7 @@ import {
 	RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY,
 } from '../lib/subscription-limit-reset'
 import { alertOwnersOncePerDay } from './run-death-alerts'
+import { BACKOFF_BASE_MS, SessionNotAdmittedError } from './self-start-limits'
 import { startSession } from './session-lifecycle'
 import { TaskSessionRestarter } from './task-session-restart'
 
@@ -201,19 +202,35 @@ export class SessionRetryScheduler {
 			})
 			newSessionId = handle.sessionId
 		} catch (err) {
-			logger.error('SessionRetryScheduler failed to start retry session', {
-				sessionId: row.id,
-				attemptNumber: row.attemptNumber + 1,
-				error: String(err),
-			})
+			// A refusal by the self-start gate is expected, and already logged and written as a
+			// session_admission event. It is not an error, and trying again in 30 s would be refused
+			// again: DEV-4A logged 697 errors in under 3 hours that way. Wait until the gate says it
+			// would admit the run, or an hour when it gives no time (a person has been asked).
+			const notAdmitted = err instanceof SessionNotAdmittedError
+			if (notAdmitted) {
+				logger.info('SessionRetryScheduler: retry not admitted, will look again later', {
+					sessionId: row.id,
+					attemptNumber: row.attemptNumber + 1,
+					refusal: err.refusal,
+				})
+			} else {
+				logger.error('SessionRetryScheduler failed to start retry session', {
+					sessionId: row.id,
+					attemptNumber: row.attemptNumber + 1,
+					error: String(err),
+				})
+			}
 			// The claim above cleared retry_at, which drops the row from the partial index. A start
 			// that throws (the wake hold does this by design) must not lose the retry: put the time
 			// back so the next tick finds it. The attempt number is untouched, so a start that never
 			// happened does not spend one. retried_session_id is still null here, so a competing
 			// scheduler cannot have linked a retry in the meantime.
+			const putBackAt = notAdmitted
+				? (err.retryAt ?? new Date(Date.now() + BACKOFF_BASE_MS))
+				: row.retryAt
 			await this.db
 				.update(sessions)
-				.set({ retryAt: row.retryAt })
+				.set({ retryAt: putBackAt })
 				.where(
 					and(eq(sessions.id, row.id), isNull(sessions.retriedSessionId), isNull(sessions.retryAt)),
 				)
