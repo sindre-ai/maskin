@@ -129,6 +129,12 @@ export interface McpConfig {
 	 */
 	server?: McpServerSpec
 	/**
+	 * Extra headers the gateway sends upstream when the calling agent's access is Read, so a
+	 * server with its own read-only switch is held to it as well as to the gateway's refusal of
+	 * write tools. Only read by the gateway; ignored for a provider that is not in GATEWAY_PROVIDERS.
+	 */
+	readOnlyHeaders?: Record<string, string>
+	/**
 	 * How an agent's `tools.mcpServers.<key>` entry for this provider is
 	 * recognised. Omit for the common case: one shared entry that is exactly
 	 * `server`. A provider that declares `mcp` must carry either `server` or a

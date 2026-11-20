@@ -22,27 +22,36 @@ import Testing
 		#expect(QuickReplyRules.replies(for: "Would you take a look?") == ["Yes, I can", "Not today", "What do you need?"])
 	}
 
-	@Test("when-questions offer times")
-	func timing() {
-		#expect(QuickReplyRules.intent(of: "When do you want the summary?") == .timing)
-		#expect(QuickReplyRules.intent(of: "The brief is done. By when do you need the slides?") == .timing)
-		#expect(QuickReplyRules.replies(for: "What time works?") == ["Today", "Tomorrow morning", "Later this week"])
-	}
-
-	@Test("any other question gets yes / no / tell me more")
+	@Test("other yes/no questions get yes / no / tell me more")
 	func general() {
 		#expect(QuickReplyRules.intent(of: "Is the launch still on for Thursday?") == .general)
 		#expect(QuickReplyRules.replies(for: "Does that match what you expected?") == ["Yes", "No", "Tell me more"])
 	}
 
-	@Test("statements, trailing quotes and the intent of an earlier sentence")
+	@Test("questions that need a free answer get no chips")
+	func openQuestions() {
+		#expect(QuickReplyRules.replies(for: "When do you want the summary?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "The brief is done. By when do you need the slides?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "What time works?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "Which environment should I deploy to?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "How should the report look?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "Ready to ship?").isEmpty)
+	}
+
+	@Test("options listed in the text, a second question or a long message get no chips")
+	func moreThanOneAnswer() {
+		#expect(QuickReplyRules.replies(for: "Should I send it now or wait until Monday?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "I can do either:\n- ship today\n- ship Monday\nShould I ship today?").isEmpty)
+		#expect(QuickReplyRules.replies(for: "Should I wait? Actually, is Sam back?").isEmpty)
+		#expect(QuickReplyRules.replies(for: String(repeating: "The numbers moved a lot this week. ", count: 10) + "Should I send it?").isEmpty)
+	}
+
+	@Test("statements and trailing quotes")
 	func statements() {
 		#expect(QuickReplyRules.intent(of: "The importer fix shipped.") == nil)
 		#expect(QuickReplyRules.replies(for: "Done. I'll ping Sam.").isEmpty)
 		#expect(QuickReplyRules.intent(of: "") == nil)
-		// The question is the last sentence; a "should I" earlier in the text does not decide it.
-		#expect(QuickReplyRules.intent(of: "Should I wait? Actually, is Sam back?") == .general)
-		#expect(QuickReplyRules.intent(of: "Ready to ship?\"") == .general)
+		#expect(QuickReplyRules.intent(of: "Is it ready to ship?\"") == .general)
 		#expect(QuickReplyRules.intent(of: "Can you?\n") == .capability)
 	}
 
@@ -73,7 +82,7 @@ import Testing
 				])
 			])
 		])
-		let message = agentMessage("Which environment should I deploy to?", metadata: ask)
+		let message = agentMessage("Should I deploy to staging?", metadata: ask)
 		#expect(!message.questions.isEmpty)
 		#expect(QuickReplyRules.suggestions(latest: message, currentActorID: "me", composerEmpty: true, somebodyTyping: false).isEmpty)
 	}

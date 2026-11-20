@@ -376,7 +376,10 @@ describe('Invites — POST /:token/accept', () => {
 		it('rejects with 403 SEAT_CAP_EXCEEDED and leaves the invite pending', async () => {
 			// Fresh trial-tier workspace: seat cap is 1 (owner alone), so the
 			// invitee overflow trips the cap.
-			const seatCapWs = await insertWorkspace(db, inviterId, { name: 'Seat Cap WS' })
+			const seatCapWs = await insertWorkspace(db, inviterId, {
+				name: 'Seat Cap WS',
+				enterpriseGranted: false,
+			})
 
 			const invitee = await insertActor(db, {
 				email: 'overflow@example.com',
@@ -420,19 +423,51 @@ describe('Invites — POST /:token/accept', () => {
 			expect(capturePosthogEventMock).not.toHaveBeenCalled()
 		})
 
-		it('lets an invitee join past the trial seat cap when the billing owner is allowlisted', async () => {
+		it('lets an invitee join past the trial seat cap when the workspace has the enterprise flag', async () => {
+			const enterpriseWs = await insertWorkspace(db, inviterId, {
+				name: 'Enterprise Seat WS',
+				enterpriseGranted: true,
+			})
+			const invitee = await insertActor(db, {
+				email: 'enterprise-invitee@example.com',
+				apiKey: generateApiKey().key,
+			})
+			const { rawToken } = await seedPendingInvite({
+				workspaceId: enterpriseWs.id,
+				inviterId,
+				email: 'enterprise-invitee@example.com',
+			})
+
+			const res = await app().request(
+				jsonRequest('POST', `/api/invites/${rawToken}/accept`, undefined, {
+					Authorization: `Bearer ${invitee.apiKey}`,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const memberships = await db
+				.select()
+				.from(workspaceMembers)
+				.where(eq(workspaceMembers.actorId, invitee.id))
+			expect(memberships).toHaveLength(1)
+		})
+
+		it('keeps the trial seat cap when only the billing owner is allowlisted', async () => {
 			const original = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = inviterId
 			try {
-				const enterpriseWs = await insertWorkspace(db, inviterId, { name: 'Enterprise Seat WS' })
+				const ws = await insertWorkspace(db, inviterId, {
+					name: 'Allowlisted Owner WS',
+					enterpriseGranted: false,
+				})
 				const invitee = await insertActor(db, {
-					email: 'enterprise-invitee@example.com',
+					email: 'allowlisted-invitee@example.com',
 					apiKey: generateApiKey().key,
 				})
 				const { rawToken } = await seedPendingInvite({
-					workspaceId: enterpriseWs.id,
+					workspaceId: ws.id,
 					inviterId,
-					email: 'enterprise-invitee@example.com',
+					email: 'allowlisted-invitee@example.com',
 				})
 
 				const res = await app().request(
@@ -441,12 +476,8 @@ describe('Invites — POST /:token/accept', () => {
 					}),
 				)
 
-				expect(res.status).toBe(200)
-				const memberships = await db
-					.select()
-					.from(workspaceMembers)
-					.where(eq(workspaceMembers.actorId, invitee.id))
-				expect(memberships).toHaveLength(1)
+				expect(res.status).toBe(403)
+				expect((await res.json()).error.code).toBe('SEAT_CAP_EXCEEDED')
 			} finally {
 				if (original === undefined) {
 					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
@@ -459,7 +490,10 @@ describe('Invites — POST /:token/accept', () => {
 
 		it('seat cap on new-signup rolls back the actor insert (invite pending, no actor)', async () => {
 			// Same fresh trial-tier workspace: 1 seat, filled by the owner.
-			const seatCapWs = await insertWorkspace(db, inviterId, { name: 'Seat Cap Signup WS' })
+			const seatCapWs = await insertWorkspace(db, inviterId, {
+				name: 'Seat Cap Signup WS',
+				enterpriseGranted: false,
+			})
 
 			const { rawToken, invite } = await seedPendingInvite({
 				workspaceId: seatCapWs.id,

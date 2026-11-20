@@ -4,6 +4,7 @@ import {
 	conversationParticipants,
 	conversationPendingTurns,
 	messages,
+	sessions,
 } from '@maskin/db/schema'
 import { HUMAN_MESSAGE_STYLE_SHORT, decideWakes } from '@maskin/shared'
 import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
@@ -955,6 +956,9 @@ async function spawnOrJoinConversationSession(params: {
 		})
 	}
 
+	// A chat whose last session was closed for being too big starts from its handoff note.
+	const rotated = await loadRotationHandoff(db, { conversationId, agentId, threadRootId })
+
 	try {
 		await startSession({
 			workspaceId,
@@ -974,6 +978,7 @@ async function spawnOrJoinConversationSession(params: {
 				filesNote: chatFiles.note,
 				clockLine: formatPersonClockLine(new Date(), timezone),
 				threadRootId,
+				handoffNote: rotated?.note ?? null,
 			}),
 			config: {
 				interactive: true,
@@ -1022,6 +1027,7 @@ async function spawnOrJoinConversationSession(params: {
 			threadRootId,
 			filesListedCount: chatFiles.listedCount,
 		})
+		if (rotated) await announceContinuedInFreshSession(db, { workspaceId, conversationId, message })
 		return 'started_new_session'
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
@@ -1254,6 +1260,68 @@ export function formatConversationTranscript(
  * directly rather than telling the agent to go fetch it via MCP tools, since
  * this only runs once per session (not once per reply).
  */
+/**
+ * What the agent's newest session in this chat left behind when it was closed for being too
+ * big (sessions.config.rotation), or null when it was not. Only the newest session counts: a
+ * later session that was not rotated ends the chain. A fallback rotation has no note.
+ */
+export async function loadRotationHandoff(
+	db: Database,
+	ctx: { conversationId: string; agentId: string; threadRootId: number | null },
+): Promise<{ note: string | null } | null> {
+	try {
+		const [latest] = await db
+			.select({ config: sessions.config })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, ctx.conversationId),
+					eq(sessions.actorId, ctx.agentId),
+					matchThread(sessions.threadRootId, ctx.threadRootId),
+					eq(sessions.interactive, true),
+				),
+			)
+			.orderBy(desc(sessions.createdAt))
+			.limit(1)
+		const rotation = (latest?.config as { rotation?: { note?: unknown } } | null)?.rotation
+		if (!rotation || typeof rotation !== 'object') return null
+		return { note: typeof rotation.note === 'string' && rotation.note ? rotation.note : null }
+	} catch (err) {
+		logger.warn('Could not read the rotation handoff, seeding without a note', {
+			conversationId: ctx.conversationId,
+			error: String(err),
+		})
+		return null
+	}
+}
+
+/**
+ * The one line a chat shows when its session restarted on a handoff note. Authored by the sender
+ * and not the agent, like the paused-agent line: an agent-authored line would count toward the
+ * consecutive-agent-messages cap. Never throws: the new session is already running.
+ */
+async function announceContinuedInFreshSession(
+	db: Database,
+	ctx: { workspaceId: string; conversationId: string; message: { actorId: string } },
+): Promise<void> {
+	try {
+		await insertConversationMessage(db, {
+			conversationId: ctx.conversationId,
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.message.actorId,
+			content: 'Continued in a fresh session',
+			metadata: null,
+			sessionId: null,
+			kind: 'system',
+		})
+	} catch (err) {
+		logger.warn('Failed to post the continued-in-a-fresh-session line', {
+			conversationId: ctx.conversationId,
+			error: String(err),
+		})
+	}
+}
+
 function buildConversationReplyPrompt(ctx: {
 	conversationId: string
 	conversationHistory: Array<{ actorName: string; content: string }>
@@ -1271,6 +1339,8 @@ function buildConversationReplyPrompt(ctx: {
 	/** The person's local date, time and zone, from formatPersonClockLine. */
 	clockLine: string
 	threadRootId: number | null
+	/** The handoff note of the session this one replaces after a rotation; null for none. */
+	handoffNote?: string | null
 }): string {
 	return [
 		'A new message was posted in a conversation you are a participant in. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
@@ -1280,6 +1350,15 @@ function buildConversationReplyPrompt(ctx: {
 		'"""',
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
+		...(ctx.handoffNote
+			? [
+					'',
+					'You are carrying on this chat in a fresh session: the earlier session grew too large and was closed. Its handoff note follows. Every standing rule in it still holds, and every decision in it still stands.',
+					'"""',
+					ctx.handoffNote,
+					'"""',
+				]
+			: []),
 		'',
 		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${HUMAN_MESSAGE_STYLE_SHORT} ${describeReplyExpectation(ctx)}`,
 		'Do not post progress notes while you work, however long this turn takes: no acknowledgement, no line on what you are about to do, no note that you are still on it. The chat already shows them that you are working, so your reply is the only message they should get. Use post_conversation_message mid-turn only when you cannot go on without something from them, or to bring another agent in.',

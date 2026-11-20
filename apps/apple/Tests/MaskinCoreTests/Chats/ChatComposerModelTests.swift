@@ -185,7 +185,7 @@ struct ChatComposerModelTests {
 		#expect(m.canSend)
 	}
 
-	@Test("a file over the 1 GB cap fails before uploading")
+	@Test("a file over the 5 GB cap fails before uploading")
 	func oversize() async {
 		let uploader = FakeUploader()
 		let m = model(uploader)
@@ -201,7 +201,7 @@ struct ChatComposerModelTests {
 		#expect(await eventually { m.hasFailedAttachment })
 		#expect(await uploader.uploaded.isEmpty)
 		#expect(await uploader.streamed.isEmpty)
-		if case .failed(let reason)? = m.attachments.first?.state { #expect(reason.contains("1 GB")) }
+		if case .failed(let reason)? = m.attachments.first?.state { #expect(reason.contains("5 GB")) }
 	}
 
 	@Test("a 200 MB file on disk uploads from the file and the temp copy is removed afterwards")

@@ -128,6 +128,7 @@ struct MaskinComposer: View {
 	#if os(iOS)
 	@State private var dictation = Dictation()
 	@State private var showCamera = false
+	@State private var showScanner = false
 	@Environment(\.openURL) private var openURL
 	#endif
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -387,7 +388,7 @@ struct MaskinComposer: View {
 	private var attachActions: [ComposerAttachAction] {
 		#if os(iOS)
 		ComposerAttachAction.available(
-			hasCamera: CameraPicker.isAvailable, clipboardHasImage: UIPasteboard.general.hasImages,
+			hasCamera: CameraPicker.isAvailable, canScan: DocumentScanner.isAvailable, clipboardHasImage: UIPasteboard.general.hasImages,
 			showsFormatting: showsFormatting)
 		#else
 		ComposerAttachAction.available(hasCamera: false, clipboardHasImage: false, showsFormatting: showsFormatting)
@@ -423,6 +424,10 @@ struct MaskinComposer: View {
 		case .camera:
 			#if os(iOS)
 			showCamera = true
+			#endif
+		case .scan:
+			#if os(iOS)
+			showScanner = true
 			#endif
 		case .file: showFiles = true
 		case .object:
@@ -517,6 +522,12 @@ struct MaskinComposer: View {
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
+	}
+
+	/// The scanned pages become one PDF chip, like any other attachment.
+	fileprivate func addScan(_ pages: [UIImage]) {
+		let name = ScannedDocument.fileName(at: Date())
+		model.attach(name: name, mimeType: "application/pdf", prepare: AttachmentLoading.scan(pages: pages, name: name))
 	}
 	#endif
 
@@ -640,6 +651,9 @@ struct MaskinComposer: View {
 				}
 				.fullScreenCover(isPresented: composer.$showCamera) {
 					CameraPicker { composer.addPhoto($0) }.ignoresSafeArea()
+				}
+				.fullScreenCover(isPresented: composer.$showScanner) {
+					DocumentScanner { composer.addScan($0) }.ignoresSafeArea()
 				}
 				.alert(
 					"Microphone", isPresented: Binding(get: { composer.voiceProblem != nil }, set: { if !$0 { composer.voiceProblem = nil } })

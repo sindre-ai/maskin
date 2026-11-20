@@ -71,6 +71,7 @@ app.post('/', async (c) => {
 		integrationId: drive?.id ?? null,
 		provider: GOOGLE_DRIVE_PROVIDER,
 		providerLabel: 'Google Drive',
+		sessionId: c.req.header('x-maskin-session-id') || undefined,
 	})
 	const mcpServer = createGoogleDriveMcpServer(
 		{

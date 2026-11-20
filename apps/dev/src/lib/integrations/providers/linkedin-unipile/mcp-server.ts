@@ -6,7 +6,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
-import { decideSend, deniedMessage } from '../../../send-gate'
+import { decideSend, deniedMessage, pilotIsReason, withPilotReason } from '../../../send-gate'
 import {
 	type ActionFields,
 	type ActionLogContext,
@@ -152,11 +152,14 @@ const sendObjectIdSchema = z
  * to ask first for the kind. The person approves a draft from its card (editing first if they
  * want) or by saying yes in the chat.
  */
-function heldForApproval(what: string, kind: string): LinkedInActionRefusal {
+function heldForApproval(what: string, kind: string, pilot: boolean): LinkedInActionRefusal {
 	return new LinkedInActionRefusal(
 		'refused_rule',
 		'INVALID_INPUT',
-		`${what} from this agent waits for a person. Put the draft on a task or object (kind ${kind}) and show it to the person: link it in the chat or put it on a decision card. They can edit the text before approving, or just say yes in the chat (then call approve_draft_from_chat). Once it is approved, call this again with only object_id. Nothing was sent.`,
+		withPilotReason(
+			`${what} from this agent waits for a person. Put the draft on a task or object (kind ${kind}) and show it to the person: link it in the chat or put it on a decision card. They can edit the text before approving, or just say yes in the chat (then call approve_draft_from_chat). Once it is approved, call this again with only object_id. Nothing was sent.`,
+			pilot,
+		),
 	)
 }
 
@@ -216,19 +219,23 @@ export function registerLinkedInMcpInstance(
 	 * What this agent's send setting says for one draft kind, read now: send at once, or draft and
 	 * get a person's approval first. A setting of deny refuses the call.
 	 */
+	// Set by sendDecision: whether pilot is why the send in hand waits, for the refusal's wording.
+	let pilotHeld = false
 	const sendDecision = async (
 		kind: string,
 		what: string,
 	): Promise<'send_now' | 'needs_approval'> => {
-		const decision = await decideSend(ctx.db, {
+		const params = {
 			workspaceId: ctx.workspaceId,
 			agentId: ctx.actorId,
 			kind,
 			sessionId: ctx.sessionId,
-		})
+		}
+		const decision = await decideSend(ctx.db, params)
 		if (decision === 'denied') {
 			throw new LinkedInActionRefusal('refused_rule', 'INVALID_INPUT', deniedMessage(what))
 		}
+		pilotHeld = decision === 'needs_approval' && (await pilotIsReason(ctx.db, params))
 		return decision
 	}
 	const logCtx: ActionLogContext = {
@@ -336,7 +343,8 @@ export function registerLinkedInMcpInstance(
 							})
 							return jsonResult(learned(rec, published, { refId: published.post_id }))
 						}
-						if (decision === 'needs_approval') throw heldForApproval('A post', 'linkedin_post')
+						if (decision === 'needs_approval')
+							throw heldForApproval('A post', 'linkedin_post', pilotHeld)
 						if (!args.text) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
@@ -410,7 +418,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, posted, { refId: posted.comment_id }))
 						}
 						if (decision === 'needs_approval')
-							throw heldForApproval('A comment', 'linkedin_comment')
+							throw heldForApproval('A comment', 'linkedin_comment', pilotHeld)
 						if (!args.post_id || !args.text) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
@@ -467,7 +475,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, posted, { refId: posted.comment_id }))
 						}
 						if (decision === 'needs_approval') {
-							throw heldForApproval('A comment reply', 'linkedin_comment_reply')
+							throw heldForApproval('A comment reply', 'linkedin_comment_reply', pilotHeld)
 						}
 						if (!args.comment_id || !args.text) {
 							throw new LinkedInIntegrationError(
@@ -521,7 +529,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, edited, {}))
 						}
 						if (decision === 'needs_approval')
-							throw heldForApproval('A post edit', 'linkedin_post_edit')
+							throw heldForApproval('A post edit', 'linkedin_post_edit', pilotHeld)
 						if (!args.post_id || (args.text === undefined && args.can_comment === undefined)) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
@@ -629,7 +637,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 						}
 						if (decision === 'needs_approval')
-							throw heldForApproval('A message', 'linkedin_message')
+							throw heldForApproval('A message', 'linkedin_message', pilotHeld)
 						const sent = await sendLinkedInMessage(opCtx, args)
 						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 					})
@@ -689,7 +697,8 @@ export function registerLinkedInMcpInstance(
 							})
 							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 						}
-						if (decision === 'needs_approval') throw heldForApproval('A reply', 'linkedin_message')
+						if (decision === 'needs_approval')
+							throw heldForApproval('A reply', 'linkedin_message', pilotHeld)
 						const sent = await replyToLinkedInThread(opCtx, args)
 						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 					})
@@ -917,7 +926,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, sent, { refId: sent.invitation_id }))
 						}
 						if (decision === 'needs_approval') {
-							throw heldForApproval('An invitation', 'linkedin_connection_request')
+							throw heldForApproval('An invitation', 'linkedin_connection_request', pilotHeld)
 						}
 						if (!args.user_id) {
 							throw new LinkedInIntegrationError(
@@ -1128,7 +1137,7 @@ export function registerLinkedInMcpInstance(
 								return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 							}
 							if (decision === 'needs_approval') {
-								throw heldForApproval('An InMail', 'linkedin_inmail')
+								throw heldForApproval('An InMail', 'linkedin_inmail', pilotHeld)
 							}
 							if (!args.recipient_provider_id || !args.body || !args.idempotency_key) {
 								throw new LinkedInIntegrationError(

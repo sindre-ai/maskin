@@ -12,6 +12,7 @@
 // No dependencies. Node 22 is in the image. Never logs a token or a header.
 
 const { spawn } = require('node:child_process')
+const { randomUUID } = require('node:crypto')
 const { StringDecoder } = require('node:string_decoder')
 
 const REMINT_MARKER = 'GITHUB_REMINT_UNRESOLVED_401'
@@ -20,6 +21,8 @@ const MINT_COOLDOWN_MS = 30 * 1000
 const DRAIN_CAP_MS = 30 * 1000
 const MINT_TIMEOUT_MS = 10 * 1000
 const INIT_REPLAY_TIMEOUT_MS = 10 * 1000
+const HOLD_CHECK_TIMEOUT_MS = 15 * 1000
+const PILOT_REFUSAL = 'This flow is in pilot, so sends wait for a person'
 const REQUIRED_ENV = [
 	'GITHUB_MCP_INTEGRATION_ID',
 	'MASKIN_API_URL',
@@ -76,6 +79,11 @@ function isRequest(message) {
 	return message && typeof message.method === 'string' && message.id !== undefined
 }
 
+// The answer to a write the Maskin check could not be asked about: held, never passed.
+function cannotCheckMessage(name) {
+	return `${PILOT_REFUSAL}. This flow could not be checked just now, so ${name} was held. Nothing was done. Try again shortly.`
+}
+
 function createSupervisor(options) {
 	const env = options.env
 	const now = options.now || Date.now
@@ -91,6 +99,13 @@ function createSupervisor(options) {
 
 	const missing = REQUIRED_ENV.filter((name) => !env[name])
 	const refreshEnabled = missing.length === 0
+	// A flow in pilot holds GitHub writes for a person. Every write is checked with Maskin first,
+	// so it needs the API address, key, workspace and the session id (MASKIN_SESSION_ID, from the
+	// container's SESSION_ID). Without them nothing here can tell whose session this is, so
+	// nothing is held, which is how an image or entry that predates this behaved.
+	const holdEnabled = Boolean(
+		env.MASKIN_API_URL && env.MASKIN_API_KEY && env.MASKIN_WORKSPACE_ID && env.MASKIN_SESSION_ID,
+	)
 	const refreshAfterMs = Number(env.GITHUB_MCP_REFRESH_AFTER_MS) || DEFAULT_REFRESH_AFTER_MS
 	const integrationTail = String(env.GITHUB_MCP_INTEGRATION_ID || '').slice(-4)
 
@@ -107,6 +122,9 @@ function createSupervisor(options) {
 	let stopped = false
 	let drainWaiters = []
 	const inflight = new Map()
+	// Tools the real tools/list calls read-only. Any tool not in it counts as a write.
+	const readOnlyTools = new Set()
+	const listRequests = new Set()
 	const retired = new Set()
 	const replayWaiters = new Map()
 	const pending = []
@@ -279,6 +297,54 @@ function createSupervisor(options) {
 		}
 	}
 
+	// Remembers which tools GitHub's own list marks read-only. A tool nobody classified is a write.
+	function noteToolsList(message) {
+		const tools = message?.result?.tools
+		if (!Array.isArray(tools)) return
+		for (const tool of tools) {
+			if (tool && typeof tool.name === 'string' && tool.annotations?.readOnlyHint === true) {
+				readOnlyTools.add(tool.name)
+			}
+		}
+	}
+
+	// Asks Maskin whether this write may run now. Held means refuse it and do nothing. Anything but
+	// a clear "not held" is held: not being able to ask never lets a write through. Never logs the
+	// arguments, the key or the answer.
+	async function checkHold(name, args) {
+		const base = String(env.MASKIN_API_URL).replace(/\/+$/, '')
+		try {
+			const res = await doFetch(`${base}/api/pilot-gate/check`, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${env.MASKIN_API_KEY}`,
+					'X-Workspace-Id': env.MASKIN_WORKSPACE_ID,
+					'X-Maskin-Session-Id': env.MASKIN_SESSION_ID,
+					'Content-Type': 'application/json',
+					// The answer changes with every call (a card, then an approval): never replayed.
+					'Idempotency-Key': randomUUID(),
+				},
+				body: JSON.stringify({ tool: `github__${name}`, arguments: args }),
+				signal: AbortSignal.timeout(HOLD_CHECK_TIMEOUT_MS),
+			})
+			if (!res.ok) {
+				log(`hold check failed status=${res.status}, holding ${name}`)
+				return { held: true, message: cannotCheckMessage(name) }
+			}
+			const body = await res.json()
+			if (body && body.held === false) return { held: false }
+			if (body && body.held === true && typeof body.message === 'string') {
+				return { held: true, message: body.message }
+			}
+			log(`hold check gave an unreadable answer, holding ${name}`)
+			return { held: true, message: cannotCheckMessage(name) }
+		} catch (err) {
+			const kind = err && err.name === 'TimeoutError' ? 'timeout' : 'network'
+			log(`hold check failed status=${kind}, holding ${name}`)
+			return { held: true, message: cannotCheckMessage(name) }
+		}
+	}
+
 	function replayInit(child) {
 		if (!cachedInitialize) return Promise.resolve()
 		replaySeq += 1
@@ -338,6 +404,26 @@ function createSupervisor(options) {
 		else if (message && message.method === 'notifications/initialized') cachedInitialized = message
 		else if (isRequest(message)) await ageRefresh()
 		if (stopped) return
+		if (message && message.method === 'tools/list' && message.id !== undefined) {
+			listRequests.add(JSON.stringify(message.id))
+		}
+		if (holdEnabled && message && message.method === 'tools/call' && message.id !== undefined) {
+			const name = typeof message.params?.name === 'string' ? message.params.name : 'unknown'
+			if (!readOnlyTools.has(name)) {
+				const verdict = await checkHold(name, message.params?.arguments)
+				if (stopped) return
+				if (verdict.held) {
+					output.write(
+						`${JSON.stringify({
+							jsonrpc: '2.0',
+							id: message.id,
+							result: { isError: true, content: [{ type: 'text', text: verdict.message }] },
+						})}\n`,
+					)
+					return
+				}
+			}
+		}
 		forward(line, message)
 	}
 
@@ -411,6 +497,7 @@ function createSupervisor(options) {
 			return
 		}
 		const key = JSON.stringify(message.id)
+		if (listRequests.delete(key)) noteToolsList(message)
 		const entry = inflight.get(key)
 		if (!entry || entry.child !== child) {
 			output.write(`${line}\n`)
