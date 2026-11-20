@@ -43,6 +43,13 @@ export const FLAGS = {
 	 */
 	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
 	/**
+	 * Gates the Edit action on your own comments on a task, bet or insight in the web app. Frontend
+	 * only: read with useFeatureFlag in activity-comment. Off means a comment shows no Edit button.
+	 * The edit route behind it only changes a comment's text for its author and is safe with the
+	 * flag off. Retire once editing is on for everyone.
+	 */
+	COMMENT_EDIT: 'comment-edit',
+	/**
 	 * Gates the visual layer of agent change review (bet
 	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
 	 * the proposal banner above a markdown file and the review view that
