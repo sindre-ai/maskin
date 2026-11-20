@@ -198,4 +198,11 @@ describe('buildLoopPersonalizationPrompt', () => {
 		expect(prompt).toContain('suggestions only')
 		expect(prompt).toContain('Do not change anything yet')
 	})
+
+	it('asks for an integration check against connected integrations and available providers', () => {
+		const prompt = buildLoopPersonalizationPrompt({ name: 'Outreach Loop', description: null })
+		expect(prompt).toContain('list_integrations')
+		expect(prompt).toContain('list_integration_providers')
+		expect(prompt).toContain('do not connect anything')
+	})
 })
