@@ -193,6 +193,33 @@ export const FLAGS = {
 	 * the Entra app registration is approved for customers and the provider is on for everyone.
 	 */
 	AZURE_DEVOPS: 'azure-devops',
+	/**
+	 * Gates the Zoom integration (task [Add Zoom integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/db07585a-26e3-462f-b73e-e2690e0f142b)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Zoom Marketplace app is approved for customers and the provider is on for everyone.
+	 */
+	ZOOM: 'zoom',
+	/**
+	 * Gates the four meeting-notes integrations Fireflies, Granola, Fathom and Otter (task
+	 * [Add four meeting-notes integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/7bfb4736-6c21-4cc9-9a19-2e6f8f4d35d6)).
+	 * Actor-scoped, read by the integrations routes: off means the four are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	MEETING_NOTES_INTEGRATIONS: 'meeting-notes-integrations',
+	/**
+	 * Gates the eight sales and automation integrations Apollo, ZoomInfo, Outreach, Gong, Clay,
+	 * Calendly, monday.com and Make (task
+	 * [Add sales and automation integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/18a0ef4c-3cd5-468e-a8cb-3ea3b3344599)).
+	 * Actor-scoped, read by the integrations routes: off means the eight are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
