@@ -5,6 +5,10 @@
 # was handed so the check can see whether the strip-images proxy was inserted,
 # and the arguments it was launched with (effort, disallowed tools).
 echo "STUB_CLAUDE_RAN base_url=${ANTHROPIC_BASE_URL:-<unset>} args=$*"
+echo "STUB_BUNDLED_SKILLS_OFF=${CLAUDE_CODE_DISABLE_BUNDLED_SKILLS:-<unset>}"
+if [ -f /agent/workspace/CLAUDE.md ]; then
+	echo "STUB_CLAUDE_MD_SKILLS=$(grep '^### ' /agent/workspace/CLAUDE.md | sed 's/^### //' | sort | tr '\n' ',')"
+fi
 echo '{"type":"result","subtype":"success","is_error":false,"result":"stub"}'
 
 # MCP view, for the guard cases in agent-image-smoke.sh. SERVERS is what
