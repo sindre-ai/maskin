@@ -1,21 +1,20 @@
-import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
+import { useQuery } from '@tanstack/react-query'
 
 /**
- * Unread-chat count for the sidebar's Chats nav entry. Reuses the
- * conversations list hook filtered to `unread_only`, so it always agrees with
- * the Chats list's own unread state instead of a second server round-trip.
- * `hasMore` signals the count is a floor (there are more unread conversations
- * than the first page holds) so the caller can render "9+" instead of a
- * precise number that would understate the truth.
+ * Unread-chat count for the sidebar's Chats nav entry. One count query
+ * (`GET /conversations/unread-count`) with the same visibility rules as the
+ * list's `unread_only` filter, instead of hydrating a page of conversations
+ * just to count them. The count is exact, so `hasMore` is always false.
+ * Marking a chat read or a new message invalidates `conversations.all`,
+ * which prefixes this key.
  */
 export function useChatUnreadCount(workspaceId: string): { count: number; hasMore: boolean } {
-	const { data } = useConversationsInfinite(workspaceId, { unread_only: true })
-	const firstPage = data?.pages?.[0]
-	return {
-		// Count rows that are still unread, not the list length: marking a chat
-		// read patches its unread_count to 0 straight away, but the row only
-		// leaves this list on the next refetch.
-		count: firstPage?.conversations.filter((c) => c.unread_count > 0).length ?? 0,
-		hasMore: firstPage?.has_more ?? false,
-	}
+	const { data } = useQuery({
+		queryKey: queryKeys.conversations.unreadCount(workspaceId),
+		queryFn: () => api.conversations.unreadCount(workspaceId),
+		enabled: !!workspaceId,
+	})
+	return { count: data?.count ?? 0, hasMore: false }
 }
