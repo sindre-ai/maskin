@@ -306,7 +306,7 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	}
 	const more = mustKeepMore({ method, path, query, body, item })
 	if (more) return more
-	// A comment edited from the app (MK-16): new words and the edit time on the stored comment.
+	// A comment edited from the app (MK-18): new words and the edit time on the stored comment.
 	const editMatch = path.match(/^\/api\/events\/(\d+)$/)
 	if (method === 'patch' && editMatch && typeof body?.content === 'string') {
 		for (const [objectId, list] of postedComments) {

@@ -322,7 +322,7 @@ final class MustKeepMoreTests: XCTestCase {
 		let item = app.staticTexts["Q4 webinar"].firstMatch
 		expectExists(item, "Items lists the Q4 webinar bet", dump: "mk18-items")
 		item.tap()
-		let activity = app.staticTexts["Activity"].firstMatch
+		let activity = app.buttons["Activity"].firstMatch
 		expectExists(activity, "the item has an Activity page", dump: "mk18-detail")
 		activity.tap()
 		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
