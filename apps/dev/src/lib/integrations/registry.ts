@@ -10,7 +10,9 @@ import {
 } from './providers/azure-devops/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clickupConfig } from './providers/clickup/config'
+import { config as cloudflareConfig } from './providers/cloudflare/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
+import { config as datadogConfig } from './providers/datadog/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
 // Import provider configs
@@ -42,6 +44,7 @@ import {
 import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
 import { startGscBackfill } from './providers/google-search-console/sync'
 import { config as granolaConfig } from './providers/granola/config'
+import { config as hexConfig } from './providers/hex/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -57,10 +60,16 @@ import { resolveExternalId as microsoftResolveExternalId } from './providers/mic
 import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
+import { config as neonConfig } from './providers/neon/config'
+import { config as netlifyConfig } from './providers/netlify/config'
+import { config as newRelicConfig } from './providers/new-relic/config'
 import { config as notionConfig } from './providers/notion/config'
 import { config as otterConfig } from './providers/otter/config'
+import { config as pagerdutyConfig } from './providers/pagerduty/config'
+import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
+import { config as retoolConfig } from './providers/retool/config'
 import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -79,6 +88,7 @@ import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 import { config as stripeConfig } from './providers/stripe/config'
+import { config as supabaseConfig } from './providers/supabase/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as vercelConfig } from './providers/vercel/config'
@@ -280,6 +290,46 @@ providers.set('fathom', {
 
 providers.set('otter', {
 	config: otterConfig,
+})
+
+providers.set('cloudflare', {
+	config: cloudflareConfig,
+})
+
+providers.set('supabase', {
+	config: supabaseConfig,
+})
+
+providers.set('neon', {
+	config: neonConfig,
+})
+
+providers.set('planetscale', {
+	config: planetscaleConfig,
+})
+
+providers.set('netlify', {
+	config: netlifyConfig,
+})
+
+providers.set('datadog', {
+	config: datadogConfig,
+})
+
+providers.set('new-relic', {
+	config: newRelicConfig,
+})
+
+providers.set('pagerduty', {
+	config: pagerdutyConfig,
+})
+
+providers.set('retool', {
+	config: retoolConfig,
+})
+
+providers.set('hex', {
+	config: hexConfig,
 })
 
 providers.set('stripe', {

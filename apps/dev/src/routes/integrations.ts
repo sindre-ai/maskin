@@ -60,6 +60,7 @@ import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oa
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
+import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
@@ -290,6 +291,10 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
 		name,
 		FLAGS.MEETING_NOTES_INTEGRATIONS,
+	]),
+	...DEVELOPER_DATA_PROVIDERS.map((name): [string, FlagId] => [
+		name,
+		FLAGS.DEVELOPER_DATA_INTEGRATIONS,
 	]),
 ])
 

@@ -210,6 +210,16 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	MEETING_NOTES_INTEGRATIONS: 'meeting-notes-integrations',
+	/**
+	 * Gates the ten developer and data integrations Cloudflare, Supabase, Neon, PlanetScale, Netlify,
+	 * Datadog, New Relic, PagerDuty, Retool and Hex (task
+	 * [Add developer and data integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0ecefc6-7add-4653-8157-d6e83ea2163d)).
+	 * Actor-scoped, read by the integrations routes: off means the ten are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	DEVELOPER_DATA_INTEGRATIONS: 'developer-data-integrations',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
