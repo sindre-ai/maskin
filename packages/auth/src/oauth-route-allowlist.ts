@@ -121,6 +121,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/conversations/:id/participants',
 	'DELETE /api/conversations/:id/participants/:actorId',
 	'GET /api/events',
+	'PATCH /api/events/:id',
 	'GET /api/feature-flags',
 	'GET /api/files/:id/comments',
 	'POST /api/files/:id/comments',
