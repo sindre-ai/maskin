@@ -40,3 +40,25 @@ struct ComposerAttachActionTests {
 		#expect(!hidden.contains(.hideFormatting))
 	}
 }
+
+@Suite("ComposerAttachAction scan")
+struct ComposerAttachScanTests {
+	@Test("Scan document sits right after Camera when the scanner is available")
+	func scanAfterCamera() {
+		let rows = ComposerAttachAction.available(
+			hasCamera: true, canScan: true, clipboardHasImage: false, showsFormatting: false)
+		#expect(rows == [.photo, .camera, .scan, .file, .object, .person, .showFormatting])
+	}
+
+	@Test("no scanner, no Scan document row")
+	func noScanner() {
+		let rows = ComposerAttachAction.available(
+			hasCamera: true, canScan: false, clipboardHasImage: false, showsFormatting: false)
+		#expect(!rows.contains(.scan))
+	}
+
+	@Test("the row reads Scan document")
+	func label() {
+		#expect(ComposerAttachAction.scan.label == "Scan document")
+	}
+}

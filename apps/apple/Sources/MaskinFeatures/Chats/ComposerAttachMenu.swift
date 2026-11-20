@@ -2,21 +2,25 @@ import MaskinDesign
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// What the `+` offers. Spec 7 §1 → Attach: Photo or video · Camera · File · Object · Person or agent.
+/// What the `+` offers. Spec 7 §1 → Attach: Photo or video · Camera · Scan document · File · Object · Person or agent.
 /// "Paste image" joins the list only while the clipboard holds a picture: the system Paste on the field
 /// takes an image too, and this row stays as a second way in. The row is the system paste button, so iOS
 /// never asks "Allow Paste" for it. "Show formatting" / "Hide formatting" is
 /// the last row: it opens or closes the formatting row above the bar.
 enum ComposerAttachAction: String, CaseIterable, Identifiable {
-	case photo, camera, file, object, person, paste, showFormatting, hideFormatting
+	case photo, camera, scan, file, object, person, paste, showFormatting, hideFormatting
 
 	var id: String { rawValue }
 
 	/// The rows the `+` shows, in order. Camera needs a device camera, Paste image needs a picture on
-	/// the clipboard, and the last row flips with the formatting row's state.
-	static func available(hasCamera: Bool, clipboardHasImage: Bool, showsFormatting: Bool) -> [ComposerAttachAction] {
+	/// the clipboard, Scan document needs the system document scanner, and the last row flips with the
+	/// formatting row's state.
+	static func available(
+		hasCamera: Bool, canScan: Bool = false, clipboardHasImage: Bool, showsFormatting: Bool
+	) -> [ComposerAttachAction] {
 		var actions: [ComposerAttachAction] = [.photo]
 		if hasCamera { actions.append(.camera) }
+		if canScan { actions.append(.scan) }
 		actions += [.file, .object, .person]
 		if clipboardHasImage { actions.append(.paste) }
 		actions.append(showsFormatting ? .hideFormatting : .showFormatting)
@@ -27,6 +31,7 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 		switch self {
 		case .photo: "Photo or video"
 		case .camera: "Camera"
+		case .scan: "Scan document"
 		case .file: "File"
 		case .object: "Item"
 		case .person: "Person or agent"
@@ -40,6 +45,7 @@ enum ComposerAttachAction: String, CaseIterable, Identifiable {
 		switch self {
 		case .photo: "photo.on.rectangle"
 		case .camera: "camera"
+		case .scan: "doc.viewfinder"
 		case .file: "doc"
 		case .object: "cube"
 		case .person: "person"

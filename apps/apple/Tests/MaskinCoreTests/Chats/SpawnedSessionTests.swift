@@ -97,21 +97,21 @@ struct ThreadLayoutHandoffTests {
 			createdAt: t0.addingTimeInterval(offset), spawnedSessions: spawned)
 	}
 
-	@Test("a message's spawned sessions follow it, with dependency names resolved within the message")
+	@Test("a message's spawned sessions follow it as one card, with dependency names resolved within the message")
 	func followsTheMessage() {
 		let a = session("a", name: "Sentinel")
 		let b = session("b", status: "pending", name: "Forge", dependsOn: ["a", "elsewhere"])
 		let items = ThreadLayout.items(for: [message(1, "x", at: 0, spawned: [a, b]), message(2, "y", at: 10)])
-		let rows = items.filter { if case .handoff = $0 { true } else { false } }
-		#expect(rows == [.handoff(a, behind: []), .handoff(b, behind: ["Sentinel"])])
+		let cards = items.filter { if case .handoff = $0 { true } else { false } }
+		#expect(cards == [.handoff([HandoffEntry(a), HandoffEntry(b, behind: ["Sentinel"])])])
 		let kinds = items.compactMap { item -> String? in
 			switch item {
 			case .message(let m, _): m.id
-			case .handoff(let s, _): "handoff-\(s.id)"
+			case .handoff(let entries): "handoff-\(entries[0].session.id)"
 			default: nil
 			}
 		}
-		#expect(kinds == ["m1", "handoff-a", "handoff-b", "m2"])
+		#expect(kinds == ["m1", "handoff-a", "m2"])
 	}
 
 	@Test("sessions without a pill are left out")
@@ -141,5 +141,50 @@ struct ThreadLayoutHandoffTests {
 		let ids = items.map(\.id)
 		#expect(Set(ids).count == ids.count)
 		#expect(ids.contains("handoff-a"))
+	}
+}
+
+@Suite("QuestionTextSplit")
+struct QuestionTextSplitTests {
+	private let draft = "Subject: Luma event\n\nHi Maya, thanks for hosting us next week. We would love to bring two people."
+
+	@Test("a question followed by a long text splits at the question mark")
+	func splitsAtTheQuestion() {
+		let split = QuestionTextSplit("Send this to Maya? \(draft)")
+		#expect(split.lead == "Send this to Maya?")
+		#expect(split.detail == draft)
+	}
+
+	@Test("a short text after the question mark stays whole")
+	func shortRestStaysWhole() {
+		let split = QuestionTextSplit("Ship it now? Yes or no.")
+		#expect(split.lead == "Ship it now? Yes or no.")
+		#expect(split.detail == nil)
+	}
+
+	@Test("a question mark inside a link is not a question")
+	func linkQuestionMark() {
+		let text = "See https://maskin.io/x?tab=1 for the page and tell me what you think about the wording there"
+		#expect(QuestionTextSplit(text).detail == nil)
+	}
+
+	@Test("a long text with no question splits after the first sentence")
+	func longTextFirstSentence() {
+		let rest = String(repeating: "More detail follows here. ", count: 6)
+		let split = QuestionTextSplit("Pick the launch date. \(rest)")
+		#expect(split.lead == "Pick the launch date.")
+		#expect(split.detail == rest.trimmingCharacters(in: .whitespaces))
+	}
+
+	@Test("a short text with no question is the lead")
+	func shortText() {
+		let split = QuestionTextSplit("Which one?")
+		#expect(split.lead == "Which one?")
+		#expect(split.detail == nil)
+	}
+
+	@Test("line breaks in the detail are kept")
+	func keepsLineBreaks() {
+		#expect(QuestionTextSplit("Is this right? \(draft)").detail?.contains("\n\n") == true)
 	}
 }

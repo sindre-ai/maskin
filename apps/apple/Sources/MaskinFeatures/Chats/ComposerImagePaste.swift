@@ -94,9 +94,9 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 	func install(on view: UIView) {
 		guard installed !== view else { return }
 		installed = view
-		let configuration = view.pasteConfiguration ?? UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.text.identifier])
-		configuration.addAcceptableTypeIdentifiers([UTType.image.identifier])
-		view.pasteConfiguration = configuration
+		// iOS 27.2 hands out the field's own configuration as read-only, so build a new one and set it.
+		let existing = view.pasteConfiguration?.acceptableTypeIdentifiers ?? [UTType.text.identifier]
+		view.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: existing + [UTType.image.identifier])
 		if let textView = view as? UITextView {
 			textView.pasteDelegate = self
 		} else if let textField = view as? UITextField {

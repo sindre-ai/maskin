@@ -241,7 +241,23 @@ describe('resolveLlmRoute priority order', () => {
 			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+		// A DeepSeek V4 model has a 1M window; the [1m] marker tells the CLI so.
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash[1m]')
+		// The recorded model name stays the plain id.
+		expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
+	})
+
+	it('3. custom_llm leaves a model with no known window as it is', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://llm.example.com',
+			api_key: 'k',
+			model: 'some-local-model',
+		}
+		const result = await resolveLlmRoute({ ...baseParams, wsSettings: settings, agent: {} })
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('some-local-model')
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
@@ -410,7 +426,7 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
 					ANTHROPIC_AUTH_TOKEN: 'sk-or-maskin',
 					ANTHROPIC_API_KEY: '',
-					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
+					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash[1m]',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
 				// Thinking is off (MAX_THINKING_TOKENS=0) because DeepSeek maps low
@@ -1467,19 +1483,18 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 		).toBeNull()
 	})
 
-	it('does not fall back for an enterprise billing owner', () => {
+	it('still falls back for an ops-allowlisted billing owner without the workspace flag', () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = '11111111-1111-4111-8111-111111111111'
-		expect(
-			resolveChatCredentials({
-				wsSettings: {},
-				workspace: {
-					enterprise: false,
-					billingOwnerId: '11111111-1111-4111-8111-111111111111',
-				},
-				agent: { provider: null, apiKey: null, model: null },
-			}),
-		).toBeNull()
+		const creds = resolveChatCredentials({
+			wsSettings: {},
+			workspace: {
+				enterpriseGranted: false,
+				billingOwnerId: '11111111-1111-4111-8111-111111111111',
+			},
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
 	})
 
 	it('still uses the enterprise workspace own credentials when configured', () => {
@@ -1756,7 +1771,7 @@ describe('resolveLlmRoute model choice', () => {
 			const result = await resolveLlmRoute(fundedParams({}))
 			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
 			expect(result?.envVars).toMatchObject({
-				ANTHROPIC_MODEL: 'deepseek/deepseek-v4.1-flash',
+				ANTHROPIC_MODEL: 'deepseek/deepseek-v4.1-flash[1m]',
 				ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4.1-flash',
 				MASKIN_CLAUDE_EFFORT: 'low',
 				MAX_THINKING_TOKENS: '0',
@@ -1770,7 +1785,7 @@ describe('resolveLlmRoute model choice', () => {
 		it('says tier, not agent, when the agent names a model this route cannot run', async () => {
 			// A Claude subscription model is not served by Maskin's OpenRouter account.
 			const result = await resolveLlmRoute(fundedParams({ model: 'claude-sonnet-5-5' }))
-			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4.1-flash')
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4.1-flash[1m]')
 			expect(result).toMatchObject({ modelSource: 'tier' })
 		})
 
@@ -1787,12 +1802,12 @@ describe('resolveLlmRoute model choice', () => {
 			const result = await resolveLlmRoute(
 				fundedParams({}, { model: 'deepseek/deepseek-v4-flash-0731', source: 'tier' }),
 			)
-			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731')
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731[1m]')
 			// A pin the route can no longer run is dropped, not obeyed.
 			const dropped = await resolveLlmRoute(
 				fundedParams({}, { model: 'claude-opus-5-5', source: 'agent' }),
 			)
-			expect(dropped?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731')
+			expect(dropped?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731[1m]')
 		})
 
 		it('keeps the provider allow list for the default model only', async () => {

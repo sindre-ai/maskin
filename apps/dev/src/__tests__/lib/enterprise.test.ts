@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
 	isEnterprise,
 	isEnterpriseActor,
@@ -61,48 +61,36 @@ describe('isEnterpriseWorkspace', () => {
 		} as never
 	}
 
-	// The env-only predecessor skipped the query entirely when the allowlist was
-	// empty. It can't any more: `enterprise_granted` lives in the row, so an
-	// empty allowlist no longer means "nobody is enterprise" and the row has to
-	// be read to answer correctly.
-	it('reads the row even when the allowlist is empty, so the column can still grant', async () => {
-		const db = dbReturning([{ enterpriseGranted: true, billingOwnerId: ACTOR_B }])
-		await expect(isEnterpriseWorkspace(db, 'ws-1', {})).resolves.toBe(true)
+	it('is true when the workspace has the ops grant', async () => {
+		const db = dbReturning([{ enterpriseGranted: true }])
+		await expect(isEnterpriseWorkspace(db, 'ws-1')).resolves.toBe(true)
 	})
 
-	it('is true for an enterprise billing owner with no per-workspace grant', async () => {
-		const db = dbReturning([{ enterpriseGranted: false, billingOwnerId: ACTOR_A }])
-		const env = { MASKIN_ENTERPRISE_ACTOR_IDS: ACTOR_A }
-		await expect(isEnterpriseWorkspace(db, 'ws-1', env)).resolves.toBe(true)
-	})
-
-	it('is false when neither the column nor the owner grants it', async () => {
-		const db = dbReturning([{ enterpriseGranted: false, billingOwnerId: ACTOR_B }])
-		await expect(isEnterpriseWorkspace(db, 'ws-1', {})).resolves.toBe(false)
+	it('is false when the workspace has no grant', async () => {
+		const db = dbReturning([{ enterpriseGranted: false }])
+		await expect(isEnterpriseWorkspace(db, 'ws-1')).resolves.toBe(false)
 	})
 
 	it('is false for a workspace that does not exist', async () => {
-		await expect(isEnterpriseWorkspace(dbReturning([]), 'missing', {})).resolves.toBe(false)
+		await expect(isEnterpriseWorkspace(dbReturning([]), 'missing')).resolves.toBe(false)
 	})
 })
 
 describe('isEnterprise', () => {
-	const env = { MASKIN_ENTERPRISE_ACTOR_IDS: ACTOR_A }
-
-	it('is true when the per-workspace ops grant is set, whoever owns billing', () => {
-		expect(isEnterprise({ enterpriseGranted: true, billingOwnerId: ACTOR_B }, env)).toBe(true)
+	it('is true when the per-workspace ops grant is set', () => {
+		expect(isEnterprise({ enterpriseGranted: true })).toBe(true)
 	})
 
-	it('is true for an enterprise billing owner without a per-workspace grant', () => {
-		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_A }, env)).toBe(true)
+	it('is false without the grant', () => {
+		expect(isEnterprise({ enterpriseGranted: false })).toBe(false)
+		expect(isEnterprise({ enterpriseGranted: null })).toBe(false)
 	})
 
-	it('is false for a non-enterprise owner with no grant', () => {
-		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_B }, env)).toBe(false)
-		expect(isEnterprise({ enterpriseGranted: null, billingOwnerId: null }, env)).toBe(false)
-	})
-
-	it('ignores the allowlist entirely when it is unset', () => {
-		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_A }, {})).toBe(false)
+	// Enterprise belongs to the workspace, not the person: an ops actor who owns
+	// billing on a workspace without the flag gets a normal trial workspace.
+	it('is false for a workspace owned by an ops actor when the flag is not set', () => {
+		vi.stubEnv('MASKIN_ENTERPRISE_ACTOR_IDS', ACTOR_A)
+		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_A } as never)).toBe(false)
+		vi.unstubAllEnvs()
 	})
 })

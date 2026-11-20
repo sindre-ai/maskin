@@ -419,6 +419,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'PATCH /api/objects/:id/next-step',
 	'POST /api/objects/:id/next-step',
 	'POST /api/objects/:id/schedule-next-step',
+	'POST /api/pilot-gate/check',
 	'POST /api/sessions/:id/chat',
 	'POST /api/sessions/:id/computer-card',
 	'POST /api/sessions/:id/connect-card',

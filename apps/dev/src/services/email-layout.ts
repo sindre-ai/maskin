@@ -50,15 +50,16 @@ const C = {
 }
 
 /**
- * The main button, in one place. Sebastian has not picked its colour yet (blue as in the web app,
- * or near-black), so flipping it is one edit here: `bg` and `text` for light mode, `darkBg` and
- * `darkText` for dark mode. Nothing else in the file names the button colour.
+ * The main button, in one place: near-black in light mode (the web app's ink), and the light ink
+ * on the dark card in dark mode, so it stays the strongest thing in the mail either way.
+ * `bg` and `text` are light mode, `darkBg` and `darkText` are dark mode. Nothing else in
+ * this file names the button colour.
  */
 export const MAIN_BUTTON = {
-	bg: '#2545c8',
+	bg: '#10131a',
 	text: '#ffffff',
-	darkBg: '#6a8cff',
-	darkText: '#060b1f',
+	darkBg: '#e8eaee',
+	darkText: '#0d0f13',
 }
 
 const LOGO_URL = 'https://maskin.io/apple-touch-icon.png'

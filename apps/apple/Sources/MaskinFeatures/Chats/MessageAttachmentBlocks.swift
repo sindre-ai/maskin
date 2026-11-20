@@ -347,8 +347,10 @@ struct ImageViewer: View {
 	@State private var dragY: CGFloat = 0
 	@State private var zoomed = false
 	@State private var sharing: DecodedImage?
+	@State private var saving = AttachmentActions()
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openAttachment) private var open
+	@Environment(\.attachmentDownloader) private var downloader
 
 	init(files: [ChatAttachmentRef], start: Int, caption: String? = nil) {
 		self.files = files
@@ -366,6 +368,7 @@ struct ImageViewer: View {
 		.background(MaskinSurface.grouped.opacity(1 - min(abs(dragY) / 600, 0.5)).ignoresSafeArea())
 		.preferredColorScheme(.dark)
 		.accessibilityAddTraits(.isModal)
+		.attachmentActions(saving, pill: true)
 	}
 
 	private static let actionSize = MaskinSpace.touchMin + MaskinSpace.s7
@@ -407,18 +410,35 @@ struct ImageViewer: View {
 				}
 				.accessibilityLabel("Share")
 			}
-			circle("arrow.down.to.line", label: "Download", size: Self.actionSize) {
-				let id = current.fileID
-				dismiss()
-				// The file screen is a sheet; let this cover finish leaving before it comes up.
-				Task {
-					try? await Task.sleep(for: .milliseconds(350))
-					open?(id)
+			if AttachmentActions.isSupported, let downloader {
+				Menu {
+					Button { saving.saveToPhotos(current, using: downloader) } label: {
+						Label("Save to Photos", systemImage: "photo.on.rectangle")
+					}
+					Button { saving.saveToFiles(current, using: downloader) } label: {
+						Label("Save to Files", systemImage: "folder")
+					}
+					Button { openFilePage() } label: { Label("Open file page", systemImage: "doc") }
+				} label: {
+					circleLabel("arrow.down.to.line")
 				}
+				.accessibilityLabel("Download")
+			} else {
+				circle("arrow.down.to.line", label: "Download", size: Self.actionSize) { openFilePage() }
 			}
 		}
 		.padding(.bottom, MaskinSpace.s14)
 		.opacity(dragY == 0 ? 1 : 0.4)
+	}
+
+	private func openFilePage() {
+		let id = current.fileID
+		dismiss()
+		// The file screen is a sheet; let this cover finish leaving before it comes up.
+		Task {
+			try? await Task.sleep(for: .milliseconds(350))
+			open?(id)
+		}
 	}
 
 	private func circleLabel(_ symbol: String) -> some View {
@@ -579,6 +599,9 @@ struct MessageFileCard: View {
 	var state: AttachmentFileState = .ready
 	var onOpen: () -> Void = {}
 	var onDownload: () -> Void = {}
+	/// When set, the download button becomes a menu: Save to Files, and Save to Photos when set.
+	var onSaveToFiles: (() -> Void)?
+	var onSaveToPhotos: (() -> Void)?
 	var onRetry: () -> Void = {}
 	var onCancel: () -> Void = {}
 
@@ -650,8 +673,27 @@ struct MessageFileCard: View {
 			}
 			.buttonStyle(.maskinPressed)
 			.accessibilityLabel("Open \(name)")
-			iconButton("arrow.down.to.line", label: "Download \(name)", action: onDownload)
+			if let onSaveToFiles {
+				saveMenu(onSaveToFiles)
+			} else {
+				iconButton("arrow.down.to.line", label: "Download \(name)", action: onDownload)
+			}
 		}
+	}
+
+	private func saveMenu(_ toFiles: @escaping () -> Void) -> some View {
+		Menu {
+			Button(action: toFiles) { Label("Save to Files", systemImage: "folder") }
+			if let onSaveToPhotos {
+				Button(action: onSaveToPhotos) { Label("Save to Photos", systemImage: "photo.on.rectangle") }
+			}
+		} label: {
+			Image(systemName: "arrow.down.to.line").maskinSymbol(MaskinFontSize.t14, weight: .semibold)
+				.foregroundStyle(MaskinColor.ink4)
+				.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+				.contentShape(Rectangle())
+		}
+		.accessibilityLabel("Download \(name)")
 	}
 
 	private func uploading(_ progress: Double?) -> some View {
@@ -727,6 +769,29 @@ struct MessageAttachments: View {
 	var onRetry: () -> Void = {}
 	var caption: String?
 	@Environment(\.openAttachment) private var open
+	@Environment(\.attachmentDownloader) private var downloader
+	@State private var actions = AttachmentActions()
+
+	/// Quick Look where the app can show it; otherwise the file screen, as before.
+	private func openFile(_ file: ChatAttachmentRef) {
+		if AttachmentActions.isSupported, let downloader {
+			actions.openPreview(file, among: attachments, using: downloader)
+		} else {
+			open?(file.fileID)
+		}
+	}
+
+	private func saveToFiles(_ file: ChatAttachmentRef) -> (() -> Void)? {
+		guard AttachmentActions.isSupported, let downloader else { return nil }
+		return { actions.saveToFiles(file, using: downloader) }
+	}
+
+	private func saveToPhotos(_ file: ChatAttachmentRef) -> (() -> Void)? {
+		guard AttachmentActions.isSupported, let downloader,
+			AttachmentSaveRules.canSaveToPhotos(mimeType: file.mimeType, name: file.name)
+		else { return nil }
+		return { actions.saveToPhotos(file, using: downloader) }
+	}
 
 	var body: some View {
 		if !attachments.isEmpty {
@@ -741,12 +806,14 @@ struct MessageAttachments: View {
 				ForEach(files) { file in
 					MessageFileCard(
 						file: file, state: AttachmentFileState(transfer),
-						onOpen: { open?(file.fileID) }, onDownload: { open?(file.fileID) }, onRetry: onRetry
+						onOpen: { openFile(file) }, onDownload: { open?(file.fileID) },
+						onSaveToFiles: saveToFiles(file), onSaveToPhotos: saveToPhotos(file), onRetry: onRetry
 					)
 					.frame(width: AttachmentLayout.width(thread: threadWidth, fraction: AttachmentLayout.fileFraction))
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
+			.attachmentActions(actions)
 		}
 	}
 }
