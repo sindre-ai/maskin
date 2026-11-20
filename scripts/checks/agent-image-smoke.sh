@@ -136,6 +136,12 @@ check "$label" -e MASKIN_TTFT_TIMEOUT_MS=5000 -e ANTHROPIC_BASE_URL=https://open
 expect "$label" "strip-images proxy up"
 expect "$label" "STUB_CLAUDE_RAN base_url=http://127.0.0.1:9334"
 
+# Only the tool loader flag: it needs the proxy too, and the file it loads in the image.
+label="tool loader only"
+check "$label" -e MASKIN_TOOL_LOADER=1 -e ANTHROPIC_BASE_URL=https://openrouter.ai/api
+expect "$label" "strip-images proxy up"
+expect "$label" "STUB_CLAUDE_RAN base_url=http://127.0.0.1:9334"
+
 # The guard without a base URL has nothing to proxy; it must not end the session.
 label="first-token guard without a base URL"
 check "$label" -e MASKIN_TTFT_TIMEOUT_MS=5000
