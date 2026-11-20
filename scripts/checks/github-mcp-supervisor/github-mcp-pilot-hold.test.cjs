@@ -135,6 +135,7 @@ async function run(options, body) {
 		list: () => request('tools/list', {}),
 		payload: (response) => JSON.parse(response.result.content[0].text),
 		text: (response) => response.result.content[0].text,
+		errText: () => errText,
 	}
 	try {
 		await body(h)
@@ -240,5 +241,22 @@ test('with no session id in the environment nothing is held and Maskin is not as
 		const response = await h.call('create_or_update_file', { tag: 'free' })
 		assert.equal(h.payload(response).wrote, true)
 		assert.equal(h.check.calls.length, 0)
+	})
+})
+
+test('the start log says the pilot hold is on', async () => {
+	await run({}, async (h) => {
+		await h.list()
+		assert.match(h.errText(), /github-mcp-supervisor: pilot hold enabled/)
+	})
+})
+
+test('the start log names the env that turns the pilot hold off', async () => {
+	await run({ omit: ['MASKIN_SESSION_ID'] }, async (h) => {
+		await h.list()
+		assert.match(
+			h.errText(),
+			/github-mcp-supervisor: pilot hold disabled: missing env MASKIN_SESSION_ID/,
+		)
 	})
 })

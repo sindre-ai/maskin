@@ -103,9 +103,14 @@ function createSupervisor(options) {
 	// so it needs the API address, key, workspace and the session id (MASKIN_SESSION_ID, from the
 	// container's SESSION_ID). Without them nothing here can tell whose session this is, so
 	// nothing is held, which is how an image or entry that predates this behaved.
-	const holdEnabled = Boolean(
-		env.MASKIN_API_URL && env.MASKIN_API_KEY && env.MASKIN_WORKSPACE_ID && env.MASKIN_SESSION_ID,
-	)
+	const holdRequired = [
+		'MASKIN_API_URL',
+		'MASKIN_API_KEY',
+		'MASKIN_WORKSPACE_ID',
+		'MASKIN_SESSION_ID',
+	]
+	const holdMissing = holdRequired.filter((name) => !env[name])
+	const holdEnabled = holdMissing.length === 0
 	const refreshAfterMs = Number(env.GITHUB_MCP_REFRESH_AFTER_MS) || DEFAULT_REFRESH_AFTER_MS
 	const integrationTail = String(env.GITHUB_MCP_INTEGRATION_ID || '').slice(-4)
 
@@ -527,6 +532,8 @@ function createSupervisor(options) {
 	function start() {
 		if (refreshEnabled) log('env ok, refresh enabled')
 		else log(`refresh disabled: missing env ${missing.join(',')}`)
+		if (holdEnabled) log('pilot hold enabled')
+		else log(`pilot hold disabled: missing env ${holdMissing.join(',')}`)
 		current = startChild()
 		input.on(
 			'data',
