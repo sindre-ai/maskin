@@ -54,6 +54,7 @@ const UNAVAILABLE_UNDER_OAUTH = [
 	'POST /api/objects/x/go-ahead', // record_go_ahead: a go-ahead is a person's own say-so, never through their AI tool
 	'POST /api/objects/x/next-step', // set_next_step: newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/objects/x/schedule-next-step', // schedule_next_step: same route family as set_next_step
+	'POST /api/pilot-gate/check', // every Maskin tool on the outbound list asks it first: a held call and its approval belong to an agent session, never to a person's own AI tool
 	'POST /api/sessions/x/ask', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/computer-card', // newer MCP tool, route not yet checked for the token's workspace pin
 	'POST /api/sessions/x/connect-card', // newer MCP tool, route not yet checked for the token's workspace pin
