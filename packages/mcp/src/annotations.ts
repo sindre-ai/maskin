@@ -172,6 +172,7 @@ const ROWS: Record<string, Row> = {
 	set_loop_view: row('Set loop view', { idempotent: true }),
 	query_data: row('Query data'),
 	delete_loop: row('Delete loop', { destructive: true, idempotent: true }),
+	fork_loop: row('Fork loop'),
 	// Subscriptions
 	mark_read: row('Mark read', { idempotent: true }),
 	list_unread: row('List unread'),

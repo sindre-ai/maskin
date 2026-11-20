@@ -2105,6 +2105,19 @@ export const tools = {
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
 		}),
 	},
+	fork_loop: {
+		description:
+			"Fork an installed marketplace Flow (loop): the workspace takes ownership of its agents, triggers, skills and integrations, and the Flow stops following marketplace updates. Fork cannot be undone: there is no unfork, and later marketplace versions are never pushed to it. Fork only when a person asks for it, or when the Flow must be changed beyond what the version push keeps. Takes the loop object id (from list_loops) or the install id, finds the install through the workspace's installed flows, and returns the counts of detached actors, triggers, skills and integrations. Fails with a clear error if the loop was not installed from the marketplace, is already forked, or you are not a writer in the workspace.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z
+				.string()
+				.uuid()
+				.describe(
+					'Loop object id (from list_loops) of an installed marketplace Flow. The install id is also accepted.',
+				),
+		}),
+	},
 
 	set_loop_view: {
 		description: [

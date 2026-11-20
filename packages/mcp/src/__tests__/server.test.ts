@@ -2773,6 +2773,122 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('fork_loop handler', () => {
+		const okJson = (data: unknown) =>
+			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
+		const LOOP_ID = '11111111-1111-4111-8111-111111111111'
+		const INSTALL_ID = '22222222-2222-4222-8222-222222222222'
+		const install = (extra: Record<string, unknown> = {}) => ({
+			id: INSTALL_ID,
+			objectId: LOOP_ID,
+			loopName: 'Meeting Flow',
+			forkedAt: null,
+			...extra,
+		})
+		const forkResponse = {
+			id: INSTALL_ID,
+			objectId: LOOP_ID,
+			installedVersion: '1.2.0',
+			forkedAt: '2026-11-20T10:00:00.000Z',
+			detached: { actors: 3, triggers: 4, skills: 2, integrations: 1 },
+		}
+		const errorResponse = (status: number, message: string) =>
+			({
+				ok: false,
+				status,
+				text: () => Promise.resolve(JSON.stringify({ error: { code: 'X', message } })),
+			}) as Response
+
+		function mockInstalls(
+			installs: unknown[],
+			fork: Response | (() => Response) = okJson(forkResponse),
+		) {
+			return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.includes('/api/installed-loops?workspaceId=') && method === 'GET')
+					return okJson({ installs })
+				if (u.endsWith(`/api/installed-loops/${INSTALL_ID}/fork`) && method === 'POST')
+					return typeof fork === 'function' ? fork() : fork
+				throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+			})
+		}
+
+		it('resolves the install from the loop object id and posts the fork', async () => {
+			const spy = mockInstalls([install({ id: 'other', objectId: 'other-loop' }), install()])
+
+			const result = (await getHandler('fork_loop')({ id: LOOP_ID })) as {
+				content: Array<{ text: string }>
+			}
+
+			const calls = spy.mock.calls.map(([u, init]) => [(init as RequestInit)?.method, String(u)])
+			expect(calls).toEqual([
+				['GET', 'http://localhost:3000/api/installed-loops?workspaceId=ws-default-123'],
+				['POST', `http://localhost:3000/api/installed-loops/${INSTALL_ID}/fork`],
+			])
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed).toMatchObject({
+				forked: true,
+				loop_id: LOOP_ID,
+				install_id: INSTALL_ID,
+				forked_from_version: '1.2.0',
+				detached: { actors: 3, triggers: 4, skills: 2, integrations: 1 },
+			})
+			expect(parsed.note).toMatch(/one way/)
+		})
+
+		it('also accepts the install id', async () => {
+			mockInstalls([install()])
+			const result = (await getHandler('fork_loop')({ id: INSTALL_ID })) as {
+				content: Array<{ text: string }>
+			}
+			expect(JSON.parse(result.content[0].text).forked).toBe(true)
+		})
+
+		it('says plainly when the loop is not an installed flow, without posting a fork', async () => {
+			const spy = mockInstalls([install({ id: 'other', objectId: 'other-loop' })])
+			await expect(getHandler('fork_loop')({ id: LOOP_ID })).rejects.toThrow(
+				/not an installed marketplace flow/,
+			)
+			expect(spy.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'POST')).toBe(
+				false,
+			)
+		})
+
+		it('says plainly when the list already shows it forked, without posting a fork', async () => {
+			const spy = mockInstalls([install({ forkedAt: '2026-11-01T00:00:00.000Z' })])
+			await expect(getHandler('fork_loop')({ id: LOOP_ID })).rejects.toThrow(/already forked/)
+			expect(spy.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'POST')).toBe(
+				false,
+			)
+		})
+
+		it('turns a 409 from the fork route into an already-forked answer', async () => {
+			mockInstalls([install()], () => errorResponse(409, 'Install is already forked'))
+			await expect(getHandler('fork_loop')({ id: LOOP_ID })).rejects.toThrow(
+				/"Meeting Flow" is already forked/,
+			)
+		})
+
+		it('turns a 403 from the fork route into a readable not-allowed answer', async () => {
+			mockInstalls([install()], () =>
+				errorResponse(403, 'You are not a member of the install workspace'),
+			)
+			await expect(getHandler('fork_loop')({ id: LOOP_ID })).rejects.toThrow(
+				/Not allowed to fork flow "Meeting Flow".*writer role/,
+			)
+		})
+
+		it('turns a 403 on the install list (a connector token) into a readable answer', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				errorResponse(403, 'This route is not available to a connected Claude client'),
+			)
+			await expect(getHandler('fork_loop')({ id: LOOP_ID })).rejects.toThrow(
+				/Not allowed to list the installed flows.*connected Claude client/,
+			)
+		})
+	})
+
 	describe('create_sub_chat handler', () => {
 		const postedBody = (spy: { mock: { calls: unknown[][] } }) =>
 			JSON.parse(((spy.mock.calls[0] as [string, { body: string }])[1] as { body: string }).body)

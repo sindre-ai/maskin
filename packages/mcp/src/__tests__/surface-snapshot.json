@@ -201,6 +201,7 @@
 		"desktop_scroll": ["agent_id", "amount", "direction", "workspace_id", "x", "y"],
 		"desktop_type": ["agent_id", "text", "workspace_id"],
 		"disconnect_integration": ["id", "workspace_id"],
+		"fork_loop": ["id", "workspace_id"],
 		"get_actor": ["id", "workspace_id"],
 		"get_comments": ["cursor", "entity_id", "limit", "workspace_id"],
 		"get_conversation": ["conversation_id", "workspace_id"],

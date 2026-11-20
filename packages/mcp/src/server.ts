@@ -8348,6 +8348,108 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'fork_loop',
+		{
+			description: tools.fork_loop.description,
+			inputSchema: tools.fork_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			const fail = (err: unknown, step: string): never => {
+				const status = parseApiErrorStatus(err)
+				const detail = (err instanceof Error ? err.message : String(err))
+					.replace(/^API error \d{3}:\s*/i, '')
+					.trim()
+				if (status === 403) {
+					throw new Error(
+						`Not allowed to ${step}: ${detail}. Forking needs a writer role in the workspace, and it is refused for connected Claude clients.`,
+					)
+				}
+				if (status === 404) throw new Error(`Could not ${step}: ${detail}`)
+				throw err
+			}
+
+			let installs: Array<{
+				id: string
+				objectId: string | null
+				loopName: string
+				forkedAt: string | null
+			}>
+			try {
+				const listed = (await apiCall(
+					config,
+					'GET',
+					`/api/installed-loops?workspaceId=${encodeURIComponent(wsId)}`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as { installs?: typeof installs }
+				installs = listed.installs ?? []
+			} catch (err) {
+				return fail(err, 'list the installed flows')
+			}
+			const install = installs.find((row) => row.objectId === id || row.id === id)
+			if (!install) {
+				throw new Error(
+					`Flow ${id} is not an installed marketplace flow in this workspace, so there is nothing to fork. Use list_loops to find the loop id; only flows installed from the marketplace can be forked.`,
+				)
+			}
+			if (install.forkedAt) {
+				throw new Error(
+					`Flow "${install.loopName}" is already forked (since ${install.forkedAt}). Nothing was changed.`,
+				)
+			}
+
+			let forked: {
+				id: string
+				objectId: string | null
+				installedVersion: string
+				forkedAt: string | null
+				detached: { actors: number; triggers: number; skills: number; integrations: number }
+			}
+			try {
+				forked = (await apiCall(
+					config,
+					'POST',
+					`/api/installed-loops/${install.id}/fork`,
+					undefined,
+					{ workspaceId: workspace_id },
+				)) as typeof forked
+			} catch (err) {
+				if (parseApiErrorStatus(err) === 409) {
+					throw new Error(`Flow "${install.loopName}" is already forked. Nothing was changed.`)
+				}
+				return fail(err, `fork flow "${install.loopName}"`)
+			}
+
+			return {
+				_meta: meta('fork_loop', config, workspace_id),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(
+							{
+								forked: true,
+								loop_id: forked.objectId ?? install.objectId,
+								install_id: forked.id,
+								flow_name: install.loopName,
+								forked_from_version: forked.installedVersion,
+								forked_at: forked.forkedAt,
+								detached: forked.detached,
+								note: 'The workspace now owns this flow. The fork is one way and cannot be undone: the flow no longer follows marketplace updates.',
+							},
+							null,
+							2,
+						),
+					},
+				],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'set_loop_view',
 		{
 			description: tools.set_loop_view.description,

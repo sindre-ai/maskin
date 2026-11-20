@@ -227,6 +227,17 @@ describe('MCP surface pin', () => {
 		expect(MUTATION_TOOL_KINDS.propose_file_changes).toBe('file_propose')
 	})
 
+	it('registers fork_loop as a plain write: not read-only, not destructive, not idempotent', () => {
+		expect(registeredTools.has('fork_loop')).toBe(true)
+		expect(TOOL_ANNOTATIONS.fork_loop).toMatchObject({
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: false,
+			openWorldHint: false,
+		})
+		expect(MUTATION_TOOL_KINDS.fork_loop).toBe('loop_fork')
+	})
+
 	it('every alias row targets a registered tool', async () => {
 		const { ALIASES } = await import('../aliases')
 		const violations: string[] = []

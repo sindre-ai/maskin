@@ -85,6 +85,7 @@ const ALL_TOOL_NAMES = [
 	'set_loop_view',
 	'query_data',
 	'delete_loop',
+	'fork_loop',
 	'create_sub_chat',
 	'create_chat',
 	'add_chat_participant',
