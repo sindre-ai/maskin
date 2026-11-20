@@ -1196,7 +1196,7 @@ export function registerLinkedInMcpInstance(
  * caller's workspace has no linkedin-unipile credential or no identities
  * enumerated yet — an agent hitting `tools/list` on an unconnected workspace
  * sees an empty list rather than a 4xx, matching the `github-*` MCP surface's
- * behaviour and letting `get_started`-driven onboarding proceed.
+ * behaviour and letting `list_marketplace`-driven onboarding proceed.
  */
 export function createLinkedInMcpServer(
 	ctx: LinkedInMcpContext,
