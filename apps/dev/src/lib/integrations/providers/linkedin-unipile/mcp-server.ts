@@ -137,7 +137,7 @@ function jsonResult(payload: unknown) {
 
 /** What a caller gets for passing the removed raw `attachments` to publish_post. */
 const PUBLISH_ATTACHMENTS_REFUSED_MESSAGE =
-	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG files, which the server reads. Nothing was posted.'
+	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG images, or one MP4 or MOV video, which the server reads. Nothing was posted.'
 
 const sendObjectIdSchema = z
 	.string()
@@ -282,7 +282,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'publish_post'),
 			{
 				description: scopedDescription(
-					'Publish a LinkedIn post. Pass text (and optionally attachment_file_ids: workspace file ids of PNG or JPEG files, up to 9, shown as a carousel) and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post draft; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. Video and documents are not supported',
+					'Publish a LinkedIn post. Pass text (and optionally attachment_file_ids: workspace file ids of up to 9 PNG or JPEG images, shown as a carousel, or exactly one MP4 or MOV video of up to 64 MB) and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post draft; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. A video post can take about 30 seconds to come back, so wait for the answer and do not call again: the same call is never posted twice. Documents are not supported',
 					cfg,
 				),
 				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
@@ -303,7 +303,7 @@ export function registerLinkedInMcpInstance(
 							.max(9)
 							.optional()
 							.describe(
-								'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported. Not used with object_id (list them on the draft instead).',
+								'Optional media for the post: workspace file ids of either up to 9 PNG or JPEG images (max 10 MB each, shown as a carousel) or exactly one MP4 or MOV video (max 64 MB), never both. Save a video from your computer first (desktop_save_file) to get its file id. The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG, JPEG, MP4 or MOV, or over its size limit fails with nothing posted. Documents are not supported. Not used with object_id (list them on the draft instead).',
 							),
 						can_read: z
 							.string()
