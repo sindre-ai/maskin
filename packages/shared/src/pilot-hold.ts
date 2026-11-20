@@ -14,6 +14,7 @@ export const PILOT_HELD_MASKIN_TOOLS: ReadonlySet<string> = new Set([
 	'delete_file',
 	'delete_loop',
 	'delete_trigger',
+	'fork_loop',
 	'create_notification',
 ])
 
