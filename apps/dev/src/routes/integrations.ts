@@ -141,6 +141,7 @@ import {
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { UNICONTA_PROVIDER } from '../lib/integrations/providers/uniconta/config'
+import { WORK_INTEGRATIONS_PROVIDERS } from '../lib/integrations/providers/work-integrations'
 import { ZENDESK_PROVIDER } from '../lib/integrations/providers/zendesk/config'
 import { ZOOM_PROVIDER } from '../lib/integrations/providers/zoom/config'
 import { getProvider, listProviders } from '../lib/integrations/registry'
@@ -340,6 +341,7 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	]),
 	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
 	...OWN_APP_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.OWN_APP_INTEGRATIONS]),
+	...WORK_INTEGRATIONS_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.WORK_INTEGRATIONS]),
 ])
 
 const OWN_APP_NAMES: ReadonlySet<string> = new Set(OWN_APP_PROVIDERS)

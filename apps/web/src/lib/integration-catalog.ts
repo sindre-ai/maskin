@@ -81,6 +81,22 @@ const CATALOG: Record<string, CatalogEntry> = {
 	ramp: { category: 'Sales & payments', domain: 'ramp.com' },
 	squarespace: { category: 'Docs & data', domain: 'squarespace.com' },
 	xero: { category: 'Sales & payments', domain: 'xero.com' },
+	brevo: { category: 'Sales & payments', domain: 'brevo.com' },
+	brex: { category: 'Sales & payments', domain: 'brex.com' },
+	coda: { category: 'Docs & data', domain: 'coda.io' },
+	deel: { category: 'Sales & payments', domain: 'deel.com' },
+	drata: { category: 'Analytics', domain: 'drata.com' },
+	framer: { category: 'Design', domain: 'framer.com' },
+	freshbooks: { category: 'Sales & payments', domain: 'freshbooks.com' },
+	greenhouse: { category: 'Sales & payments', domain: 'greenhouse.com' },
+	gusto: { category: 'Sales & payments', domain: 'gusto.com' },
+	klaviyo: { category: 'Sales & payments', domain: 'klaviyo.com' },
+	mailchimp: { category: 'Sales & payments', domain: 'mailchimp.com' },
+	mercury: { category: 'Sales & payments', domain: 'mercury.com' },
+	mural: { category: 'Design', domain: 'mural.co' },
+	trello: { category: 'Docs & data', domain: 'trello.com' },
+	vanta: { category: 'Analytics', domain: 'vanta.com' },
+	wix: { category: 'Design', domain: 'wix.com' },
 }
 
 /** A provider the catalog does not know yet is still listed, under Docs & data. */
