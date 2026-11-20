@@ -127,10 +127,9 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 /**
  * Flips the `enterprise_granted` ops grant via the real admin route.
  *
- * The allowlist is scoped to just this call rather than the whole test: an
- * actor in MASKIN_ENTERPRISE_ACTOR_IDS is enterprise-entitled outright, so leaving
- * it set would make every later assertion pass through the allowlist and never
- * touch the per-workspace grant these tests are about.
+ * The allowlist is scoped to just this call rather than the whole test: it only
+ * decides who may set the grant, so leaving it set would let a later assertion
+ * pass for the wrong reason.
  */
 async function grantEnterpriseAsOps(
 	app: ReturnType<typeof createApp>,
@@ -828,32 +827,57 @@ describe('Workspaces Integration', () => {
 			expect(listed?.enterprise).toBe(true)
 		})
 
-		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
+		it('does not entitle an allowlisted billing owner without a per-workspace grant', async () => {
 			const app = createApp()
 			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Ops Owner No Grant' }),
 			)
 			const ws = await createRes.json()
 			expect(ws.enterprise).toBe(false)
 
-			// The allowlist is read from process.env at call time, so flipping it
-			// here exercises exactly what a founder deployment configures.
 			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 			try {
 				const listRes = await app.request(jsonGet('/api/workspaces'))
 				const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
-				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(true)
+				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(false)
 
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
 						settings: { llm_keys: { anthropic: 'sk-ant-enterprise' } },
 					}),
 				)
-				expect(res.status).toBe(200)
-				const body = await res.json()
-				expect(body.settings.llm_keys).toBeUndefined()
-				expect(body.llm_configured.anthropic).toBe(true)
+				expect(res.status).toBe(403)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('gives a workspace made by an allowlisted actor the trial card step, with no grant', async () => {
+			const app = createApp()
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const res = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'Made By Ops Actor' }),
+				)
+				expect(res.status).toBe(201)
+				const created = await res.json()
+				expect(created.enterprise).toBe(false)
+
+				const [row] = await db
+					.select({
+						settings: workspacesTable.settings,
+						enterpriseGranted: workspacesTable.enterpriseGranted,
+					})
+					.from(workspacesTable)
+					.where(eq(workspacesTable.id, created.id))
+				expect(row?.enterpriseGranted).toBe(false)
+				expect((row?.settings as { billing?: Record<string, unknown> }).billing).toMatchObject({
+					plan: 'trial',
+					trial_state: 'awaiting_card',
+				})
 			} finally {
 				// '' parses to an empty allowlist, same as unset.
 				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
@@ -1283,56 +1307,45 @@ describe('Workspaces Integration', () => {
 		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
-			// The ownership cap (trial tier: 1 owned workspace) would otherwise
-			// block the second create below — bypass it via the enterprise
-			// allowlist so this test can focus on its actual subject: agent-seed
-			// isolation between two workspaces owned by the same creator.
-			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
-			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
-			try {
-				const first = await (
-					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
-				).json()
-				const second = await (
-					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
-				).json()
+			// A trial-tier actor may only own one workspace, so raise the first to pro
+			// before creating the second. This test is about agent-seed isolation, not
+			// the ownership cap.
+			const first = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
+			).json()
+			await setWorkspacePlan(db, first.id, 'pro')
+			const second = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
+			).json()
 
-				expect(first.id).not.toBe(second.id)
-				expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-				expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+			expect(first.id).not.toBe(second.id)
+			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-				// Agent actor rows are distinct between workspaces — a workspace's
-				// members must not overlap another workspace's, otherwise
-				// permissions/skills would leak across tenants.
-				const firstAgentIds = new Set(
-					(
-						await db
-							.select({ actorId: workspaceMembers.actorId })
-							.from(workspaceMembers)
-							.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-							.where(eq(workspaceMembers.workspaceId, first.id))
-					)
-						.map((r) => r.actorId)
-						.filter((id) => id !== getTestActorId()),
-				)
-				const secondAgentIds = (
+			// Agent actor rows are distinct between workspaces — a workspace's
+			// members must not overlap another workspace's, otherwise
+			// permissions/skills would leak across tenants.
+			const firstAgentIds = new Set(
+				(
 					await db
 						.select({ actorId: workspaceMembers.actorId })
 						.from(workspaceMembers)
 						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-						.where(eq(workspaceMembers.workspaceId, second.id))
+						.where(eq(workspaceMembers.workspaceId, first.id))
 				)
 					.map((r) => r.actorId)
-					.filter((id) => id !== getTestActorId())
-				for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
-			} finally {
-				if (ORIGINAL_ENV === undefined) {
-					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
-					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
-				} else {
-					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
-				}
-			}
+					.filter((id) => id !== getTestActorId()),
+			)
+			const secondAgentIds = (
+				await db
+					.select({ actorId: workspaceMembers.actorId })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(eq(workspaceMembers.workspaceId, second.id))
+			)
+				.map((r) => r.actorId)
+				.filter((id) => id !== getTestActorId())
+			for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
 		})
 
 		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {

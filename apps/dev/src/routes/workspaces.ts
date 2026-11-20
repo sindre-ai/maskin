@@ -125,8 +125,8 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
  * Shape a workspace row for a response: swap the raw `enterprise_granted`
- * column for the derived `enterprise` status callers actually care about (the
- * column OR an enterprise billing owner). Every single-row workspace response
+ * column for the derived `enterprise` status callers actually care about (today
+ * the same value, kept behind `isEnterprise()` so it has one definition). Every single-row workspace response
  * goes through this, so a route can't leak the raw grant flag or disagree with
  * the list route about who is enterprise.
  *
@@ -322,10 +322,9 @@ app.openapi(listWorkspacesRoute, async (c) => {
 			),
 		)
 
-	// Report the *effective* entitlement, not the raw column — an enterprise
-	// billing owner is entitled on every workspace they own without a
-	// per-workspace grant. This list is the only place the frontend reads the
-	// flag from, so it gates the whole settings UI.
+	// Report the derived `enterprise` status via `isEnterprise()`, not the raw
+	// column. This list is the only place the frontend reads the flag from, so
+	// it gates the whole settings UI.
 	const callerIsHuman = c.get('actorType') !== 'agent'
 	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
 		...workspaceForCaller(row, callerIsHuman && (row.role === 'owner' || row.role === 'admin')),

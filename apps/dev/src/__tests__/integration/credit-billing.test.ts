@@ -199,7 +199,7 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		})
 	})
 
-	describe('enterprise allowlist bypass', () => {
+	describe('ops allowlist is not an enterprise grant', () => {
 		const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 
 		afterEach(() => {
@@ -211,20 +211,17 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 			}
 		})
 
-		it('never blocks a workspace bill-owned by an allowlisted actor, even far over cap on trial', async () => {
+		it('does not exempt a workspace bill-owned by an allowlisted actor when its flag is off', async () => {
 			await seedOverCapUsage()
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = actorId
 			const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 0 })
-			// `checkPlanCap` no longer re-reads the workspace to answer "is this
-			// enterprise" — it takes the answer from the caller, which already holds
-			// the row (PR #1489). Derive it here the way `resolveLlmRoute` and the
-			// session pre-flight do, so this still covers the allowlist resolution
-			// and not just the branch it feeds.
+			// `checkPlanCap` takes the enterprise answer from the caller (PR #1489).
+			// Derive it the way `resolveLlmRoute` and the session pre-flight do.
 			const enterprise = await isEnterpriseWorkspace(db, workspaceId)
-			expect(enterprise).toBe(true)
-			await expect(
-				checkPlanCap({ db, workspaceId, wsSettings, enterprise }),
-			).resolves.toBeUndefined()
+			expect(enterprise).toBe(false)
+			await expect(checkPlanCap({ db, workspaceId, wsSettings, enterprise })).rejects.toThrow(
+				PlanCapExceededError,
+			)
 		})
 	})
 })
