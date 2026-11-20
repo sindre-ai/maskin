@@ -98,6 +98,7 @@ import {
 	recordToolCallResponseSize,
 } from './telemetry.js'
 import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
+import { isToolHidden } from './tool-groups.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
 import { compactTrigger, triggerSchedule } from './trigger-rows.js'
 import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
@@ -178,6 +179,12 @@ export interface McpConfig {
 	 * Only a claim: the API checks it before acting on it.
 	 */
 	maskinSessionId?: string
+	/**
+	 * The tool groups the caller holds (see tool-groups.ts). When set, tools/list leaves out the
+	 * tools of every other group; the tools still run when called. Unset lists every tool, as
+	 * before. Set by `routes/mcp.ts` for a tools/list request when MASKIN_TOOL_GROUPS is on.
+	 */
+	toolGroups?: readonly string[]
 }
 
 /**
@@ -3843,7 +3850,9 @@ export function createMcpServer(config: McpConfig) {
 			: definition
 
 		// biome-ignore lint/suspicious/noExplicitAny: handler signature varies by inputSchema presence; the wrapper is a pure pass-through so we forward as-is.
-		return _registerAppTool(s, name, annotatedDefinition, wrappedHandler as any)
+		const registered = _registerAppTool(s, name, annotatedDefinition, wrappedHandler as any)
+		if (config.toolGroups && isToolHidden(name, config.toolGroups)) registered?.disable?.()
+		return registered
 		// biome-ignore lint/suspicious/noExplicitAny: see comment above.
 	}) as any as typeof _registerAppTool
 
