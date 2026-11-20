@@ -7,7 +7,7 @@ import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
-import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill, loopPillStyle } from '@/components/loops/loop-pill'
 import {
 	LoopProposedEdit,
 	type PlanDiffRow,
@@ -100,7 +100,14 @@ const SLOW_LOAD_MESSAGE = 'The server may be busy.'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
+	errorComponent: ({ error, reset }) => (
+		<RouteError
+			error={error}
+			reset={reset}
+			title="This page could not load"
+			message="Something went wrong on our side. Try again, or reload the page."
+		/>
+	),
 })
 
 interface ProposedEdit {
@@ -628,7 +635,7 @@ function LoopDetailRoute() {
 	const cyclesRunning = isLiveLoopPill(loop.pill) ? loop.inProgressCount : 0
 	const asksWaiting = loop.waitingCount
 	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	// The flow's driver is the object's own `driver`; no driver, no pill.
 	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
 	const needsYouRows = itemsNeedingYou(
@@ -800,7 +807,7 @@ function LoopDetailRoute() {
 									type="button"
 									data-testid="loop-pill"
 									disabled={!canWrite || !object}
-									aria-label={`Stage: ${LOOP_PILL_STYLES[loop.status].label}`}
+									aria-label={`Stage: ${loopPillStyle(loop.status).label}`}
 									className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground disabled:cursor-default"
 								>
 									<span
@@ -811,7 +818,7 @@ function LoopDetailRoute() {
 											isLiveLoopPill(loop.pill) && 'animate-pulse',
 										)}
 									/>
-									{LOOP_PILL_STYLES[loop.status].label}
+									{loopPillStyle(loop.status).label}
 									{canWrite && object && (
 										<ChevronDown size={11} aria-hidden="true" className="text-muted-foreground" />
 									)}

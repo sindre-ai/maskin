@@ -1,4 +1,4 @@
-import { UPGRADE_PILL, shouldShowNoCreditsPill } from '@/components/loops/loop-pill'
+import { UPGRADE_PILL, loopPillStyle, shouldShowNoCreditsPill } from '@/components/loops/loop-pill'
 import { describe, expect, it } from 'vitest'
 
 describe('UPGRADE_PILL tokens', () => {
@@ -12,6 +12,20 @@ describe('UPGRADE_PILL tokens', () => {
 	it('has no top-up, credit or NO CREDITS wording', () => {
 		const all = Object.values(UPGRADE_PILL).join(' ')
 		expect(all).not.toMatch(/top up|credit/i)
+	})
+})
+
+describe('loopPillStyle', () => {
+	it('returns the table entry for a known pill', () => {
+		expect(loopPillStyle('live').label).toBe('Live')
+	})
+
+	it('falls back to the raw text for a pill the table does not know', () => {
+		expect(loopPillStyle('retired')).toEqual({
+			label: 'retired',
+			dot: 'bg-muted-foreground',
+			text: 'text-muted-foreground',
+		})
 	})
 })
 
