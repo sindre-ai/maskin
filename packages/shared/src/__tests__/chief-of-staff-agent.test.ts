@@ -139,7 +139,7 @@ describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 		expect(scriptLines).not.toMatch(
 			/\b(agent|model|prompt|loop|KPI|MCP|integration|workflow|LLM)\b/i,
 		)
-		expect(scriptLines).not.toContain('—')
+		expect(scriptLines).not.toContain('\\u2014')
 	})
 
 	it('states the driver convention: agents drive knowledge objects, never the human owner', () => {
