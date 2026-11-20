@@ -14,6 +14,8 @@ export const PILOT_HELD_MASKIN_TOOLS: ReadonlySet<string> = new Set([
 	'delete_file',
 	'delete_loop',
 	'delete_trigger',
+	// Changes who owns a flow, and cannot be undone
+	'fork_loop',
 	'create_notification',
 ])
 
