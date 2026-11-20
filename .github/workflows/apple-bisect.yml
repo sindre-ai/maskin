@@ -1,0 +1,103 @@
+name: Apple bisect (temporary)
+
+# Throwaway experiment for the native crash reporting task. Lives on exp/** only and is never merged.
+# Builds the iOS app in three variants. If a build is still running after 30 minutes it takes a stack
+# sample of every compiler process (which compiler step is stuck, in which file), then stops it.
+
+on:
+  push:
+    branches: ['exp/task-dc16ade5-bisect']
+
+jobs:
+  build:
+    name: ios-build (${{ matrix.variant }})
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [full, nohooks, nomiddleware]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          test -n "$xcode"
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Apply the variant
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          drop() { # drop <file> <fixed string>: delete the lines that contain the string
+            grep -vF -- "$2" "$1" > "$RUNNER_TEMP/tmp.swift" || true
+            mv "$RUNNER_TEMP/tmp.swift" "$1"
+          }
+          case "${{ matrix.variant }}" in
+            full) ;;
+            nohooks)
+              drop Sources/MaskinCore/Auth/APIAuthenticator.swift "ErrorReporter.shared.reportThrown(error)"
+              drop Sources/MaskinCore/Objects/APIObjectsRemote.swift "ErrorReporter.shared.reportThrown(error)"
+              drop Sources/MaskinCore/Search/RemoteFailure.swift "ErrorReporter.shared.reportThrown(error)"
+              drop Apps/Maskin/MaskinApp.swift "ErrorReporter.shared.setWorkspace"
+              ;;
+            nomiddleware)
+              drop Sources/MaskinAPI/MaskinClient.swift "ErrorReportingMiddleware(reporter: errorReporter),"
+              ;;
+          esac
+          git diff --stat
+
+      - name: Generate Xcode project
+        working-directory: apps/apple
+        run: xcodegen generate
+
+      - name: xcodebuild (iOS), sampled if it stalls
+        working-directory: apps/apple
+        run: |
+          set -uo pipefail
+          xcodebuild build \
+            -project Maskin.xcodeproj -scheme Maskin \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            > "$RUNNER_TEMP/xcodebuild.log" 2>&1 &
+          XB=$!
+          START=$(date +%s)
+          while kill -0 "$XB" 2>/dev/null; do
+            if [ $(( $(date +%s) - START )) -gt 1800 ]; then break; fi
+            sleep 10
+          done
+          if kill -0 "$XB" 2>/dev/null; then
+            echo "STALLED: still building after 30 minutes" | tee "$RUNNER_TEMP/result.txt"
+            ps -axo pid,etime,pcpu,rss,command | grep -E "swift-frontend|swiftc|swift-build|xcodebuild|clang" | grep -v grep > "$RUNNER_TEMP/ps.txt" || true
+            for pid in $(pgrep -f swift-frontend || true); do
+              sample "$pid" 10 -file "$RUNNER_TEMP/sample-$pid.txt" || true
+            done
+            kill "$XB" || true
+            pkill -f swift-frontend || true
+          else
+            wait "$XB"; code=$?
+            echo "FINISHED in $(( $(date +%s) - START )) s, exit code $code" | tee "$RUNNER_TEMP/result.txt"
+          fi
+          tail -n 25 "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Upload what was captured
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bisect-${{ matrix.variant }}
+          path: |
+            ${{ runner.temp }}/result.txt
+            ${{ runner.temp }}/ps.txt
+            ${{ runner.temp }}/sample-*.txt
+            ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 3
