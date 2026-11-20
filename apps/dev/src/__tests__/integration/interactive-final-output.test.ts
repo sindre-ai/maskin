@@ -1259,7 +1259,12 @@ ${surviving}
 
 			expect(stopped).toEqual([{ sessionId: session.id, reason: 'login_expired' }])
 			const rows = await messagesFor(conversationId)
-			expect(rows[0]?.content).toContain('OAuth session expired')
+			// The body is the plain line; the provider's own text stays on the message.
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(
+				(rows[0]?.metadata as { final_output?: { error_detail?: string } })?.final_output
+					?.error_detail,
+			).toContain('OAuth session expired')
 		})
 
 		it('keeps the session running for a 403 block page that also opens with Failed to authenticate', async () => {
