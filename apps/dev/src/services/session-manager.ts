@@ -3726,6 +3726,8 @@ ${cont.continues_prompt}
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							// Lets the relay ask Maskin before a write whether the session's flow is in pilot.
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					}
 				: {

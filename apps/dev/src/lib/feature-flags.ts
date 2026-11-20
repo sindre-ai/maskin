@@ -185,6 +185,14 @@ export const FLAGS = {
 	 * on for everyone.
 	 */
 	IOS_SHARE_SUGGESTIONS: 'ios-share-suggestions',
+	/**
+	 * Gates the Azure DevOps integration (task [Add Azure DevOps integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/508145fe-70aa-497c-a08a-d37e76f90c82)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Entra app registration is approved for customers and the provider is on for everyone.
+	 */
+	AZURE_DEVOPS: 'azure-devops',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

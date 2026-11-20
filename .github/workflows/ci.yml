@@ -187,7 +187,7 @@ jobs:
       # The GitHub MCP supervisor ships in the agent image (docker/agent-base), outside the pnpm
       # workspace, so turbo does not see its tests. Plain node:test, no dependencies.
       - name: GitHub MCP supervisor tests
-        run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs
+        run: node --test scripts/checks/github-mcp-supervisor/github-mcp-supervisor.test.cjs scripts/checks/github-mcp-supervisor/github-mcp-pilot-hold.test.cjs
 
       - name: OAuth client registration script tests
         run: node --test scripts/register-oauth-client.test.mjs

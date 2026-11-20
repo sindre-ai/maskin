@@ -1,4 +1,5 @@
 import CoreSpotlight
+import MaskinAPI
 import MaskinCore
 import MaskinFeatures
 import SwiftUI
@@ -39,6 +40,11 @@ struct MaskinApp: App {
 
 	init() {
 		Perf.event("app.init")
+		// Crash and error reports (Sentry, project maskin-ios). Nil in debug builds, tests and any build
+		// without an address; then every report is a no-op. Started first so a crash during launch counts.
+		let errorSink = SentrySink.forThisBuild()
+		errorSink?.start()
+		ErrorReporter.shared.configure(sink: errorSink)
 		#if os(macOS)
 			let source = "macos"
 			let platform = DevicePlatform.macos
@@ -106,6 +112,7 @@ struct MaskinApp: App {
 				// "Agents working" activity at the signed-in workspace.
 				.onChange(of: environment.auth.session, initial: true) { _, session in
 					Analytics.shared.sessionChanged(actorId: session?.actorId, workspaceId: session?.workspaceId)
+					ErrorReporter.shared.setWorkspace(session?.workspaceId)
 					watchBridge.publish(session)
 					Task { await AgentsActivityRuntime.shared?.sessionChanged(workspaceId: session?.workspaceId) }
 					Task { await CycleActivityController.shared?.workspaceChanged(session?.workspaceId) }
