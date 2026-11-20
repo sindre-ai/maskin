@@ -338,6 +338,16 @@ export async function fanOutGmailHistory(ctx: WebhookFanOutContext): Promise<Nor
 
 	for (const record of result.records) {
 		for (const m of record.messagesAdded ?? []) {
+			// Google's hosted Gmail connection refuses to read spam-classified mail, so a
+			// received event for it would wake the agent for something it cannot open.
+			if (m.message.labelIds?.includes('SPAM')) {
+				logger.info('Gmail fan-out skipped spam-labelled message', {
+					integrationId: ctx.integrationId,
+					messageId: m.message.id,
+					historyEntryId: record.id,
+				})
+				continue
+			}
 			events.push(
 				makeMessageEvent(messageAddedAction(m.message), emailAddress, m.message, {
 					historyEntryId: record.id,
