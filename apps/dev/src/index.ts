@@ -88,6 +88,7 @@ import { configureSessionLifecycle } from './services/session-lifecycle'
 import { SessionManager } from './services/session-manager'
 import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { SessionSelfHealJob } from './services/session-self-heal-job'
+import { StageTaskCreator } from './services/stage-tasks'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import {
 	VoiceSessionTimeoutSweeper,
@@ -313,6 +314,11 @@ commentDispatcher.start()
 // else or a decision card expires. Does nothing unless the workspace has the driver-wake flag.
 const driverWaker = new DriverWaker(db, notifyBridge)
 driverWaker.start()
+
+// Creates a flow stage's standard tasks (metadata.stage_tasks on the flow) when an object enters the
+// stage. Does nothing for a flow with no list for the stage.
+const stageTaskCreator = new StageTaskCreator(db, notifyBridge)
+stageTaskCreator.start()
 
 // Finds objects with an overdue or missing next step and wakes their driver. Record-only until a
 // workspace has the next-step-sweep flag for 3 days and next-step-sweep-wake too.
@@ -658,6 +664,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	driverWaker.stop()
+	stageTaskCreator.stop()
 	nextStepSweep.stop()
 	decisionDefaultWake.stop()
 	stopMcpRateLimit()
