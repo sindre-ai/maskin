@@ -3,12 +3,15 @@ import {
 	actors,
 	agentGrants,
 	integrations,
+	sessionLogs,
+	sessions,
 	triggers,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 import { attachesServer, effectiveAccess } from './agent-access'
+import { CUSTOM_MCP_PROVIDER, customServerKey } from './custom-mcp'
 
 /**
  * Seeds an agent grant for each outside tool server an agent really uses, so that switching an
@@ -52,7 +55,7 @@ export function namesMergeTool(text: string): boolean {
 
 type IntegrationRow = Pick<
 	typeof integrations.$inferSelect,
-	'id' | 'provider' | 'providerMode' | 'status' | 'config' | 'defaultAgentAccess'
+	'id' | 'provider' | 'providerMode' | 'status' | 'config' | 'defaultAgentAccess' | 'displayName'
 >
 
 /** Integrations whose server a key stands for. Empty when the key is not an outside tool server. */
@@ -78,7 +81,14 @@ export function integrationsForServerKey(
 	if (serverKey.startsWith('linkedin-')) {
 		return registered.filter((r) => r.provider === 'linkedin-unipile')
 	}
-	return []
+	// A custom tool server is one row, keyed by its name and the start of its id.
+	if (serverKey.startsWith('custom-')) {
+		return registered.filter(
+			(r) => r.provider === CUSTOM_MCP_PROVIDER && customServerKey(r) === serverKey,
+		)
+	}
+	// Older sessions name a server by its provider alone: slack, gmail, posthog.
+	return registered.filter((r) => r.provider === serverKey)
 }
 
 export type UsageMap = Map<string, Map<string, Set<UsageSource>>>
@@ -91,23 +101,49 @@ function addUsage(usage: UsageMap, actorId: string, key: string, source: UsageSo
 	usage.set(actorId, byKey)
 }
 
-/** Calls per agent and server in the last `days` days, counted by the database. */
+/** Sessions per log query, so each query stays well inside the database's time limit. */
+const LOG_SESSION_BATCH = 50
+
+/**
+ * Servers each agent called in the last `days` days, read from the session logs. The logs are
+ * read for a few sessions at a time through the session index: one query over the whole
+ * window times out on production (45 second limit).
+ */
 async function readLogUsage(
 	db: Database,
 	usage: UsageMap,
 	opts: { workspaceId?: string; days: number },
 ) {
-	const rows = await db.execute<{ actor_id: string; server: string }>(sql`
-		SELECT DISTINCT s.actor_id AS actor_id, m.parts[1] AS server
-		FROM session_logs l
-		JOIN sessions s ON s.id = l.session_id
-		CROSS JOIN LATERAL regexp_matches(l.content, '"name":"mcp__([^"]+?)__[^"]+"', 'g') AS m(parts)
-		WHERE l.stream = 'stdout'
-			AND l.created_at > now() - make_interval(days => ${opts.days}::int)
-			AND l.content LIKE '%"name":"mcp__%'
-			${opts.workspaceId ? sql`AND s.workspace_id = ${opts.workspaceId}` : sql``}
-	`)
-	for (const r of rows) addUsage(usage, r.actor_id, r.server, 'session_logs')
+	const since = sql`now() - make_interval(days => ${opts.days}::int)`
+	const recent = await db
+		.select({ id: sessions.id, actorId: sessions.actorId })
+		.from(sessions)
+		.where(
+			and(
+				gt(sessions.updatedAt, since),
+				opts.workspaceId ? eq(sessions.workspaceId, opts.workspaceId) : undefined,
+			),
+		)
+	const actorOf = new Map(recent.map((s) => [s.id, s.actorId]))
+	const ids = [...actorOf.keys()]
+	for (let i = 0; i < ids.length; i += LOG_SESSION_BATCH) {
+		const batch = ids.slice(i, i + LOG_SESSION_BATCH)
+		const rows = await db.execute<{ session_id: string; server: string }>(sql`
+			SELECT DISTINCT session_logs.session_id AS session_id, m.parts[1] AS server
+			FROM session_logs
+			CROSS JOIN LATERAL regexp_matches(
+				session_logs.content, '"name":"mcp__([^"]+?)__[^"]+"', 'g'
+			) AS m(parts)
+			WHERE session_logs.stream = 'stdout'
+				AND session_logs.created_at > ${since}
+				AND session_logs.content LIKE '%"name":"mcp__%'
+				AND ${inArray(sessionLogs.sessionId, batch)}
+		`)
+		for (const r of rows) {
+			const actorId = actorOf.get(r.session_id)
+			if (actorId) addUsage(usage, actorId, r.server, 'session_logs')
+		}
+	}
 }
 
 export interface SeedOptions {

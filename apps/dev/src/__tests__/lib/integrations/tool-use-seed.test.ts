@@ -6,10 +6,15 @@ import {
 	serverOfToolName,
 } from '../../../lib/integrations/tool-use-seed'
 
-const row = (provider: string, config: Record<string, unknown> = {}) =>
+const row = (
+	provider: string,
+	config: Record<string, unknown> = {},
+	displayName: string | null = null,
+) =>
 	({
-		id: `${provider}-${JSON.stringify(config)}`,
+		id: `${provider}-${JSON.stringify(config)}-${displayName}`,
 		provider,
+		displayName,
 		providerMode: 'registered',
 		status: 'active',
 		config,
@@ -53,6 +58,10 @@ describe('integrationsForServerKey', () => {
 		row('github', { owner_login: 'sindre-ai' }),
 		row('github', { owner_login: 'vaerksted-ai' }),
 		row('linkedin-unipile'),
+		row('slack'),
+		row('posthog'),
+		row('google-calendar'),
+		row('custom-mcp', {}, 'Exa'),
 	]
 	it('maps each kind of server key to its integration', () => {
 		expect(integrationsForServerKey('integration-gmail', rows).map((r) => r.provider)).toEqual([
@@ -64,8 +73,25 @@ describe('integrationsForServerKey', () => {
 			'linkedin-unipile',
 		)
 	})
+	it('maps a server named by its provider alone, as older sessions log it', () => {
+		const providerOf = (key: string) => integrationsForServerKey(key, rows).map((r) => r.provider)
+		expect(providerOf('slack')).toEqual(['slack'])
+		expect(providerOf('posthog')).toEqual(['posthog'])
+		expect(providerOf('google-calendar')).toEqual(['google-calendar'])
+		expect(providerOf('gmail')).toEqual(['gmail'])
+	})
+	it('maps a custom tool server key to its one row', () => {
+		const exa = rows.find((r) => r.displayName === 'Exa')
+		expect(exa).toBeDefined()
+		const key = `custom-exa-${exa?.id.slice(0, 8)}`
+		expect(integrationsForServerKey(key, rows)).toEqual([exa])
+		expect(integrationsForServerKey('custom-exa-00000000', rows)).toEqual([])
+	})
 	it('leaves Maskin’s own server and unknown keys alone', () => {
 		expect(integrationsForServerKey('maskin', rows)).toEqual([])
 		expect(integrationsForServerKey('integration-nothing', rows)).toEqual([])
+		expect(integrationsForServerKey('github-merge', rows)).toEqual([])
+		expect(integrationsForServerKey('github-mcp-server', rows)).toEqual([])
+		expect(integrationsForServerKey('claude_ai_maskin', rows)).toEqual([])
 	})
 })

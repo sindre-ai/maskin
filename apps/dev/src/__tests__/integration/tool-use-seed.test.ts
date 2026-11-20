@@ -65,6 +65,16 @@ describe('seedToolGrants', () => {
 			{ sessionId: session.id, stream: 'stdout', content: call('mcp__maskin__get_objects') },
 			{ sessionId: session.id, stream: 'stdout', content: call('Bash') },
 		])
+		// Older sessions logged a server by its provider alone.
+		const byBareLog = await newAgent(ws.id)
+		const bareSession = await insertSession(db, ws.id, byBareLog.id, human, {
+			status: 'completed',
+		})
+		await db.insert(sessionLogs).values({
+			sessionId: bareSession.id,
+			stream: 'stdout',
+			content: call('mcp__slack__slack_send_message'),
+		})
 		const byConfig = await newAgent(ws.id, {
 			mcpServers: { 'integration-slack': { type: 'http', url: 'https://x' } },
 		})
@@ -104,6 +114,7 @@ describe('seedToolGrants', () => {
 
 		await seedToolGrants(db, { workspaceId: ws.id })
 		expect(await grantsOf(byLogs.id)).toEqual([[gmail.id, 'read']])
+		expect(await grantsOf(byBareLog.id)).toEqual([[slack.id, 'read']])
 		expect(await grantsOf(byConfig.id)).toEqual([[slack.id, 'read']])
 		expect(await grantsOf(byTrigger.id)).toEqual([[linear.id, 'read']])
 		// An existing grant keeps its level, and a default of none stays closed.
