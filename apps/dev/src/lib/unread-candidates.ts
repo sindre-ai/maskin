@@ -10,8 +10,12 @@ import { createTtlCache } from './ttl-cache'
  */
 export const MAX_UNREAD_CANDIDATE_ENTITIES = 5_000
 
-/** How long a scan of every mention is trusted before it is read again from the start. */
-const FULL_SCAN_TTL_MS = 10 * 60_000
+/**
+ * How long a scan of every mention is trusted before it is read again from the start. Long on
+ * purpose: the list only grows between rebuilds and the unread query still decides what counts,
+ * and the full scan is the slow part (3 s cold), so it should run about once per deploy.
+ */
+const FULL_SCAN_TTL_MS = 3 * 60 * 60_000
 
 /** Cached people. Each holds at most MAX_UNREAD_CANDIDATE_ENTITIES ids. */
 const MAX_CACHED_ACTORS = 300
