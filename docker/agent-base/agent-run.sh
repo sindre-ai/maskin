@@ -208,6 +208,26 @@ assert_skills_symlink() {
   echo "[system] workspace skills registered: ${link} -> ${target}"
 }
 
+# Lean context (MASKIN_LEAN_CONTEXT=1; off unless set, so a session starts as it
+# always has). Rollback is unsetting it, no image rebuild. When on:
+#   - CLAUDE.md carries the persona and learnings, and only the always-on skills in
+#     full. Every other skill stays at /agent/skills, where Claude Code lists it by
+#     name and description and loads it through the Skill tool when it is needed.
+#   - the bundled Claude Code skills and the built-in tools no agent uses are
+#     switched off (see run_agent).
+# Always-on skills are named in MASKIN_ALWAYS_ON_SKILLS (comma separated). Unset,
+# it keeps the voice and working-way skills; set empty, it keeps none.
+lean_context_on() {
+  [ "${MASKIN_LEAN_CONTEXT:-}" = "1" ] || [ "${MASKIN_LEAN_CONTEXT:-}" = "true" ]
+}
+
+skill_always_on() {
+  case ",${MASKIN_ALWAYS_ON_SKILLS-plain-english-voice,maskin-way-of-working}," in
+    *",$1,"*) return 0 ;;
+  esac
+  return 1
+}
+
 # Build CLAUDE.md from system prompt + skills
 build_context() {
   local context_file="/agent/workspace/CLAUDE.md"
@@ -219,11 +239,21 @@ build_context() {
 
   # Append skills — each skill lives at /agent/skills/<name>/SKILL.md
   # (agent-storage.ts pullWorkspaceSkillsForAgent), not as a flat <name>.md.
+  # With lean context on, only the always-on skills are pasted in.
   if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*/SKILL.md 2>/dev/null)" ]; then
-    echo "## Skills" >> "$context_file"
-    echo "" >> "$context_file"
+    local skills_heading_written=""
+    local skill_name
     for f in /agent/skills/*/SKILL.md; do
-      echo "### $(basename "$(dirname "$f")")" >> "$context_file"
+      skill_name="$(basename "$(dirname "$f")")"
+      if lean_context_on && ! skill_always_on "$skill_name"; then
+        continue
+      fi
+      if [ -z "$skills_heading_written" ]; then
+        echo "## Skills" >> "$context_file"
+        echo "" >> "$context_file"
+        skills_heading_written=1
+      fi
+      echo "### $skill_name" >> "$context_file"
       echo "" >> "$context_file"
       cat "$f" >> "$context_file"
       echo "" >> "$context_file"
@@ -625,9 +655,23 @@ run_agent() {
         low|medium|high|xhigh|max) effort_args=(--effort "$MASKIN_CLAUDE_EFFORT") ;;
       esac
       # The Maskin-funded route cannot run the CLI's server-side WebSearch.
-      local search_args=()
+      local disallowed=""
       if [ "${MASKIN_DISABLE_WEB_SEARCH:-}" = "1" ]; then
-        search_args=(--disallowedTools=WebSearch)
+        disallowed="WebSearch"
+      fi
+      # Lean context: Claude Code has a switch for its bundled skills
+      # (CLAUDE_CODE_DISABLE_BUNDLED_SKILLS) that leaves workspace skills alone. Two
+      # bundled skills survive it (design, doctor), so they are switched off by name
+      # in settings. The built-in tools below are ones no agent here uses.
+      local lean_args=()
+      if lean_context_on; then
+        export CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1
+        disallowed="${disallowed:+$disallowed,}CronCreate,CronDelete,CronList,DesignSync,PushNotification,RemoteTrigger"
+        lean_args=(--settings '{"skillOverrides":{"design":"off","doctor":"off"}}')
+      fi
+      local search_args=()
+      if [ -n "$disallowed" ]; then
+        search_args=(--disallowedTools="$disallowed")
       fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
@@ -660,6 +704,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
             "${search_args[@]}" \
+            "${lean_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -671,6 +716,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
             "${search_args[@]}" \
+            "${lean_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
@@ -682,6 +728,7 @@ run_agent() {
           --dangerously-skip-permissions \
           "${effort_args[@]}" \
           "${search_args[@]}" \
+          "${lean_args[@]}" \
           "${mcp_args[@]}"
       fi
       ;;
