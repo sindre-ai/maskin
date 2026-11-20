@@ -188,6 +188,7 @@
 		"delete_trigger": ["id", "workspace_id"],
 		"delete_workspace_field": ["name", "type", "workspace_id"],
 		"delete_workspace_skill": ["name", "workspace_id"],
+		"desktop_attach_file": ["agent_id", "path", "selector", "workspace_id"],
 		"desktop_click": ["agent_id", "button", "double", "workspace_id", "x", "y"],
 		"desktop_close_port": ["agent_id", "relay_port", "workspace_id"],
 		"desktop_drag": ["agent_id", "from_x", "from_y", "to_x", "to_y", "workspace_id"],

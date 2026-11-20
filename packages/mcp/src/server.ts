@@ -11092,6 +11092,30 @@ ${claudeCredsBlock}`,
 
 	registerAppTool(
 		server,
+		'desktop_attach_file',
+		{
+			description: tools.desktop_attach_file.description,
+			inputSchema: tools.desktop_attach_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...input } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/input', agent_id),
+				{ action: 'attach_file', ...input },
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_attach_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'desktop_apply_settings',
 		{
 			description: tools.desktop_apply_settings.description,
