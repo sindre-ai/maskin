@@ -144,13 +144,35 @@ async function findApp() {
 		'GET',
 		`/v1/apps?${query({ 'filter[bundleId]': BUNDLE_ID, 'fields[apps]': 'name,bundleId,primaryLocale' })}`,
 	)
-	if (res.data.length !== 1) {
-		fail(
-			`Expected one app with bundle id ${BUNDLE_ID}, App Store Connect returned ${res.data.length}.`,
-		)
+	// The bundle id filter can also return apps whose id merely contains ours, so keep exact matches.
+	const matches = res.data.filter((app) => app.attributes.bundleId === BUNDLE_ID)
+	if (matches.length === 1) return matches[0]
+	if (matches.length === 0) {
+		fail(`No app with bundle id ${BUNDLE_ID}, App Store Connect returned ${res.data.length}.`)
 	}
-	return res.data[0]
+	// Still several: take the one that has an iPhone App Store version, since this script only
+	// sends iPhone builds. A record that exists only for another platform has none.
+	const withIosVersion = []
+	for (const app of matches) {
+		const versions = await asc(
+			'GET',
+			`/v1/apps/${app.id}/appStoreVersions?${query({ 'filter[platform]': PLATFORM, limit: '1' })}`,
+		)
+		if (versions.data.length > 0) withIosVersion.push(app)
+	}
+	if (withIosVersion.length === 1) {
+		const others = matches.filter((app) => app !== withIosVersion[0]).map(describeApp)
+		console.log(
+			`${matches.length} apps share bundle id ${BUNDLE_ID}. Using the one with an ${PLATFORM} App Store version; ignoring ${others.join(', ')}.`,
+		)
+		return withIosVersion[0]
+	}
+	fail(
+		`${matches.length} apps share bundle id ${BUNDLE_ID} and ${withIosVersion.length} of them have an ${PLATFORM} App Store version, so the app cannot be told apart. Apps: ${matches.map(describeApp).join(', ')}.`,
+	)
 }
+
+const describeApp = (app) => `${app.attributes.name} (id ${app.id})`
 
 async function listBuilds(appId) {
 	const params = {
