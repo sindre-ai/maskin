@@ -110,7 +110,7 @@ export async function createStageTasks(db: Database, entry: StageEntry): Promise
 async function createForLoop(
 	tx: Transaction,
 	entry: StageEntry,
-	member: { id: string; type: string; title: string },
+	member: { id: string; type: string; title: string | null },
 	loop: { id: string; driver: string | null },
 	specs: StageTaskSpec[],
 ): Promise<number> {
@@ -129,6 +129,8 @@ async function createForLoop(
 		.limit(1)
 	if (claimed) return 0
 
+	// An object with no title is named by its type in the task body.
+	const parent = { id: member.id, type: member.type, title: member.title ?? member.type }
 	let made = 0
 	for (const [index, spec] of specs.entries()) {
 		const ownerId = (await resolveOwner(tx, entry.workspaceId, spec.owner)) ?? loop.driver
@@ -140,7 +142,7 @@ async function createForLoop(
 				workspaceId: entry.workspaceId,
 				type: 'task',
 				title: spec.title,
-				content: stageTaskContent(spec, member, entry.status, dueAt),
+				content: stageTaskContent(spec, parent, entry.status, dueAt),
 				status,
 				driver: ownerId,
 				createdBy: entry.actorId,
