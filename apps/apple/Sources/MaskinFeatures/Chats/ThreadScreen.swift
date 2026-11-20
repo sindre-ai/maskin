@@ -12,16 +12,19 @@ struct ThreadScreen: View {
 	let store: ChatStore
 	let root: ChatMessage
 
-	@State private var draft = ""
+	/// The shared composer's model: this thread's own draft, mentions and attachments.
+	@State private var composer: ChatComposerModel
 	@State private var alsoInChannel = false
 	@State private var recipientIndex = 0
-	@State private var listening = false
-	@State private var engineNote: String?
 	@State private var selectingText: ChatMessage?
-	/// The reply being edited; while set, the reply bar saves over it instead of sending a new one.
-	@State private var editing: ChatMessage?
-	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+
+	/// `uploader` lets the `+` menu attach photos and files; nil leaves attachments to fail with a notice.
+	init(store: ChatStore, root: ChatMessage, uploader: (any ChatFileUploading)? = nil) {
+		self.store = store
+		self.root = root
+		_composer = State(initialValue: ChatComposerModel(uploader: uploader, selfActorID: store.currentActorID))
+	}
 
 	private var rootID: Int? { root.serverID }
 
@@ -144,7 +147,7 @@ struct ThreadScreen: View {
 			actions.onReact = { emoji in Task { await store.toggleReaction(emoji, on: message) } }
 		}
 		if message.canEdit(by: store.currentActorID) {
-			actions.onEdit = { beginEdit(message) }
+			actions.onEdit = { composer.beginEdit(messageID: message.id, text: message.content) }
 		}
 		if message.isFailed {
 			actions.onRetrySend = { store.retrySend(message.id) }
@@ -190,75 +193,36 @@ struct ThreadScreen: View {
 
 	// MARK: Reply bar
 
+	/// The shared composer (spec 7 §1), with "To" and "Also send to chat" as its options.
 	private var replyBar: some View {
-		VStack(spacing: MaskinSpace.s4) {
-			if editing != nil {
-				editingStrip
-			} else {
-				HStack(spacing: MaskinSpace.s5) {
-					if let recipient { recipientChip(recipient) }
-					Spacer(minLength: 0)
-					alsoToggle
-				}
-			}
-			HStack(spacing: MaskinSpace.s4) {
-				TextField("Reply", text: $draft, axis: .vertical)
-					.lineLimit(1...5)
-					.focused($focused)
-					.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
-					.submitLabel(.send)
-					.onSubmit(send)
-					.padding(.leading, MaskinSpace.s10)
-					.padding(.vertical, MaskinSpace.s6)
-				DictationButton(text: $draft, listening: $listening, engineNote: $engineNote)
-				// While the mic is open it keeps the send slot, as in the chat composer.
-				if !listening {
-					Button(action: send) {
-						Image(systemName: "arrow.up")
-							.maskinSymbol(MaskinFontSize.t18, weight: .bold)
-							.foregroundStyle(canSend ? MaskinSurface.onInverse : MaskinColor.inkPlaceholder)
-							.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-							.background(canSend ? MaskinSurface.inverse : MaskinSurface.fill, in: Circle())
-					}
-					.buttonStyle(.maskinPressed)
-					.disabled(!canSend)
-					.padding(.trailing, MaskinSpace.s2)
-					.accessibilityLabel("Send reply")
-				}
-			}
-			.background(MaskinSurface.card, in: Capsule())
-			.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
-			// Only when something is wrong (the phone took over, the server heard nothing): stays after the mic closes.
-			if let engineNote {
-				Text(engineNote).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
-					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
-			}
-		}
-		.padding(.horizontal, MaskinSpace.s8)
-		.padding(.top, MaskinSpace.s4)
-		.padding(.bottom, MaskinSpace.s5)
-		.background(MaskinSurface.grouped)
+		MaskinComposer(
+			model: composer,
+			config: MaskinComposerConfig(
+				variant: .floating, placeholder: "Reply in thread",
+				suggestions: { query in
+					MentionTrigger.candidates(
+						query: query, participants: store.participants, workspace: store.workspaceActors,
+						selfID: store.currentActorID, excluding: Set(composer.mentions.map(\.id)))
+				},
+				inConversation: Set(store.participants.map(\.id)),
+				roster: runtime?.mentionRoster()?.roster),
+			topAccessory: threadOptions,
+			onSend: send
+		)
+		.padding(.horizontal, MaskinSpace.s7)
+		.padding(.bottom, MaskinSpace.s4)
 	}
 
-	private var editingStrip: some View {
-		HStack(spacing: MaskinSpace.s5) {
-			Text("Editing message")
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .bold, relativeTo: .footnote))
-				.foregroundStyle(MaskinColor.ink)
-			Spacer(minLength: 0)
-			Button {
-				editing = nil
-				draft = ""
-			} label: {
-				Image(systemName: "xmark.circle.fill")
-					.maskinSymbol(MaskinFontSize.t18)
-					.foregroundStyle(MaskinColor.ink5)
-					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-					.contentShape(Rectangle())
+	private var threadOptions: AnyView? {
+		// While a reply is being edited the composer's own strip takes the slot.
+		guard rootID != nil, composer.editing == nil else { return nil }
+		return AnyView(
+			HStack(spacing: MaskinSpace.s5) {
+				if let recipient { recipientChip(recipient) }
+				Spacer(minLength: 0)
+				alsoToggle
 			}
-			.buttonStyle(.maskinPressed)
-			.accessibilityLabel("Cancel editing")
-		}
+			.padding(.horizontal, MaskinSpace.s3))
 	}
 
 	private func recipientChip(_ person: ChatParticipant) -> some View {
@@ -310,31 +274,22 @@ struct ThreadScreen: View {
 		.accessibilityAddTraits(alsoInChannel ? [.isSelected] : [])
 	}
 
-	private var canSend: Bool {
-		rootID != nil && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-	}
-
-	/// Edit loads the reply's words into the reply bar; sending saves them over the original.
-	private func beginEdit(_ message: ChatMessage) {
-		editing = message
-		draft = message.content
-		focused = true
-	}
-
+	/// Send, or — while the composer holds an edit — save the new text over the original reply.
 	private func send() {
-		if let original = editing {
-			guard canSend else { return }
-			let text = draft
+		if let edit = composer.takeEdit() {
 			MaskinHaptics.play(.selection)
-			editing = nil
-			draft = ""
-			Task { await store.edit(original.id, to: text) }
+			Task { await store.edit(edit.messageID, to: edit.text) }
 			return
 		}
-		guard canSend, let rootID else { return }
-		guard store.reply(draft, in: rootID, to: recipient, alsoInChannel: alsoInChannel) != nil else { return }
+		guard let rootID, let (text, metadata) = composer.take() else { return }
+		guard
+			store.reply(text, in: rootID, to: recipient, alsoInChannel: alsoInChannel, metadata: metadata) != nil
+		else {
+			// Nothing was queued: give the words back rather than lose them.
+			composer.text = text
+			return
+		}
 		MaskinHaptics.play(.selection)
-		draft = ""
 		alsoInChannel = false
 	}
 }

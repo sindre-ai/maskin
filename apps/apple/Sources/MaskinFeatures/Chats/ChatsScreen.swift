@@ -470,7 +470,10 @@ private struct ThreadHost: View {
 	var body: some View {
 		let chat = holder.chat ?? make()
 		let _ = { holder.chat = chat }()
-		ThreadScreen(store: chat, root: item.root)
+		ThreadScreen(
+			store: chat, root: item.root,
+			uploader: APIChatsSource(
+				client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads))
 			.onDisappear {
 				chat.stop()
 				Task { await conversations.refreshThreads() }

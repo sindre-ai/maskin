@@ -1254,9 +1254,11 @@ public final class ChatStore {
 	) -> String? {
 		var metadata = extra
 		if let recipient {
-			metadata = ChatSendMetadata(
-				mentions: [recipient.id], questionAnswer: extra?.questionAnswer,
-				hiddenFromChat: extra?.hiddenFromChat, cardAnswer: extra?.cardAnswer)
+			// The addressee comes first, then anyone the writer tagged; attachments ride along.
+			var merged = extra ?? ChatSendMetadata()
+			let tagged = (extra?.mentions ?? []).filter { $0 != recipient.id }
+			merged.mentions = Array(([recipient.id] + tagged).prefix(ChatSendMetadata.maxMentions))
+			metadata = merged
 		}
 		return send(
 			text, metadata: metadata, thread: ChatSendThread(rootID: rootID, alsoInChannel: alsoInChannel))
