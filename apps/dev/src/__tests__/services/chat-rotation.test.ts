@@ -111,7 +111,20 @@ describe('ChatRotation.onTurn', () => {
 		expect(host.writeHandoffTurn).not.toHaveBeenCalled()
 		expect(getSessionContextSize(SESSION_ID)).toMatchObject({
 			lastTurnWindowTokens: 160_000,
+			sizeSource: 'assistant_usage',
 			contextWindowTokens: 1_000_000,
+		})
+	})
+
+	it('records a log estimate as such', async () => {
+		const { host } = makeHost()
+		await new ChatRotation(host, { env: {} as NodeJS.ProcessEnv }).onTurn(
+			SESSION_ID,
+			reading({ lastTurnWindowTokens: 30_000, sizeSource: 'log_estimate' }),
+		)
+		expect(getSessionContextSize(SESSION_ID)).toMatchObject({
+			lastTurnWindowTokens: 30_000,
+			sizeSource: 'log_estimate',
 		})
 	})
 

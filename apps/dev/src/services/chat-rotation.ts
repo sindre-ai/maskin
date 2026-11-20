@@ -121,6 +121,7 @@ export class ChatRotation {
 			if (this.handoffResults.delete(sessionId)) {
 				recordSessionContextSize(sessionId, {
 					lastTurnWindowTokens: reading.lastTurnWindowTokens,
+					sizeSource: reading.sizeSource,
 					contextWindowTokens: reading.contextWindowTokens,
 				})
 				return
@@ -130,6 +131,7 @@ export class ChatRotation {
 				cause === 'compaction_failed' || cause === 'context_full' ? cause : null
 			recordSessionContextSize(sessionId, {
 				lastTurnWindowTokens: reading.lastTurnWindowTokens,
+				sizeSource: reading.sizeSource,
 				contextWindowTokens: reading.contextWindowTokens,
 				endCause,
 			})

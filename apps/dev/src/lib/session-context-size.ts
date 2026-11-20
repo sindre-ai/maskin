@@ -5,12 +5,16 @@
  * numbers off the event (PostHog reads them as absent), and nothing is written per turn.
  */
 
+import type { SizeSource } from './turn-size'
+
 /** How a session ended on a full or failing window. Both ride on the event's stop_reason. */
 export type ContextEndCause = 'context_full' | 'compaction_failed'
 
 export interface SessionContextSize {
 	/** Window size at the last model call of the last top-level turn, in tokens. */
 	lastTurnWindowTokens?: number
+	/** Where `lastTurnWindowTokens` came from: the model's own usage, or a count of log lines. */
+	sizeSource?: SizeSource
 	/** The window the session reports for its model, in tokens. */
 	contextWindowTokens?: number
 	/** Set while the newest turn shows the window failing, cleared by the next clean turn. */
@@ -26,12 +30,14 @@ export function recordSessionContextSize(
 	sessionId: string,
 	patch: {
 		lastTurnWindowTokens?: number | null
+		sizeSource?: SizeSource | null
 		contextWindowTokens?: number | null
 		endCause?: ContextEndCause | null
 	},
 ): void {
 	const next: SessionContextSize = { ...sizes.get(sessionId) }
 	if (patch.lastTurnWindowTokens != null) next.lastTurnWindowTokens = patch.lastTurnWindowTokens
+	if (patch.sizeSource != null) next.sizeSource = patch.sizeSource
 	if (patch.contextWindowTokens != null) next.contextWindowTokens = patch.contextWindowTokens
 	if (patch.endCause === null) next.endCause = undefined
 	else if (patch.endCause) next.endCause = patch.endCause
