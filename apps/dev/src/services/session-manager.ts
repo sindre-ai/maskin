@@ -5493,7 +5493,10 @@ ${cont.continues_prompt}
 		const pending = this.pendingLaunchStarts.get(sessionId)
 		if (!pending) return
 		this.pendingLaunchStarts.delete(sessionId)
-		void trackAgentSessionStartedWithPrompt(pending.props)
+		void trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			startPrompt: pending.observer.startPromptSize,
+		})
 	}
 
 	/**
@@ -5544,6 +5547,7 @@ ${cont.continues_prompt}
 		await trackAgentSessionStartedWithPrompt({
 			...pending.props,
 			firstCall: { ...first.size, firstTurnCostUsd },
+			startPrompt: pending.observer.startPromptSize,
 		})
 	}
 
