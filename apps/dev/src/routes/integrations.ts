@@ -129,6 +129,7 @@ import {
 	sendEphemeralResponse,
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
+import { WORK_INTEGRATIONS_PROVIDERS } from '../lib/integrations/providers/work-integrations'
 import { ZOOM_PROVIDER } from '../lib/integrations/providers/zoom/config'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import { integrationScopeGaps, parseScopes } from '../lib/integrations/scope-drift'
@@ -291,6 +292,7 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 		name,
 		FLAGS.MEETING_NOTES_INTEGRATIONS,
 	]),
+	...WORK_INTEGRATIONS_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.WORK_INTEGRATIONS]),
 ])
 
 const providerVisible = (providerName: string, actorId: string | undefined): boolean => {
