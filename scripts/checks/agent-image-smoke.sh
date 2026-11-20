@@ -62,7 +62,9 @@ RC=0
 
 # Runs one session. The entrypoint idles until /agent/.exec-trigger exists (the
 # agent-server writes it in production), so create it first, then hand over to
-# the real entrypoint. Extra args are passed to `docker run` (-e flags).
+# the real entrypoint. Extra args are passed to `docker run` (-e flags). Skill
+# fixtures mounted at /fixture-skills are copied into /agent/skills first: the
+# entrypoint chowns /agent, which a read-only bind mount there would refuse.
 run_session() {
 	OUT="$(
 		timeout 180 docker run --rm \
@@ -71,7 +73,7 @@ run_session() {
 			-e ACTION_PROMPT=smoke \
 			"$@" \
 			--entrypoint bash "${SESSION_IMAGE:-$IMAGE}" \
-			-c 'touch /agent/.exec-trigger && exec /entrypoint.sh' 2>&1
+			-c 'touch /agent/.exec-trigger && { [ ! -d /fixture-skills ] || { mkdir -p /agent/skills && cp -r /fixture-skills/. /agent/skills/; }; } && exec /entrypoint.sh' 2>&1
 	)"
 	RC=$?
 	SESSIONS=$((SESSIONS + 1))
@@ -152,6 +154,38 @@ label="no effort, web search on"
 check "$label"
 reject "$label" "--effort"
 reject "$label" "--disallowedTools"
+
+# --- Lean context (MASKIN_LEAN_CONTEXT) ----------------------------------------
+# Two staged skills: plain-english-voice is on the default always-on list, other-skill
+# is not. Off (or unset) the session starts as it always has: both pasted in, no
+# extra arguments. On, only the always-on skill is pasted in and the bundled skills
+# and unused built-in tools are switched off.
+STUB_SKILLS="$(native_path "$REPO_ROOT/scripts/checks/fixtures/skills")"
+
+label="lean context off"
+check "$label" -v "$STUB_SKILLS:/fixture-skills:ro"
+expect "$label" "STUB_CLAUDE_MD_SKILLS=other-skill,plain-english-voice,"
+expect "$label" "STUB_BUNDLED_SKILLS_OFF=<unset>"
+reject "$label" "--settings"
+reject "$label" "--disallowedTools"
+
+label="lean context on"
+check "$label" -v "$STUB_SKILLS:/fixture-skills:ro" -e MASKIN_LEAN_CONTEXT=1
+expect "$label" "STUB_CLAUDE_MD_SKILLS=plain-english-voice,"
+expect "$label" "STUB_BUNDLED_SKILLS_OFF=1"
+expect "$label" "--disallowedTools=CronCreate,CronDelete,CronList,DesignSync,PushNotification,RemoteTrigger"
+expect "$label" "--settings"
+
+label="lean context on with web search off"
+check "$label" -v "$STUB_SKILLS:/fixture-skills:ro" -e MASKIN_LEAN_CONTEXT=1 -e MASKIN_DISABLE_WEB_SEARCH=1
+expect "$label" "--disallowedTools=WebSearch,CronCreate"
+
+# A system prompt makes sure CLAUDE.md exists, so an empty skill list is a real
+# result and not a missing file.
+label="lean context on, no always-on skills"
+check "$label" -v "$STUB_SKILLS:/fixture-skills:ro" -e MASKIN_LEAN_CONTEXT=1 -e MASKIN_ALWAYS_ON_SKILLS= -e SYSTEM_PROMPT=smoke
+expect "$label" "STUB_CLAUDE_MD_SKILLS="
+reject "$label" "STUB_CLAUDE_MD_SKILLS=[a-z]"
 
 # --- Guard wrapper (maskin-mcp-guard) ----------------------------------------
 # One guarded server (the shape the API writes: wrapper first, real command

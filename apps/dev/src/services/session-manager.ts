@@ -2940,6 +2940,16 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 		if (process.env.MASKIN_MCP_ENV_SCRUB === 'off') {
 			envVars.MASKIN_MCP_ENV_SCRUB = 'off'
 		}
+		// Lean context for agent-run.sh (skills listed by name instead of pasted in,
+		// bundled skills and unused built-in tools switched off). Off unless set on
+		// this service; unsetting it is the rollback. A session's own env_vars can
+		// still turn it on for one agent.
+		if (['1', 'true'].includes((process.env.MASKIN_LEAN_CONTEXT ?? '').trim().toLowerCase())) {
+			envVars.MASKIN_LEAN_CONTEXT = '1'
+			if (process.env.MASKIN_ALWAYS_ON_SKILLS !== undefined) {
+				envVars.MASKIN_ALWAYS_ON_SKILLS = process.env.MASKIN_ALWAYS_ON_SKILLS
+			}
+		}
 
 		// Resolve the workspace-skill manifest here so both the emitted
 		// `agent_session_started_with_prompt` signal AND the dispatch payload
