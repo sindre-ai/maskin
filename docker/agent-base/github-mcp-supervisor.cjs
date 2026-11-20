@@ -417,7 +417,13 @@ function createSupervisor(options) {
 						`${JSON.stringify({
 							jsonrpc: '2.0',
 							id: message.id,
-							result: { isError: true, content: [{ type: 'text', text: verdict.message }] },
+							// resultType is required by servers on protocol revision 2026-07-28: without it the
+							// client drops this refusal as malformed and the agent never reads why it was held.
+							result: {
+								resultType: 'complete',
+								isError: true,
+								content: [{ type: 'text', text: verdict.message }],
+							},
 						})}\n`,
 					)
 					return
