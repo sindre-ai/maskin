@@ -19,19 +19,6 @@ private func layout(_ conversations: [ConversationSummary], query: String = "") 
 		TeamLayout.Input(conversations: conversations, query: query, currentActorID: "me", now: now, calendar: cal))
 }
 
-@MainActor
-private final class RecordingSink: AnalyticsSink {
-	var events: [(name: String, properties: AnalyticsProperties)] = []
-	func start() {}
-	func identify(_ distinctId: String) {}
-	func group(type: String, key: String) {}
-	func capture(_ event: String, properties: AnalyticsProperties) {
-		events.append((event, properties))
-	}
-	func reset() {}
-	func stop() {}
-}
-
 @Suite("ChatListTracking")
 struct ChatListTrackingTests {
 	@Test("a pinned tile, an unread row and a dated row read as pinned, unread and recent")
@@ -79,30 +66,21 @@ struct ChatListTrackingTests {
 	}
 
 	@MainActor
-	@Test("the events carry categories only, in the chats feature area, and nothing without consent")
+	@Test("the events carry categories only and are queued only while events are on")
 	func events() {
-		let storage = InMemoryAnalyticsStorage()
-		let sink = RecordingSink()
-		let analytics = Analytics()
-		analytics.configure(sink: sink, storage: storage)
-		analytics.sessionChanged(actorId: "actor-1", workspaceId: "ws-1")
+		let (analytics, _, _) = makeAnalytics()
+		analytics.setEnabled(false)
 		analytics.chatOpenedFromList(.init(source: .list, section: .unread, position: 7))
-		#expect(sink.events.isEmpty, "no consent yet")
+		#expect(analytics.queuedEvents.isEmpty, "switched off")
 
-		analytics.setConsent(true)
-		sink.events.removeAll()
+		analytics.setEnabled(true)
+		let before = analytics.queuedEvents.count
 		analytics.chatOpenedFromList(.init(source: .list, section: .unread, position: 7))
 		analytics.chatListSearchUsed(resultCount: 0)
 
-		#expect(sink.events.map(\.name) == ["chat_opened_from_list", "chat_list_search_used"])
-		let opened = sink.events[0].properties
-		#expect(opened["source"] == "list")
-		#expect(opened["section"] == "unread")
-		#expect(opened["position_bucket"] == "4_10")
-		#expect(opened["feature_area"] == "chats")
-		#expect(opened["surface"] == "iphone")
-		let searched = sink.events[1].properties
-		#expect(searched["result_count_bucket"] == "0")
-		#expect(searched["feature_area"] == "chats")
+		let added = Array(analytics.queuedEvents.dropFirst(before))
+		#expect(added.map(\.name) == ["chat_opened_from_list", "chat_list_search_used"])
+		#expect(added[0].properties == ["source": "list", "section": "unread", "position_bucket": "4_10"])
+		#expect(added[1].properties == ["result_count_bucket": "0"])
 	}
 }

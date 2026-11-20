@@ -56,12 +56,12 @@ public struct SettingsScreen: View {
 								}
 							}
 						}
-						// Only in builds that can send. Off until the person agrees (the first-run question).
+						// On by default. Off stops events from this phone and forgets the ones not yet sent.
 						if section == .preferences, analytics.isAvailable {
 							Toggle(
 								AnalyticsCopy.settingsTitle,
 								isOn: Binding(
-									get: { analytics.consent == .granted }, set: { analytics.setConsent($0) }))
+									get: { analytics.isEnabled }, set: { analytics.setEnabled($0) }))
 						}
 					} header: {
 						if let title = section.title { Text(title) }

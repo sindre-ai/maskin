@@ -5,30 +5,12 @@ import Testing
 @testable import MaskinCore
 
 @MainActor
-private final class RecordingSink: AnalyticsSink {
-	var events: [(name: String, properties: AnalyticsProperties)] = []
-	func start() {}
-	func identify(_ distinctId: String) {}
-	func group(type: String, key: String) {}
-	func capture(_ event: String, properties: AnalyticsProperties) {
-		events.append((event, properties))
-	}
-	func reset() {}
-	func stop() {}
-	var updates: [AnalyticsProperties] { events.filter { $0.name == "object_updated" }.map(\.properties) }
-}
-
-@MainActor
-private func makeStore(consent: AnalyticsConsent?) -> (ObjectDetailStore, FakeObjectsRemote, RecordingSink) {
+private func makeStore(enabled: Bool = true) -> (ObjectDetailStore, FakeObjectsRemote, Analytics) {
 	let suite = "ObjectDescriptionSaveAnalyticsTests.\(UUID().uuidString)"
 	let defaults = UserDefaults(suiteName: suite)!
 	defaults.removePersistentDomain(forName: suite)
-	let storage = InMemoryAnalyticsStorage()
-	if let consent { storage.set(consent.rawValue, for: Analytics.consentKey) }
-	let sink = RecordingSink()
-	let analytics = Analytics()
-	analytics.configure(sink: sink, storage: storage)
-	analytics.sessionChanged(actorId: "me", workspaceId: "ws-1")
+	let (analytics, _, _) = makeAnalytics()
+	if !enabled { analytics.setEnabled(false) }
 
 	let remote = FakeObjectsRemote(objects: Fixtures.objects)
 	let object = Fixtures.objects.first { $0.id == "t1" }!
@@ -37,7 +19,13 @@ private func makeStore(consent: AnalyticsConsent?) -> (ObjectDetailStore, FakeOb
 		objectId: "t1", remote: remote, directory: ObjectsDirectory(remote: remote, actors: Fixtures.actors),
 		currentActorId: "me", preload: object, defaults: defaults)
 	store.analytics = analytics
-	return (store, remote, sink)
+	return (store, remote, analytics)
+}
+
+extension Analytics {
+	fileprivate var updates: [AnalyticsProperties] {
+		queuedEvents.filter { $0.name == "object_updated" }.map(\.properties)
+	}
 }
 
 @MainActor
@@ -45,19 +33,18 @@ private func makeStore(consent: AnalyticsConsent?) -> (ObjectDetailStore, FakeOb
 struct ObjectDescriptionSaveAnalyticsTests {
 	@Test("a saved description sends one object_updated with ids and counts only")
 	func savedDescription() async {
-		let (store, _, sink) = makeStore(consent: .granted)
-		sink.events.removeAll()
+		let (store, _, analytics) = makeStore()
 		await store.edit(ObjectPatch(content: "A secret new description"))
-		#expect(sink.updates.count == 1)
-		let props = sink.updates[0]
+		#expect(analytics.updates.count == 1)
+		let props = analytics.updates[0]
 		#expect(props["object_id"] == "t1")
 		#expect(props["mutation_type"] == "field")
 		#expect(props["via"] == "single")
 		#expect(props["bulk_batch_size"] == 1)
-		#expect(props["surface"] == "iphone")
-		#expect(props["workspace_id"] == "ws-1")
-		#expect(props["actor_id"] == "me")
-		#expect(props["feature_area"] == "objects")
+		// The server stamps who and where from the signed-in request, so the phone sends none of it.
+		for key in ["surface", "workspace_id", "actor_id", "actor_type", "feature_area"] {
+			#expect(props[key] == nil)
+		}
 		// Nothing the person typed rides along: every value is an id, a label, a count or a flag.
 		let texts = props.values.compactMap { value -> String? in
 			if case .string(let text) = value { return text }
@@ -66,30 +53,26 @@ struct ObjectDescriptionSaveAnalyticsTests {
 		#expect(!texts.contains { $0.contains("secret") })
 	}
 
-	@Test("nothing is sent while consent is undecided or denied")
-	func noConsent() async {
-		for consent in [nil, AnalyticsConsent.denied] {
-			let (store, _, sink) = makeStore(consent: consent)
-			await store.edit(ObjectPatch(content: "New description"))
-			#expect(sink.events.isEmpty)
-		}
+	@Test("nothing is queued while the person has switched events off")
+	func switchedOff() async {
+		let (store, _, analytics) = makeStore(enabled: false)
+		await store.edit(ObjectPatch(content: "New description"))
+		#expect(analytics.queuedEvents.isEmpty)
 	}
 
 	@Test("a refused save sends nothing")
 	func failedSave() async {
-		let (store, remote, sink) = makeStore(consent: .granted)
-		sink.events.removeAll()
+		let (store, remote, analytics) = makeStore()
 		remote.fail("update")
 		await store.edit(ObjectPatch(content: "New description"))
-		#expect(sink.updates.isEmpty)
+		#expect(analytics.updates.isEmpty)
 	}
 
 	@Test("a title-only or status-only edit is not a description save")
 	func otherEdits() async {
-		let (store, _, sink) = makeStore(consent: .granted)
-		sink.events.removeAll()
+		let (store, _, analytics) = makeStore()
 		await store.edit(ObjectPatch(title: "Another title"))
 		await store.setStatus("done")
-		#expect(sink.updates.isEmpty)
+		#expect(analytics.updates.isEmpty)
 	}
 }

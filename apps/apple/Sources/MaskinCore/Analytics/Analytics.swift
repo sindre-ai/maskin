@@ -13,41 +13,69 @@ public enum AnalyticsValue: Sendable, Equatable, ExpressibleByStringLiteral,
 	public init(stringLiteral value: String) { self = .string(value) }
 	public init(integerLiteral value: Int) { self = .int(value) }
 	public init(booleanLiteral value: Bool) { self = .bool(value) }
+}
 
-	public var anyValue: Any {
+extension AnalyticsValue: Codable {
+	public init(from decoder: any Decoder) throws {
+		let container = try decoder.singleValueContainer()
+		if let flag = try? container.decode(Bool.self) {
+			self = .bool(flag)
+		} else if let number = try? container.decode(Int.self) {
+			self = .int(number)
+		} else {
+			self = .string(try container.decode(String.self))
+		}
+	}
+
+	public func encode(to encoder: any Encoder) throws {
+		var container = encoder.singleValueContainer()
 		switch self {
-		case .string(let value): value
-		case .int(let value): value
-		case .bool(let value): value
+		case .string(let value): try container.encode(value)
+		case .int(let value): try container.encode(value)
+		case .bool(let value): try container.encode(value)
 		}
 	}
 }
 
 public typealias AnalyticsProperties = [String: AnalyticsValue]
 
-/// Whether the person has agreed to share product usage from this phone. Nothing is sent while it
-/// is `undecided` or `denied`.
-public enum AnalyticsConsent: String, Sendable, Equatable {
-	case undecided, granted, denied
+/// One product event waiting to be sent. Never holds the base fields (`workspace_id`, `actor_id`,
+/// `actor_type`, `surface`): the server sets those from the signed-in request.
+public struct AnalyticsEvent: Codable, Sendable, Equatable, Identifiable {
+	public var id: UUID
+	public var name: String
+	public var properties: AnalyticsProperties
+	/// When the action happened, so an event sent later (offline) still lands on the right day.
+	public var occurredAt: Date
+	public var workspaceId: String
+	public var actorId: String
+
+	public init(
+		id: UUID = UUID(), name: String, properties: AnalyticsProperties, occurredAt: Date,
+		workspaceId: String, actorId: String
+	) {
+		self.id = id
+		self.name = name
+		self.properties = properties
+		self.occurredAt = occurredAt
+		self.workspaceId = workspaceId
+		self.actorId = actorId
+	}
 }
 
-/// Where the analytics tool lives. The real one wraps the PostHog SDK (`PostHogSink` in
-/// MaskinFeatures); tests record calls instead. `Analytics` only calls a sink once the person has
-/// agreed, and calls `stop()` when they take it back.
-@MainActor
-public protocol AnalyticsSink: AnyObject {
-	/// Starts the SDK. Called after consent, and again on later launches. Safe to repeat.
-	func start()
-	func identify(_ distinctId: String)
-	func group(type: String, key: String)
-	func capture(_ event: String, properties: AnalyticsProperties)
-	/// Forgets the identified person (sign-out).
-	func reset()
-	/// Consent taken back: stop sending and forget the person.
-	func stop()
+/// Throw from a transport when the server will never accept the batch (a 4xx other than a sign-in
+/// problem, rate limit or timeout). The batch is dropped. Any other error keeps it for the next try.
+public struct AnalyticsRejected: Error, Sendable, Equatable {
+	public init() {}
 }
 
-/// Small key-value store for the consent answer and the once-only events.
+/// Where a batch goes. The real one posts to the server route (`APIAnalyticsTransport`); tests
+/// record calls instead.
+public protocol AnalyticsTransport: Sendable {
+	func send(_ events: [AnalyticsEvent], workspaceId: String) async throws
+}
+
+/// Small key-value store for the on/off switch, the unsent events and the once-only events.
 public protocol AnalyticsStorage: Sendable {
 	func value(for key: String) -> String?
 	func set(_ value: String?, for key: String)
@@ -73,39 +101,65 @@ public struct UserDefaultsAnalyticsStorage: AnalyticsStorage, @unchecked Sendabl
 /// Product analytics for the phone, with the same event and property names as the web app (see
 /// `AnalyticsFeatureArea` and `packages/shared/src/analytics-feature-area.ts`).
 ///
-/// The rules this type enforces, so call sites cannot get them wrong:
-/// - Nothing reaches the sink until the person has agreed (`consent == .granted`).
-/// - The person is identified by the stable actor id only. No name, no email.
-/// - Every event carries `workspace_id`, `actor_id`, `actor_type` and `surface` (`iphone`), plus
-///   `feature_area` when the event has one.
-/// - Property keys that usually hold names or text are dropped. Callers pass ids and short labels.
+/// Events are queued on the phone with the time of the action and sent in batches to the server
+/// (`POST /api/telemetry/client`), which applies the workspace's share-usage and anonymise settings
+/// and the list of allowed names. There is no third-party SDK in the app.
 ///
-/// `shared` is inert until `configure(sink:)` runs, which only happens when the build has a
-/// PostHog project token. Without one every call is a no-op.
+/// The rules this type enforces, so call sites cannot get them wrong:
+/// - On by default. Nothing is queued or sent when the person has switched it off in Settings, or
+///   when the selected workspace has usage sharing off.
+/// - Only events and property keys the server allows are queued (`AnalyticsAllowlist`). No names,
+///   emails, message text, device id or advertising id ever ride along.
+/// - The server stamps `workspace_id`, `actor_id`, `actor_type` and `surface` from the request, so
+///   the phone sends none of them.
+/// - Unsent events survive a relaunch, are dropped after six days (the server takes a week) and
+///   when the person signs out.
+///
+/// `shared` is inert until `configure(transport:)` runs.
 @MainActor
 @Observable
 public final class Analytics {
 	public static let shared = Analytics()
 
-	public private(set) var consent: AnalyticsConsent = .undecided
+	/// The person's own switch (Settings). On unless they turned it off.
+	public private(set) var isEnabled = true
 
-	@ObservationIgnored private var sink: (any AnalyticsSink)?
+	@ObservationIgnored private var transport: (any AnalyticsTransport)?
 	@ObservationIgnored private var storage: any AnalyticsStorage = InMemoryAnalyticsStorage()
 	@ObservationIgnored private var clock: @Sendable () -> Date = { Date() }
 	@ObservationIgnored private var actorId: String?
 	@ObservationIgnored private var workspaceId: String?
-	@ObservationIgnored private var identifiedActorId: String?
-	@ObservationIgnored private var groupedWorkspaceId: String?
-	/// The app came to the front while consent was given but nobody was signed in yet (a cold start
-	/// restores the session a moment later). The `app_opened` is sent once the person is known.
+	/// Whether each workspace the person belongs to shares usage. Unknown means it does, the same
+	/// default as the server.
+	@ObservationIgnored private var workspaceSharing: [String: Bool] = [:]
+	@ObservationIgnored private var queue: [AnalyticsEvent] = []
+	@ObservationIgnored private var flushing = false
+	/// Tests turn this off and call `flushNow()` themselves, so a send never races an assertion.
+	@ObservationIgnored private var sendsOnItsOwn = true
+	/// The app came to the front but nobody was signed in yet (a cold start restores the session a
+	/// moment later). The `app_opened` is sent once the person is known.
 	@ObservationIgnored private var openWaitingForSignIn = false
 	/// Cards already counted as shown since launch, like the web's per-page-load record.
 	@ObservationIgnored private var impressedCards: Set<String> = []
 
-	static let consentKey = "analytics.consent.v1"
+	static let enabledKey = "analytics.enabled.v1"
+	/// The answer to the old one-time question. Only read, so a "No thanks" is still respected.
+	static let legacyConsentKey = "analytics.consent.v1"
+	static let queueKey = "analytics.queue.v1"
 	static let installedKey = "analytics.sent.app_installed.v1"
 	static let activeDayKey = "analytics.sent.app_active_day.v1"
 	static func firstSignInKey(_ actorId: String) -> String { "analytics.sent.first_sign_in.v1.\(actorId)" }
+
+	/// Most events kept on the phone. The oldest go first.
+	static let maxQueued = 200
+	/// A full queue sends without waiting for the app to go to the background.
+	static let flushThreshold = 20
+	/// The server takes at most 50 per batch.
+	static let batchSize = 50
+	/// The server refuses actions older than a week. Drop a day before that.
+	static let maxAge: TimeInterval = 6 * 24 * 60 * 60
+	/// The server refuses actions more than 5 minutes ahead of it.
+	static let maxFuture: TimeInterval = 4 * 60
 
 	/// Keys that usually hold a person's words or identity. Dropped from every event.
 	static let blockedKeys: Set<String> = [
@@ -115,70 +169,75 @@ public final class Analytics {
 
 	public init() {}
 
-	/// Wires the tool in. A nil sink (no project token in this build) keeps everything inert.
+	/// Wires the sender in and reads the saved switch and unsent events. A nil transport keeps
+	/// everything inert (previews, tests).
 	public func configure(
-		sink: (any AnalyticsSink)?, storage: any AnalyticsStorage = UserDefaultsAnalyticsStorage(),
-		clock: @escaping @Sendable () -> Date = { Date() }
+		transport: (any AnalyticsTransport)?, storage: any AnalyticsStorage = UserDefaultsAnalyticsStorage(),
+		clock: @escaping @Sendable () -> Date = { Date() }, sendsOnItsOwn: Bool = true
 	) {
-		self.sink = sink
+		self.sendsOnItsOwn = sendsOnItsOwn
+		self.transport = transport
 		self.storage = storage
 		self.clock = clock
-		consent = storage.value(for: Self.consentKey).flatMap(AnalyticsConsent.init(rawValue:)) ?? .undecided
-		if isActive { sink?.start() }
+		if let saved = storage.value(for: Self.enabledKey) {
+			isEnabled = saved == "1"
+		} else {
+			isEnabled = storage.value(for: Self.legacyConsentKey) != "denied"
+		}
+		queue = Self.readQueue(storage)
 		syncIdentity()
 	}
 
-	/// True when this build can send at all (it has a project token).
-	public var isAvailable: Bool { sink != nil }
+	/// True when this build can send at all, so Settings shows the switch.
+	public var isAvailable: Bool { transport != nil }
 
-	/// True when the person has agreed and the build can send.
-	public var isActive: Bool { sink != nil && consent == .granted }
+	/// True when events are being queued: the switch is on and the selected workspace shares usage.
+	public var isActive: Bool { transport != nil && isEnabled && workspaceSharesUsage }
 
-	/// The one-time question is owed: the build can send, the person is signed in, and they have
-	/// not answered yet.
-	public var needsConsentPrompt: Bool { isAvailable && consent == .undecided && actorId != nil }
+	private var workspaceSharesUsage: Bool {
+		workspaceId.map { workspaceSharing[$0] ?? true } ?? true
+	}
 
-	public func setConsent(_ granted: Bool) {
-		storage.set(granted ? AnalyticsConsent.granted.rawValue : AnalyticsConsent.denied.rawValue, for: Self.consentKey)
-		consent = granted ? .granted : .denied
-		guard let sink else { return }
-		if granted {
-			sink.start()
+	/// The Settings switch. Turning it off also forgets what has not been sent yet.
+	public func setEnabled(_ enabled: Bool) {
+		storage.set(enabled ? "1" : "0", for: Self.enabledKey)
+		isEnabled = enabled
+		if enabled {
 			syncIdentity()
 			appOpened()
 		} else {
-			sink.stop()
-			identifiedActorId = nil
-			groupedWorkspaceId = nil
+			queue = []
+			persistQueue()
 		}
+	}
+
+	/// The workspaces the person belongs to, with each one's usage-sharing setting. Events for a
+	/// workspace that does not share are forgotten at once.
+	public func workspacesLoaded(_ workspaces: [WorkspaceSummary]) {
+		workspaceSharing = Dictionary(workspaces.map { ($0.id, $0.sharesUsage) }) { _, last in last }
+		let before = queue.count
+		queue.removeAll { workspaceSharing[$0.workspaceId] == false }
+		if queue.count != before { persistQueue() }
+		syncIdentity()
 	}
 
 	/// Called whenever the signed-in actor or workspace changes (nil actor = signed out).
 	public func sessionChanged(actorId: String?, workspaceId: String?) {
-		let signedOut = actorId == nil && self.actorId != nil
+		let leaving = self.actorId != nil && actorId != self.actorId
 		self.actorId = actorId
 		self.workspaceId = workspaceId
-		if signedOut, isActive {
-			sink?.reset()
-			identifiedActorId = nil
-			groupedWorkspaceId = nil
+		// Events belong to the person who made them. They are not sent under someone else's key.
+		if leaving {
+			queue = []
+			persistQueue()
 		}
 		syncIdentity()
+		if actorId != nil { flush() }
 	}
 
-	/// Identifies the person, joins the workspace group and sends the once-only events that were
-	/// waiting for consent or for a sign-in.
+	/// Sends the once-only events that were waiting for a sign-in.
 	private func syncIdentity() {
-		guard isActive, let sink, let actorId else { return }
-		if identifiedActorId != actorId {
-			sink.identify(actorId)
-			identifiedActorId = actorId
-			groupedWorkspaceId = nil
-		}
-		if let workspaceId, groupedWorkspaceId != workspaceId {
-			sink.group(type: "workspace", key: workspaceId)
-			groupedWorkspaceId = workspaceId
-		}
+		guard isActive, let actorId, workspaceId != nil else { return }
 		sendOnce(Self.installedKey, event: "app_installed")
 		sendOnce(Self.firstSignInKey(actorId), event: "first_sign_in")
 		if openWaitingForSignIn {
@@ -197,9 +256,9 @@ public final class Analytics {
 	/// and weekly active people event, same name and `utc_day` as the web app).
 	public func appOpened() {
 		guard isActive else { return }
-		// No actor yet: nothing goes out and the day must not be marked as sent. Remember the open
+		// No person yet: nothing goes out and the day must not be marked as sent. Remember the open
 		// so it goes out as soon as the session is restored.
-		guard actorId != nil else {
+		guard actorId != nil, workspaceId != nil else {
 			openWaitingForSignIn = true
 			return
 		}
@@ -209,6 +268,7 @@ public final class Analytics {
 			storage.set(day, for: Self.activeDayKey)
 			track("app_active", ["utc_day": .string(day)])
 		}
+		flush()
 	}
 
 	/// A main screen came on show.
@@ -265,27 +325,81 @@ public final class Analytics {
 			])
 	}
 
-	/// Sends one event if the person has agreed and is signed in.
+	/// Queues one event when sending is on and a person is signed in. Events the server does not
+	/// allow are dropped here, so one of them cannot cost the whole batch.
 	public func track(_ event: String, _ properties: AnalyticsProperties = [:]) {
-		guard isActive, let sink, let actorId else { return }
-		sink.capture(event, properties: Self.compose(
-			event: event, properties: properties, actorId: actorId, workspaceId: workspaceId))
+		guard isActive, let actorId, let workspaceId else { return }
+		let safe = properties.filter { !Self.blockedKeys.contains($0.key.lowercased()) }
+		guard let clean = AnalyticsAllowlist.clean(event: event, properties: safe) else { return }
+		queue.append(
+			AnalyticsEvent(
+				name: event, properties: clean, occurredAt: clock(), workspaceId: workspaceId,
+				actorId: actorId))
+		if queue.count > Self.maxQueued { queue.removeFirst(queue.count - Self.maxQueued) }
+		persistQueue()
+		if queue.count >= Self.flushThreshold { flush() }
 	}
 
-	/// The properties an event leaves with: caller values minus blocked keys, then the shared ones.
-	static func compose(
-		event: String, properties: AnalyticsProperties, actorId: String, workspaceId: String?
-	) -> AnalyticsProperties {
-		var result: AnalyticsProperties = [:]
-		if let area = AnalyticsFeatureArea.forEvent(event) { result["feature_area"] = .string(area.rawValue) }
-		for (key, value) in properties where !blockedKeys.contains(key.lowercased()) {
-			result[key] = value
+	/// Sends what is queued, a batch at a time. Called when the app comes to the front or goes to
+	/// the background, when someone signs in, and when the queue fills. Safe to call often: one send
+	/// runs at a time, and a failed one leaves the events for the next call.
+	public func flush() {
+		guard sendsOnItsOwn else { return }
+		Task { await flushNow() }
+	}
+
+	func flushNow() async {
+		guard let transport, isEnabled, !flushing else { return }
+		flushing = true
+		defer { flushing = false }
+		dropUnsendable()
+		while let first = queue.first {
+			let workspace = first.workspaceId
+			let batch = Array(queue.lazy.filter { $0.workspaceId == workspace }.prefix(Self.batchSize))
+			do {
+				try await transport.send(batch, workspaceId: workspace)
+			} catch is AnalyticsRejected {
+				// The server will never take this batch. Dropping it keeps one bad event from
+				// blocking everything behind it.
+			} catch {
+				return
+			}
+			let sent = Set(batch.map(\.id))
+			queue.removeAll { sent.contains($0.id) }
+			persistQueue()
 		}
-		if let workspaceId { result["workspace_id"] = .string(workspaceId) }
-		result["actor_id"] = .string(actorId)
-		result["actor_type"] = "human"
-		result["surface"] = "iphone"
-		return result
+	}
+
+	/// Events that must not go out: too old or ahead of the clock for the server, made by someone
+	/// else, or for a workspace that does not share usage.
+	private func dropUnsendable() {
+		let now = clock()
+		let before = queue.count
+		queue.removeAll {
+			$0.occurredAt < now.addingTimeInterval(-Self.maxAge)
+				|| $0.occurredAt > now.addingTimeInterval(Self.maxFuture) || $0.actorId != actorId
+				|| workspaceSharing[$0.workspaceId] == false
+		}
+		if queue.count != before { persistQueue() }
+	}
+
+	var queuedEvents: [AnalyticsEvent] { queue }
+
+	private func persistQueue() {
+		guard !queue.isEmpty else {
+			storage.set(nil, for: Self.queueKey)
+			return
+		}
+		let encoder = JSONEncoder()
+		encoder.dateEncodingStrategy = .iso8601
+		storage.set((try? encoder.encode(queue)).flatMap { String(data: $0, encoding: .utf8) }, for: Self.queueKey)
+	}
+
+	private static func readQueue(_ storage: any AnalyticsStorage) -> [AnalyticsEvent] {
+		guard let text = storage.value(for: queueKey), let data = text.data(using: .utf8) else { return [] }
+		let decoder = JSONDecoder()
+		decoder.dateDecodingStrategy = .iso8601
+		return (try? decoder.decode([AnalyticsEvent].self, from: data)) ?? []
 	}
 
 	static func utcDay(_ date: Date) -> String {

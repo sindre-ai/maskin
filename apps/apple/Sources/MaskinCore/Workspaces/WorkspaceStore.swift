@@ -9,12 +9,26 @@ public struct WorkspaceSummary: Identifiable, Sendable, Equatable, Codable {
 	/// The signed-in actor's role in it (`owner`, `member`, …).
 	public var role: String
 	public var memberCount: Int
+	/// The workspace's usage-sharing setting (`settings.privacy.share_usage`, on unless set to
+	/// false). Product analytics from the phone stop while it is off.
+	public var sharesUsage: Bool
 
-	public init(id: String, name: String, role: String, memberCount: Int) {
+	public init(id: String, name: String, role: String, memberCount: Int, sharesUsage: Bool = true) {
 		self.id = id
 		self.name = name
 		self.role = role
 		self.memberCount = memberCount
+		self.sharesUsage = sharesUsage
+	}
+
+	// A list saved by an older build has no `sharesUsage`: it reads as on, the server's default.
+	public init(from decoder: any Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		id = try container.decode(String.self, forKey: .id)
+		name = try container.decode(String.self, forKey: .name)
+		role = try container.decode(String.self, forKey: .role)
+		memberCount = try container.decode(Int.self, forKey: .memberCount)
+		sharesUsage = try container.decodeIfPresent(Bool.self, forKey: .sharesUsage) ?? true
 	}
 }
 
@@ -42,12 +56,22 @@ public struct APIWorkspaceSource: WorkspaceListing {
 	private let client: Client
 	public init(client: Client) { self.client = client }
 
+	/// `settings.privacy.share_usage`. On unless the workspace set it to false, like the server.
+	static func sharesUsage(_ privacy: OpenAPIValueContainer?) -> Bool {
+		guard let privacy = privacy?.value as? [String: (any Sendable)?],
+			let flag = privacy["share_usage"] as? Bool
+		else { return true }
+		return flag
+	}
+
 	public func listWorkspaces() async throws -> [WorkspaceSummary] {
 		let output = try await client.get_sol_api_sol_workspaces()
 		switch output {
 		case .ok(let ok):
 			return try ok.body.json.map {
-				WorkspaceSummary(id: $0.id, name: $0.name, role: $0.role, memberCount: $0.memberCount)
+				WorkspaceSummary(
+					id: $0.id, name: $0.name, role: $0.role, memberCount: $0.memberCount,
+					sharesUsage: Self.sharesUsage($0.settings?.additionalProperties["privacy"]))
 			}
 		default:
 			throw WorkspaceListingError("Couldn't load workspaces.")
@@ -105,6 +129,7 @@ public final class WorkspaceStore {
 		workspaces = entry.value
 		phase = .loaded
 		freshness.hydrated(from: entry.savedAt)
+		Analytics.shared.workspacesLoaded(entry.value)
 	}
 
 	/// The person just deleted their last workspace and has not yet answered "Delete your account
@@ -150,6 +175,7 @@ public final class WorkspaceStore {
 			workspaces = list
 			phase = .loaded
 			freshness.refreshed(at: Date())
+			Analytics.shared.workspacesLoaded(list)
 			SyncLog.revalidated(Self.cacheName, ok: true, since: started)
 			if let disk, let key = cacheKey { disk.write(list, key: key, version: 1) }
 			if selected == nil, let first = list.first { auth.selectWorkspace(first.id) }

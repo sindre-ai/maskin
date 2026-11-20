@@ -52,9 +52,15 @@ struct MaskinApp: App {
 		// Agent names, thread links and Spotlight entries belong to the account that is leaving.
 		environment.auth.onSessionEnded { _ in Task { await MaskinIntentsContext.wipe() } }
 		_environment = State(initialValue: environment)
-		// Nil without a PostHog token in this build; then every analytics call is a no-op. Nothing is
-		// sent until the person agrees (see Analytics).
-		Analytics.shared.configure(sink: PostHogSink.forThisBuild())
+		// Product usage events go to the server route, which applies the workspace's privacy
+		// settings. On unless the person turns it off in Settings. Debug builds (simulators, UI
+		// tests against the demo server) send nothing, as before when no project key was set.
+		#if os(iOS) && !DEBUG
+			Analytics.shared.configure(
+				transport: APIAnalyticsTransport(
+					baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider))
+		#endif
 		let registrar = PushRegistrar(
 			system: SystemPushSystem(), devices: APIDeviceRegistrar(
 				baseURL: environment.baseURL, clientSource: environment.clientSource,
@@ -113,7 +119,10 @@ struct MaskinApp: App {
 			// Stage Manager and Split View may shrink the window, but never below 320 × 480.
 			.windowResizability(.contentMinSize)
 			.onChange(of: scenePhase) { _, phase in
-				if phase == .background { BackgroundRefresh.schedule() }
+				if phase == .background {
+					BackgroundRefresh.schedule()
+					Analytics.shared.flush()
+				}
 				// Back in front: the agents card has no push path on this server, so refetch now.
 				if phase == .active {
 					Analytics.shared.appOpened()

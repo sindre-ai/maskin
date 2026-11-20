@@ -49,6 +49,9 @@ const EVENT_PROPERTIES: Record<string, Record<string, ValueRule>> = {
 		bulk_batch_size: 'int',
 	},
 	object_viewed: { entity_id: 'id', entity_type: ['object'], object_type: 'id' },
+	// The Chats list events: buckets and categories only, never a chat title, id or search text.
+	chat_opened_from_list: { source: 'id', section: 'id', position_bucket: 'id' },
+	chat_list_search_used: { result_count_bucket: 'id' },
 	// The two generic step events from the plan, for flows with no screen of their own.
 	flow_step: { flow: 'id', step: 'id', flow_id: 'id', duration_ms: 'int' },
 	flow_error: { flow: 'id', step: 'id', error_category: 'id' },
