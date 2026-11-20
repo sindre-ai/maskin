@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 /// The text view is found beside this background first. On the iOS 18 selection field it does not sit there, so
 /// when the field takes focus the hook also looks for the text view that is the first responder, which is the
 /// one the edit menu belongs to.
+/// UIKit's text field decides from the text on the clipboard whether Paste shows, so a paste configuration alone
+/// never offered Paste for a picture. `ComposerImagePasteOverride` covers that.
 struct ComposerImagePasteHook: UIViewRepresentable {
 	var isFocused = false
 	let onImage: @MainActor (Data) -> Void
@@ -102,6 +104,23 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 		} else if let textField = view as? UITextField {
 			textField.pasteDelegate = self
 		}
+		ComposerImagePasteOverride.apply(to: view, handler: self)
+	}
+
+	/// Hands the picture on the clipboard to `onImage`. Called from Paste in the edit menu, which iOS never prompts for.
+	func pasteImageFromClipboard() {
+		guard let provider = UIPasteboard.general.itemProviders.first(where: {
+			$0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+		}) else { return }
+		deliver(provider)
+	}
+
+	private func deliver(_ provider: NSItemProvider) {
+		let callback = onImage
+		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+			guard let data else { return }
+			Task { @MainActor in callback(data) }
+		}
 	}
 
 	func textPasteConfigurationSupporting(
@@ -115,11 +134,56 @@ final class ComposerImagePasteHandler: NSObject, UITextPasteDelegate {
 			return
 		}
 		item.setNoResult()
-		let deliver = onImage
-		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-			guard let data else { return }
-			Task { @MainActor in deliver(data) }
+		deliver(provider)
+	}
+}
+
+/// Gives the live text input a subclass that also takes Paste while the clipboard holds a picture and no text.
+/// Text on the clipboard, with or without a picture, still goes to the input's own paste.
+enum ComposerImagePasteOverride {
+	nonisolated(unsafe) private static var handlerKey: UInt8 = 0
+	private static let prefix = "MaskinImagePaste_"
+
+	private static var clipboardHoldsOnlyPicture: Bool {
+		UIPasteboard.general.hasImages && !UIPasteboard.general.hasStrings
+	}
+
+	static func apply(to view: UIView, handler: ComposerImagePasteHandler) {
+		objc_setAssociatedObject(view, &handlerKey, handler, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+		let base: AnyClass = type(of: view)
+		let baseName = NSStringFromClass(base)
+		guard !baseName.hasPrefix(prefix) else { return }
+		let name = prefix + baseName
+		if let existing = NSClassFromString(name) {
+			object_setClass(view, existing)
+			return
 		}
+		guard let subclass = objc_allocateClassPair(base, name, 0) else { return }
+
+		let canPerformSelector = #selector(UIResponder.canPerformAction(_:withSender:))
+		let pasteSelector = #selector(UIResponder.paste(_:))
+		typealias CanPerform = @convention(c) (AnyObject, Selector, Selector, Any?) -> Bool
+		typealias Paste = @convention(c) (AnyObject, Selector, Any?) -> Void
+		let superCanPerform = unsafeBitCast(class_getMethodImplementation(base, canPerformSelector), to: CanPerform.self)
+		let superPaste = unsafeBitCast(class_getMethodImplementation(base, pasteSelector), to: Paste.self)
+
+		let canPerform: @convention(block) (AnyObject, Selector, Any?) -> Bool = { object, action, sender in
+			if action == pasteSelector, clipboardHoldsOnlyPicture { return true }
+			return superCanPerform(object, canPerformSelector, action, sender)
+		}
+		let paste: @convention(block) (AnyObject, Any?) -> Void = { object, sender in
+			if clipboardHoldsOnlyPicture,
+				let handler = objc_getAssociatedObject(object, &handlerKey) as? ComposerImagePasteHandler
+			{
+				MainActor.assumeIsolated { handler.pasteImageFromClipboard() }
+				return
+			}
+			superPaste(object, pasteSelector, sender)
+		}
+		class_addMethod(subclass, canPerformSelector, imp_implementationWithBlock(unsafeBitCast(canPerform, to: AnyObject.self)), "B@::@")
+		class_addMethod(subclass, pasteSelector, imp_implementationWithBlock(unsafeBitCast(paste, to: AnyObject.self)), "v@:@")
+		objc_registerClassPair(subclass)
+		object_setClass(view, subclass)
 	}
 }
 #endif

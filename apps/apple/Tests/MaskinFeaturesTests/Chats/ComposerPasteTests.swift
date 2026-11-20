@@ -42,6 +42,17 @@ struct ComposerPasteTests {
 		#expect(types.contains(UTType.text.identifier))
 		#expect(types.contains(UTType.image.identifier))
 	}
+
+	@Test("an input with image paste setup offers Paste while the clipboard holds only a picture")
+	func offersPasteForPicture() {
+		let field = UITextField()
+		ComposerImagePasteHandler().install(on: field)
+		UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+			UIColor.orange.setFill()
+			context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+		}
+		#expect(field.canPerformAction(#selector(UIResponder.paste(_:)), withSender: nil))
+	}
 	#endif
 }
 
