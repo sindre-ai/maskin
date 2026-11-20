@@ -100,7 +100,9 @@ export interface ListInput {
 	search?: string
 }
 
-export type BuiltRequest = { ok: true; url: string; limit: number } | { ok: false; message: string }
+export type BuiltRequest =
+	| { ok: true; url: string; limit: number; probed: boolean }
+	| { ok: false; message: string }
 
 const ESCAPED = /[+&#%=]/g
 
@@ -123,7 +125,9 @@ function clampInt(value: number | undefined, fallback: number, min: number, max:
 
 /**
  * The URL for one page. Asks for one row more than `limit`, so the caller can tell whether
- * another page exists without a count call.
+ * another page exists without a count call. Never asks for more than MAX_LIMIT rows: the issues
+ * and topics routes answered 400 to limit 51, so at limit 50 the page is asked for as it is
+ * (`probed` false) and a full page counts as "maybe more".
  */
 export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltRequest {
 	const spec = LIST_SPECS[list]
@@ -131,7 +135,8 @@ export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltReq
 	const skip = clampInt(input.skip, 0, 0, MAX_SKIP)
 
 	const order = [...(spec.dateField ? [`${spec.dateField} DESC`] : []), `${spec.tiebreaker} DESC`]
-	const filter: Record<string, unknown> = { limit: limit + 1, skip, order }
+	const asked = Math.min(limit + 1, MAX_LIMIT)
+	const filter: Record<string, unknown> = { limit: asked, skip, order }
 
 	if (input.since !== undefined) {
 		if (!spec.dateField) return { ok: false, message: `since is not available for ${list}.` }
@@ -151,7 +156,12 @@ export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltReq
 		if (!spec.searchable) return { ok: false, message: `search is not available for ${list}.` }
 		params.push(`search=${encodeURIComponent(input.search.trim().slice(0, 200))}`)
 	}
-	return { ok: true, url: `${DEEPDOTS_BASE_URL}${spec.path}?${params.join('&')}`, limit }
+	return {
+		ok: true,
+		url: `${DEEPDOTS_BASE_URL}${spec.path}?${params.join('&')}`,
+		limit,
+		probed: asked > limit,
+	}
 }
 
 function trimValue(value: unknown): unknown {
@@ -186,6 +196,8 @@ export function trimPage(
 	body: unknown,
 	limit: number,
 	skip: number,
+	/** False when the request had no extra row, so a full page is all we know. */
+	probed = true,
 ): TrimmedPage | null {
 	const rows = rowsOf(body)
 	if (!rows) return null
@@ -198,6 +210,6 @@ export function trimPage(
 		}
 		return out
 	})
-	const hasMore = rows.length > limit
+	const hasMore = probed ? rows.length > limit : rows.length >= limit
 	return { items, has_more: hasMore, next_skip: hasMore ? skip + limit : null }
 }

@@ -109,6 +109,34 @@ function failureForStatus(status: number): Outcome {
 	return failure('REQUEST_FAILED', `Deepdots answered with an unexpected status (${status}).`)
 }
 
+const MAX_REASON_LENGTH = 300
+
+/**
+ * Deepdots' own words for a refused request (400 or 422): the error message and the path and
+ * message of each validation detail, like "/filter/limit: must be <= 50". Those describe the
+ * request we sent, never feedback rows. The body is not read at all for other statuses, and
+ * only these fields are read, so nothing else in it can reach the agent.
+ */
+async function refusalReason(res: Response): Promise<string | null> {
+	try {
+		const error = ((await res.json()) as { error?: unknown }).error
+		if (!error || typeof error !== 'object') return null
+		const { message, details } = error as { message?: unknown; details?: unknown }
+		const parts: string[] = []
+		if (typeof message === 'string') parts.push(message)
+		if (Array.isArray(details)) {
+			for (const d of details.slice(0, 5)) {
+				const { path, message: m } = (d ?? {}) as { path?: unknown; message?: unknown }
+				if (typeof m === 'string') parts.push(typeof path === 'string' ? `${path}: ${m}` : m)
+			}
+		}
+		const reason = parts.join(' ').replace(/\s+/g, ' ').trim()
+		return reason ? reason.slice(0, MAX_REASON_LENGTH) : null
+	} catch {
+		return null
+	}
+}
+
 const limitField = z
 	.number()
 	.int()
@@ -256,7 +284,16 @@ async function runList(
 	}
 
 	logger.info('Deepdots MCP call', { workspaceId: ctx.workspaceId, tool, httpStatus: res.status })
-	if (!res.ok) return failureForStatus(res.status)
+	if (!res.ok) {
+		const outcome = failureForStatus(res.status)
+		if (res.status !== 400 && res.status !== 422) return outcome
+		const reason = await refusalReason(res)
+		if (!reason) return outcome
+		return failure(
+			'REQUEST_FAILED',
+			`Deepdots answered with an unexpected status (${res.status}): ${reason}`,
+		)
+	}
 
 	let body: unknown
 	try {
@@ -264,7 +301,13 @@ async function runList(
 	} catch {
 		return failure('UNEXPECTED_RESPONSE', 'Deepdots answered with something that is not JSON.')
 	}
-	const page = trimPage(list, body, built.limit, Math.max(0, Math.trunc(input.skip ?? 0)))
+	const page = trimPage(
+		list,
+		body,
+		built.limit,
+		Math.max(0, Math.trunc(input.skip ?? 0)),
+		built.probed,
+	)
 	if (!page) {
 		return failure('UNEXPECTED_RESPONSE', 'Deepdots answered with something that is not a list.')
 	}
