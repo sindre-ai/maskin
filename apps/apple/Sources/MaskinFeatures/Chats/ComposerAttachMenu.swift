@@ -124,6 +124,8 @@ struct ComposerAttachMenu: View {
 			}
 			.labelStyle(.titleOnly)
 			.buttonBorderShape(.roundedRectangle)
+			// The button's own title reads "Paste"; the label stays "Paste image" for VoiceOver and the must-keep test (MK-07b).
+			.accessibilityLabel("Paste image")
 			Spacer(minLength: 0)
 		}
 		.padding(.horizontal, MaskinSpace.s9)
