@@ -8,8 +8,8 @@
 -- with 24,405 events, per lookup, and the cards run in parallel until the feed times out.
 --
 -- Partial, so it holds only those three actions (226 of 910,054 events today) and the write cost is
--- one more index entry on a rare event. The lookups spell the action as a literal, so the planner can
--- prove the query implies this predicate.
+-- one more index entry on a rare event. The pool runs with prepare: false, so each lookup is planned
+-- with its real action value and the planner can prove the query implies this predicate.
 --
 -- `events` is written on every mutation, so the build is CONCURRENTLY and alone in its file
 -- (see packages/db/MIGRATIONS.md Rule 1). IF NOT EXISTS lets a retry pass after an interrupted
