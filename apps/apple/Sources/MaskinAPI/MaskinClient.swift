@@ -132,7 +132,9 @@ public enum ErrorReportTags {
 	public static let allowed: Set<String> = ["kind", "operation", "status", "workspace_id", "app_version", "build"]
 
 	public static func scrub(_ tags: [String: String]) -> [String: String] {
-		tags.filter { allowed.contains($0.key) }
+		var kept: [String: String] = [:]
+		for (key, value) in tags where allowed.contains(key) { kept[key] = value }
+		return kept
 	}
 }
 
@@ -143,7 +145,9 @@ public enum ErrorReportScrub {
 	public static let contextKeys: Set<String> = ["app", "device", "os"]
 
 	public static func contexts<Value>(_ contexts: [String: Value]) -> [String: Value] {
-		contexts.filter { contextKeys.contains($0.key) }
+		var kept: [String: Value] = [:]
+		for (key, value) in contexts where contextKeys.contains(key) { kept[key] = value }
+		return kept
 	}
 
 	/// An exception's text can hold whatever the code was working on, so only its type is kept.
@@ -177,16 +181,23 @@ public final class ErrorReporter: @unchecked Sendable {
 
 	public init(now: @escaping @Sendable () -> Date = { Date() }) { self.now = now }
 
+	// The lock is taken with lock() and unlock(), not with withLock { }: the Swift 6.3 compiler in Xcode 26.6
+	// never finishes optimizing a closure like that one when it has several exits (it looped for over an
+	// hour in the closure-lifetime pass), so nothing in this class passes a closure to the lock.
+
 	public func configure(sink: (any ErrorReportSink)?) {
-		lock.withLock { self.sink = sink }
-		sink?.workspaceChanged(lock.withLock { workspaceId })
+		lock.lock()
+		self.sink = sink
+		let current = workspaceId
+		lock.unlock()
+		sink?.workspaceChanged(current)
 	}
 
 	public func setWorkspace(_ workspaceId: String?) {
-		let sink = lock.withLock { () -> (any ErrorReportSink)? in
-			self.workspaceId = workspaceId
-			return self.sink
-		}
+		lock.lock()
+		self.workspaceId = workspaceId
+		let sink = self.sink
+		lock.unlock()
 		sink?.workspaceChanged(workspaceId)
 	}
 
@@ -226,20 +237,30 @@ public final class ErrorReporter: @unchecked Sendable {
 	}
 
 	private func submit(_ report: ErrorReport) {
-		let (sink, send) = lock.withLock { () -> ((any ErrorReportSink)?, ErrorReport?) in
-			guard let sink else { return (nil, nil) }
-			var report = report
-			report.workspaceId = workspaceId
-			let key = "\(report.kind.rawValue)\u{0}\(report.operationID)\u{0}\(report.workspaceId ?? "")"
-			let at = now()
-			if let previous = lastSent[key], at.timeIntervalSince(previous) < Self.window { return (sink, nil) }
-			if lastSent.count >= Self.pruneAbove {
-				lastSent = lastSent.filter { at.timeIntervalSince($0.value) < Self.window }
-			}
-			lastSent[key] = at
-			return (sink, report)
+		var report = report
+		lock.lock()
+		guard let sink else {
+			lock.unlock()
+			return
 		}
-		if let send { sink?.send(send) }
+		report.workspaceId = workspaceId
+		let key = "\(report.kind.rawValue)\u{0}\(report.operationID)\u{0}\(report.workspaceId ?? "")"
+		let at = now()
+		var isRepeat = false
+		if let previous = lastSent[key], at.timeIntervalSince(previous) < Self.window { isRepeat = true }
+		if !isRepeat {
+			if lastSent.count >= Self.pruneAbove { dropExpired(at: at) }
+			lastSent[key] = at
+		}
+		lock.unlock()
+		if !isRepeat { sink.send(report) }
+	}
+
+	/// Called with the lock held.
+	private func dropExpired(at: Date) {
+		var kept: [String: Date] = [:]
+		for (key, sentAt) in lastSent where at.timeIntervalSince(sentAt) < Self.window { kept[key] = sentAt }
+		lastSent = kept
 	}
 }
 

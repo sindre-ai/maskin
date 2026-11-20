@@ -9,17 +9,41 @@ private final class RecordingSink: ErrorReportSink, @unchecked Sendable {
 	private let lock = NSLock()
 	private var _reports: [ErrorReport] = []
 	private var _workspaces: [String?] = []
-	var reports: [ErrorReport] { lock.withLock { _reports } }
-	var workspaces: [String?] { lock.withLock { _workspaces } }
-	func send(_ report: ErrorReport) { lock.withLock { _reports.append(report) } }
-	func workspaceChanged(_ workspaceId: String?) { lock.withLock { _workspaces.append(workspaceId) } }
+	var reports: [ErrorReport] {
+		lock.lock()
+		defer { lock.unlock() }
+		return _reports
+	}
+	var workspaces: [String?] {
+		lock.lock()
+		defer { lock.unlock() }
+		return _workspaces
+	}
+	func send(_ report: ErrorReport) {
+		lock.lock()
+		_reports.append(report)
+		lock.unlock()
+	}
+	func workspaceChanged(_ workspaceId: String?) {
+		lock.lock()
+		_workspaces.append(workspaceId)
+		lock.unlock()
+	}
 }
 
 private final class Clock: @unchecked Sendable {
 	private let lock = NSLock()
 	private var at = Date(timeIntervalSince1970: 1_800_000_000)
-	func now() -> Date { lock.withLock { at } }
-	func advance(_ seconds: TimeInterval) { lock.withLock { at = at.addingTimeInterval(seconds) } }
+	func now() -> Date {
+		lock.lock()
+		defer { lock.unlock() }
+		return at
+	}
+	func advance(_ seconds: TimeInterval) {
+		lock.lock()
+		at = at.addingTimeInterval(seconds)
+		lock.unlock()
+	}
 }
 
 private func make() -> (ErrorReporter, RecordingSink, Clock) {
