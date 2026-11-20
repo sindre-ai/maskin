@@ -28,12 +28,16 @@ describe('GATEWAY_PROVIDERS', () => {
 			'azure-devops',
 			'canva',
 			'clickup',
+			'fathom',
+			'fireflies',
 			'gmail',
 			'google-calendar',
+			'granola',
 			'linear',
 			'miro',
 			'mixpanel',
 			'notion',
+			'otter',
 			'posthog',
 			'resend',
 			'sentry',
@@ -42,6 +46,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'vercel',
 			'webflow',
 			'zapier',
+			'zoom',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {
 			expect(GATEWAY_PROVIDERS.has(other)).toBe(false)

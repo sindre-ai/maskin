@@ -13,8 +13,10 @@ import { config as clickupConfig } from './providers/clickup/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
-import { githubAuth } from './providers/github/auth'
 // Import provider configs
+import { config as fathomConfig } from './providers/fathom/config'
+import { config as firefliesConfig } from './providers/fireflies/config'
+import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as gmailConfig } from './providers/gmail/config'
@@ -39,6 +41,7 @@ import {
 } from './providers/google-meet/webhooks'
 import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
 import { startGscBackfill } from './providers/google-search-console/sync'
+import { config as granolaConfig } from './providers/granola/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -55,6 +58,7 @@ import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
 import { config as notionConfig } from './providers/notion/config'
+import { config as otterConfig } from './providers/otter/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as sentryConfig } from './providers/sentry/config'
@@ -80,6 +84,7 @@ import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as zapierConfig } from './providers/zapier/config'
+import { config as zoomConfig } from './providers/zoom/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -255,6 +260,26 @@ providers.set('sentry', {
 
 providers.set('zapier', {
 	config: zapierConfig,
+})
+
+providers.set('zoom', {
+	config: zoomConfig,
+})
+
+providers.set('fireflies', {
+	config: firefliesConfig,
+})
+
+providers.set('granola', {
+	config: granolaConfig,
+})
+
+providers.set('fathom', {
+	config: fathomConfig,
+})
+
+providers.set('otter', {
+	config: otterConfig,
 })
 
 providers.set('stripe', {

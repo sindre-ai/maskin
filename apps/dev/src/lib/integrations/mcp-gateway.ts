@@ -41,12 +41,16 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'azure-devops',
 	'canva',
 	'clickup',
+	'fathom',
+	'fireflies',
 	'gmail',
 	'google-calendar',
+	'granola',
 	'linear',
 	'miro',
 	'mixpanel',
 	'notion',
+	'otter',
 	'posthog',
 	'resend',
 	'sentry',
@@ -55,6 +59,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'vercel',
 	'webflow',
 	'zapier',
+	'zoom',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000
