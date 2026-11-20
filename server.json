@@ -2,7 +2,7 @@
 	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
 	"name": "io.github.sindre-ai/maskin",
 	"title": "Maskin",
-	"description": "MCP-native agentic workspace where humans set direction and agents run the shop. 68 tools.",
+	"description": "Open-source workspace where AI agents do the work and humans set direction. Apache 2.0.",
 	"version": "0.1.0",
 	"websiteUrl": "https://maskin.io",
 	"repository": {
