@@ -1,8 +1,21 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects, sessions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	files,
+	messages,
+	objects,
+	sessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
+import {
+	createCommentSchema,
+	eventQuerySchema,
+	updateCommentSchema,
+	validateDecisionProse,
+} from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import {
@@ -761,6 +774,100 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	return c.json(serialized, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+// PATCH /api/events/:id - Edit the text of a comment you wrote
+const updateCommentRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	'x-viewer-policy': 'writer',
+	tags: ['events'],
+	summary: 'Edit the text of your own comment on an object',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: updateCommentSchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Comment updated',
+			content: { 'application/json': { schema: eventResponseSchema } },
+		},
+		400: {
+			description: 'Invalid request, or a comment that cannot be edited',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Only the author can edit a comment',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Comment not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+	const { content } = c.req.valid('json')
+
+	const [existing] = await db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.id, id),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+			),
+		)
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	if (existing.actorId !== actorId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the author can edit this comment'),
+			403 as never,
+		)
+	}
+
+	const data = (existing.data ?? {}) as Record<string, unknown>
+	// A decision card is a set of buttons a person already tapped or may tap; its words are fixed.
+	if (data.decision) {
+		return c.json(createApiError('BAD_REQUEST', 'A decision card cannot be edited'), 400 as never)
+	}
+
+	// Only the words and the edit time change. The row is updated in place, never re-inserted, so
+	// the insert-time dispatch (mentions, agent sessions, notifications) cannot run again, and
+	// the stored mentions, attachments and parent stay exactly as they were.
+	const editedAt = new Date()
+	const [updated] = await db
+		.update(events)
+		.set({ data: { ...data, content, editedAt: editedAt.toISOString() } })
+		.where(eq(events.id, id))
+		.returning()
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+
+	// The same comment shown in the object's chat follows the edit. Best effort: the comment is
+	// the record, the chat message is its mirror.
+	try {
+		await db
+			.update(messages)
+			.set({ content, editedAt })
+			.where(sql`(${messages.metadata}->>'comment_event_id') = ${String(id)}`)
+	} catch (err) {
+		logger.warn('Failed to carry a comment edit into the object chat', {
+			commentEventId: id,
+			error: String(err),
+		})
+	}
+
+	return c.json(serializeArray([updated])[0] as z.infer<typeof eventResponseSchema>, 200)
+}) as RouteHandler<typeof updateCommentRoute, Env>)
 
 type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }
 
