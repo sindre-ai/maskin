@@ -28,6 +28,11 @@ interface ListSpec {
 	tiebreaker: string
 	/** True when the route has a text search (the "search" query parameter). */
 	searchable: boolean
+	/**
+	 * True when the list is small (one row per topic), so a last-resort request with no filter at
+	 * all is safe to read whole and cut here.
+	 */
+	bareFallback: boolean
 	/** The fields an agent gets back. Anything else is dropped. */
 	fields: readonly string[]
 }
@@ -40,6 +45,7 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		dateField: 'generatedAt',
 		tiebreaker: 'id',
 		searchable: false,
+		bareFallback: false,
 		fields: ['id', 'name', 'summary', 'status', 'identity', 'type', 'generatedAt', 'updatedAt'],
 	},
 	issues: {
@@ -47,6 +53,7 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		dateField: 'externalGeneratedAt',
 		tiebreaker: 'id',
 		searchable: false,
+		bareFallback: false,
 		fields: [
 			'id',
 			'issues_name',
@@ -65,6 +72,7 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		dateField: 'last_generated_at',
 		tiebreaker: 'slug',
 		searchable: true,
+		bareFallback: false,
 		fields: [
 			'slug',
 			'opportunity_name',
@@ -81,6 +89,7 @@ export const LIST_SPECS: Record<DeepdotsList, ListSpec> = {
 		dateField: null,
 		tiebreaker: 'topic',
 		searchable: false,
+		bareFallback: true,
 		fields: [
 			'topic',
 			'severity',
@@ -100,7 +109,19 @@ export interface ListInput {
 	search?: string
 }
 
-export type BuiltRequest = { ok: true; url: string; limit: number } | { ok: false; message: string }
+/**
+ * How much of the filter a request carries. Deepdots answers 400 to a request it dislikes, and
+ * the routes were never checked against a live answer, so a refused request is retried once per
+ * smaller shape (see runList in mcp-server.ts):
+ *  - full: limit, skip, order and since;
+ *  - unsorted: the same without the order, in case a sort field is not known to the route;
+ *  - bare: no filter at all, for the small per-topic list only (see ListSpec.bareFallback).
+ */
+export type RequestShape = 'full' | 'unsorted' | 'bare'
+
+export type BuiltRequest =
+	| { ok: true; url: string; limit: number; clientSkip: number }
+	| { ok: false; message: string }
 
 const ESCAPED = /[+&#%=]/g
 
@@ -125,13 +146,18 @@ function clampInt(value: number | undefined, fallback: number, min: number, max:
  * The URL for one page. Asks for one row more than `limit`, so the caller can tell whether
  * another page exists without a count call.
  */
-export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltRequest {
+export function buildListRequest(
+	list: DeepdotsList,
+	input: ListInput,
+	shape: RequestShape = 'full',
+): BuiltRequest {
 	const spec = LIST_SPECS[list]
 	const limit = clampInt(input.limit, DEFAULT_LIMIT, 1, MAX_LIMIT)
 	const skip = clampInt(input.skip, 0, 0, MAX_SKIP)
 
 	const order = [...(spec.dateField ? [`${spec.dateField} DESC`] : []), `${spec.tiebreaker} DESC`]
-	const filter: Record<string, unknown> = { limit: limit + 1, skip, order }
+	const filter: Record<string, unknown> = { limit: limit + 1, skip }
+	if (shape === 'full') filter.order = order
 
 	if (input.since !== undefined) {
 		if (!spec.dateField) return { ok: false, message: `since is not available for ${list}.` }
@@ -146,12 +172,26 @@ export function buildListRequest(list: DeepdotsList, input: ListInput): BuiltReq
 		filter.where = { [spec.dateField]: { gte: when.toISOString() } }
 	}
 
-	const params = [`filter=${encodeURIComponent(serializeFilter(filter))}`]
+	// Without a filter the route answers its default page; skip is applied here instead.
+	const bare = shape === 'bare'
+	const params = bare ? [] : [`filter=${encodeURIComponent(serializeFilter(filter))}`]
 	if (input.search !== undefined && input.search.trim() !== '') {
 		if (!spec.searchable) return { ok: false, message: `search is not available for ${list}.` }
 		params.push(`search=${encodeURIComponent(input.search.trim().slice(0, 200))}`)
 	}
-	return { ok: true, url: `${DEEPDOTS_BASE_URL}${spec.path}?${params.join('&')}`, limit }
+	const query = params.length > 0 ? `?${params.join('&')}` : ''
+	return {
+		ok: true,
+		url: `${DEEPDOTS_BASE_URL}${spec.path}${query}`,
+		limit,
+		clientSkip: bare ? skip : 0,
+	}
+}
+
+/** Drops the first `count` rows of a list answer. Anything that is not a list is returned as is. */
+export function skipRows(body: unknown, count: number): unknown {
+	const rows = rowsOf(body)
+	return rows && count > 0 ? rows.slice(count) : body
 }
 
 function trimValue(value: unknown): unknown {
@@ -178,6 +218,8 @@ export interface TrimmedPage {
 	items: Record<string, unknown>[]
 	has_more: boolean
 	next_skip: number | null
+	/** Set when the page came from a smaller request than asked for, and what that costs. */
+	note?: string
 }
 
 /** Cuts the answer to the fields we offer and to `limit` rows. Null when it is not a list. */

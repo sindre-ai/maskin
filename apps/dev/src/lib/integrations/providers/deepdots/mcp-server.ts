@@ -11,9 +11,12 @@ import {
 	DEEPDOTS_BASE_URL,
 	DEFAULT_LIMIT,
 	type DeepdotsList,
+	LIST_SPECS,
 	MAX_LIMIT,
 	MAX_SKIP,
+	type RequestShape,
 	buildListRequest,
+	skipRows,
 	trimPage,
 } from './query'
 
@@ -30,7 +33,8 @@ import {
  * (see query.ts).
  *
  * Every call fires integration_tool_called with ids and an outcome only. No arguments, no rows,
- * no error text.
+ * no error text. The tool answer, unlike the event, carries the short error text Deepdots sends
+ * back with a refused request, so a failure can be read and fixed.
  */
 export const DEEPDOTS_PROVIDER = 'deepdots'
 export const DEEPDOTS_FETCH_TIMEOUT_MS = 20_000
@@ -89,8 +93,36 @@ function failure(code: string, message: string): Outcome {
 const NEEDS_ATTENTION_MESSAGE =
 	'The Deepdots connection needs attention: the saved sign-in no longer works. Ask a person to reconnect Deepdots under Settings, Integrations. This is not an outage, so do not retry.'
 
+const MAX_ERROR_TEXT = 300
+
+/**
+ * The reason Deepdots gives for a refused request, flattened to one short line. Deepdots answers
+ * with {"error": {"message", "details"}}; anything else is cut to the same length.
+ */
+async function errorText(res: Response): Promise<string> {
+	let raw = ''
+	try {
+		raw = await res.text()
+	} catch {
+		return 'no error text'
+	}
+	let text = raw
+	try {
+		const error = (JSON.parse(raw) as { error?: { message?: unknown; details?: unknown } }).error
+		if (error && typeof error.message === 'string') {
+			text = error.details ? `${error.message} ${JSON.stringify(error.details)}` : error.message
+		}
+	} catch {
+		// Not JSON: the raw text stands.
+	}
+	text = text.replace(/\s+/g, ' ').trim()
+	if (text === '') return 'no error text'
+	return text.length > MAX_ERROR_TEXT ? `${text.slice(0, MAX_ERROR_TEXT)}...` : text
+}
+
 /** Every Deepdots failure, mapped to a code and a message that says what to do. */
-function failureForStatus(status: number): Outcome {
+async function failureForResponse(res: Response): Promise<Outcome> {
+	const status = res.status
 	if (status === 401 || status === 403) {
 		return failure('NEEDS_ATTENTION', NEEDS_ATTENTION_MESSAGE)
 	}
@@ -106,7 +138,10 @@ function failureForStatus(status: number): Outcome {
 			'Deepdots is busy or down right now. Try again later.',
 		)
 	}
-	return failure('REQUEST_FAILED', `Deepdots answered with an unexpected status (${status}).`)
+	return failure(
+		'REQUEST_FAILED',
+		`Deepdots answered with an unexpected status (${status}): ${await errorText(res)}`,
+	)
 }
 
 const limitField = z
@@ -211,8 +246,9 @@ async function runList(
 		return failure('NOT_CONNECTED', 'Deepdots is not connected in this workspace.')
 	}
 
-	const built = buildListRequest(list, input)
-	if (!built.ok) return failure('INVALID_INPUT', built.message)
+	// Checks the input once, before any sign-in. The shapes below are built from the same input.
+	const checked = buildListRequest(list, input)
+	if (!checked.ok) return failure('INVALID_INPUT', checked.message)
 
 	let token: string
 	try {
@@ -239,34 +275,63 @@ async function runList(
 		)
 	}
 
-	let res: Response
-	try {
-		res = await (ctx.fetchImpl ?? fetch)(built.url, {
-			method: 'GET',
-			headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-			signal: AbortSignal.timeout(DEEPDOTS_FETCH_TIMEOUT_MS),
-		})
-	} catch (err) {
-		logger.warn('Deepdots MCP request failed', {
+	// Deepdots answers 400 to a request it dislikes, with a reason. Retry once per smaller shape and
+	// say which one worked. A since filter is only kept in shapes that can carry it.
+	const shapes: RequestShape[] = ['full', 'unsorted']
+	if (LIST_SPECS[list].bareFallback && input.since === undefined) shapes.push('bare')
+	const refused: string[] = []
+
+	for (const shape of shapes) {
+		const built = buildListRequest(list, input, shape)
+		if (!built.ok) return failure('INVALID_INPUT', built.message)
+
+		let res: Response
+		try {
+			res = await (ctx.fetchImpl ?? fetch)(built.url, {
+				method: 'GET',
+				headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+				signal: AbortSignal.timeout(DEEPDOTS_FETCH_TIMEOUT_MS),
+			})
+		} catch (err) {
+			logger.warn('Deepdots MCP request failed', {
+				workspaceId: ctx.workspaceId,
+				tool,
+				error: err instanceof Error ? err.name : 'unknown',
+			})
+			return failure('REQUEST_FAILED', 'The request to Deepdots did not complete.')
+		}
+
+		logger.info('Deepdots MCP call', {
 			workspaceId: ctx.workspaceId,
 			tool,
-			error: err instanceof Error ? err.name : 'unknown',
+			shape,
+			httpStatus: res.status,
 		})
-		return failure('REQUEST_FAILED', 'The request to Deepdots did not complete.')
+		if (res.status === 400) {
+			refused.push(`${shape} request: ${await errorText(res)}`)
+			continue
+		}
+		if (!res.ok) return failureForResponse(res)
+
+		let body: unknown
+		try {
+			body = await res.json()
+		} catch {
+			return failure('UNEXPECTED_RESPONSE', 'Deepdots answered with something that is not JSON.')
+		}
+		const skip = Math.max(0, Math.trunc(input.skip ?? 0))
+		const page = trimPage(list, skipRows(body, built.clientSkip), built.limit, skip)
+		if (!page) {
+			return failure('UNEXPECTED_RESPONSE', 'Deepdots answered with something that is not a list.')
+		}
+		if (shape === 'unsorted') {
+			page.note =
+				'Deepdots refused the sort order, so these rows are not newest first and the next page can repeat or miss rows.'
+		} else if (shape === 'bare') {
+			page.note = 'Deepdots refused the filter, so the whole list was read and cut here.'
+		}
+		return { result: textResult(page), errorCode: null }
 	}
 
-	logger.info('Deepdots MCP call', { workspaceId: ctx.workspaceId, tool, httpStatus: res.status })
-	if (!res.ok) return failureForStatus(res.status)
-
-	let body: unknown
-	try {
-		body = await res.json()
-	} catch {
-		return failure('UNEXPECTED_RESPONSE', 'Deepdots answered with something that is not JSON.')
-	}
-	const page = trimPage(list, body, built.limit, Math.max(0, Math.trunc(input.skip ?? 0)))
-	if (!page) {
-		return failure('UNEXPECTED_RESPONSE', 'Deepdots answered with something that is not a list.')
-	}
-	return { result: textResult(page), errorCode: null }
+	return failure('REQUEST_FAILED', `Deepdots refused the request (400). ${refused.join(' | ')}`)
 }

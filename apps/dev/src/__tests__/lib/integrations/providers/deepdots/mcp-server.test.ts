@@ -161,6 +161,71 @@ describe('Deepdots MCP server', () => {
 		expect(payload(res).error.code).toBe('TEMPORARILY_UNAVAILABLE')
 	})
 
+	// Deepdots refuses a request it dislikes with a 400 and a reason. The first request is the full
+	// one; each refusal is retried once with less, and the answer says what was left out.
+	const refusal = (message: string) =>
+		new Response(JSON.stringify({ error: { statusCode: 400, name: 'BadRequestError', message } }), {
+			status: 400,
+		})
+
+	it('retries a refused sort without the order, and says so in the answer', async () => {
+		const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+			const filter = JSON.parse(new URL(String(url)).searchParams.get('filter') ?? '{}')
+			if (filter.order) return refusal('Property "externalGeneratedAt" is not sortable')
+			return new Response(JSON.stringify(ROWS.slice(0, filter.limit)), { status: 200 })
+		})
+		const { client } = await connect({ fetchImpl: fetchImpl as unknown as typeof fetch })
+		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 3 } })
+		expect(res.isError).toBeUndefined()
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		expect(payload(res).items).toHaveLength(3)
+		expect(payload(res).note).toContain('sort order')
+	})
+
+	it('reads the small topics list without a filter when Deepdots refuses the filter', async () => {
+		const topics = Array.from({ length: 5 }, (_, n) => ({ topic: `t${n}`, num_feedback: n }))
+		const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+			new URL(String(url)).searchParams.has('filter')
+				? refusal('Unexpected query parameter filter')
+				: new Response(JSON.stringify(topics), { status: 200 }),
+		)
+		const { client } = await connect({ fetchImpl: fetchImpl as unknown as typeof fetch })
+		const res = await client.callTool({
+			name: 'deepdots_list_topics',
+			arguments: { limit: 2, skip: 1 },
+		})
+		expect(fetchImpl).toHaveBeenCalledTimes(3)
+		expect(payload(res).items.map((r: { topic: string }) => r.topic)).toEqual(['t1', 't2'])
+		expect(payload(res)).toMatchObject({ has_more: true, next_skip: 3 })
+		expect(payload(res).note).toContain('whole list')
+	})
+
+	it('shows the text Deepdots sent when every shape is refused', async () => {
+		const fetchImpl = vi.fn(async () => refusal('filter.order is invalid'))
+		const { client, trackToolCalled } = await connect({
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		expect(res.isError).toBe(true)
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		expect(payload(res).error.code).toBe('REQUEST_FAILED')
+		expect(payload(res).error.message).toContain('filter.order is invalid')
+		expect(payload(res).error.message).toContain('full request')
+		// The event still carries the code only, never the text.
+		expect(JSON.stringify(trackToolCalled.mock.calls)).not.toContain('filter.order')
+	})
+
+	it('shows the text of any other unexpected status, cut to a short line', async () => {
+		const { client } = await connect({
+			fetchImpl: (async () =>
+				new Response(`bad ${'x'.repeat(1000)}`, { status: 422 })) as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'deepdots_list_insights', arguments: {} })
+		const message = payload(res).error.message as string
+		expect(message).toContain('(422): bad xxx')
+		expect(message.length).toBeLessThan(400)
+	})
+
 	it('reports a 405 as a permission problem', async () => {
 		const { client } = await connect({
 			fetchImpl: (async () => new Response('{}', { status: 405 })) as unknown as typeof fetch,

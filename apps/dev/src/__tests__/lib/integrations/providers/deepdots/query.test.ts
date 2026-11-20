@@ -4,6 +4,7 @@ import {
 	MAX_LIMIT,
 	buildListRequest,
 	serializeFilter,
+	skipRows,
 	trimPage,
 } from '../../../../../lib/integrations/providers/deepdots/query'
 
@@ -14,8 +15,9 @@ function filterOf(url: string): Record<string, unknown> {
 function built(
 	list: Parameters<typeof buildListRequest>[0],
 	input: Parameters<typeof buildListRequest>[1],
+	shape?: Parameters<typeof buildListRequest>[2],
 ) {
-	const r = buildListRequest(list, input)
+	const r = buildListRequest(list, input, shape)
 	if (!r.ok) throw new Error(r.message)
 	return r
 }
@@ -70,6 +72,39 @@ describe('buildListRequest', () => {
 		expect(new URL(inFilter.url).searchParams.get('filter')).not.toContain(']=')
 	})
 
+	// Pins the two routes that answered 400 on 20 Nov, so a change to the request is a visible one.
+	it('pins the issues and topics requests', () => {
+		const issues = built('issues', {})
+		expect(new URL(issues.url).pathname).toBe('/topics/issues')
+		expect(filterOf(issues.url)).toEqual({
+			limit: 21,
+			skip: 0,
+			order: ['externalGeneratedAt DESC', 'id DESC'],
+		})
+
+		const topics = built('topics', {})
+		expect(new URL(topics.url).pathname).toBe('/dimensions/topics')
+		expect(filterOf(topics.url)).toEqual({ limit: 21, skip: 0, order: ['topic DESC'] })
+	})
+
+	it('drops only the order in the unsorted shape, and keeps since', () => {
+		const r = built('issues', { since: '2026-11-01', limit: 5, skip: 10 }, 'unsorted')
+		expect(filterOf(r.url)).toEqual({
+			limit: 6,
+			skip: 10,
+			where: { externalGeneratedAt: { gte: '2026-11-01T00:00:00.000Z' } },
+		})
+		expect(r.clientSkip).toBe(0)
+	})
+
+	it('sends no filter in the bare shape, and leaves the skip to the caller', () => {
+		const r = built('topics', { skip: 40 }, 'bare')
+		expect(r.url).toBe('https://api.deepdots.com/dimensions/topics')
+		expect(r.clientSkip).toBe(40)
+		expect(LIST_SPECS.topics.bareFallback).toBe(true)
+		expect(LIST_SPECS.issues.bareFallback).toBe(false)
+	})
+
 	it('uses the issues path for issues', () => {
 		expect(
 			built('issues', {}).url.startsWith('https://api.deepdots.com/topics/issues?filter='),
@@ -102,5 +137,14 @@ describe('trimPage', () => {
 		const page = trimPage('insights', { data: [{ id: 'a', summary: 'x'.repeat(2000) }] }, 5, 0)
 		expect((page?.items[0].summary as string).length).toBeLessThan(700)
 		expect(trimPage('insights', { error: 'nope' }, 5, 0)).toBeNull()
+	})
+})
+
+describe('skipRows', () => {
+	it('drops the first rows of a list, plain or wrapped, and leaves other answers alone', () => {
+		expect(skipRows([1, 2, 3], 2)).toEqual([3])
+		expect(skipRows({ data: [1, 2, 3] }, 1)).toEqual([2, 3])
+		expect(skipRows([1, 2], 0)).toEqual([1, 2])
+		expect(skipRows({ error: 'x' }, 2)).toEqual({ error: 'x' })
 	})
 })
