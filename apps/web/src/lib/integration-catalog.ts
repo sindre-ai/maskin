@@ -53,6 +53,14 @@ const CATALOG: Record<string, CatalogEntry> = {
 	supabase: { category: 'Docs & data', domain: 'supabase.com' },
 	ubersuggest: { category: 'Analytics', domain: 'neilpatel.com' },
 	zoom: { category: 'Chat & social', domain: 'zoom.us' },
+	apollo: { category: 'Sales & payments', domain: 'apollo.io' },
+	zoominfo: { category: 'Sales & payments', domain: 'zoominfo.com' },
+	outreach: { category: 'Sales & payments', domain: 'outreach.io' },
+	gong: { category: 'Sales & payments', domain: 'gong.io' },
+	clay: { category: 'Sales & payments', domain: 'clay.com' },
+	calendly: { category: 'Email & calendar', domain: 'calendly.com' },
+	monday: { category: 'Docs & data', domain: 'monday.com' },
+	make: { category: 'Docs & data', domain: 'make.com' },
 }
 
 /** A provider the catalog does not know yet is still listed, under Docs & data. */
