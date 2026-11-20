@@ -9,10 +9,14 @@ import { logger } from '../lib/logger'
 const execFile = promisify(execFileCb)
 
 // libkrun panics when an env var contains non-printable ASCII (Norwegian
-// `æøå` was the original repro). Bet constraint #1. Such a value is not stripped
-// (that deleted every newline and em dash from the system prompt): it goes to the
-// spill file below, which libkrun never sees.
+// `æøå` was the original repro). Bet constraint #1.
+const PRINTABLE_ASCII_RE = /[^\x20-\x7E]/g
+// With the readable prompt on, such a value is not stripped (that deleted every newline and
+// em dash from the system prompt): it goes to the spill file below, which libkrun never sees.
 const NON_PRINTABLE_ASCII_RE = /[^\x20-\x7E]/
+// Set by apps/dev on the session env when MASKIN_READABLE_PROMPT is on there (see
+// apps/dev/src/lib/readable-prompt.ts). Absent, values are stripped exactly as before.
+const READABLE_PROMPT_ENV = 'MASKIN_READABLE_PROMPT'
 
 // libkrun's env handshake fails when a single value exceeds ~1500 chars; the
 // agent-base entrypoint sources the spill file at boot. Bet constraint #2.
@@ -187,16 +191,27 @@ export function sanitizeEnvForMicroVM(env: Record<string, string>): {
 	const inline: Record<string, string> = {}
 	const overflow: Array<{ key: string; value: string }> = []
 	let sanitizedCount = 0
+	const readable = env[READABLE_PROMPT_ENV] === 'on'
 	for (const [key, value] of Object.entries(env)) {
 		if (!ENV_KEY_RE.test(key)) {
 			throw new Error(`Invalid env var key: ${JSON.stringify(key)}`)
 		}
-		if (value.length > ENV_OVERFLOW_THRESHOLD || NON_PRINTABLE_ASCII_RE.test(value)) {
-			const cleaned = stripControlChars(value)
-			if (cleaned !== value) sanitizedCount += 1
+		if (readable) {
+			if (value.length > ENV_OVERFLOW_THRESHOLD || NON_PRINTABLE_ASCII_RE.test(value)) {
+				const cleaned = stripControlChars(value)
+				if (cleaned !== value) sanitizedCount += 1
+				overflow.push({ key, value: cleaned })
+			} else {
+				inline[key] = value
+			}
+			continue
+		}
+		const cleaned = value.replace(PRINTABLE_ASCII_RE, '')
+		if (cleaned !== value) sanitizedCount += 1
+		if (cleaned.length > ENV_OVERFLOW_THRESHOLD) {
 			overflow.push({ key, value: cleaned })
 		} else {
-			inline[key] = value
+			inline[key] = cleaned
 		}
 	}
 	return { inline, overflow, sanitizedCount }
@@ -305,7 +320,7 @@ export async function spawnSession(
 
 	const { inline, overflow, sanitizedCount } = sanitizeEnvForMicroVM(input.env)
 	if (sanitizedCount > 0) {
-		logger.warn('stripped control characters from env', {
+		logger.warn('sanitized non-printable-ASCII from env', {
 			sessionId: input.sessionId,
 			sanitizedCount,
 		})

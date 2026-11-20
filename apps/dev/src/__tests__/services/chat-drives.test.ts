@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHAT_DRIVES_MAX, buildChatDrivesBlock } from '../../services/chat-drives'
 import { createTestContext } from '../setup'
 
@@ -25,7 +25,7 @@ describe('buildChatDrivesBlock', () => {
 		expect(await buildChatDrivesBlock(db, session, FRONTEND)).toBe('')
 	})
 
-	it('lists a driven loop with its close condition, and says the agent owns the outcomes', async () => {
+	it('lists a driven loop with its targets and close condition, and says the agent owns the outcomes', async () => {
 		const { db, mockResults } = createTestContext()
 		mockResults.selectQueue = [
 			[
@@ -44,9 +44,8 @@ describe('buildChatDrivesBlock', () => {
 		expect(block).toContain('## What you drive')
 		expect(block).toContain('You own these outcomes. The person in this chat supports you.')
 		expect(block).toContain(
-			`- [Events](${objectUrl('a1')}) (supervised). Closes when: The webinar has run.`,
+			`- [Events](${objectUrl('a1')}) (supervised). Targets: Registrations: 1 of 100; Webinars held: 0 of 4. Closes when: The webinar has run.`,
 		)
-		expect(block).not.toContain('Registrations')
 		expect(block).toContain(`- [Draft the invite](${objectUrl('b1')}) (task, in_progress)`)
 		expect(block).not.toContain('This chat is about')
 	})
@@ -66,7 +65,7 @@ describe('buildChatDrivesBlock', () => {
 		const block = await buildChatDrivesBlock(db, session, FRONTEND)
 		expect(block).toContain(`This chat is about [Webinar](${objectUrl('c1')}) (loop, supervised).`)
 		expect(block.indexOf('[Webinar]')).toBeLessThan(block.indexOf('[Events]'))
-		expect(block).not.toContain('Seats')
+		expect(block).toContain('Seats: 3 of 50')
 	})
 
 	it('names the object the chat is about once, and not again in the open items', async () => {
@@ -84,37 +83,72 @@ describe('buildChatDrivesBlock', () => {
 		expect(block).toContain('Draft the invite')
 	})
 
-	it('leaves the targets to the jobs block, so they are in the prompt once', async () => {
+	describe('with MASKIN_READABLE_PROMPT on', () => {
+		afterEach(() => vi.unstubAllEnvs())
+
+		it('leaves the targets to the jobs block, so they are in the prompt once', async () => {
+			vi.stubEnv('MASKIN_READABLE_PROMPT', 'on')
+			const { db, mockResults } = createTestContext()
+			mockResults.selectQueue = [
+				[
+					loop('a1', 'Events', {
+						targets: [{ label: 'Registrations', source: 'manual', actual: 1, target: 100 }],
+						close_condition: 'The webinar has run.',
+					}),
+				],
+				[],
+				[{ subjectType: null, subjectId: null }],
+			]
+			const block = await buildChatDrivesBlock(db, session, FRONTEND)
+			expect(block).toContain(
+				`- [Events](${objectUrl('a1')}) (supervised). Closes when: The webinar has run.`,
+			)
+			expect(block).toContain('Flows:')
+			expect(block).not.toContain('Registrations')
+			expect(block).not.toContain('Targets')
+		})
+	})
+
+	it('skips target rows that are malformed', async () => {
 		const { db, mockResults } = createTestContext()
 		mockResults.selectQueue = [
 			[
 				loop('a1', 'Events', {
-					targets: [{ label: 'Good', source: 'manual', actual: 1, target: 2 }],
+					targets: [
+						{ label: 'Good', source: 'manual', actual: 1, target: 2 },
+						{ label: 'No numbers', source: 'manual' },
+						'nonsense',
+					],
 				}),
 			],
 			[],
 			[{ subjectType: null, subjectId: null }],
 		]
 		const block = await buildChatDrivesBlock(db, session, FRONTEND)
-		expect(block).toContain('[Events]')
-		expect(block).not.toContain('Targets')
-		expect(block).not.toContain('Good')
+		expect(block).toContain('Targets: Good: 1 of 2')
+		expect(block).not.toContain('No numbers')
 	})
 
 	it('stays under the character cap by dropping whole lines from the end', async () => {
 		const { db, mockResults } = createTestContext()
 		const heavy = (n: number) =>
-			loop(`a${n}`, `Loop ${n} ${'x'.repeat(100)}`, {
+			loop(`a${n}`, `Loop ${n}`, {
+				targets: Array.from({ length: 6 }, (_, i) => ({
+					label: `${'x'.repeat(110)}${i}`,
+					source: 'manual',
+					actual: 1,
+					target: 2,
+				})),
 				close_condition: 'y'.repeat(500),
 			})
 		mockResults.selectQueue = [
 			[heavy(1), heavy(2), heavy(3)],
-			Array.from({ length: 6 }, (_, i) => task(`b${i}`, `Task ${i} ${'z'.repeat(100)}`)),
+			Array.from({ length: 6 }, (_, i) => task(`b${i}`, `Task ${i}`)),
 			[{ subjectType: null, subjectId: null }],
 		]
 		const block = await buildChatDrivesBlock(db, session, FRONTEND)
 		expect(block.trim().length).toBeLessThanOrEqual(CHAT_DRIVES_MAX)
 		expect(block).toContain('(more on the objects you drive)')
-		expect(block).toContain('[Loop 1 ')
+		expect(block).toContain('[Loop 1]')
 	})
 })
