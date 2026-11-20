@@ -17,6 +17,11 @@ export const actorToolsSchema = z.object({
 	 * ignored at launch (see resolveActorSecretEnv in apps/dev session-manager).
 	 */
 	envFrom: z.array(z.string()).optional(),
+	/**
+	 * The groups of Maskin's own tools this agent lists (computer, files, admin and so on; see
+	 * packages/mcp tool-groups.ts). Read when MASKIN_TOOL_GROUPS is on. Absent means every tool.
+	 */
+	maskin_tool_groups: z.array(z.string()).optional(),
 })
 
 export const llmConfigSchema = z.object({

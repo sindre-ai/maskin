@@ -2,9 +2,16 @@ import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
 import { getMcpForwardMarker, isMcpOAuthEnabled, resolveMcpCredential } from '@maskin/auth/mcp'
 import type { Database } from '@maskin/db'
-import { READ_TOOL_NAMES, createMcpServer } from '@maskin/mcp'
+import { actors } from '@maskin/db/schema'
+import {
+	READ_TOOL_NAMES,
+	createMcpServer,
+	isToolGroupsEnabled,
+	readGrantedToolGroups,
+} from '@maskin/mcp'
 import { OAUTH_ACCESS_TOKEN_PREFIX, resolveWebAppBaseUrl } from '@maskin/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { type McpClient, classifyMcpClient, oauthClientLabel } from '../lib/analytics/mcp-client'
 import {
@@ -208,6 +215,7 @@ app.post('/', async (c) => {
 	const serveStartedAt = Date.now()
 
 	const mcpConfig = {
+		toolGroups: await resolveToolGroups(db, lookup, body),
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey,
 		defaultWorkspaceId: workspaceId,
@@ -1048,6 +1056,34 @@ async function resolveAgentActor(db: Database, apiKey: string): Promise<ActorLoo
 	} catch (err) {
 		logger.warn('mcp trace actor lookup failed', { error: String(err) })
 		return { status: 'error' }
+	}
+}
+
+/**
+ * The tool groups to list for this request, or undefined to list every tool. Only a tools/list
+ * request from an agent, with MASKIN_TOOL_GROUPS on, is narrowed, so a tools/call never meets a
+ * disabled tool and what an agent may call does not change. An agent with no
+ * maskin_tool_groups list on its tools config (never seeded) lists everything. Any fault reads
+ * as "list everything".
+ */
+async function resolveToolGroups(
+	db: Database | undefined,
+	lookup: ActorLookup,
+	body: unknown,
+): Promise<string[] | undefined> {
+	if (!db || !isToolGroupsEnabled()) return undefined
+	if (lookup.status !== 'resolved' || lookup.actor.actorType !== 'agent') return undefined
+	if (!listRequests(body).some((message) => message.method === 'tools/list')) return undefined
+	try {
+		const [row] = await db
+			.select({ tools: actors.tools })
+			.from(actors)
+			.where(eq(actors.id, lookup.actor.actorId))
+			.limit(1)
+		return readGrantedToolGroups(row?.tools)
+	} catch (err) {
+		logger.warn('mcp tool group lookup failed', { error: String(err) })
+		return undefined
 	}
 }
 
