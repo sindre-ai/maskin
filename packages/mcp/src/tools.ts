@@ -327,29 +327,27 @@ export const LIST_OBJECTS_SORTS = [
 
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
-	get_started: {
+	list_marketplace: {
 		description:
-			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace. Lists available marketplace loops and installs one. Flow: (1) call with no args (or just workspace_id) to get a PREVIEW of available loops. (2) Ask the user which loop they want and what to name the workspace. (3) Call again with { loop_id, confirm: true, workspace_name? } to install.',
+			'LIST THE MARKETPLACE LOOPS. Read-only: returns the available marketplace loops with their ids, descriptions and use cases. Call it whenever a user asks to set up, onboard or configure a Maskin workspace, or to browse the marketplace. To install one, ask the user which loop they want (and whether to rename the workspace), then call install_loop with its id.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	install_loop: {
+		description:
+			'Install a marketplace loop into a workspace: provisions its agents, triggers and skills and creates the running Loop. Get the loop_id from list_marketplace and confirm the choice with the user first. Optionally renames the workspace. Returns links to the workspace and the new loop, plus a prompt to connect the Claude subscription when agent sessions cannot run yet. The installed loop is locked to the marketplace version; use fork_loop to customise it.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			loop_id: z
 				.string()
 				.uuid()
-				.optional()
-				.describe(
-					'The marketplace loop ID to install. Get this from the preview list returned when called without confirm.',
-				),
+				.describe('The marketplace loop ID to install. Get it from list_marketplace.'),
 			workspace_name: z
 				.string()
 				.optional()
 				.describe(
-					'Rename the workspace on confirm. Use whatever the user told you — a product name, a team name, anything. Only applied when confirm is true.',
-				),
-			confirm: z
-				.boolean()
-				.optional()
-				.describe(
-					'Set true to install the chosen loop. Without this, the tool returns the list of available loops.',
+					'Rename the workspace before installing. Use whatever the user told you: a product name, a team name, anything.',
 				),
 		}),
 	},
@@ -1935,7 +1933,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author new steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent under it. Before adding a step, check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work. Never default to an unrelated agent; if nothing fits, create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live, or paused. Draft, paused and archived (terminal) turn every trigger off; the others leave them on. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, ideally the main target's owner. Details: docs/reference/loops.md.",
+			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use list_marketplace. Each STEP is a trigger that fires an agent when an object changes state (event) or on a schedule (cron). Author new steps inline with `steps` or attach existing triggers with `trigger_ids`; the response nests each step's resolved agent under it. Before adding a step, check with list_actors (and list_triggers) that the agent's role and system_prompt fit the work. Never default to an unrelated agent; if nothing fits, create a specialised one with create_actor. MEMBER OBJECTS (any type) flow through the loop, linked by `in_loop` edges. `status` climbs draft → pilot → supervised → live, or paused. Draft, paused and archived (terminal) turn every trigger off; the others leave them on. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. The loop and its `in_loop` edges are created atomically; add more with update_loop, read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome, ideally the main target's owner. Details: docs/reference/loops.md.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
@@ -2103,6 +2101,20 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+		}),
+	},
+
+	fork_loop: {
+		description:
+			"Fork a Loop that was installed from the marketplace, so the workspace owns it. An installed loop is locked: Maskin keeps its agents, triggers and skills in sync with the marketplace version and pushes updates. Forking detaches them, so they become plain workspace resources you can edit with update_actor, update_trigger and update_workspace_skill, and later marketplace updates no longer overwrite your changes. The running loop and its members are untouched. Fork BEFORE customising an installed loop's agents, triggers or skills, otherwise the next marketplace update reverts the edits. This cannot be undone. `id` is the loop object id from list_loops (or the installed-loop id). A loop that is already forked, or that was not installed from the marketplace, returns an explanation instead of an error.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z
+				.string()
+				.uuid()
+				.describe(
+					'Loop object id (from list_loops) of an installed marketplace loop. The installed-loop id is accepted too.',
+				),
 		}),
 	},
 
