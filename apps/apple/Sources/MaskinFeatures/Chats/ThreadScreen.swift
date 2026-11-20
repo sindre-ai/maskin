@@ -18,6 +18,8 @@ struct ThreadScreen: View {
 	@State private var listening = false
 	@State private var engineNote: String?
 	@State private var selectingText: ChatMessage?
+	/// The reply being edited; while set, the reply bar saves over it instead of sending a new one.
+	@State private var editing: ChatMessage?
 	@FocusState private var focused: Bool
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
@@ -141,6 +143,9 @@ struct ThreadScreen: View {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
 			actions.onReact = { emoji in Task { await store.toggleReaction(emoji, on: message) } }
 		}
+		if message.canEdit(by: store.currentActorID) {
+			actions.onEdit = { beginEdit(message) }
+		}
 		if message.isFailed {
 			actions.onRetrySend = { store.retrySend(message.id) }
 			actions.onDiscard = { store.discard(message.id) }
@@ -187,10 +192,14 @@ struct ThreadScreen: View {
 
 	private var replyBar: some View {
 		VStack(spacing: MaskinSpace.s4) {
-			HStack(spacing: MaskinSpace.s5) {
-				if let recipient { recipientChip(recipient) }
-				Spacer(minLength: 0)
-				alsoToggle
+			if editing != nil {
+				editingStrip
+			} else {
+				HStack(spacing: MaskinSpace.s5) {
+					if let recipient { recipientChip(recipient) }
+					Spacer(minLength: 0)
+					alsoToggle
+				}
 			}
 			HStack(spacing: MaskinSpace.s4) {
 				TextField("Reply", text: $draft, axis: .vertical)
@@ -229,6 +238,27 @@ struct ThreadScreen: View {
 		.padding(.top, MaskinSpace.s4)
 		.padding(.bottom, MaskinSpace.s5)
 		.background(MaskinSurface.grouped)
+	}
+
+	private var editingStrip: some View {
+		HStack(spacing: MaskinSpace.s5) {
+			Text("Editing message")
+				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .bold, relativeTo: .footnote))
+				.foregroundStyle(MaskinColor.ink)
+			Spacer(minLength: 0)
+			Button {
+				editing = nil
+				draft = ""
+			} label: {
+				Image(systemName: "xmark.circle.fill")
+					.maskinSymbol(MaskinFontSize.t18)
+					.foregroundStyle(MaskinColor.ink5)
+					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.maskinPressed)
+			.accessibilityLabel("Cancel editing")
+		}
 	}
 
 	private func recipientChip(_ person: ChatParticipant) -> some View {
@@ -284,7 +314,23 @@ struct ThreadScreen: View {
 		rootID != nil && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 	}
 
+	/// Edit loads the reply's words into the reply bar; sending saves them over the original.
+	private func beginEdit(_ message: ChatMessage) {
+		editing = message
+		draft = message.content
+		focused = true
+	}
+
 	private func send() {
+		if let original = editing {
+			guard canSend else { return }
+			let text = draft
+			MaskinHaptics.play(.selection)
+			editing = nil
+			draft = ""
+			Task { await store.edit(original.id, to: text) }
+			return
+		}
 		guard canSend, let rootID else { return }
 		guard store.reply(draft, in: rootID, to: recipient, alsoInChannel: alsoInChannel) != nil else { return }
 		MaskinHaptics.play(.selection)
