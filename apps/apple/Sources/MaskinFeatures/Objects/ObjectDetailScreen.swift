@@ -266,7 +266,11 @@ public struct ObjectDetailScreen<Decision: View>: View {
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.padding(.horizontal, MaskinSpace.s5)
 					}
-					MaskinComposer(model: composer, config: composerConfig, topAccessory: modeChip, onSend: sendComment)
+					MaskinComposer(
+						model: composer, config: composerConfig, topAccessory: modeChip,
+						needsWords: composerMode == .message && messageTarget != nil && appRuntime != nil
+							? ComposerSendGate.messageNeedsWords : nil,
+						onSend: sendComment)
 				}
 				.frame(maxWidth: ReadingColumn.maxWidth)
 				.frame(maxWidth: .infinity)
