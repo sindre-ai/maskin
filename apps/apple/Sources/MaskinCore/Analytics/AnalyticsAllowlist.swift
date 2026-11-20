@@ -45,6 +45,9 @@ enum AnalyticsAllowlist {
 		"object_viewed": ["entity_id": .id, "entity_type": .oneOf(["object"]), "object_type": .id],
 		"chat_opened_from_list": ["source": .id, "section": .id, "position_bucket": .id],
 		"chat_list_search_used": ["result_count_bucket": .id],
+		// The two generic step events, for flows with no screen of their own.
+		"flow_step": ["flow": .id, "step": .id, "flow_id": .id, "duration_ms": .int],
+		"flow_error": ["flow": .id, "step": .id, "error_category": .id],
 	]
 
 	/// The properties of `event` that would pass, or nil when the event itself is not on the list.
