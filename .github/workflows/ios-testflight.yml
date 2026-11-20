@@ -35,8 +35,28 @@ name: iOS TestFlight
 # so this is the only way to symbolicate a crash log from a CI build. Each artifact is about
 # 400 MB, which is why retention is 7 days and not 14.
 #
+# Crash and error reports: the build carries the DSN of the native app's Sentry project (maskin-ios), see
+# MASKIN_SENTRY_DSN below, so a TestFlight build reports crashes and nothing else does. The dSYMs are also
+# uploaded to that project so crashes show real function names. The upload needs one repository secret,
+# SENTRY_AUTH_TOKEN_IOS (an organization token with release and project read-write rights). Unset = the
+# upload step is skipped and the build goes on; the 7 day artifact above stays the fallback.
+#
 # Internal testers get the build automatically once App Store Connect finishes processing it,
 # if the internal TestFlight group has "Automatic distribution" switched on.
+#
+# Apple TV: the TV app (io.maskin.app, the same bundle id as iPhone, Top Shelf io.maskin.app.topshelf)
+# is the tvOS platform of the one Maskin App Store record, so the iOS archive never contains it. Job
+# testflight-tv archives the MaskinTV scheme for tvOS and uploads it after the iPhone upload, with the
+# same build number, secrets and certificate clean-up. It runs after the iPhone job (not beside it) so
+# the two never revoke each other's development certificates, and it is a separate job so a failed TV
+# upload never blocks the iPhone App Review submission and can be re-run alone from Actions. Needs the
+# tvOS platform added to the Maskin app record in App Store Connect; without it the upload is
+# rejected. TV is not sent to App Review (app-review below
+# stays iPhone only). dSYMs are kept as Maskin-TV-dSYMs-<build number>.
+#
+# The TV job is off until the repository variable APPLE_TV_UPLOAD is set to true (Settings, Secrets
+# and variables, Actions, Variables). Infra & DevOps sets it once the tvOS platform exists on the Maskin app
+# record in App Store Connect, so a version bump before that does not turn main red or spend a second Mac run.
 #
 # App Review: a merge that changes MARKETING_VERSION in apps/apple/project.yml also sends that
 # version to App Review, once the upload is processed (job app-review, .github/scripts/
@@ -51,7 +71,8 @@ name: iOS TestFlight
 # submission leaves the TestFlight build in place.
 #
 # One macOS runner for roughly 20-30 minutes per merge that changes MARKETING_VERSION (10x the
-# per-minute cost of Linux). Other merges only run the short Linux plan job.
+# per-minute cost of Linux), and a second one for the Apple TV upload. Other merges only run the
+# short Linux plan job.
 
 on:
   push:
@@ -139,6 +160,9 @@ jobs:
       # The PostHog project token (public by design, same as the web build's VITE_POSTHOG_KEY). Unset =
       # the app ships without analytics: it sends nothing and never asks.
       POSTHOG_PROJECT_KEY: ${{ vars.POSTHOG_PROJECT_KEY }}
+      # The Sentry DSN of the native app's project (maskin-ios). A DSN ships inside the app by design, so it
+      # is not a secret. Only this workflow sets it: debug builds, CI compiles and tests report nothing.
+      MASKIN_SENTRY_DSN: https://0b63561779279f716f2ffebdbb9afaac@o4510993475960832.ingest.de.sentry.io/4512449147437136
     steps:
       - name: Check signing secrets
         id: gate
@@ -216,6 +240,7 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CURRENT_PROJECT_VERSION="$build_number" \
             MASKIN_POSTHOG_KEY="$POSTHOG_PROJECT_KEY" \
+            MASKIN_SENTRY_DSN="$MASKIN_SENTRY_DSN" \
             2>&1 | tee "$RUNNER_TEMP/archive.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
 
@@ -230,6 +255,26 @@ jobs:
           path: ${{ runner.temp }}/Maskin.xcarchive/dSYMs
           if-no-files-found: warn
           retention-days: 7
+
+      # Sends the same dSYMs to Sentry so crash reports show function names. Skipped when the token
+      # secret is not set, and never fails the build: the TestFlight upload below matters more.
+      - name: Upload the debug symbols to Sentry
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN_IOS }}
+          SENTRY_ORG: maskin
+          SENTRY_PROJECT: maskin-ios
+          # The project's ingest host ends in .de.sentry.io, so the organization lives in the EU region.
+          SENTRY_URL: https://de.sentry.io
+        run: |
+          set -euo pipefail
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::notice::Sentry symbol upload skipped: the SENTRY_AUTH_TOKEN_IOS secret is not set yet."
+            exit 0
+          fi
+          npx --yes @sentry/cli@2 debug-files upload \
+            "$RUNNER_TEMP/Maskin.xcarchive/dSYMs"
 
       - name: Export and upload to TestFlight
         if: steps.gate.outputs.enabled == 'true'
@@ -285,9 +330,163 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Apple TV archive and upload, after the iPhone upload (see the header). Same build number as the
+  # iPhone build, taken from that job. When the iPhone job did not archive (secrets not set) the
+  # build number is empty and this job is skipped. Also skipped until the repository variable
+  # APPLE_TV_UPLOAD is true, which is set once the tvOS platform exists on the Maskin app record in App Store Connect.
+  # A fresh Mac, so it records and revokes its own development certificates; running after the
+  # iPhone job means the two never see each other's.
+  testflight-tv:
+    needs: testflight
+    if: needs.testflight.result == 'success' && needs.testflight.outputs.build_number != '' && vars.APPLE_TV_UPLOAD == 'true'
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      BUILD_NUMBER: ${{ needs.testflight.outputs.build_number }}
+    steps:
+      - name: Check signing secrets
+        id: gate
+        run: |
+          if [ -z "$APPLE_TEAM_ID" ] || [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::notice::Apple TV upload skipped: Apple signing secrets are not set yet."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.gate.outputs.enabled == 'true'
+
+      - name: Select Xcode 26
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26.x on this runner image."
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install xcodegen and generate the project
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: apps/apple
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Write the App Store Connect key
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+
+      - uses: actions/setup-node@v7
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: 20
+
+      - name: Record the development certificates before the archive
+        id: certs_before
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-dev-certs.mjs snapshot "$RUNNER_TEMP/dev-certs-before.json"
+
+      - name: Archive Apple TV
+        if: steps.gate.outputs.enabled == 'true'
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project Maskin.xcodeproj -scheme MaskinTV \
+            -destination 'generic/platform=tvOS' \
+            -archivePath "$RUNNER_TEMP/MaskinTV.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            2>&1 | tee "$RUNNER_TEMP/archive-tv.log" | tail -n 25
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Keep the debug symbols
+        if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: Maskin-TV-dSYMs-${{ env.BUILD_NUMBER }}
+          path: ${{ runner.temp }}/MaskinTV.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Export and upload to TestFlight
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/MaskinTV.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export-tv" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee "$RUNNER_TEMP/export-tv.log" | tail -n 25
+          test "${PIPESTATUS[0]}" -eq 0
+          echo "Uploaded Apple TV build $BUILD_NUMBER to App Store Connect."
+
+      - name: Revoke the development certificates this run created
+        if: always() && steps.gate.outputs.enabled == 'true' && steps.certs_before.outcome == 'success'
+        continue-on-error: true
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-dev-certs.mjs revoke-new "$RUNNER_TEMP/dev-certs-before.json"
+
+      - name: Remove the key
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: rm -rf "$RUNNER_TEMP/asc"
+
+      - name: Upload logs
+        if: (failure() || cancelled()) && steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-testflight-logs
+          path: |
+            ${{ runner.temp }}/archive-tv.log
+            ${{ runner.temp }}/export-tv.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   # Sends the version to App Review when it was changed on purpose. A Linux job on purpose: it only
   # talks to the App Store Connect API, so a manual dry run needs no Mac, and a failure here never
   # touches the TestFlight upload above. Runs after a push upload, or alone on a manual run.
+  # iPhone only: the Apple TV build is uploaded by testflight-tv but not sent to App Review.
   app-review:
     needs: testflight
     if: always() && (needs.testflight.result == 'success' || needs.testflight.result == 'skipped')

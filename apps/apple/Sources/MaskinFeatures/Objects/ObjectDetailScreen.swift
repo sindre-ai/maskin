@@ -35,6 +35,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	@State private var atTop = true
 	/// The event a held-down Reply picked; the next comment threads under it.
 	@State private var replyingTo: TimelineItem?
+	/// The comment whose words the composer is changing, while its "Editing message" strip shows.
+	@State private var editingComment: TimelineItem?
 	@Environment(AppRuntime.self) private var appRuntime: AppRuntime?
 	/// The session whose log is open, the one awaiting a Stop confirm, and what Retry would run.
 	@State private var logSession: AgentSession?
@@ -186,6 +188,17 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		composer.reply(to: store.authorName(for: item), text: ActivityGrouping.summary(of: item))
 	}
 
+	/// Hold → Edit: the comment's words go into the composer under the "Editing message" strip, and
+	/// Send saves them over the original instead of posting a new comment.
+	private func startEdit(_ item: TimelineItem) {
+		guard case .comment(let text) = item.kind, store.canEdit(item) else { return }
+		MaskinHaptics.play(.light)
+		replyingTo = nil
+		composerMode = .comment
+		editingComment = item
+		composer.beginEdit(messageID: item.id, text: text)
+	}
+
 	/// The thread already shows the parent, so the body carries the text alone, not a quote.
 	/// Sending jumps to Activity, where the thread is.
 	private var messageTarget: ActorRef? {
@@ -215,7 +228,15 @@ public struct ObjectDetailScreen<Decision: View>: View {
 			appRuntime.startChat(with: ChatParticipant(id: agent.id, name: agent.name, kind: .agent), draft: text)
 			return
 		}
-		let text = composer.trimmedText
+		if let item = editingComment, composer.editing != nil {
+			let words = composer.trimmedText
+			guard !words.isEmpty else { return }
+			composer.clear()
+			editingComment = nil
+			Task { await store.editComment(item, to: words) }
+			return
+		}
+		let text = composer.commentText
 		guard !text.isEmpty, !composer.isUploading, !composer.hasFailedAttachment else { return }
 		let mentions = composer.mentions.map(\.id).filter { $0 != store.currentActorId }
 		let files = composer.attachments.compactMap(\.ref)
@@ -274,6 +295,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 				.task(id: ReferenceTrigger.find(in: composer.text)?.query) { await searchReferences() }
 				// Clearing the quote strip in the composer also drops the thread target.
 				.onChange(of: composer.replyTo == nil) { _, cleared in if cleared { replyingTo = nil } }
+				// Cancelling the "Editing message" strip also drops the comment being edited.
+				.onChange(of: composer.editing == nil) { _, cleared in if cleared { editingComment = nil } }
 				.padding(.horizontal, MaskinSpace.s7)
 				.padding(.bottom, MaskinSpace.s4)
 			}
@@ -466,7 +489,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 					Section {
 						ObjectDetailContent(
 							store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true },
-							onReply: startReply,
+							onReply: startReply, onEditComment: startEdit,
 							onShowActivity: { withAnimation(reduceMotion ? nil : MaskinMotion.quick) { page = .activity } },
 							sessionActions: sessionActions
 						) { decision }

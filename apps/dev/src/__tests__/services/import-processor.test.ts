@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceSettings } from '../../lib/types'
-import { generateMapping, parseFile } from '../../services/import-processor'
+import { detectCsvOptions, generateMapping, parseFile } from '../../services/import-processor'
 
 const defaultSettings: WorkspaceSettings = {
 	display_names: { insight: 'Insight', bet: 'Bet', task: 'Task', contact: 'Contact' },
@@ -263,5 +263,33 @@ describe('generateMapping', () => {
 		const urgencyCol = cols.find((c) => c.sourceColumn === 'urgency')
 		expect(urgencyCol?.targetField).toBe('metadata.priority')
 		expect(urgencyCol?.skip).toBe(false)
+	})
+})
+
+describe('CSV encoding detection', () => {
+	const header = 'Name,Company\n'
+
+	it('keeps UTF-8 when the file has one stray invalid byte', () => {
+		const rows = Buffer.concat([
+			Buffer.from(`${header}Jakob Føns,Ørsted\nSøren Eikers,Mærsk\n`, 'utf8'),
+			Buffer.from([0x4b, 0xc3]), // a truncated "ø" at the end of a row
+			Buffer.from(',X\n'),
+		])
+		const options = detectCsvOptions(rows)
+		expect(options.encoding).toBe('utf-8')
+		const parsed = parseFile(rows, 'csv', options)
+		expect(parsed.rows[0]).toMatchObject({ Name: 'Jakob Føns', Company: 'Ørsted' })
+	})
+
+	it('falls back to Latin-1 for a real Latin-1 file', () => {
+		const rows = Buffer.from(`${header}Jakob F\xf8ns,\xd8rsted\n`, 'latin1')
+		const options = detectCsvOptions(rows)
+		expect(options.encoding).toBe('latin-1')
+		const parsed = parseFile(rows, 'csv', options)
+		expect(parsed.rows[0]).toMatchObject({ Name: 'Jakob Føns', Company: 'Ørsted' })
+	})
+
+	it('reads a clean UTF-8 file as UTF-8', () => {
+		expect(detectCsvOptions(Buffer.from(`${header}Ørsted,Ørsted\n`, 'utf8')).encoding).toBe('utf-8')
 	})
 })

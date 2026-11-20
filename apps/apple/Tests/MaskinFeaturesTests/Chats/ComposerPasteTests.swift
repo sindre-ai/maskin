@@ -4,6 +4,11 @@ import Testing
 
 @testable import MaskinFeatures
 
+#if os(iOS)
+import UIKit
+import UniformTypeIdentifiers
+#endif
+
 @MainActor
 @Suite("Pasting into the composer")
 struct ComposerPasteTests {
@@ -26,4 +31,37 @@ struct ComposerPasteTests {
 	func pasteRowStays() {
 		#expect(ComposerAttachAction.allCases.map(\.label).contains("Paste image"))
 	}
+
+	#if os(iOS)
+	@Test("image paste setup leaves a read-only paste configuration alone and sets a new one")
+	func installOnReadOnlyConfiguration() {
+		let field = ReadOnlyPasteTextView()
+		ComposerImagePasteHandler().install(on: field)
+		let types = field.pasteConfiguration?.acceptableTypeIdentifiers ?? []
+		#expect(!field.readOnly.wasChanged)
+		#expect(types.contains(UTType.text.identifier))
+		#expect(types.contains(UTType.image.identifier))
+	}
+	#endif
 }
+
+#if os(iOS)
+/// Stands in for the list iOS 27.2 hands out: it can be read, and any change to it is refused.
+private final class ReadOnlyPasteConfiguration: UIPasteConfiguration {
+	private(set) var wasChanged = false
+
+	override func addAcceptableTypeIdentifiers(_ acceptableTypeIdentifiers: [String]) {
+		wasChanged = true
+	}
+}
+
+private final class ReadOnlyPasteTextView: UITextView {
+	let readOnly = ReadOnlyPasteConfiguration(acceptableTypeIdentifiers: [UTType.text.identifier])
+	private var replacement: UIPasteConfiguration?
+
+	override var pasteConfiguration: UIPasteConfiguration? {
+		get { replacement ?? readOnly }
+		set { replacement = newValue }
+	}
+}
+#endif

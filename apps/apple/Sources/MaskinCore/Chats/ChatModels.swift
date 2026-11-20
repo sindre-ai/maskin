@@ -429,7 +429,7 @@ public enum ChatLimits {
 	public static let maxSessionsPage = 100
 	public static let maxMessageLength = 8000
 	public static let maxAttachments = 10
-	/// The largest file the app accepts (1 GiB, `MAX_LARGE_FILE_SIZE_BYTES`). Over the JSON route's own
+	/// The largest file the app accepts (5 GiB, `MAX_LARGE_FILE_SIZE_BYTES`). Over the JSON route's own
 	/// cap (`FileUploadLimits`) a file goes to storage in parts.
 	public static let maxFileBytes = FileUploadLimits.maxLargeFileBytes
 	/// The most a message's text can be as an attached .txt: that upload is base64 JSON.

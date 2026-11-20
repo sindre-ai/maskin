@@ -25,4 +25,14 @@ public enum TabBadge: Equatable, Sendable {
 		case .dot: ""
 		}
 	}
+
+	/// What VoiceOver adds after the tab's name: "8 unread", "15 need you" (For you counts decisions),
+	/// "unread" for a dot. `nil` when there is no badge.
+	public func spokenValue(needsYou: Bool) -> String? {
+		switch self {
+		case .none: nil
+		case .dot: "unread"
+		case .count: label.map { needsYou ? "\($0) need you" : "\($0) unread" }
+		}
+	}
 }

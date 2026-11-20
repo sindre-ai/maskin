@@ -285,16 +285,19 @@ final class MustKeepMoreTests: XCTestCase {
 
 	// MARK: MK-15 Edit, react to, and delete a message
 
-	/// MK-15a: your newest message offers Edit. The words go back into the field under "Editing message",
-	/// and sending the change shows the new words.
-	func testMK15a_EditOwnNewestMessage() throws {
+	/// MK-15a: any message you wrote offers Edit, not only the newest. Here an older one of yours (a newer one
+	/// of yours sits below it). The words go back into the field under "Editing message", and sending the
+	/// change shows the new words with the "edited" mark.
+	func testMK15a_EditOwnMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
-		let mine = anyLabel(containing: "Draft the counter offer for Contoso")
-		expectExists(mine, "the chat shows your newest message", dump: "mk15a-message")
-		openMessageMenu(on: mine)
+		expectExists(
+			anyLabel(containing: "Draft the counter offer for Contoso"), "the chat shows your newer message", dump: "mk15a-newer")
+		let older = anyLabel(containing: "Which clause did Legal flag?")
+		expectExists(older, "the chat shows your older message", dump: "mk15a-message")
+		openMessageMenu(on: older)
 		let edit = element(labelled: "Edit")
-		expectExists(edit, "your newest message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
+		expectExists(edit, "your older message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
 		edit.tap()
 		expectExists(app.buttons["Cancel editing"], "the composer says it is editing the message", dump: "mk15a-strip", timeout: 5)
 		let field = composerField()
@@ -307,8 +310,44 @@ final class MustKeepMoreTests: XCTestCase {
 		XCTAssertTrue(send.waitForExistence(timeout: 5), "the composer offers Send for the edit")
 		send.tap()
 		expectExists(
-			anyLabel(containing: "Draft the counter offer for Contoso. (edited by the test)"), "the chat shows the edited words", dump: "mk15a-after",
+			anyLabel(containing: "Which clause did Legal flag? (edited by the test)"), "the chat shows the edited words", dump: "mk15a-after",
 			timeout: 15)
+	}
+
+	/// MK-18: a comment you wrote on an item offers Edit in its long-press menu. The words go into the comment bar
+	/// under "Editing message", and sending the change shows the new words with the "edited" mark. The demo server
+	/// keeps comments posted during the run, so the test posts one first.
+	func testMK18_EditOwnObjectComment() throws {
+		app.tabBars.buttons["Items"].tap()
+		let item = app.staticTexts["Q4 webinar"].firstMatch
+		expectExists(item, "Items lists the Q4 webinar bet", dump: "mk18-items")
+		item.tap()
+		let activity = app.buttons["Activity"].firstMatch
+		expectExists(activity, "the item has an Activity page", dump: "mk18-detail")
+		activity.tap()
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		let field = app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Type /'", kinds[0], kinds[1])
+		).firstMatch
+		expectExists(field, "the item shows its comment bar", dump: "mk18-bar")
+		field.tap()
+		field.typeText("Checking the budget line")
+		app.buttons["Send"].firstMatch.tap()
+		let posted = anyLabel(containing: "Checking the budget line")
+		expectExists(posted, "the comment shows in Activity", dump: "mk18-posted", timeout: 15)
+		openMessageMenu(on: posted)
+		let edit = element(labelled: "Edit")
+		expectExists(edit, "your comment's menu offers Edit", dump: "mk18-menu", timeout: 5)
+		edit.tap()
+		expectExists(app.buttons["Cancel editing"], "the bar says it is editing the comment", dump: "mk18-strip", timeout: 5)
+		let focused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+		_ = XCTWaiter().wait(for: [focused], timeout: 5)
+		field.typeText(" (edited by the test)")
+		app.buttons["Send"].firstMatch.tap()
+		expectExists(
+			anyLabel(containing: "Checking the budget line (edited by the test)"), "Activity shows the edited words",
+			dump: "mk18-after", timeout: 15)
+		expectExists(app.staticTexts["edited"].firstMatch, "the comment carries the edited mark", dump: "mk18-mark", timeout: 5)
 	}
 
 	/// MK-15b: a message's menu offers quick reactions; picking an emoji puts a count chip under the message.

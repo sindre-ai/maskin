@@ -576,7 +576,7 @@ async function handleTranscriptReady(
 	conferenceRecordName: string,
 	storage: unknown,
 	workspaceId: string,
-): Promise<void> {
+): Promise<boolean> {
 	// List transcripts on the record, then walk entries for the first one.
 	const transcripts = await fetchPages<MeetTranscript>(
 		`${MEET_API_BASE}/${conferenceRecordName}/transcripts`,
@@ -584,7 +584,7 @@ async function handleTranscriptReady(
 		'transcripts',
 	)
 	const transcript = transcripts[0]
-	if (!transcript) return
+	if (!transcript) return false
 
 	const entries = await fetchPages<MeetTranscriptEntry>(
 		`${MEET_API_BASE}/${transcript.name}/entries`,
@@ -673,6 +673,7 @@ async function handleTranscriptReady(
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
+	return true
 }
 
 async function handleRecordingReady(
@@ -695,9 +696,11 @@ async function handleRecordingReady(
 }
 
 /**
- * Called by the reconciler for meetings with a Meet space but no transcript
- * yet: list the record + rehydrate as if a transcript.fileGenerated push landed.
- * Returns true if it wrote a transcript, false if nothing was found yet.
+ * Called by the reconciler for meetings with a Meet space or a conference
+ * record name but no transcript yet: resolve the record (by name when the
+ * meeting already carries one, else by space) + rehydrate as if a
+ * transcript.fileGenerated push landed. Returns true if it wrote a transcript,
+ * false if nothing was found (no record, or a record with no transcript).
  */
 export async function reconcileMeetingArtefacts(
 	db: Database,
@@ -705,8 +708,19 @@ export async function reconcileMeetingArtefacts(
 	workspaceId: string,
 	meetingId: string,
 	spaceName: string | undefined,
+	conferenceRecordName: string | undefined,
 	storage: unknown,
 ): Promise<boolean> {
+	if (conferenceRecordName) {
+		return reconcileConferenceRecord(
+			db,
+			accessToken,
+			workspaceId,
+			meetingId,
+			conferenceRecordName,
+			storage,
+		)
+	}
 	if (!spaceName) return false
 	const records = await callGoogleApi<{
 		conferenceRecords?: MeetConferenceRecord[]
@@ -723,18 +737,35 @@ export async function reconcileMeetingArtefacts(
 	})
 	const record = records.conferenceRecords?.[0]
 	if (!record) return false
+	return reconcileConferenceRecord(db, accessToken, workspaceId, meetingId, record.name, storage)
+}
 
-	await handleTranscriptReady(db, accessToken, meetingId, record.name, storage, workspaceId)
+async function reconcileConferenceRecord(
+	db: Database,
+	accessToken: string,
+	workspaceId: string,
+	meetingId: string,
+	conferenceRecordName: string,
+	storage: unknown,
+): Promise<boolean> {
+	const wrote = await handleTranscriptReady(
+		db,
+		accessToken,
+		meetingId,
+		conferenceRecordName,
+		storage,
+		workspaceId,
+	)
 	// Also pull recording if any.
 	try {
-		await handleRecordingReady(db, accessToken, meetingId, record.name)
+		await handleRecordingReady(db, accessToken, meetingId, conferenceRecordName)
 	} catch (err) {
 		logger.warn('Reconciler recording fetch failed', {
 			meetingId,
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
-	return true
+	return wrote
 }
 
 // Re-export the classifyGoogleApiError symbol for callers that don't import

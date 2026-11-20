@@ -13,6 +13,13 @@ name: Apple
 # and bet work is based on a bet branch, not main. Without this they were never compiled
 # until the whole stack or bet reached main.
 #
+# Draft pull requests do not start Mac runs: both jobs skip while the PR is a draft, and
+# `ready_for_review` starts them when it is marked ready. Every push to an iPhone PR used to
+# start a Mac run of 35-90 minutes, and the Mac queue jammed (2 running, 9 waiting). Open
+# experiment PRs as drafts and mark them ready only when the Mac result is needed. A skipped
+# job counts as passing, so a draft shows green without having compiled anything. Pushes to
+# main are unaffected.
+#
 # The drift checks (design tokens, OpenAPI snapshot, generated Swift client) are NOT here
 # and are not enforced in CI. Refresh them by hand when the backend spec or tokens change.
 #
@@ -51,6 +58,8 @@ on:
       - '.github/workflows/apple.yml'
   pull_request:
     branches: [main, 'feat/**', 'bet/**']
+    # The three defaults plus ready_for_review, which starts the runs a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
@@ -63,6 +72,8 @@ concurrency:
 
 jobs:
   apple:
+    # Not a draft pull request (pushes have no pull_request context, so they always run).
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -145,6 +156,8 @@ jobs:
   # --- Platform builds, one runner per platform ---
   apple-build:
     name: apple-build (${{ matrix.platform }})
+    # Not a draft pull request (pushes have no pull_request context, so they always run).
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-26
     timeout-minutes: 50
     strategy:
@@ -178,6 +191,18 @@ jobs:
       - name: Generate Xcode project
         working-directory: apps/apple
         run: xcodegen generate
+
+      # Package downloads (SourcePackages) and compiled packages (Build) live under the derived
+      # data path below. Keyed on Package.resolved, so a dependency such as Sentry or PostHog
+      # compiles once per version, not on every push. One cache per platform: each compiles for
+      # its own SDK. No restore-keys: a cache from another Package.resolved would only mislead.
+      - name: Cache Swift packages and compiled packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/dd/SourcePackages
+            ${{ runner.temp }}/dd/Build
+          key: swiftpm-build-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('apps/apple/Package.resolved') }}
 
       - name: xcodebuild (${{ matrix.platform }})
         working-directory: apps/apple
