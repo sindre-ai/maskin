@@ -1,7 +1,7 @@
 import type { Database, Transaction } from '@maskin/db'
 import { events, actors } from '@maskin/db/schema'
 import type { ObjectPreview } from '@maskin/shared'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { withAttachmentNames } from './email-attachments'
 import { recordEventReturning } from './events/record-event'
 
@@ -28,13 +28,11 @@ export interface ObjectApproval {
 	createdAt: Date | null
 }
 
-type ApprovalAction = typeof APPROVED_ACTION | typeof DELIVERED_ACTION | typeof AUTO_SENT_ACTION
-
 async function latestEvent(
 	db: Database,
 	workspaceId: string,
 	objectId: string,
-	action: ApprovalAction,
+	action: string,
 	humanOnly: boolean,
 ) {
 	const rows = await db
@@ -50,10 +48,7 @@ async function latestEvent(
 			and(
 				eq(events.workspaceId, workspaceId),
 				eq(events.entityId, objectId),
-				// A literal, not a bound parameter: a generic plan cannot prove `action = $1` implies the
-				// partial index events_approval_lookup_idx, and would read every event of the object.
-				// `action` is one of the three constants above, so there is nothing to escape.
-				sql`${events.action} = ${sql.raw(`'${action}'`)}`,
+				eq(events.action, action),
 				...(humanOnly ? [eq(actors.type, 'human')] : []),
 			),
 		)
