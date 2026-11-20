@@ -306,6 +306,18 @@ export function overrides({ method, path, params, query, body, base, item }) {
 	}
 	const more = mustKeepMore({ method, path, query, body, item })
 	if (more) return more
+	// A comment edited from the app (MK-16): new words and the edit time on the stored comment.
+	const editMatch = path.match(/^\/api\/events\/(\d+)$/)
+	if (method === 'patch' && editMatch && typeof body?.content === 'string') {
+		for (const [objectId, list] of postedComments) {
+			const event = list.find((e) => e.id === Number(editMatch[1]))
+			if (!event) continue
+			event.data = { ...event.data, content: body.content, editedAt: new Date().toISOString() }
+			postedComments.set(objectId, [...list])
+			return { body: event }
+		}
+		return { status: 404, body: { error: { code: 'NOT_FOUND', message: 'Comment not found' } } }
+	}
 	if (method !== 'get' && method !== 'post') return null
 	if (method === 'post' && path === '/api/events' && typeof body?.entity_id === 'string') {
 		const event = {

@@ -314,6 +314,42 @@ final class MustKeepMoreTests: XCTestCase {
 			timeout: 15)
 	}
 
+	/// MK-16: a comment you wrote on an item offers Edit in its long-press menu. The words go into the comment bar
+	/// under "Editing message", and sending the change shows the new words with the "edited" mark. The demo server
+	/// keeps comments posted during the run, so the test posts one first.
+	func testMK16_EditOwnObjectComment() throws {
+		app.tabBars.buttons["Items"].tap()
+		let item = app.staticTexts["Q4 webinar"].firstMatch
+		expectExists(item, "Items lists the Q4 webinar bet", dump: "mk16-items")
+		item.tap()
+		let activity = app.staticTexts["Activity"].firstMatch
+		expectExists(activity, "the item has an Activity page", dump: "mk16-detail")
+		activity.tap()
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		let field = app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Type /'", kinds[0], kinds[1])
+		).firstMatch
+		expectExists(field, "the item shows its comment bar", dump: "mk16-bar")
+		field.tap()
+		field.typeText("Checking the budget line")
+		app.buttons["Send"].firstMatch.tap()
+		let posted = anyLabel(containing: "Checking the budget line")
+		expectExists(posted, "the comment shows in Activity", dump: "mk16-posted", timeout: 15)
+		openMessageMenu(on: posted)
+		let edit = element(labelled: "Edit")
+		expectExists(edit, "your comment's menu offers Edit", dump: "mk16-menu", timeout: 5)
+		edit.tap()
+		expectExists(app.buttons["Cancel editing"], "the bar says it is editing the comment", dump: "mk16-strip", timeout: 5)
+		let focused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+		_ = XCTWaiter().wait(for: [focused], timeout: 5)
+		field.typeText(" (edited by the test)")
+		app.buttons["Send"].firstMatch.tap()
+		expectExists(
+			anyLabel(containing: "Checking the budget line (edited by the test)"), "Activity shows the edited words",
+			dump: "mk16-after", timeout: 15)
+		expectExists(app.staticTexts["edited"].firstMatch, "the comment carries the edited mark", dump: "mk16-mark", timeout: 5)
+	}
+
 	/// MK-15b: a message's menu offers quick reactions; picking an emoji puts a count chip under the message.
 	func testMK15b_ReactToMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
