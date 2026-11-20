@@ -48,7 +48,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
 	// Maskin-hosted and read-only. Curated, so a tool added later is a write until it is listed here.
-	youtube: new Set(['youtube__get_channel']),
+	youtube: new Set(['youtube__get_channel', 'youtube__list_recent_videos']),
 	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
 	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
 	// Stripe's hosted tool names are not read verbs (stripe_api_read), and stripe_api_write takes
