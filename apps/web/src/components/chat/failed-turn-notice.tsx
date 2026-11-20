@@ -5,12 +5,18 @@ import { useRetryMessage } from '@/hooks/use-conversation'
 import type { MessageResponse } from '@/lib/api'
 import { RotateCcw } from 'lucide-react'
 
-/** A permanent failure: the plain line is the message body, the provider's own text is kept for the fold. */
+/**
+ * A permanent failure: the plain line is the message body, the provider's own text is kept for the
+ * fold. The subscription-moved notice is also marked permanent, but the server already answers that
+ * message again on the new subscription, so it keeps its own text and gets no Retry.
+ */
 export function isPermanentFailure(message: MessageResponse): boolean {
+	const output = message.metadata?.final_output
 	return (
 		message.actorType === 'agent' &&
 		message.kind === 'message' &&
-		message.metadata?.final_output?.error_kind === 'permanent'
+		output?.error_kind === 'permanent' &&
+		!('subscription_moved_to' in output)
 	)
 }
 
