@@ -5,7 +5,8 @@
 // The core is picked from call counts per tool (PostHog, 29 Oct to 19 Nov 2026): a tool is core
 // when 50 or more distinct agents called it or it has 2,000 or more estimated calls (desktop
 // tools left out of that count), plus the four the agent prompts name for everyone
-// (create_sub_chat, ask_user_question, get_started, post_conversation_message).
+// (create_sub_chat, ask_user_question, list_marketplace, post_conversation_message). fork_loop
+// and install_loop have no counts yet, so they sit in the automation group until they do.
 //
 // A tool that is in neither the core nor a group stays listed, so a new tool is never hidden by
 // accident. tool-groups.test.ts fails when a registered tool is in neither, so new tools get
@@ -27,7 +28,6 @@ export const CORE_TOOLS: ReadonlySet<string> = new Set([
 	'get_loop',
 	'get_objects',
 	'get_session',
-	'get_started',
 	'get_workspace_schema',
 	'list_actors',
 	'list_chats',
@@ -36,6 +36,7 @@ export const CORE_TOOLS: ReadonlySet<string> = new Set([
 	'list_for_you',
 	'list_integrations',
 	'list_loops',
+	'list_marketplace',
 	'list_notifications',
 	'list_objects',
 	'list_relationships',
@@ -59,7 +60,9 @@ export const TOOL_GROUPS = {
 		'create_trigger',
 		'delete_loop',
 		'delete_trigger',
+		'fork_loop',
 		'get_trigger',
+		'install_loop',
 		'schedule_next_step',
 		'set_loop_view',
 		'set_next_step',
