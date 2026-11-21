@@ -9,15 +9,20 @@ import { YoutubeError } from './errors'
  *  - data: 10,000 units a day at Google, held to 5,000 global and 1,000 per workspace.
  *  - search: 100 search.list calls a day at Google, held to 60 global and 20 per workspace.
  *  - upload: 100 videos.insert calls a day at Google, held to 20 global and 5 per workspace.
- * Search and upload are counted in calls (1 unit each). The caps are conservative on purpose, so
- * one looping agent cannot drain the shared budget for everyone.
+ *  - analytics: the YouTube Analytics API has no published default quota (Researcher, 2026-11-04).
+ *    Until the real number is read from the console (smoke S2) the global cap is the spec's 200
+ *    calls a day and a workspace gets a quarter of it. Both are ASSUMED: set them from a fraction
+ *    of the real number when it is posted on the part 3 task.
+ * Search, upload and analytics are counted in calls (1 unit each). The caps are conservative on
+ * purpose, so one looping agent cannot drain the shared budget for everyone.
  */
-export type YoutubeQuotaBucket = 'data' | 'search' | 'upload'
+export type YoutubeQuotaBucket = 'data' | 'search' | 'upload' | 'analytics'
 
 export const BUCKET_CAPS: Record<YoutubeQuotaBucket, { global: number; workspace: number }> = {
 	data: { global: 5_000, workspace: 1_000 },
 	search: { global: 60, workspace: 20 },
 	upload: { global: 20, workspace: 5 },
+	analytics: { global: 200, workspace: 50 },
 }
 
 export const GLOBAL_DAILY_CAP = BUCKET_CAPS.data.global
@@ -28,6 +33,7 @@ const BUCKET_LABEL: Record<YoutubeQuotaBucket, string> = {
 	data: 'YouTube',
 	search: 'YouTube search',
 	upload: 'YouTube upload',
+	analytics: 'YouTube Analytics',
 }
 
 /** Thrown inside the transaction to roll the workspace increment back. */
@@ -159,4 +165,14 @@ export async function chargeYoutubeUploadQuota(
 		}
 		throw err
 	}
+}
+
+/** One Analytics API call is one unit of the analytics bucket, whatever the report asks for. */
+export function chargeYoutubeAnalyticsQuota(
+	db: Database,
+	workspaceId: string,
+	units = 1,
+	at?: Date,
+): Promise<void> {
+	return chargeYoutubeQuota(db, workspaceId, units, 'analytics', at)
 }

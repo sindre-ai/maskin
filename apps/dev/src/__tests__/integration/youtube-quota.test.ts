@@ -7,6 +7,7 @@ import {
 	GLOBAL_DAILY_CAP,
 	GLOBAL_SCOPE,
 	WORKSPACE_DAILY_CAP,
+	chargeYoutubeAnalyticsQuota,
 	chargeYoutubeQuota,
 } from '../../lib/integrations/providers/youtube/quota'
 import { db } from './global-setup'
@@ -163,6 +164,7 @@ describe('chargeYoutubeQuota', () => {
 				data: { global: 5000, workspace: 1000 },
 				search: { global: 60, workspace: 20 },
 				upload: { global: 20, workspace: 5 },
+				analytics: { global: 200, workspace: 50 },
 			})
 		})
 
@@ -223,6 +225,60 @@ describe('chargeYoutubeQuota', () => {
 
 			expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(5)
 			expect(await used(GLOBAL_SCOPE, '2026-10-14', 'search')).toBe(BUCKET_CAPS.search.global)
+		})
+
+		it('charges the analytics bucket on its own rows and leaves the data bucket alone', async () => {
+			const ws = wsId()
+			await chargeYoutubeAnalyticsQuota(db, ws, 1, OCT_14)
+			await chargeYoutubeAnalyticsQuota(db, ws, 1, OCT_14)
+
+			expect(await used(ws, '2026-10-14', 'analytics')).toBe(2)
+			expect(await used(GLOBAL_SCOPE, '2026-10-14', 'analytics')).toBe(2)
+			expect(await used(ws, '2026-10-14', 'data')).toBeNull()
+			expect(await used(GLOBAL_SCOPE, '2026-10-14', 'data')).toBeNull()
+		})
+
+		it('a spent data bucket does not block analytics, and the other way round', async () => {
+			const ws = wsId()
+			await seed(ws, '2026-10-14', WORKSPACE_DAILY_CAP)
+			await seed(GLOBAL_SCOPE, '2026-10-14', GLOBAL_DAILY_CAP)
+			await chargeYoutubeAnalyticsQuota(db, ws, 1, OCT_14)
+			expect(await used(ws, '2026-10-14', 'analytics')).toBe(1)
+
+			const other = wsId()
+			await seed(other, '2026-10-14', BUCKET_CAPS.analytics.workspace, 'analytics')
+			await expect(chargeYoutubeAnalyticsQuota(db, other, 1, OCT_14)).rejects.toMatchObject({
+				code: 'WORKSPACE_QUOTA_EXHAUSTED',
+			})
+			await db.delete(youtubeQuotaUsage).where(eq(youtubeQuotaUsage.scope, GLOBAL_SCOPE))
+			await expect(chargeYoutubeQuota(db, wsId(), 1, 'data', OCT_14)).resolves.toBeUndefined()
+		})
+
+		it('parallel analytics calls never exceed the workspace cap', async () => {
+			const ws = wsId()
+			await seed(ws, '2026-10-14', BUCKET_CAPS.analytics.workspace - 5, 'analytics')
+
+			const results = await Promise.allSettled(
+				Array.from({ length: 20 }, () => chargeYoutubeAnalyticsQuota(db, ws, 1, OCT_14)),
+			)
+
+			expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(5)
+			const failed = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
+			for (const f of failed) expect(f.reason).toMatchObject({ code: 'WORKSPACE_QUOTA_EXHAUSTED' })
+			expect(await used(ws, '2026-10-14', 'analytics')).toBe(BUCKET_CAPS.analytics.workspace)
+			expect(await used(GLOBAL_SCOPE, '2026-10-14', 'analytics')).toBe(5)
+		})
+
+		it('a global analytics cap hit rolls back the workspace increment and names Analytics', async () => {
+			const ws = wsId()
+			await seed(GLOBAL_SCOPE, '2026-10-14', BUCKET_CAPS.analytics.global, 'analytics')
+
+			const err = await chargeYoutubeAnalyticsQuota(db, ws, 1, OCT_14).catch((e) => e)
+
+			expect(err).toBeInstanceOf(YoutubeError)
+			expect(err.code).toBe('QUOTA_EXHAUSTED')
+			expect(err.message).toContain('Analytics')
+			expect(await used(ws, '2026-10-14', 'analytics')).toBeNull()
 		})
 
 		it('rejects a bucket name the table does not know', async () => {
