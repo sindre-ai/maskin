@@ -25,7 +25,11 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WORKSPACE_PURGE_CASCADE, WORKSPACE_PURGE_EXPLICIT } from '../../lib/workspace-purge'
+import {
+	WORKSPACE_PURGE_CASCADE,
+	WORKSPACE_PURGE_EXPLICIT,
+	purgeWorkspaceInBatches,
+} from '../../lib/workspace-purge'
 import {
 	insertActor,
 	insertConversation,
@@ -307,6 +311,27 @@ describe('workspace deletion (integration)', () => {
 			)
 			for (const t of [...explicit, ...cascade]) expect(tables.has(t), `${t} exists`).toBe(true)
 		})
+
+		it('has an index on every column that references objects', async () => {
+			// Deleting an object makes Postgres look up the rows that point at it in every child table.
+			// Without an index on the column that is a full scan per deleted object, which is what pushed
+			// the objects step of a workspace delete past the 45 second query timeout.
+			const unindexed = await sql<{ child: string; col: string }[]>`
+				SELECT c.conrelid::regclass::text AS child, a.attname AS col
+				FROM pg_constraint c
+				JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+				WHERE c.contype = 'f' AND c.confrelid = 'public.objects'::regclass
+					AND NOT EXISTS (
+						SELECT 1 FROM pg_index i
+						WHERE i.indrelid = c.conrelid AND i.indisvalid AND i.indkey[0] = c.conkey[1]
+					)
+				ORDER BY 1, 2`
+
+			expect(
+				unindexed.map((r) => `${r.child}.${r.col}`),
+				'a table references objects but no index starts with that column: add a partial index in a migration (see 0167 to 0169) so deleting an object does not scan the whole table',
+			).toEqual([])
+		})
 	})
 
 	it('purges every row of the workspace and leaves another workspace untouched', async () => {
@@ -386,6 +411,9 @@ describe('workspace deletion (integration)', () => {
 				target.fileKey,
 				`agents/${target.ws.id}/${target.agent.id}/extra.md`,
 				`workspaces/${target.ws.id}/skills/s/SKILL.md`,
+				// Finished sessions are deleted in batches before the final purge; their snapshot
+				// keys must still reach storage.
+				target.first.snapshotPath as string,
 			]),
 		)
 		expect(storage.deleted.some((k) => k.includes(bystander.ws.id))).toBe(false)
@@ -453,6 +481,95 @@ describe('workspace deletion (integration)', () => {
 		}
 		expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(1)
 		expect(await countRows('objects', 'workspace_id', ws.id)).toBeGreaterThan(0)
+	})
+
+	it('answers a failed purge in plain words and keeps the workspace so the delete can be retried', async () => {
+		const { ws } = await seedWorkspace(me, { name: 'Blocked' })
+		// A table the purge has never heard of, holding a NO ACTION link to the workspace: the same
+		// shape as a table added after the purge list was written.
+		await sql.unsafe(
+			'CREATE TABLE zz_purge_probe (id serial PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces(id))',
+		)
+		await sql.unsafe('INSERT INTO zz_purge_probe (workspace_id) VALUES ($1)', [ws.id])
+		try {
+			const res = await del(ws.id, 'Blocked')
+			expect(res.status).toBe(500)
+			const body = (await res.json()) as { error: { message: string } }
+			expect(body.error.message).not.toBe('An unexpected error occurred')
+			// The bulky rows went in their own statements before the final step failed, so the
+			// message says part of the data may be gone and that trying again carries on.
+			expect(body.error.message).toContain('carries on')
+			// The final transaction rolled back: the workspace row and its members are still there.
+			expect(await db.select().from(workspaces).where(eq(workspaces.id, ws.id))).toHaveLength(1)
+			expect(await countRows('workspace_members', 'workspace_id', ws.id)).toBeGreaterThan(0)
+		} finally {
+			await sql.unsafe('DROP TABLE zz_purge_probe')
+		}
+	})
+
+	it('removes the bulky rows in small batches and leaves unfinished sessions and the rest', async () => {
+		const other = await insertActor(db, { type: 'human' })
+		const target = await seedWorkspace(me, { name: 'Batched' })
+		const bystander = await seedWorkspace(other, { name: 'Neighbour' })
+		// A retry chain whose last link is still running: the finished links go, the running one
+		// stays for the final purge, which reads its sandbox first.
+		const chainA = await insertSession(db, target.ws.id, target.agent.id, me.id, {
+			status: 'completed',
+		})
+		const chainB = await insertSession(db, target.ws.id, target.agent.id, me.id, {
+			status: 'completed',
+			retryOf: chainA.id,
+		})
+		const running = await insertSession(db, target.ws.id, target.agent.id, me.id, {
+			status: 'running',
+			retryOf: chainB.id,
+		})
+		for (let i = 0; i < 5; i++) {
+			await insertObject(db, target.ws.id, me.id, { type: 'task', title: `Extra ${i}` })
+			await db.insert(events).values({
+				workspaceId: target.ws.id,
+				actorId: me.id,
+				action: 'created',
+				entityType: 'object',
+				entityId: target.objectA.id,
+			})
+		}
+
+		// A batch of one forces every loop to run several times.
+		const { storageKeys } = await purgeWorkspaceInBatches(db, target.ws.id, { batchSize: 1 })
+
+		expect(await countRows('objects', 'workspace_id', target.ws.id)).toBe(0)
+		expect(await countRows('events', 'workspace_id', target.ws.id)).toBe(0)
+		expect(await countRows('installed_loops', 'workspace_id', target.ws.id)).toBe(0)
+		expect(
+			await sql`SELECT 1 FROM relationships WHERE source_id = ${target.objectA.id} OR target_id = ${target.objectA.id}`,
+		).toHaveLength(0)
+		expect(
+			await db.select().from(sessionLogs).where(eq(sessionLogs.sessionId, target.first.id)),
+		).toEqual([])
+		// The finished sessions are gone (the seed's retry and original point at each other); the
+		// unfinished one stays.
+		expect(await db.select().from(sessions).where(eq(sessions.id, target.first.id))).toEqual([])
+		const left = await db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(eq(sessions.workspaceId, target.ws.id))
+		expect(left.map((r) => r.id)).toEqual([running.id])
+		expect(storageKeys).toEqual([target.first.snapshotPath])
+
+		// Not the workspace itself, its members, files or the neighbour.
+		expect(await db.select().from(workspaces).where(eq(workspaces.id, target.ws.id))).toHaveLength(
+			1,
+		)
+		expect(await countRows('files', 'workspace_id', target.ws.id)).toBeGreaterThan(0)
+		expect(await countRows('objects', 'workspace_id', bystander.ws.id)).toBeGreaterThan(0)
+		expect(await countRows('events', 'workspace_id', bystander.ws.id)).toBeGreaterThan(0)
+
+		// A second run finds nothing to do, and the delete itself still finishes the job.
+		expect((await purgeWorkspaceInBatches(db, target.ws.id)).storageKeys).toEqual([])
+		const res = await del(target.ws.id, 'Batched')
+		expect(res.status).toBe(200)
+		expect(await countRows('sessions', 'workspace_id', target.ws.id)).toBe(0)
 	})
 
 	it('refuses a member who is not the billing owner', async () => {

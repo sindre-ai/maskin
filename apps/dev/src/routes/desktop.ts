@@ -391,6 +391,9 @@ const NOT_A_PASSWORD_FIELD_HINT =
 const OLD_COMPUTER_MESSAGE =
 	'This computer is an older version that cannot check which field has focus, so the saved password was not typed. Nothing was typed. Run desktop_apply_settings to bring this computer up to date without losing its saved logins, then send the reference again. If that says chromium_restart_needed, the browser has to be restarted once first, which closes its open pages.'
 
+const OLD_COMPUTER_ATTACH_MESSAGE =
+	'This computer is an older version that cannot attach a file to a page. Nothing was attached. Run desktop_apply_settings to bring it up to date without losing its saved logins, then try again. If that says chromium_restart_needed, the browser has to be restarted once first, which closes its open pages. Until then use the file chooser: click the upload button, press ctrl+L, type the path, click Open.'
+
 /**
  * The session a call comes from, so a credential allowed for only this chat counts. Taken
  * only when it is this actor's own session in this workspace; anything else is ignored.
@@ -468,6 +471,16 @@ async function forwardControl(c: Ctx, action: ControlAction, body: unknown) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Desktop could not be reached'), 502)
 	}
 	if (!result) return c.json(createApiError('NOT_FOUND', 'No desktop could be started'), 404)
+
+	// An image from before attach_file answers 400 'unknown action'. Say what to do about it.
+	if (
+		action === 'input' &&
+		(body as { action?: string }).action === 'attach_file' &&
+		result.status === 400 &&
+		(result.body as { message?: string } | null)?.message === 'unknown action'
+	) {
+		return c.json(createApiError('CONFLICT', OLD_COMPUTER_ATTACH_MESSAGE), 409)
+	}
 
 	// Screenshots are reads; input and exec change the desktop everyone is watching.
 	if (action !== 'screenshot' && result.status === 200) {

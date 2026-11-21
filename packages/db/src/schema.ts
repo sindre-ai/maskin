@@ -415,6 +415,12 @@ export const events = pgTable(
 		index('events_daily_budget_summary_day_idx')
 			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
 			.where(sql`${t.action} = 'daily_budget_summary'`),
+		// The newest approved, delivered or auto_sent event of one object, behind the draft cards on
+		// For You (lib/object-delivery.ts). Partial, so it holds only those three actions. Built
+		// CONCURRENTLY in migration 0170.
+		index('events_approval_lookup_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} IN ('approved', 'delivered', 'auto_sent')`),
 	],
 )
 
@@ -1183,6 +1189,11 @@ export const nextSteps = pgTable(
 			.on(t.objectId)
 			.where(sql`${t.status} in ('open', 'blocked')`),
 		index('next_steps_open_due_idx').on(t.dueAt).where(sql`${t.status} = 'open'`),
+		// ON DELETE CASCADE FK to objects: a deleted object finds its blocked steps here. Built
+		// CONCURRENTLY in migration 0168.
+		index('next_steps_blocked_on_object_idx')
+			.on(t.blockedOnObjectId)
+			.where(sql`${t.blockedOnObjectId} IS NOT NULL`),
 		check('next_steps_status_check', sql`${t.status} in ('open', 'blocked', 'done', 'skipped')`),
 		check(
 			'next_steps_blocked_on_check',
@@ -2138,6 +2149,10 @@ export const notifications = pgTable(
 		index('notifications_session_id_idx')
 			.on(t.sessionId)
 			.where(sql`${t.sessionId} IS NOT NULL`),
+		// ON DELETE SET NULL FK to objects. Built CONCURRENTLY in migration 0167.
+		index('notifications_object_id_idx')
+			.on(t.objectId)
+			.where(sql`${t.objectId} IS NOT NULL`),
 	],
 )
 
@@ -2848,6 +2863,11 @@ export const installedLoops = pgTable(
 	(t) => [
 		unique('installed_loops_ws_source_uniq').on(t.workspaceId, t.sourceLoopId),
 		index('installed_loops_source_locked_idx').on(t.sourceLoopId, t.isLocked),
+		// NO ACTION FK to objects: deleting an object checks this column. Built CONCURRENTLY in
+		// migration 0169.
+		index('installed_loops_object_id_idx')
+			.on(t.objectId)
+			.where(sql`${t.objectId} IS NOT NULL`),
 	],
 )
 

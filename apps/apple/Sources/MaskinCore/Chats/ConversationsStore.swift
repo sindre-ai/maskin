@@ -522,9 +522,9 @@ public final class ConversationsStore {
 	) async throws -> ConversationSummary {
 		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
-		let hasMessage = !(message?.isEmpty ?? true)
+		let hasMessage = !(message?.isEmpty ?? true) || firstMessageMetadata?.attachments != nil
 		let created = try await api.create(
-			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? (message ?? "") : nil,
 			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
 		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
 			conversations.insert(created, at: 0)

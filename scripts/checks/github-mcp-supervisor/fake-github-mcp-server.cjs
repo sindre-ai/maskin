@@ -7,6 +7,9 @@
 // Tools: get_me and list_branches (need auth), echo, slow, stats, forbidden,
 // mentions_401 (a successful result whose text mentions 401), issue_401_not_found
 // (a 404 error whose URL contains 401), crash.
+// create_or_update_file (a write) answers { wrote: true }.
+// With FAKE_TOOLS_LIST=1, tools/list answers GitHub's shape: get_me and list_branches carry
+// readOnlyHint true, create_or_update_file and unmarked_tool do not.
 // Any other method with an id is answered with { discovered: true }.
 
 const readline = require('node:readline')
@@ -74,6 +77,8 @@ function handleTool(id, name, args) {
 				hasGithubToken: startedWith !== '',
 			}),
 		)
+	} else if (name === 'create_or_update_file' || name === 'unmarked_tool') {
+		reply(id, text({ wrote: true, pid: process.pid, tag: args.tag }))
 	} else if (name === 'crash') {
 		process.exit(3)
 	} else {
@@ -92,6 +97,15 @@ lines.on('line', (line) => {
 		})
 	} else if (message.method === 'notifications/initialized') {
 		initializedCount += 1
+	} else if (message.method === 'tools/list' && process.env.FAKE_TOOLS_LIST === '1') {
+		reply(message.id, {
+			tools: [
+				{ name: 'get_me', annotations: { readOnlyHint: true } },
+				{ name: 'list_branches', annotations: { readOnlyHint: true } },
+				{ name: 'create_or_update_file', annotations: { readOnlyHint: false } },
+				{ name: 'unmarked_tool' },
+			],
+		})
 	} else if (message.method === 'tools/call') {
 		handleTool(message.id, message.params.name, message.params.arguments || {})
 	} else if (message.id !== undefined && message.method) {

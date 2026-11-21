@@ -17,6 +17,11 @@ MASKIN_WEB_BASE_URL =
 MASKIN_POSTHOG_KEY =
 MASKIN_POSTHOG_HOST = https:/$()/eu.i.posthog.com
 
+// Crash and error reports. The DSN of the native app's Sentry project (maskin-ios). A DSN is meant to ship
+// inside the app, so it is not a secret. Empty = this build reports nothing; only the TestFlight workflow
+// sets it. Debug builds and tests never report, whatever this says.
+MASKIN_SENTRY_DSN =
+
 // Optional, gitignored: DEVELOPMENT_TEAM and any overrides. CI has none and builds with
 // CODE_SIGNING_ALLOWED=NO.
 #include? "Local.xcconfig"

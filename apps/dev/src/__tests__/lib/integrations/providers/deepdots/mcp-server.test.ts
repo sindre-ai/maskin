@@ -169,6 +169,60 @@ describe('Deepdots MCP server', () => {
 		expect(payload(res).error.code).toBe('NOT_ALLOWED')
 	})
 
+	it('keeps the reason Deepdots gives for a 400 or 422, cut short, and nothing else from the body', async () => {
+		const body = {
+			error: {
+				statusCode: 400,
+				name: 'BadRequestError',
+				message: 'limit must be at most 50',
+				details: [{ path: '/filter/limit', code: 'max', message: 'must be <= 50' }],
+				text: 'secret feedback text',
+			},
+		}
+		const { client } = await connect({
+			fetchImpl: (async () =>
+				new Response(JSON.stringify(body), { status: 400 })) as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 50 } })
+		const error = payload(res).error
+		expect(error.code).toBe('REQUEST_FAILED')
+		expect(error.message).toBe(
+			'Deepdots answered with an unexpected status (400): limit must be at most 50 /filter/limit: must be <= 50',
+		)
+		expect(error.message).not.toContain('secret')
+
+		const long = await connect({
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: { message: 'x'.repeat(2000) } }), {
+					status: 422,
+				})) as unknown as typeof fetch,
+		})
+		const cut = await long.client.callTool({ name: 'deepdots_list_topics', arguments: {} })
+		expect(payload(cut).error.message.length).toBeLessThan(400)
+	})
+
+	it('keeps the plain message for a 400 whose body is not an error object', async () => {
+		const { client } = await connect({
+			fetchImpl: (async () => new Response('not json', { status: 400 })) as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'deepdots_list_issues', arguments: {} })
+		expect(payload(res).error.message).toBe('Deepdots answered with an unexpected status (400).')
+	})
+
+	it('asks Deepdots for 50 rows at limit 50 and says there may be more on a full page', async () => {
+		const rows = Array.from({ length: 50 }, (_, i) => ({ id: `i${i}`, issues_name: `n${i}` }))
+		const { client, fetchImpl } = await connect({
+			fetchImpl: vi.fn(async () => new Response(JSON.stringify(rows))) as unknown as typeof fetch,
+		})
+		const res = await client.callTool({
+			name: 'deepdots_list_issues',
+			arguments: { limit: 50 },
+		})
+		const [url] = (fetchImpl as unknown as { mock: { calls: [string][] } }).mock.calls[0]
+		expect(JSON.parse(new URL(url).searchParams.get('filter') ?? '{}').limit).toBe(50)
+		expect(payload(res)).toMatchObject({ has_more: true, next_skip: 50 })
+	})
+
 	it('fires integration_tool_called with ids and an outcome only', async () => {
 		const { client, trackToolCalled } = await connect()
 		await client.callTool({ name: 'deepdots_list_issues', arguments: { limit: 2 } })

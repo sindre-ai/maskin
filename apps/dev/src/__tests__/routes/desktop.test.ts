@@ -379,6 +379,57 @@ describe('agent control routes', () => {
 		expect(text).not.toContain('close and reopen')
 	})
 
+	it('forwards attach_file to the computer and passes its answer on', async () => {
+		const controlFn = vi.fn(async () => ({
+			status: 200,
+			body: { ok: true, file_name: 'photo.png' },
+		}))
+		const { app } = build({ control: controlFn })
+
+		const res = await control(app, 'input', {
+			action: 'attach_file',
+			path: '~/Downloads/photo.png',
+			selector: 'input[type=file]',
+		})
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true, file_name: 'photo.png' })
+		expect(controlFn.mock.calls[0]?.[3]).toEqual({
+			action: 'attach_file',
+			path: '~/Downloads/photo.png',
+			selector: 'input[type=file]',
+		})
+	})
+
+	it('passes on why a file could not be attached', async () => {
+		const refusal = {
+			error: 'several_file_inputs',
+			message: 'The page has more than one file input.',
+		}
+		const { app } = build({ control: vi.fn(async () => ({ status: 409, body: refusal })) })
+
+		const res = await control(app, 'input', { action: 'attach_file', path: '/home/user/a.png' })
+
+		expect(res.status).toBe(409)
+		expect(await res.json()).toEqual(refusal)
+	})
+
+	it('tells the agent how to refresh a computer that cannot attach a file', async () => {
+		const controlFn = vi.fn(async () => ({
+			status: 400,
+			body: { error: 'invalid_request', message: 'unknown action' },
+		}))
+		const { app } = build({ control: controlFn })
+
+		const res = await control(app, 'input', { action: 'attach_file', path: '/home/user/a.png' })
+
+		expect(res.status).toBe(409)
+		const text = await res.text()
+		expect(text).toContain('older version')
+		expect(text).toContain('desktop_apply_settings')
+		expect(text).toContain('ctrl+L')
+	})
+
 	it('types a saved username or email as plain text, as before', async () => {
 		vi.mocked(resolveKeychainTyping).mockResolvedValueOnce({
 			kind: 'resolved',
@@ -400,6 +451,8 @@ describe('agent control routes', () => {
 		['non-integer y', { action: 'move', x: 1, y: 1.5 }],
 		['shell metacharacters in a key', { action: 'key', keys: ['ctrl+l; rm -rf /'] }],
 		['empty text', { action: 'type', text: '' }],
+		['attach_file with a relative path', { action: 'attach_file', path: 'photo.png' }],
+		['attach_file with an empty selector', { action: 'attach_file', path: '/a.png', selector: '' }],
 	])('input rejects %s with 400 and never reaches the desktop', async (_name, body) => {
 		const controlFn = vi.fn()
 		const { app } = build({ control: controlFn })

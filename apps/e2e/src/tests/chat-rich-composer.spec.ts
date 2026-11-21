@@ -286,6 +286,34 @@ test.describe('Chat message box with formatting', () => {
 		await expect(box).toContainText('https://example.com/docs')
 	})
 
+	test('a pasted link shows as a link without angle brackets once sent', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		await box.evaluate((el) => {
+			const data = new DataTransfer()
+			data.setData('text/plain', 'https://example.com/docs')
+			el.dispatchEvent(
+				new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+			)
+		})
+		await page.keyboard.press('ControlOrMeta+Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toContain('https://example.com/docs')
+		const link = page.getByRole('link', { name: 'https://example.com/docs' })
+		await expect(link).toBeVisible()
+		await expect(link).toHaveAttribute('href', 'https://example.com/docs')
+		await expect(page.getByText('<https://example.com/docs>')).toHaveCount(0)
+		await page.screenshot({ path: 'test-results/rich-composer-sent-link.png' })
+	})
+
 	test('Show formatting opens a row of buttons that act on the selection', async ({
 		page,
 		account,

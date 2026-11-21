@@ -4,7 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { buildEventResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-const { createMutate } = vi.hoisted(() => ({ createMutate: vi.fn() }))
+const { createMutate, editMutate } = vi.hoisted(() => ({
+	createMutate: vi.fn(),
+	editMutate: vi.fn(),
+}))
 
 vi.mock('@/hooks/use-conversations', () => ({
 	useConversationsInfinite: () => ({ data: undefined }),
@@ -31,6 +34,10 @@ vi.mock('@/hooks/use-actors', () => ({
 
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: createMutate, isPending: false }),
+}))
+
+vi.mock('@/hooks/use-edit-comment', () => ({
+	useEditComment: () => ({ mutate: editMutate, isPending: false }),
 }))
 
 vi.mock('@/hooks/use-files', () => ({
@@ -550,6 +557,65 @@ describe('ActivityComment', () => {
 
 			expect(screen.queryByText(/Answered:/)).not.toBeInTheDocument()
 			expect(screen.getByRole('button', { name: /Ship/ })).toBeInTheDocument()
+		})
+	})
+
+	describe('editing your own comment', () => {
+		beforeEach(() => {
+			editMutate.mockClear()
+			localStorage.setItem('ff:comment-edit', 'on')
+		})
+		afterEach(() => localStorage.removeItem('ff:comment-edit'))
+
+		it('lets the author edit and saves the new text', async () => {
+			const user = userEvent.setup()
+			const event = buildEventResponse({ id: 11, action: 'commented', data: { content: 'Draft' } })
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />, {
+				wrapper: TestWrapper,
+			})
+
+			await user.click(screen.getByRole('button', { name: 'Edit' }))
+			const box = screen.getByRole('textbox', { name: 'Edit your comment' })
+			await user.clear(box)
+			await user.type(box, 'Better words')
+			await user.click(screen.getByRole('button', { name: 'Save' }))
+
+			expect(editMutate).toHaveBeenCalledWith(
+				{ eventId: 11, content: 'Better words' },
+				expect.anything(),
+			)
+		})
+
+		it('offers no Edit on someone else’s comment', () => {
+			const event = buildEventResponse({
+				actorId: 'actor-2',
+				action: 'commented',
+				data: { content: 'Not yours' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />, {
+				wrapper: TestWrapper,
+			})
+			expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+		})
+
+		it('offers no Edit with the flag off', () => {
+			localStorage.setItem('ff:comment-edit', 'off')
+			const event = buildEventResponse({ action: 'commented', data: { content: 'Mine' } })
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />, {
+				wrapper: TestWrapper,
+			})
+			expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+		})
+
+		it('marks an edited comment', () => {
+			const event = buildEventResponse({
+				action: 'commented',
+				data: { content: 'Fixed', editedAt: '2026-01-02T00:00:00Z' },
+			})
+			render(<ActivityComment event={event} workspaceId="ws-1" objectId="obj-1" />, {
+				wrapper: TestWrapper,
+			})
+			expect(screen.getByText('(edited)')).toBeInTheDocument()
 		})
 	})
 })

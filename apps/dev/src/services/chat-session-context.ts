@@ -332,6 +332,67 @@ export function shareReplyDigest(db: Database, reply: ReplyDigest): void {
 	)
 }
 
+/**
+ * Edit notes waiting for a session's next turn, held in memory for the same reasons as the
+ * digests above: a write to a session's input always starts a reply turn, so a note sent on its own
+ * would make the agent answer it.
+ */
+const pendingEditNotes = new Map<string, string[]>()
+
+interface EditedMessage {
+	conversationId: string
+	authorName: string
+	content: string
+}
+
+/**
+ * A person edited a message that is not the newest, so nobody is woken. Leave a note for each live
+ * session in the chat: a session read the old text once and has no other way to learn it changed.
+ * The note rides on the session's next turn (see takeEditNotes). Writes nothing to any session.
+ */
+export async function recordEditNote(db: Database, edit: EditedMessage): Promise<void> {
+	const live = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.conversationId, edit.conversationId),
+				eq(sessions.interactive, true),
+				inArray(sessions.status, [...LIVE_STATUSES]),
+			),
+		)
+	const line = `${edit.authorName} edited an earlier message. The new text replaces what they wrote before: "${oneLine(edit.content, DIGEST_SNIPPET_CHARS)}"`
+	for (const { id } of live) {
+		const lines = pendingEditNotes.get(id) ?? []
+		lines.push(line)
+		if (lines.length > MAX_DIGESTS_PER_SESSION) lines.shift()
+		pendingEditNotes.delete(id)
+		pendingEditNotes.set(id, lines)
+		if (pendingEditNotes.size > MAX_DIGEST_SESSIONS) {
+			const oldest = pendingEditNotes.keys().next().value
+			if (oldest !== undefined) pendingEditNotes.delete(oldest)
+		}
+	}
+}
+
+/** recordEditNote, fire-and-forget and never throwing, so a note failure cannot cost an edit. */
+export function shareEditNote(db: Database, edit: EditedMessage): void {
+	recordEditNote(db, edit).catch((err: unknown) =>
+		logger.warn('Failed to share an edit note', {
+			conversationId: edit.conversationId,
+			error: String(err),
+		}),
+	)
+}
+
+/** Takes (and clears) the edit notes waiting for a session, as text to put after its next turn; '' if none. */
+export function takeEditNotes(sessionId: string): string {
+	const lines = pendingEditNotes.get(sessionId)
+	if (!lines || lines.length === 0) return ''
+	pendingEditNotes.delete(sessionId)
+	return ['Edited since you last read the chat:', ...lines.map((l) => `- ${l}`)].join('\n')
+}
+
 /** Takes (and clears) the digests waiting for a session, as text to put after its next turn; '' if none. */
 export function takeSessionDigests(sessionId: string): string {
 	const lines = pendingDigests.get(sessionId)
@@ -346,4 +407,5 @@ export function takeSessionDigests(sessionId: string): string {
 /** Test helper: forget every waiting digest. */
 export function _resetSessionDigests(): void {
 	pendingDigests.clear()
+	pendingEditNotes.clear()
 }

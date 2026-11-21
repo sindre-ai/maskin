@@ -228,6 +228,9 @@ skill_always_on() {
   return 1
 }
 
+# Most of the consolidated learnings file pasted at start (20 KB, the CTO's number).
+LEARNINGS_MAX_BYTES=20480
+
 # Build CLAUDE.md from system prompt + skills
 build_context() {
   local context_file="/agent/workspace/CLAUDE.md"
@@ -260,15 +263,41 @@ build_context() {
     done
   fi
 
-  # Append memory/learnings
-  if [ -f /agent/memory/consolidated-learnings.md ]; then
+  # Append memory/learnings, capped so a huge memory file cannot eat the window.
+  local learnings_bytes=0 learnings_capped=false
+  local learnings_file="/agent/memory/consolidated-learnings.md"
+  if [ -f "$learnings_file" ]; then
+    local learnings_total
+    learnings_total=$(wc -c < "$learnings_file" | tr -d ' ')
     echo "## Learnings" >> "$context_file"
     echo "" >> "$context_file"
-    cat /agent/memory/consolidated-learnings.md >> "$context_file"
+    if [ "$learnings_total" -le "$LEARNINGS_MAX_BYTES" ]; then
+      cat "$learnings_file" >> "$context_file"
+      learnings_bytes=$learnings_total
+    else
+      # Keep the newest entries, which the agent appends at the end of the file.
+      # Start the kept part on a heading so no entry is cut in the middle.
+      local kept from_heading
+      kept=$(tail -c "$LEARNINGS_MAX_BYTES" "$learnings_file" | tail -n +2)
+      from_heading=$(printf '%s\n' "$kept" | awk '/^#+ /{found=1} found')
+      [ -n "$from_heading" ] && kept=$from_heading
+      printf '_Older learnings are left out here (%s bytes in the full file, cap %s). Read the full file at %s._\n\n' \
+        "$learnings_total" "$LEARNINGS_MAX_BYTES" "$learnings_file" >> "$context_file"
+      printf '%s\n' "$kept" >> "$context_file"
+      learnings_bytes=$(printf '%s\n' "$kept" | wc -c | tr -d ' ')
+      learnings_capped=true
+    fi
     echo "" >> "$context_file"
   fi
 
   echo "[system] Context file written to $context_file"
+
+  # One machine-readable line: the session manager reads it for the session-start
+  # event and warns when the persona or the whole start prompt is very large.
+  local persona_bytes total_bytes
+  persona_bytes=$(printf '%s' "$SYSTEM_PROMPT" | wc -c | tr -d ' ')
+  total_bytes=$(( $(wc -c < "$context_file" | tr -d ' ') + $(printf '%s' "$ACTION_PROMPT" | wc -c | tr -d ' ') ))
+  echo "[system] start prompt size: persona_bytes=${persona_bytes} total_bytes=${total_bytes} learnings_bytes=${learnings_bytes} learnings_capped=${learnings_capped}"
 }
 
 # Configure MCP servers — writes config file and sets MCP_CONFIG_FILE for run_agent
