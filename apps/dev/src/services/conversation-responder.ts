@@ -3,6 +3,7 @@ import {
 	actors,
 	conversationParticipants,
 	conversationPendingTurns,
+	files,
 	messages,
 	sessions,
 } from '@maskin/db/schema'
@@ -28,10 +29,11 @@ import {
 	loadChatFilesList,
 	loadSiblingSessionsNote,
 	loadThreadSeed,
+	takeEditNotes,
 	takeSessionDigests,
 } from './chat-session-context'
 import { computerHandbackForMessage } from './computer-handback'
-import { insertConversationMessage } from './conversation-messages'
+import { attachedFileIds, insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
@@ -279,13 +281,18 @@ export async function evaluateAndRespond(ctx: {
 	}
 
 	const historyRows = await db
-		.select({ actorName: actors.name, content: messages.content })
+		.select({
+			actorName: actors.name,
+			content: messages.content,
+			metadata: messages.metadata,
+			editedAt: messages.editedAt,
+		})
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(and(eq(messages.conversationId, conversationId), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(HISTORY_CONTEXT_MESSAGES)
-	const conversationHistory = historyRows.slice().reverse()
+	const conversationHistory = await historyEntries(db, workspaceId, historyRows.slice().reverse())
 
 	// Group chat (3 or more active participants): a plain rule decides, never the model.
 	if (emitsRoutingEvent) {
@@ -741,6 +748,8 @@ export async function deliverTurnToAgent(params: {
 		// this turn, which the message started anyway, and is never delivered on its own.
 		const digest = takeSessionDigests(existing.id)
 		if (digest) turnPayload.message.content += `\n\n${digest}`
+		const editNotes = takeEditNotes(existing.id)
+		if (editNotes) turnPayload.message.content += `\n\n${editNotes}`
 	}
 	if (existing && existing.status !== 'running') {
 		// The agent's session is still booting (pending/starting/queued) —
@@ -1244,6 +1253,51 @@ function appendContextBlock(
 		}
 	}
 	return lines.join('\n')
+}
+
+type HistoryRow = {
+	actorName: string
+	content: string
+	metadata: unknown
+	editedAt: Date | null
+}
+
+/**
+ * One chat message as the agent's history block shows it: the text, then the same context and
+ * file lines the live prompt carries, and an edited marker. Without these a message that is only
+ * chips or files reads as empty, and an edited one looks like it never changed. Only files in
+ * liveFileIds are listed, so a deleted file or one from another workspace never shows its name.
+ */
+export function historyEntry(
+	row: HistoryRow,
+	liveFileIds: Set<string>,
+): { actorName: string; content: string } {
+	const metadata = row.metadata as Parameters<typeof appendContextBlock>[1]
+	const content = appendContextBlock(
+		row.content,
+		metadata?.attachments
+			? { ...metadata, attachments: metadata.attachments.filter((a) => liveFileIds.has(a.file_id)) }
+			: metadata,
+	)
+	return { actorName: row.actorName, content: row.editedAt ? `[edited] ${content}` : content }
+}
+
+/** historyEntry for a whole history block, looking up which attached files still exist here. */
+export async function historyEntries(
+	db: Database,
+	workspaceId: string,
+	rows: HistoryRow[],
+): Promise<Array<{ actorName: string; content: string }>> {
+	const ids = [...new Set(rows.flatMap((r) => attachedFileIds(r.metadata)))]
+	const live =
+		ids.length === 0
+			? []
+			: await db
+					.select({ id: files.id })
+					.from(files)
+					.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, ids)))
+	const liveFileIds = new Set(live.map((f) => f.id))
+	return rows.map((r) => historyEntry(r, liveFileIds))
 }
 
 /** Shared `{actorName}: {content}` transcript join, used by the seed prompt and the auto-titler. */
