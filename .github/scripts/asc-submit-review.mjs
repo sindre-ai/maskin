@@ -13,9 +13,15 @@
 // Safe to run twice: it reuses the App Store version and an unsent review submission, and stops
 // when the version is already waiting for, in or past review. Any error fails the run with
 // Apple's message. The build stays in TestFlight either way. Nothing secret is printed.
+//
+// Retries: a failure that may pass on another try (network, an Apple server error, a rate limit)
+// is run again after a pause, 3 attempts in all. A failure another try cannot fix (a bad store
+// listing, missing release notes, an app or build that cannot be picked) stops at once. When the
+// run still fails it ends red, with one line in the run summary naming the version and the reason.
+// Exit code: 0 done, 1 gave up after retries, 2 stopped without retrying.
 
 import { createPrivateKey, sign } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 
 // AFTER_APPROVAL: the version goes to customers as soon as Apple approves it, with no one pressing
 // Release. The version number is a deliberate edit of MARKETING_VERSION, so a bump is the decision
@@ -28,6 +34,14 @@ const API = 'https://api.appstoreconnect.apple.com'
 const PROCESSING_CAP_MS = 45 * 60 * 1000
 const POLL_MS = 60 * 1000
 const WHATS_NEW_MAX = 4000
+const MAX_ATTEMPTS = 3
+const RETRY_PAUSE_MS = Number(process.env.RETRY_PAUSE_MS) || 3 * 60 * 1000
+
+// Store listing fields Apple refuses to submit without. The what's-new text is not listed: this
+// script sets it from release-notes.md. Add a name here when Apple rejects a submit for another one.
+const APP_INFO_FIELDS = ['name', 'privacyPolicyUrl', 'privacyPolicyText']
+const VERSION_FIELDS = ['description', 'keywords', 'supportUrl']
+const VERSION_ATTRIBUTES = ['copyright']
 
 // App Store version states, by what to do. Anything not listed fails loud instead of guessing.
 const EDITABLE = new Set([
@@ -58,25 +72,20 @@ const {
 	SUBMIT_VERSION = '',
 	BUILD_NUMBER = '',
 	RELEASE_NOTES_PATH = 'apps/apple/release-notes.md',
+	GITHUB_STEP_SUMMARY = '',
 } = process.env
 const DRY_RUN = process.env.DRY_RUN === 'true'
 
 const plan = []
-let problems = 0
+const problems = []
 
-function fail(message) {
-	throw new Error(message)
-}
-
-if (!ASC_KEY_ID || !ASC_ISSUER_ID || !ASC_KEY_P8_PATH) {
-	fail('ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8_PATH must be set.')
-}
-if (!/^\d+(\.\d+){1,2}$/.test(SUBMIT_VERSION)) {
-	fail(`SUBMIT_VERSION must look like 1.2 or 1.2.1, got "${SUBMIT_VERSION}".`)
+// retryable false: running it again cannot help, so the workflow stops at once (exit code 2).
+function fail(message, { retryable = true } = {}) {
+	throw Object.assign(new Error(message), { retryable })
 }
 
 const b64url = (v) => Buffer.from(v).toString('base64url')
-const privateKey = createPrivateKey(readFileSync(ASC_KEY_P8_PATH, 'utf8'))
+const privateKey = ASC_KEY_P8_PATH ? createPrivateKey(readFileSync(ASC_KEY_P8_PATH, 'utf8')) : null
 
 // A new token per request: Apple caps a token at 20 minutes and the build wait can run for 45.
 function authToken() {
@@ -93,7 +102,16 @@ function authToken() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// Only reads are retried. A write that failed may have gone through, and the next run finds it.
+// A 4xx from Apple means the request itself is wrong (bad field, wrong state), so another try
+// gets the same answer. Rate limits (429), timeouts (408) and server errors (5xx) can pass later.
+// A 409 is retried unless Apple says an entity is invalid (ENTITY_ERROR), which is a listing problem.
+function retryableStatus(status, text) {
+	if (status === 408 || status === 429 || status >= 500) return true
+	if (status === 409) return !text.includes('ENTITY_ERROR')
+	return false
+}
+
+// Only reads are retried here. A write that failed may have gone through, and the next run finds it.
 async function asc(method, path, body) {
 	for (let attempt = 1; ; attempt++) {
 		const headers = { Authorization: `Bearer ${authToken()}` }
@@ -109,7 +127,9 @@ async function asc(method, path, body) {
 			await sleep(attempt * 5000)
 			continue
 		}
-		fail(`${method} ${path} -> ${res.status}: ${text}`)
+		fail(`${method} ${path} -> ${res.status}: ${text}`, {
+			retryable: retryableStatus(res.status, text),
+		})
 	}
 }
 
@@ -120,6 +140,7 @@ function readReleaseNotes() {
 	if (!existsSync(RELEASE_NOTES_PATH)) {
 		fail(
 			`${RELEASE_NOTES_PATH} is missing. Add it with "# ${SUBMIT_VERSION}" on the first line and the what's-new text below it.`,
+			{ retryable: false },
 		)
 	}
 	const [first = '', ...rest] = readFileSync(RELEASE_NOTES_PATH, 'utf8')
@@ -129,12 +150,19 @@ function readReleaseNotes() {
 	if (found !== SUBMIT_VERSION) {
 		fail(
 			`${RELEASE_NOTES_PATH} holds the notes for ${found ? `version ${found}` : 'no version'}, not ${SUBMIT_VERSION}. Replace the text, with "# ${SUBMIT_VERSION}" on the first line.`,
+			{ retryable: false },
 		)
 	}
 	const text = rest.join('\n').trim()
-	if (!text) fail(`${RELEASE_NOTES_PATH} has a heading but no what's-new text below it.`)
+	if (!text) {
+		fail(`${RELEASE_NOTES_PATH} has a heading but no what's-new text below it.`, {
+			retryable: false,
+		})
+	}
 	if (text.length > WHATS_NEW_MAX) {
-		fail(`${RELEASE_NOTES_PATH} is ${text.length} characters, Apple allows ${WHATS_NEW_MAX}.`)
+		fail(`${RELEASE_NOTES_PATH} is ${text.length} characters, Apple allows ${WHATS_NEW_MAX}.`, {
+			retryable: false,
+		})
 	}
 	return text
 }
@@ -148,7 +176,9 @@ async function findApp() {
 	const matches = res.data.filter((app) => app.attributes.bundleId === BUNDLE_ID)
 	if (matches.length === 1) return matches[0]
 	if (matches.length === 0) {
-		fail(`No app with bundle id ${BUNDLE_ID}, App Store Connect returned ${res.data.length}.`)
+		fail(`No app with bundle id ${BUNDLE_ID}, App Store Connect returned ${res.data.length}.`, {
+			retryable: false,
+		})
 	}
 	// Still several: take the one that has an iPhone App Store version, since this script only
 	// sends iPhone builds. A record that exists only for another platform has none.
@@ -169,6 +199,7 @@ async function findApp() {
 	}
 	fail(
 		`${matches.length} apps share bundle id ${BUNDLE_ID} and ${withIosVersion.length} of them have an ${PLATFORM} App Store version, so the app cannot be told apart. Apps: ${matches.map(describeApp).join(', ')}.`,
+		{ retryable: false },
 	)
 }
 
@@ -204,11 +235,15 @@ async function waitForBuild(appId) {
 		if (ready) return ready
 		const processing = builds.some((b) => b.attributes.processingState === 'PROCESSING')
 		if (builds.length && !processing) {
-			fail(`No usable build for ${SUBMIT_VERSION}. Builds seen: ${describeBuilds(builds)}.`)
+			fail(`No usable build for ${SUBMIT_VERSION}. Builds seen: ${describeBuilds(builds)}.`, {
+				retryable: false,
+			})
 		}
 		if (Date.now() > deadline) {
+			// A retry would wait another 45 minutes for a build that is not there. A person looks.
 			fail(
 				`App Store Connect did not finish processing ${SUBMIT_VERSION}${BUILD_NUMBER ? ` build ${BUILD_NUMBER}` : ''} within 45 minutes. Builds seen: ${describeBuilds(builds)}.`,
+				{ retryable: false },
 			)
 		}
 		console.log(`Waiting for processing. Builds seen: ${describeBuilds(builds)}.`)
@@ -269,6 +304,43 @@ async function setWhatsNew(versionId, app, text) {
 		})
 		console.log(`Created the ${locale} localization with the what's-new text.`)
 	}
+}
+
+const isEmpty = (value) => !String(value ?? '').trim()
+
+// Names of required listing fields that are empty, for example "app info en-US privacyPolicyText".
+// Reads the pending app info (the one still open for edits) and, when the App Store version
+// exists, its text fields. A version that does not exist yet is created without checks here.
+async function emptyListingFields(appId, version) {
+	const empty = []
+	const infos = await asc('GET', `/v1/apps/${appId}/appInfos?limit=10`)
+	const pending = infos.data.filter((info) =>
+		EDITABLE.has(info.attributes.state ?? info.attributes.appStoreState),
+	)
+	if (pending.length === 0) console.log('No pending app info to check.')
+	for (const info of pending) {
+		const locs = await asc('GET', `/v1/appInfos/${info.id}/appInfoLocalizations?limit=200`)
+		for (const loc of locs.data) {
+			for (const field of APP_INFO_FIELDS) {
+				if (isEmpty(loc.attributes[field])) empty.push(`app info ${loc.attributes.locale} ${field}`)
+			}
+		}
+	}
+	if (version) {
+		for (const field of VERSION_ATTRIBUTES) {
+			if (isEmpty(version.attributes[field])) empty.push(`version ${SUBMIT_VERSION} ${field}`)
+		}
+		const locs = await asc(
+			'GET',
+			`/v1/appStoreVersions/${version.id}/appStoreVersionLocalizations?limit=200`,
+		)
+		for (const loc of locs.data) {
+			for (const field of VERSION_FIELDS) {
+				if (isEmpty(loc.attributes[field])) empty.push(`version ${loc.attributes.locale} ${field}`)
+			}
+		}
+	}
+	return empty
 }
 
 // Review submissions that are still open, with the App Store version each one carries.
@@ -339,6 +411,17 @@ async function submitForReview(appId, versionId, open) {
 }
 
 async function main() {
+	// A retry starts clean: main runs again from the top.
+	plan.length = 0
+	problems.length = 0
+	if (!ASC_KEY_ID || !ASC_ISSUER_ID || !ASC_KEY_P8_PATH) {
+		fail('ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8_PATH must be set.', { retryable: false })
+	}
+	if (!/^\d+(\.\d+){1,2}$/.test(SUBMIT_VERSION)) {
+		fail(`SUBMIT_VERSION must look like 1.2 or 1.2.1, got "${SUBMIT_VERSION}".`, {
+			retryable: false,
+		})
+	}
 	console.log(
 		`${DRY_RUN ? 'DRY RUN. ' : ''}Version ${SUBMIT_VERSION}, ${BUILD_NUMBER ? `build ${BUILD_NUMBER}` : 'newest processed build'}, release type ${RELEASE_TYPE}.`,
 	)
@@ -349,7 +432,7 @@ async function main() {
 		console.log(`Release notes: ${notes.length} characters for ${SUBMIT_VERSION}.`)
 	} catch (error) {
 		if (!DRY_RUN) throw error
-		problems++
+		problems.push(error.message)
 		console.log(`WOULD FAIL: ${error.message}`)
 	}
 
@@ -367,6 +450,7 @@ async function main() {
 		if (!EDITABLE.has(state)) {
 			fail(
 				`App Store version ${SUBMIT_VERSION} is in state ${state}, which this script does not handle.`,
+				{ retryable: false },
 			)
 		}
 	} else {
@@ -387,13 +471,24 @@ async function main() {
 		return
 	}
 
+	// Before the build wait, so a bad listing fails in a minute and not after 45.
+	const empty = await emptyListingFields(app.id, version)
+	if (empty.length) {
+		const message = `The store listing has empty required fields: ${empty.join(', ')}. Fill them in App Store Connect, then run the workflow again with submit_version ${SUBMIT_VERSION}.`
+		if (!DRY_RUN) fail(message, { retryable: false })
+		problems.push(message)
+		console.log(`WOULD FAIL: ${message}`)
+	} else {
+		console.log('Store listing: all required fields are filled in.')
+	}
+
 	let build
 	if (DRY_RUN) {
 		const builds = await listBuilds(app.id)
 		console.log(`Builds for ${SUBMIT_VERSION}: ${describeBuilds(builds)}.`)
 		build = builds.find((b) => b.attributes.processingState === 'VALID' && !b.attributes.expired)
 		if (!build) {
-			problems++
+			problems.push(`no processed build for ${SUBMIT_VERSION} yet`)
 			console.log('WOULD FAIL: no processed build for this version yet.')
 		}
 	} else {
@@ -408,7 +503,10 @@ async function main() {
 	if (DRY_RUN) {
 		console.log('Dry run: nothing was created. It would:')
 		for (const step of plan) console.log(`  - ${step}`)
-		if (problems) process.exitCode = 1
+		if (problems.length)
+			fail(`Dry run found ${problems.length} problem(s): ${problems.join(' ')}`, {
+				retryable: false,
+			})
 		return
 	}
 
@@ -428,9 +526,38 @@ async function main() {
 	}
 }
 
-try {
-	await main()
-} catch (error) {
-	console.error(`::error::${error.message}`)
-	process.exit(1)
+// Runs main again after a failure that may pass on another try, up to MAX_ATTEMPTS in all with a
+// pause between. Safe because every step reuses what an earlier attempt already created. A failure
+// no retry can fix (retryable false) stops at once. The last failure ends the run red, with one
+// plain line in the run summary naming the version and the reason.
+async function run() {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			await main()
+			return
+		} catch (error) {
+			console.error(`::error::${error.message}`)
+			const retryable = error.retryable !== false
+			if (retryable && attempt < MAX_ATTEMPTS) {
+				console.log(
+					`Attempt ${attempt} of ${MAX_ATTEMPTS} failed. Trying again in ${RETRY_PAUSE_MS / 60000} minutes.`,
+				)
+				await sleep(RETRY_PAUSE_MS)
+				continue
+			}
+			const why = retryable
+				? `gave up after ${attempt} attempts`
+				: 'not retried, a retry cannot fix it'
+			const reason = error.message.replace(/\s+/g, ' ').slice(0, 600)
+			if (GITHUB_STEP_SUMMARY) {
+				appendFileSync(
+					GITHUB_STEP_SUMMARY,
+					`App Review submit failed for version ${SUBMIT_VERSION} (${why}): ${reason}\n`,
+				)
+			}
+			process.exit(retryable ? 1 : 2)
+		}
+	}
 }
+
+await run()

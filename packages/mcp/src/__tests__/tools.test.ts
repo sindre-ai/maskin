@@ -138,6 +138,7 @@ const ALL_TOOL_NAMES = [
 	'desktop_scroll',
 	'desktop_type',
 	'desktop_key',
+	'desktop_attach_file',
 	'desktop_run',
 	'desktop_put_file',
 	'desktop_apply_settings',

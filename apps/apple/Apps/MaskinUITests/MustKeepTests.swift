@@ -345,8 +345,8 @@ final class MustKeepTests: XCTestCase {
 
 	// MARK: MK-07 The composer offers Paste when a picture is on the clipboard
 
-	/// MK-07a: long-press in the message field with a picture on the clipboard: the system menu does not offer
-	/// Paste for a picture. The + menu's "Paste image" (MK-07b) is the supported way. Text paste is MK-09.
+	/// MK-07a: long-press in the message field with a picture on the clipboard: the system menu offers Paste.
+	/// What Paste then does is MK-07c; text paste is MK-07d and MK-09.
 	func testMK07a_FieldMenuOffersPasteForImage() throws {
 		putImageOnClipboard()
 		openChat("Priya Rao")
@@ -357,9 +357,9 @@ final class MustKeepTests: XCTestCase {
 		let paste = fieldMenuPaste(field, dump: "mk07a-menu")
 		// Say what the menu did offer, so the log tells the app from the test if this ever flips.
 		let offered = (app.menuItems.allElementsBoundByIndex + app.menus.buttons.allElementsBoundByIndex).map(\.label)
-		XCTAssertFalse(
+		XCTAssertTrue(
 			paste.exists,
-			"with a picture on the clipboard, the message field's menu does not offer Paste; use the + menu (the menu showed: \(offered))")
+			"with a picture on the clipboard, the message field's menu offers Paste (the menu showed: \(offered))")
 	}
 
 	/// MK-07b: the + menu lists "Paste image" while the clipboard holds a picture.
@@ -373,6 +373,42 @@ final class MustKeepTests: XCTestCase {
 		let row = element(labelled: "Paste image")
 		if !row.waitForExistence(timeout: 5) { dumpScreen("mk07b-menu") }
 		XCTAssertTrue(row.exists, "with a picture on the clipboard, the + menu offers 'Paste image'")
+	}
+
+	/// MK-07c: Paste in the field's menu with a picture on the clipboard adds the picture as a chip (its Remove
+	/// button shows). The keyboard's "Paste from Screenshots" suggestion uses the same paste handling, but a test
+	/// cannot tap it, so that path is checked by hand on a phone.
+	func testMK07c_FieldPasteAddsImageChip() throws {
+		putImageOnClipboard()
+		openChat("Priya Rao")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		pasteIntoField(field)
+		let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).firstMatch
+		if !chip.waitForExistence(timeout: 15) { dumpScreen("mk07c-chip") }
+		XCTAssertTrue(chip.exists, "the pasted picture shows as a chip in the composer")
+	}
+
+	/// MK-07d: Paste in the field's menu with text on the clipboard puts the words in the field and adds no chip.
+	func testMK07d_TextPasteStaysText() throws {
+		let words = "Pasted by the must keep test"
+		UIPasteboard.general.string = words
+		openChat("Priya Rao")
+		dismissNotNow()
+		let field = composerField()
+		XCTAssertTrue(field.waitForExistence(timeout: 15), "the chat shows its message field")
+		field.tap()
+		pasteIntoField(field)
+		let pasted = app.descendants(matching: .any).matching(
+			NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", words, words)
+		).firstMatch
+		if !pasted.waitForExistence(timeout: 10) { dumpScreen("mk07d-text") }
+		XCTAssertTrue(pasted.exists, "the pasted words show in the message field")
+		XCTAssertFalse(
+			app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove '")).firstMatch.exists,
+			"a text paste adds no chip")
 	}
 
 	// MARK: MK-08 Type a message and send it
