@@ -85,7 +85,7 @@ export class OpenRouterBalanceMonitor {
 		try {
 			const { apiKey, baseUrl } = readFallbackConfig()
 			// No key, or a key for some other provider: there is no OpenRouter balance to watch.
-			if (!apiKey || new URL(baseUrl).hostname !== 'openrouter.ai') return
+			if (!apiKey || !baseUrl || new URL(baseUrl).hostname !== 'openrouter.ai') return
 
 			const reading = await readOpenRouterBalance(apiKey, baseUrl, this.fetchImpl)
 			if (!reading.ok) {
