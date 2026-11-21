@@ -189,7 +189,12 @@ export function readFailedTurn(last: LastMessage | undefined): { reason: ChatErr
 	const f = failureOf(last.metadata)
 	if (!f) return null
 	const meta = last.metadata as TurnMetadata
-	if (meta.credit_balance_low || USAGE_LIMIT_TEXT.test(last.content)) {
+	// A permanent failure keeps the provider's text in error_detail; the body is a plain line.
+	if (
+		meta.credit_balance_low ||
+		USAGE_LIMIT_TEXT.test(last.content) ||
+		USAGE_LIMIT_TEXT.test(f.error_detail ?? '')
+	) {
 		return { reason: 'usage_limit' }
 	}
 	if (f.error_kind === 'transient' || f.retry) return { reason: 'connection' }

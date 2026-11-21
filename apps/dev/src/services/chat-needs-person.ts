@@ -14,6 +14,7 @@ export type TurnMetadata = {
 	final_output?: {
 		is_error?: boolean
 		error_kind?: string
+		error_detail?: string
 		retry?: string
 		pseudo_tool_calls?: unknown
 		empty_completion?: unknown
