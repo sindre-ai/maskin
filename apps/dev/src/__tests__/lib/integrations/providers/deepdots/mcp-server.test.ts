@@ -243,6 +243,6 @@ describe('Deepdots MCP server', () => {
 		expect(res.isError).toBe(true)
 		expect(fetchImpl).not.toHaveBeenCalled()
 		const { tools } = await client.listTools()
-		expect(tools[0].description).toContain('Utilgængelig'.length ? 'Unavailable' : '')
+		expect(tools[0].description).toContain('Unavailable')
 	})
 })
