@@ -104,6 +104,14 @@ describe('Files in this chat list for a new chat session (Integration)', () => {
 		return params.actionPrompt
 	}
 
+	// The history block also names attached files (as the message carried them), so checks on the
+	// chat's file list read only the list section, which starts at its heading.
+	const filesSection = () => {
+		const prompt = seedPrompt()
+		const start = prompt.indexOf('Files in this chat')
+		return start === -1 ? '' : prompt.slice(start)
+	}
+
 	const seededEvent = () =>
 		vi.mocked(capturePosthogEvent).mock.calls.find(([name]) => name === 'chat_session_seeded')
 
@@ -138,12 +146,12 @@ describe('Files in this chat list for a new chat session (Integration)', () => {
 
 		await respond(lastId)
 
-		const prompt = seedPrompt()
-		const listed = prompt.match(/^- clip-\d{3}\.mp4 /gm) ?? []
+		const section = filesSection()
+		const listed = section.match(/^- clip-\d{3}\.mp4 /gm) ?? []
 		expect(listed).toHaveLength(CHAT_FILES_LIST_MAX)
-		expect(prompt).toContain('clip-057.mp4')
-		expect(prompt).not.toContain('clip-007.mp4')
-		expect(prompt).toContain('7 older files not shown, use the chat files lookup')
+		expect(section).toContain('clip-057.mp4')
+		expect(section).not.toContain('clip-007.mp4')
+		expect(section).toContain('7 older files not shown, use the chat files lookup')
 		expect(seededEvent()?.[2]).toMatchObject({ files_listed_count: CHAT_FILES_LIST_MAX })
 	})
 
@@ -182,10 +190,10 @@ describe('Files in this chat list for a new chat session (Integration)', () => {
 
 		await respond(lastId)
 
-		const prompt = seedPrompt()
-		expect(prompt).toContain('kept.pdf')
-		expect(prompt).not.toContain('gone.pdf')
-		expect(prompt).not.toContain('foreign.pdf')
+		const section = filesSection()
+		expect(section).toContain('kept.pdf')
+		expect(section).not.toContain('gone.pdf')
+		expect(section).not.toContain('foreign.pdf')
 		expect(seededEvent()?.[2]).toMatchObject({ files_listed_count: 1 })
 	})
 })
