@@ -74,6 +74,8 @@ function mockApi() {
 		if (urlStr.includes('/api/objects/bet-1/graph')) {
 			return respond({ object: objectRow, relationships: [], connected_objects: [] })
 		}
+		// get_actor also reads the actor's access; it must not echo the actor row (and its prompt).
+		if (urlStr.includes('/api/actors/a-1/access')) return respond({ integrations: [] })
 		if (urlStr.includes('/api/actors/a-1')) return respond(actorRow)
 		if (urlStr.includes('/api/actors?')) return respond([actorRow])
 		if (urlStr.includes('/api/events/history')) return respond([commentRow])

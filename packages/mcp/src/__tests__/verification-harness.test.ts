@@ -195,9 +195,9 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 	// callers actually use in production: Claude Code sessions and background
 	// workspace agents that page through workspace state.
 	//
-	// `list_actors` is intentionally absent — it has no `content` channel
-	// (structuredContent-only), so it can't participate in a content-channel
-	// parity loop. See the dedicated trace test below.
+	// `list_actors` is intentionally absent — its rows live in the hero card, so
+	// its text copy has a different shape from the other list tools. See the
+	// dedicated trace test below.
 	const traces: Array<{
 		trace: string
 		tool: string
@@ -270,16 +270,17 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 		})
 	}
 
-	it('claude-code: list_actors (default): responds via structuredContent only', async () => {
+	it('claude-code: list_actors (default): carries its rows in the text and in the card', async () => {
 		const fixture = [actorRow(1), actorRow(2)]
 		stubFetch(fixture)
 		const handler = handlers.get('list_actors')
 		if (!handler) throw new Error('handler list_actors not registered')
 		const result = (await handler({})) as {
-			content?: Array<{ text: string }>
+			content: Array<{ text: string }>
 			structuredContent: { heroCard: { kind: string; objects?: unknown[] } }
 		}
-		expect(result.content).toBeUndefined()
+		const text = JSON.parse(result.content[0].text) as { actors: unknown[] }
+		expect(text.actors).toHaveLength(fixture.length)
 		expect(result.structuredContent.heroCard.kind).toBe('list')
 		expect(result.structuredContent.heroCard.objects).toHaveLength(fixture.length)
 	})
@@ -348,17 +349,23 @@ describe('verification harness — repeated calls against the same fixture are d
 		})
 	}
 
-	it('list_actors: two calls against the same fixture return an identical structuredContent-only shape', async () => {
+	it('list_actors: two calls against the same fixture return an identical shape', async () => {
 		const fixture = [actorRow(1), actorRow(2)]
 		stubFetch(fixture)
 		const handler = handlers.get('list_actors')
 		if (!handler) throw new Error('handler list_actors not registered')
 
-		const first = (await handler({})) as { content?: unknown; structuredContent: unknown }
-		expect(first.content).toBeUndefined()
+		const first = (await handler({})) as {
+			content: Array<{ text: string }>
+			structuredContent: unknown
+		}
+		expect(first.content[0].text.length).toBeGreaterThan(0)
 
-		const second = (await handler({})) as { content?: unknown; structuredContent: unknown }
-		expect(second.content).toBeUndefined()
+		const second = (await handler({})) as {
+			content: Array<{ text: string }>
+			structuredContent: unknown
+		}
+		expect(second.content[0].text).toBe(first.content[0].text)
 		expect(second.structuredContent).toEqual(first.structuredContent)
 	})
 
