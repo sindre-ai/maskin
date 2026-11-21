@@ -1,5 +1,6 @@
 import {
 	conversationParticipants,
+	files,
 	messages,
 	sessionLogs,
 	workspaceMembers,
@@ -355,6 +356,18 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 	})
 	describe('edited messages', () => {
 		it('marks an edited message in the history and keeps its chips and files', async () => {
+			const [file] = await db
+				.insert(files)
+				.values({
+					workspaceId,
+					name: 'notes.pdf',
+					mimeType: 'application/pdf',
+					sizeBytes: 1,
+					storageKey: 'test/notes.pdf',
+					createdBy: personId,
+				})
+				.returning()
+			if (!file) throw new Error('failed to insert file')
 			await db.insert(messages).values({
 				conversationId,
 				actorId: personId,
@@ -367,7 +380,7 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 				content: '',
 				metadata: {
 					context_objects: [{ id: 'obj-1', title: 'Launch plan', type: 'bet' }],
-					attachments: [{ file_id: 'file-1', name: 'notes.pdf' }],
+					attachments: [{ file_id: file.id, name: 'notes.pdf' }],
 				},
 				editedAt: new Date(),
 			})
@@ -379,9 +392,44 @@ describe('thread session seed, sibling note and digest (Integration)', () => {
 			expect(prompt).toContain('[edited] the corrected text')
 			expect(prompt).toContain('Launch plan (bet)')
 			expect(prompt).toContain('notes.pdf')
-			expect(prompt).toContain('file id: file-1')
+			expect(prompt).toContain(`file id: ${file.id}`)
 			// A message nobody edited carries no marker.
 			expect(prompt).not.toContain('[edited] look at it again')
+		})
+
+		it('leaves a deleted file and another workspace file out of the history', async () => {
+			const otherWorkspaceId = (await insertWorkspace(db, personId)).id
+			const [foreign] = await db
+				.insert(files)
+				.values({
+					workspaceId: otherWorkspaceId,
+					name: 'foreign.pdf',
+					mimeType: 'application/pdf',
+					sizeBytes: 1,
+					storageKey: 'test/foreign.pdf',
+					createdBy: personId,
+				})
+				.returning()
+			if (!foreign) throw new Error('failed to insert file')
+			await db.insert(messages).values({
+				conversationId,
+				actorId: personId,
+				content: 'two files',
+				metadata: {
+					attachments: [
+						{ file_id: foreign.id, name: 'foreign.pdf' },
+						{ file_id: '00000000-0000-4000-8000-000000000001', name: 'gone.pdf' },
+					],
+				},
+			})
+			const newest = await post(personId, 'look at it again')
+
+			await respond(newest)
+
+			const prompt = seedPrompt()
+			expect(prompt).toContain('two files')
+			expect(prompt).not.toContain('foreign.pdf')
+			expect(prompt).not.toContain('gone.pdf')
 		})
 
 		it('tells a live session about an edit on its next turn, once', async () => {

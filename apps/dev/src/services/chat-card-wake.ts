@@ -3,7 +3,7 @@ import { actors, conversationParticipants, conversations, messages } from '@mask
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { isHumanPaused } from '../lib/agent-pause'
 import { logger } from '../lib/logger'
-import { deliverTurnToAgent, historyEntry } from './conversation-responder'
+import { deliverTurnToAgent, historyEntries } from './conversation-responder'
 import type { SessionManager } from './session-manager'
 
 /**
@@ -148,7 +148,7 @@ export async function wakeAgentFromCard(params: {
 				authorType: caller.type,
 				content: instruction,
 			},
-			conversationHistory: historyRows.slice().reverse().map(historyEntry),
+			conversationHistory: await historyEntries(db, workspaceId, historyRows.slice().reverse()),
 			isDirectConversation: participants.length === 2,
 			wakeReason: 'tagged',
 		})

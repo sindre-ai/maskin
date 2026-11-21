@@ -104,8 +104,8 @@ describe('Files in this chat list for a new chat session (Integration)', () => {
 		return params.actionPrompt
 	}
 
-	// The history block also names attached files (as the message carried them), so checks on the
-	// chat's file list read only the list section, which starts at its heading.
+	// The history block also names the attached files that still exist, so the count check reads
+	// only the list section, which starts at its heading.
 	const filesSection = () => {
 		const prompt = seedPrompt()
 		const start = prompt.indexOf('Files in this chat')
@@ -190,10 +190,10 @@ describe('Files in this chat list for a new chat session (Integration)', () => {
 
 		await respond(lastId)
 
-		const section = filesSection()
-		expect(section).toContain('kept.pdf')
-		expect(section).not.toContain('gone.pdf')
-		expect(section).not.toContain('foreign.pdf')
+		const prompt = seedPrompt()
+		expect(prompt).toContain('kept.pdf')
+		expect(prompt).not.toContain('gone.pdf')
+		expect(prompt).not.toContain('foreign.pdf')
 		expect(seededEvent()?.[2]).toMatchObject({ files_listed_count: 1 })
 	})
 })

@@ -3,6 +3,7 @@ import {
 	actors,
 	conversationParticipants,
 	conversationPendingTurns,
+	files,
 	messages,
 	sessions,
 } from '@maskin/db/schema'
@@ -32,7 +33,7 @@ import {
 	takeSessionDigests,
 } from './chat-session-context'
 import { computerHandbackForMessage } from './computer-handback'
-import { insertConversationMessage } from './conversation-messages'
+import { attachedFileIds, insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
@@ -291,7 +292,7 @@ export async function evaluateAndRespond(ctx: {
 		.where(and(eq(messages.conversationId, conversationId), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(HISTORY_CONTEXT_MESSAGES)
-	const conversationHistory = historyRows.slice().reverse().map(historyEntry)
+	const conversationHistory = await historyEntries(db, workspaceId, historyRows.slice().reverse())
 
 	// Group chat (3 or more active participants): a plain rule decides, never the model.
 	if (emitsRoutingEvent) {
@@ -1254,22 +1255,49 @@ function appendContextBlock(
 	return lines.join('\n')
 }
 
-/**
- * One chat message as the agent's history block shows it: the text, then the same context and
- * file lines the live prompt carries, and an edited marker. Without these a message that is only
- * chips or files reads as empty, and an edited one looks like it never changed.
- */
-export function historyEntry(row: {
+type HistoryRow = {
 	actorName: string
 	content: string
 	metadata: unknown
 	editedAt: Date | null
-}): { actorName: string; content: string } {
+}
+
+/**
+ * One chat message as the agent's history block shows it: the text, then the same context and
+ * file lines the live prompt carries, and an edited marker. Without these a message that is only
+ * chips or files reads as empty, and an edited one looks like it never changed. Only files in
+ * liveFileIds are listed, so a deleted file or one from another workspace never shows its name.
+ */
+export function historyEntry(
+	row: HistoryRow,
+	liveFileIds: Set<string>,
+): { actorName: string; content: string } {
+	const metadata = row.metadata as Parameters<typeof appendContextBlock>[1]
 	const content = appendContextBlock(
 		row.content,
-		row.metadata as Parameters<typeof appendContextBlock>[1],
+		metadata?.attachments
+			? { ...metadata, attachments: metadata.attachments.filter((a) => liveFileIds.has(a.file_id)) }
+			: metadata,
 	)
 	return { actorName: row.actorName, content: row.editedAt ? `[edited] ${content}` : content }
+}
+
+/** historyEntry for a whole history block, looking up which attached files still exist here. */
+export async function historyEntries(
+	db: Database,
+	workspaceId: string,
+	rows: HistoryRow[],
+): Promise<Array<{ actorName: string; content: string }>> {
+	const ids = [...new Set(rows.flatMap((r) => attachedFileIds(r.metadata)))]
+	const live =
+		ids.length === 0
+			? []
+			: await db
+					.select({ id: files.id })
+					.from(files)
+					.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, ids)))
+	const liveFileIds = new Set(live.map((f) => f.id))
+	return rows.map((r) => historyEntry(r, liveFileIds))
 }
 
 /** Shared `{actorName}: {content}` transcript join, used by the seed prompt and the auto-titler. */
