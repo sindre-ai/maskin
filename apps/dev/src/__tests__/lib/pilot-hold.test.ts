@@ -42,13 +42,14 @@ describe('buildGateCard', () => {
 })
 
 describe('what pilot holds', () => {
-	it('holds the five Maskin tools of the task', () => {
+	it('holds the six Maskin tools of the task', () => {
 		expect([...PILOT_HELD_MASKIN_TOOLS].sort()).toEqual([
 			'create_notification',
 			'delete_file',
 			'delete_loop',
 			'delete_object',
 			'delete_trigger',
+			'fork_loop',
 		])
 	})
 
