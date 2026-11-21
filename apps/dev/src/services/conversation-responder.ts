@@ -28,6 +28,7 @@ import {
 	loadChatFilesList,
 	loadSiblingSessionsNote,
 	loadThreadSeed,
+	takeEditNotes,
 	takeSessionDigests,
 } from './chat-session-context'
 import { computerHandbackForMessage } from './computer-handback'
@@ -279,13 +280,18 @@ export async function evaluateAndRespond(ctx: {
 	}
 
 	const historyRows = await db
-		.select({ actorName: actors.name, content: messages.content })
+		.select({
+			actorName: actors.name,
+			content: messages.content,
+			metadata: messages.metadata,
+			editedAt: messages.editedAt,
+		})
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(and(eq(messages.conversationId, conversationId), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(HISTORY_CONTEXT_MESSAGES)
-	const conversationHistory = historyRows.slice().reverse()
+	const conversationHistory = historyRows.slice().reverse().map(historyEntry)
 
 	// Group chat (3 or more active participants): a plain rule decides, never the model.
 	if (emitsRoutingEvent) {
@@ -741,6 +747,8 @@ export async function deliverTurnToAgent(params: {
 		// this turn, which the message started anyway, and is never delivered on its own.
 		const digest = takeSessionDigests(existing.id)
 		if (digest) turnPayload.message.content += `\n\n${digest}`
+		const editNotes = takeEditNotes(existing.id)
+		if (editNotes) turnPayload.message.content += `\n\n${editNotes}`
 	}
 	if (existing && existing.status !== 'running') {
 		// The agent's session is still booting (pending/starting/queued) —
@@ -1244,6 +1252,24 @@ function appendContextBlock(
 		}
 	}
 	return lines.join('\n')
+}
+
+/**
+ * One chat message as the agent's history block shows it: the text, then the same context and
+ * file lines the live prompt carries, and an edited marker. Without these a message that is only
+ * chips or files reads as empty, and an edited one looks like it never changed.
+ */
+export function historyEntry(row: {
+	actorName: string
+	content: string
+	metadata: unknown
+	editedAt: Date | null
+}): { actorName: string; content: string } {
+	const content = appendContextBlock(
+		row.content,
+		row.metadata as Parameters<typeof appendContextBlock>[1],
+	)
+	return { actorName: row.actorName, content: row.editedAt ? `[edited] ${content}` : content }
 }
 
 /** Shared `{actorName}: {content}` transcript join, used by the seed prompt and the auto-titler. */

@@ -83,7 +83,7 @@ import {
 import { loadLatestSnippets, loadWorkingByConversation } from '../services/chat-list-rows'
 import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
-import { shareReplyDigest } from '../services/chat-session-context'
+import { shareEditNote, shareReplyDigest } from '../services/chat-session-context'
 import {
 	attachedFileIds,
 	insertConversationMessage,
@@ -1977,6 +1977,18 @@ app.openapi(editMessageRoute, (async (c) => {
 				error: String(err),
 			}),
 		)
+	} else {
+		// Nobody is woken, but a session that already read the old text is told on its next turn.
+		const [editor] = await db
+			.select({ name: actors.name })
+			.from(actors)
+			.where(eq(actors.id, callerId))
+			.limit(1)
+		shareEditNote(db, {
+			conversationId: id,
+			authorName: editor?.name ?? 'Someone',
+			content: body.content,
+		})
 	}
 
 	const [caller] = await db
