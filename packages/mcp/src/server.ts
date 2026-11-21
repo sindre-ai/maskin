@@ -3617,6 +3617,8 @@ const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
 		types: 'edge_type_allow_list',
 	},
 	get_objects: {
+		object_id: 'ids: ["<uuid>"]',
+		object_ids: 'ids',
 		include_content: 'include: ["content"]',
 		include_body: 'include: ["content"]',
 		include_metadata: 'include: ["metadata"]',
@@ -3904,7 +3906,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, nodes, edges } = args
+			const { nodes, edges } = args
+			// Left out, the call runs in the caller's own workspace (the session's, or the default).
+			const workspace_id = args.workspace_id ?? config.defaultWorkspaceId
 			const wsOpts = { workspaceId: workspace_id }
 
 			// /api/graph doesn't understand file_ids — strip them from the body
@@ -7431,6 +7435,11 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, run_at, ...fields } = args
+			if (!fields.target_actor_id && fields.config?.target !== 'item_driver') {
+				throw new Error(
+					'Missing required key "target_actor_id": the agent to start (find one with list_actors), or set config.target to "item_driver" to start the item\'s driver.',
+				)
+			}
 			const body = oneTimeOrScheduledBody(fields, run_at)
 			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
@@ -8509,7 +8518,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			// Without for_actor_id the route reads the caller's own list.
+			const params = new URLSearchParams(args.actor_id ? { for_actor_id: args.actor_id } : {})
 			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as { items?: ForYouItemLike[] }
