@@ -60,6 +60,7 @@ import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oa
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
+import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
@@ -80,6 +81,7 @@ import {
 } from '../lib/integrations/providers/google-drive/watch'
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { MEETING_NOTES_PROVIDERS } from '../lib/integrations/providers/meeting-notes'
 import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
@@ -286,6 +288,14 @@ const listProvidersRoute = createRoute({
 const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	[AZURE_DEVOPS_PROVIDER, FLAGS.AZURE_DEVOPS],
 	[ZOOM_PROVIDER, FLAGS.ZOOM],
+	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
+		name,
+		FLAGS.MEETING_NOTES_INTEGRATIONS,
+	]),
+	...DEVELOPER_DATA_PROVIDERS.map((name): [string, FlagId] => [
+		name,
+		FLAGS.DEVELOPER_DATA_INTEGRATIONS,
+	]),
 ])
 
 const providerVisible = (providerName: string, actorId: string | undefined): boolean => {
