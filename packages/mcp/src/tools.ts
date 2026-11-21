@@ -456,7 +456,7 @@ export const tools = {
 				)
 				.default([])
 				.describe(
-					'Blocks to add to each object. The default `[]` returns the core fields plus `setup`. `setup` is always attached; listing it is accepted and does nothing.',
+					'Blocks to add to each object. Allowed values: content, metadata, relationships, connected_objects, events, files. The default `[]` returns the core fields plus `setup`. `setup` is always attached; listing it is accepted and does nothing.',
 				),
 			wait_for_status: z
 				.array(z.string().min(1))
