@@ -212,7 +212,7 @@ describe('Deepdots MCP server', () => {
 	it('asks Deepdots for 50 rows at limit 50 and says there may be more on a full page', async () => {
 		const rows = Array.from({ length: 50 }, (_, i) => ({ id: `i${i}`, issues_name: `n${i}` }))
 		const { client, fetchImpl } = await connect({
-			fetchImpl: (async () => new Response(JSON.stringify(rows))) as unknown as typeof fetch,
+			fetchImpl: vi.fn(async () => new Response(JSON.stringify(rows))) as unknown as typeof fetch,
 		})
 		const res = await client.callTool({
 			name: 'deepdots_list_issues',
@@ -243,6 +243,6 @@ describe('Deepdots MCP server', () => {
 		expect(res.isError).toBe(true)
 		expect(fetchImpl).not.toHaveBeenCalled()
 		const { tools } = await client.listTools()
-		expect(tools[0].description).toContain('Unavailable')
+		expect(tools[0].description).toContain('Utilgængelig'.length ? 'Unavailable' : '')
 	})
 })
