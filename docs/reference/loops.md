@@ -115,7 +115,7 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
 - **`list_loops`** — wraps `GET /api/loops` with deep links to `/{workspace}/loops/{id}`.
 
 Do not author loops through raw `create_objects` — the tools above wire the metadata and edges
-correctly. Marketplace loop *templates* are installed via `get_started` (see
+correctly. Marketplace loop *templates* are installed via `install_loop` (see
 `apps/dev/src/routes/installed-loops.ts`); installing one provisions its items and creates the
 `type = 'loop'` object automatically. A locked install follows the catalog: the hourly version
 pusher brings it to the newest version, and `POST /api/installed-loops/{id}/update` ("update

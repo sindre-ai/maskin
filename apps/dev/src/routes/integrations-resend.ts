@@ -31,7 +31,13 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage, recordAutoSent } from '../lib/send-gate'
+import {
+	decideSend,
+	deniedMessage,
+	pilotIsReason,
+	recordAutoSent,
+	withPilotReason,
+} from '../lib/send-gate'
 import { callingSessionId } from '../lib/session-flow'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
@@ -286,10 +292,20 @@ app.openapi(sendRoute, async (c) => {
 	)
 	if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
 	if (!loaded.approvalEventId && decision === 'needs_approval') {
+		const pilot = await pilotIsReason(db, {
+			workspaceId,
+			agentId: actorId,
+			kind: 'email',
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+		const askFirst = 'This agent is set to ask first, so a person has to approve this email.'
 		const f = fail(
 			403,
 			'FORBIDDEN',
-			'Not sent. This agent is set to ask first, so a person has to approve this email. The draft shows an Approve button in For You and in chat; they can edit the text there first. If the person has just said yes in a chat you are in, after you showed them this draft there, call approve_draft_from_chat with this object_id and the id of their message, then call this tool again. Otherwise end your turn; when they have approved it, call this tool again with the same object_id.',
+			withPilotReason(
+				`Not sent. ${pilot ? 'A person has to approve this email.' : askFirst} The draft shows an Approve button in For You and in chat; they can edit the text there first. If the person has just said yes in a chat you are in, after you showed them this draft there, call approve_draft_from_chat with this object_id and the id of their message, then call this tool again. Otherwise end your turn; when they have approved it, call this tool again with the same object_id.`,
+				pilot,
+			),
 		)
 		return c.json(f.body, f.status)
 	}

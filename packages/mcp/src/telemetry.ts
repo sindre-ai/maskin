@@ -555,6 +555,8 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
 	delete_loop: 'loop_delete',
+	fork_loop: 'loop_fork',
+	install_loop: 'loop_install',
 	set_loop_view: 'loop_view_set',
 	// Comments
 	create_comment: 'comment_create',

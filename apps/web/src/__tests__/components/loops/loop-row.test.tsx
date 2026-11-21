@@ -69,6 +69,14 @@ function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
 	}
 }
 
+describe('LoopRow with an unknown pill', () => {
+	it('shows the raw status text instead of crashing', () => {
+		const loop = buildLoop({ pill: 'retired' as LoopSummary['pill'] })
+		render(<LoopRow loop={loop} actors={[]} />)
+		expect(screen.getAllByText('retired').length).toBeGreaterThan(0)
+	})
+})
+
 describe('LoopRow', () => {
 	it('renders the state dot, name, one-line outcome, and stage label', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)

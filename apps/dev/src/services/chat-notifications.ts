@@ -208,6 +208,8 @@ async function createChatNotifications(
 			)
 		const already = new Set(existing.map((r) => r.targetActorId))
 		const targets = args.targets.filter((t) => !already.has(t))
+		const author = await actorProfile(tx as unknown as Db, args.authorId)
+		const fromHuman = author?.type === 'human'
 
 		return insertNotificationsWithEvents(tx, {
 			workspaceId: args.workspaceId,
@@ -224,6 +226,7 @@ async function createChatNotifications(
 				status: args.status,
 				metadata: {
 					...args.extraMetadata,
+					...(fromHuman ? { from_human: true } : {}),
 					push_collapse_key:
 						args.collapseKey ??
 						(args.threadRootId

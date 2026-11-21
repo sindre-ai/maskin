@@ -33,4 +33,13 @@ struct TabBadgeTests {
 	func countWins() {
 		#expect(TabBadge.make(count: 2, hasUnreadWithoutCount: true) == .count(2))
 	}
+
+	@Test("VoiceOver hears the count after the tab name")
+	func spoken() {
+		#expect(TabBadge.none.spokenValue(needsYou: false) == nil)
+		#expect(TabBadge.dot.spokenValue(needsYou: true) == "unread")
+		#expect(TabBadge.count(8).spokenValue(needsYou: false) == "8 unread")
+		#expect(TabBadge.count(15).spokenValue(needsYou: true) == "15 need you")
+		#expect(TabBadge.count(250).spokenValue(needsYou: false) == "99+ unread")
+	}
 }

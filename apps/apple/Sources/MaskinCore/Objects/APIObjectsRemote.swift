@@ -258,6 +258,47 @@ public struct APIObjectsRemote: ObjectsRemote {
 		}
 	}
 
+	public func editComment(eventId: Int, content: String) async throws {
+		guard let raw else { throw ObjectsError("Editing a comment isn't available here.") }
+		let request = await makeEditCommentRequest(eventId: eventId, content: content, transport: raw)
+		let data: Data
+		let response: URLResponse
+		do {
+			(data, response) = try await raw.session.data(for: request)
+		} catch {
+			throw Self.wrap(error)
+		}
+		try Self.editCommentResult(status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+	}
+
+	/// Built apart from sending so a test can read the path, headers and body.
+	func makeEditCommentRequest(eventId: Int, content: String, transport: RawTransport) async -> URLRequest {
+		var request = URLRequest(url: transport.baseURL.appendingPathComponent("api/events/\(eventId)"))
+		request.httpMethod = "PATCH"
+		request.timeoutInterval = 30
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue(transport.clientSource, forHTTPHeaderField: "X-Client-Source")
+		if let credentials = await credentials() {
+			request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
+			if let workspaceId = credentials.workspaceId {
+				request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id")
+			}
+		}
+		request.httpBody = try? JSONEncoder().encode(["content": content])
+		return request
+	}
+
+	/// What a response to a comment edit means: nothing to read on success, a plain reason if not.
+	static func editCommentResult(status: Int) throws {
+		switch status {
+		case 200..<300: return
+		case 403: throw ObjectsError("Only the person who wrote a comment can edit it.")
+		case 404: throw ObjectsError("That comment is gone.")
+		default: throw ObjectsError("The server couldn't save the edit.")
+		}
+	}
+
 	// MARK: Directory
 
 	public func actors() async throws -> [ActorRef] {
@@ -332,6 +373,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 
 	static func wrap(_ error: Error) -> ObjectsError {
 		if let error = error as? ObjectsError { return error }
+		ErrorReporter.shared.reportThrown(error)
 		var current: Error? = error
 		while let e = current {
 			if let url = e as? URLError {

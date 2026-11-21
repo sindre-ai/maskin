@@ -4,7 +4,7 @@
 // One new chat, "Contoso renewal" (room 304), nobody else uses it, so edits, reactions and sends here
 // cannot change what another row sees:
 //   - a thread whose replies include one from an agent (MK-10, MK-11)
-//   - your newest message, which can be edited (MK-15a), and an agent message to react to (MK-15b)
+//   - an older message of yours, which can be edited (MK-15a), and an agent message to react to (MK-15b)
 //   - a send that the server refuses when the text says REJECT, which leaves an unsent message (MK-15c)
 // plus the Threads list (MK-11) and one integration that connects with a pasted key (MK-17).
 

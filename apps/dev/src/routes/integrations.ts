@@ -35,6 +35,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, type FlagId, isFlagEnabled } from '../lib/feature-flags'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
@@ -58,6 +59,8 @@ import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
+import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
@@ -78,6 +81,7 @@ import {
 } from '../lib/integrations/providers/google-drive/watch'
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { MEETING_NOTES_PROVIDERS } from '../lib/integrations/providers/meeting-notes'
 import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
@@ -126,6 +130,7 @@ import {
 	sendEphemeralResponse,
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
+import { ZOOM_PROVIDER } from '../lib/integrations/providers/zoom/config'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import { integrationScopeGaps, parseScopes } from '../lib/integrations/scope-drift'
 import type {
@@ -279,9 +284,30 @@ const listProvidersRoute = createRoute({
 	},
 })
 
+/** Providers that show up only for the testers of their flag (apps/dev/src/lib/feature-flags.ts). */
+const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
+	[AZURE_DEVOPS_PROVIDER, FLAGS.AZURE_DEVOPS],
+	[ZOOM_PROVIDER, FLAGS.ZOOM],
+	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
+		name,
+		FLAGS.MEETING_NOTES_INTEGRATIONS,
+	]),
+	...DEVELOPER_DATA_PROVIDERS.map((name): [string, FlagId] => [
+		name,
+		FLAGS.DEVELOPER_DATA_INTEGRATIONS,
+	]),
+])
+
+const providerVisible = (providerName: string, actorId: string | undefined): boolean => {
+	const flag = FLAGGED_PROVIDERS.get(providerName)
+	return !flag || (!!actorId && isFlagEnabled(actorId, flag))
+}
+
 app.openapi(listProvidersRoute, (async (c) => {
+	const actorId = c.get('actorId')
 	const providers = listProviders()
 		.filter((p) => p.config.name !== CUSTOM_MCP_PROVIDER)
+		.filter((p) => providerVisible(p.config.name, actorId))
 		.map((p) => ({
 			name: p.config.name,
 			displayName: p.config.displayName,
@@ -930,6 +956,10 @@ app.openapi(connectRoute, (async (c) => {
 			createApiError('BAD_REQUEST', 'Custom tool servers are added from the Tools section'),
 			400,
 		)
+	}
+
+	if (!providerVisible(providerName, actorId)) {
+		return c.json(createApiError('BAD_REQUEST', `Unknown provider: ${providerName}`), 400)
 	}
 
 	let resolved: ResolvedProvider
