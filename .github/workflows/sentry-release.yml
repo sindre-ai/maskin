@@ -1,0 +1,48 @@
+name: Sentry release
+
+# Creates one Sentry release per push to main, named after the commit SHA, and
+# links the commits so Sentry can point a new error at the change that caused
+# it. Runs next to the deploy workflows and never blocks them.
+#
+# Needs the repo secret SENTRY_AUTH_TOKEN (Sentry org maskin, scopes
+# project:releases and org:read). Without it the job logs a notice and passes.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: sentry-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    steps:
+      - name: Check for Sentry token
+        id: token
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::notice::SENTRY_AUTH_TOKEN is not set, skipping Sentry release"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Create Sentry release
+        if: steps.token.outputs.present == 'true'
+        uses: getsentry/action-release@v3
+        env:
+          SENTRY_ORG: maskin
+        with:
+          projects: maskin-agent-server maskin-dev maskin-web
+          environment: production
+          release: ${{ github.sha }}
