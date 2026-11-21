@@ -1,9 +1,11 @@
 import MaskinDesign
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What the `+` offers. Spec 7 §1 → Attach: Photo or video · Camera · Scan document · File · Object · Person or agent.
 /// "Paste image" joins the list only while the clipboard holds a picture: the system Paste on the field
-/// takes an image too, and this row stays as a second way in. "Show formatting" / "Hide formatting" is
+/// takes an image too, and this row stays as a second way in. The row is the system paste button, so iOS
+/// never asks "Allow Paste" for it. "Show formatting" / "Hide formatting" is
 /// the last row: it opens or closes the formatting row above the bar.
 enum ComposerAttachAction: String, CaseIterable, Identifiable {
 	case photo, camera, scan, file, object, person, paste, showFormatting, hideFormatting
@@ -60,6 +62,8 @@ struct ComposerAttachMenu: View {
 	/// The most height the card may take. Taller than that, the rows scroll inside it.
 	var maxHeight: CGFloat = .infinity
 	let onPick: (ComposerAttachAction) -> Void
+	/// Gets the pictures the system paste button hands over.
+	var onPasteImages: ([NSItemProvider]) -> Void = { _ in }
 
 	static let width: CGFloat = 250
 	private static let row: CGFloat = MaskinSpace.touchMin + MaskinSpace.s2
@@ -96,27 +100,58 @@ struct ComposerAttachMenu: View {
 		VStack(alignment: .leading, spacing: 0) {
 			ForEach(Array(actions.enumerated()), id: \.element) { index, action in
 				if index > 0 { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
-				Button {
-					MaskinHaptics.play(.selection)
-					onPick(action)
-				} label: {
-					HStack(spacing: MaskinSpace.s7) {
-						Image(systemName: action.symbol)
-							.maskinSymbol(MaskinFontSize.t19, weight: .regular)
-							.foregroundStyle(MaskinColor.ink3)
-							.frame(width: MaskinSpace.s12)
-							.accessibilityHidden(true)
-						Text(action.label)
-							.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
-							.foregroundStyle(MaskinColor.ink)
-						Spacer(minLength: 0)
-					}
-					.padding(.horizontal, MaskinSpace.s9)
-					.frame(minHeight: Self.row)
-					.contentShape(Rectangle())
+				if action == .paste {
+					pasteRow(action)
+				} else {
+					pickRow(action)
 				}
-				.buttonStyle(.maskinPressed)
 			}
 		}
+	}
+
+	/// Paste image: the system paste button, since it reads the clipboard without the Allow Paste prompt.
+	/// It keeps the system's own look, so the row only gives it the row's height and padding.
+	private func pasteRow(_ action: ComposerAttachAction) -> some View {
+		HStack(spacing: MaskinSpace.s7) {
+			Image(systemName: action.symbol)
+				.maskinSymbol(MaskinFontSize.t19, weight: .regular)
+				.foregroundStyle(MaskinColor.ink3)
+				.frame(width: MaskinSpace.s12)
+				.accessibilityHidden(true)
+			PasteButton(supportedContentTypes: [UTType.image]) { providers in
+				MaskinHaptics.play(.selection)
+				onPasteImages(providers)
+			}
+			.labelStyle(.titleOnly)
+			.buttonBorderShape(.roundedRectangle)
+			// The button's own title reads "Paste"; the label stays "Paste image" for VoiceOver and the must-keep test (MK-07b).
+			.accessibilityLabel("Paste image")
+			Spacer(minLength: 0)
+		}
+		.padding(.horizontal, MaskinSpace.s9)
+		.frame(minHeight: Self.row)
+	}
+
+	private func pickRow(_ action: ComposerAttachAction) -> some View {
+		Button {
+			MaskinHaptics.play(.selection)
+			onPick(action)
+		} label: {
+			HStack(spacing: MaskinSpace.s7) {
+				Image(systemName: action.symbol)
+					.maskinSymbol(MaskinFontSize.t19, weight: .regular)
+					.foregroundStyle(MaskinColor.ink3)
+					.frame(width: MaskinSpace.s12)
+					.accessibilityHidden(true)
+				Text(action.label)
+					.font(MaskinTypeface.sans(MaskinFontSize.t16, relativeTo: .body))
+					.foregroundStyle(MaskinColor.ink)
+				Spacer(minLength: 0)
+			}
+			.padding(.horizontal, MaskinSpace.s9)
+			.frame(minHeight: Self.row)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
 	}
 }

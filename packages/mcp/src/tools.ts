@@ -2106,7 +2106,7 @@ export const tools = {
 
 	fork_loop: {
 		description:
-			"Fork a Loop that was installed from the marketplace, so the workspace owns it. An installed loop is locked: Maskin keeps its agents, triggers and skills in sync with the marketplace version and pushes updates. Forking detaches them, so they become plain workspace resources you can edit with update_actor, update_trigger and update_workspace_skill, and later marketplace updates no longer overwrite your changes. The running loop and its members are untouched. Fork BEFORE customising an installed loop's agents, triggers or skills, otherwise the next marketplace update reverts the edits. This cannot be undone. `id` is the loop object id from list_loops (or the installed-loop id). A loop that is already forked, or that was not installed from the marketplace, returns an explanation instead of an error.",
+			"Fork a Loop that was installed from the marketplace, so the workspace owns it. An installed loop is locked: Maskin keeps its agents, triggers and skills in sync with the marketplace version and pushes updates. Forking detaches them, so they become plain workspace resources you can edit with update_actor, update_trigger and update_workspace_skill, and later marketplace updates no longer overwrite your changes. The running loop and its members are untouched. Fork only when a person asks, or when the change cannot be made any other way (a locked loop's agents, triggers and skills are reverted by the next marketplace update). This cannot be undone. `id` is the loop object id from list_loops (or the installed-loop id). A loop that is already forked, or that was not installed from the marketplace, returns an explanation instead of an error.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z
@@ -3146,6 +3146,25 @@ export const tools = {
 				.max(20),
 		}),
 	},
+	desktop_attach_file: {
+		description:
+			"Attach a file that is on YOUR computer to a web page's file upload field, with no file chooser: use this instead of clicking the upload button and typing a path. Put the file on the computer first with desktop_put_file and pass the path it returned. It acts on the browser page that is on screen. It picks the file input that has focus, else the only file input on the page (a styled upload button almost always sits on a hidden one). If the page has several, pass a CSS selector such as input[type=file]#photo; if it finds none, or the selector matches nothing, it says so and attaches nothing. The page gets the same input and change events as with a real pick, so its own upload code runs; then submit the form as usual and take a screenshot to confirm. It never clicks or types. If you already opened the chooser by clicking, press Escape to close it first. Does not work for an upload field that the page only creates at the moment you click, or one inside another site's frame: use the chooser then (ctrl+L, type the path, click Open). On a computer made before this existed it says so: run desktop_apply_settings. If it says the debugging port is not reachable, Chromium needs one restart (this closes its open pages). Returns the file name the page now holds. Only your own computer is reachable.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			path: z
+				.string()
+				.min(1)
+				.max(4096)
+				.describe('Full path of the file on your computer, as desktop_put_file returned it.'),
+			selector: z
+				.string()
+				.min(1)
+				.max(500)
+				.optional()
+				.describe('CSS selector of the file input, when the page has more than one.'),
+		}),
+	},
 	desktop_run: {
 		description:
 			'Run a shell command inside your computer (the desktop VM) (not on the host and not in your own sandbox). DISPLAY is already set, so GUI programs launched here appear on your screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each truncated to 20,000 characters). Default timeout 30s, max 120s. Anything meant to keep running after the command returns must be backgrounded with `&`.',
@@ -3158,7 +3177,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error) and free_space_bytes, the room left on the computer. Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. Files an earlier desktop_put_file left on the computer are cleaned up first: those over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first. Files you made and files Chromium downloaded are never removed. If there is still no room the call is refused with how much is needed and how much is free, and nothing is downloaded. To upload it in Chromium: click the page's file field, press ctrl+L in the chooser, type the full path that this call returned, then click Open (or press alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.",
+			'Put a workspace file on YOUR computer (the desktop VM) by its file id, so a browser there can pick it in a file field. Your computer is a separate machine, so a file in your session or in the workspace is not on it until you call this. The computer downloads the file directly: its content never passes through you, so photos and videos are fine. Returns the path, size and sha256 of the file as it landed (the same size and hash as the stored file; a mismatch is an error) and free_space_bytes, the room left on the computer. Default folder is ~/Downloads; an existing file of the same name is overwritten, and the name is made safe (letters, digits, dot, dash, underscore, space). Takes up to two minutes, so a very large file can time out. Files an earlier desktop_put_file left on the computer are cleaned up first: those over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, those over 1 hour old, oldest first. Files you made and files Chromium downloaded are never removed. If there is still no room the call is refused with how much is needed and how much is free, and nothing is downloaded. To upload in Chromium, call desktop_attach_file with this path (no chooser). Fallback: click the file field, press ctrl+L in the chooser, type the path, click Open (or alt+O). Do not press Enter and do not double click: both close the chooser without choosing the file. The chooser opens centred on screen with Open in view. Only your own computer is reachable.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -3177,7 +3196,7 @@ export const tools = {
 	},
 	desktop_apply_settings: {
 		description:
-			"Bring YOUR computer up to date without deleting it, so your saved logins and open pages stay. A computer keeps the image it was created from, so a later fix does not reach it until now. Replaces the computer's control helper when it is older than the server's (run this when typing a saved password says the computer is an older version) and rewrites a fixed list of user settings files (the file chooser's size and position). Nothing else is touched, and the browser is never restarted. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, for example before a saved password can be typed; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
+			"Bring YOUR computer up to date without deleting it, so your saved logins and open pages stay. A computer keeps the image it was created from, so a later fix does not reach it until now. Replaces the computer's control helper when it is older than the server's (run this when typing a saved password or desktop_attach_file says the computer is an older version) and rewrites a fixed list of user settings files (the file chooser's size and position). Nothing else is touched, and the browser is never restarted. Safe to run again: the second run changes nothing and says so. Returns the settings version now on the computer, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, for example before a saved password can be typed or a file attached; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

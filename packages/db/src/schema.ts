@@ -415,6 +415,12 @@ export const events = pgTable(
 		index('events_daily_budget_summary_day_idx')
 			.on(t.workspaceId, sql`(${t.data} ->> 'day')`)
 			.where(sql`${t.action} = 'daily_budget_summary'`),
+		// The newest approved, delivered or auto_sent event of one object, behind the draft cards on
+		// For You (lib/object-delivery.ts). Partial, so it holds only those three actions. Built
+		// CONCURRENTLY in migration 0170.
+		index('events_approval_lookup_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} IN ('approved', 'delivered', 'auto_sent')`),
 	],
 )
 

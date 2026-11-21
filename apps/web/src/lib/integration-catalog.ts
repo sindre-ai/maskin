@@ -38,6 +38,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	slack: { category: 'Chat & social', domain: 'slack.com' },
 	stripe: { category: 'Sales & payments', domain: 'stripe.com' },
 	ubersuggest: { category: 'Analytics', domain: 'neilpatel.com' },
+	zoom: { category: 'Chat & social', domain: 'zoom.us' },
 }
 
 /** A provider the catalog does not know yet is still listed, under Docs & data. */

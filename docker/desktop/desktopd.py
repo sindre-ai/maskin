@@ -64,6 +64,47 @@ FOCUS_PROBE = """(() => {
   return el && el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'password' ? 'password' : 'other';
 })()"""
 
+# Runs inside the page. Answers whether this page is the one on screen, as a word.
+VISIBLE_PROBE = "document.visibilityState + ':' + document.hasFocus()"
+
+# Runs inside the page and answers with the one file input to use, or a word that says why
+# there is none. The agent's selector (a JSON string, or null) is spliced in as the argument.
+# Without a selector: the focused file input, else the page's only file input (a styled
+# upload button almost always sits on a hidden one). Looks through open shadow roots, not
+# into frames.
+FILE_INPUT_PROBE = """((selector) => {
+  const isFile = (el) => !!el && el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'file';
+  const pick = (el) => (el.disabled ? 'disabled' : el);
+  if (selector) {
+    let el;
+    try { el = document.querySelector(selector); } catch (e) { return 'bad_selector'; }
+    if (!el) return 'no_match';
+    return isFile(el) ? pick(el) : 'not_file_input';
+  }
+  let a = document.activeElement;
+  for (let i = 0; i < 20 && a && a.shadowRoot && a.shadowRoot.activeElement; i++) a = a.shadowRoot.activeElement;
+  if (isFile(a)) return pick(a);
+  const found = [];
+  const walk = (root) => {
+    for (const n of root.querySelectorAll('*')) {
+      if (isFile(n)) found.push(n);
+      if (n.shadowRoot) walk(n.shadowRoot);
+    }
+  };
+  walk(document);
+  if (found.length === 1) return pick(found[0]);
+  return found.length ? 'several' : 'none';
+})(%s)"""
+
+ATTACH_REFUSALS = {
+    "bad_selector": ("bad_selector", "The selector is not valid CSS. Nothing was attached."),
+    "no_match": ("no_file_input", "The selector matches nothing on the page. Nothing was attached."),
+    "not_file_input": ("no_file_input", "The selector matches an element that is not a file input (input type=file). Nothing was attached."),
+    "disabled": ("no_file_input", "The file input is disabled. Nothing was attached."),
+    "several": ("several_file_inputs", "The page has more than one file input and none has focus. Pass a selector for the right one. Nothing was attached."),
+    "none": ("no_file_input", "The page has no file input to attach to. Nothing was attached."),
+}
+
 ENV = {**os.environ, "DISPLAY": DISPLAY}
 # xdotool calls interleave badly (a click between a move and a drag-release).
 input_lock = threading.Lock()
@@ -75,6 +116,14 @@ class BadRequest(Exception):
 
 class NotPasswordField(Exception):
     """A saved password was about to be typed and the focus is not a confirmed password field."""
+
+
+class AttachError(Exception):
+    """A file could not be attached to a page's file input. `error` is a short code, `message` plain words."""
+
+    def __init__(self, error, message):
+        super().__init__(message)
+        self.error, self.message = error, message
 
 
 def xdo(*args):
@@ -196,6 +245,84 @@ def focused_field_is_password():
         return False
 
 
+def cdp(ws, msg_id, method, params=None):
+    """One debugging-port call on an open page connection; returns its result or raises AttachError."""
+    ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+    while True:
+        reply = json.loads(ws.recv())
+        if reply.get("id") == msg_id:
+            if "error" in reply:
+                raise AttachError("attach_failed", f"The browser refused: {reply['error'].get('message', method)}")
+            return reply.get("result") or {}
+
+
+def page_to_use():
+    """The websocket path of the one page that is on screen. Raises when there is not exactly one."""
+    conn = http.client.HTTPConnection(CDP_HOST, CDP_PORT, timeout=3)
+    try:
+        conn.request("GET", "/json/list")
+        targets = json.loads(conn.getresponse().read())
+    finally:
+        conn.close()
+    shown = []  # (path, has_focus) of every page whose tab is visible
+    for t in targets:
+        if t.get("type") != "page":
+            continue
+        m = re.match(r"^ws://[^/]+(/devtools/page/[A-Za-z0-9-]+)$", t.get("webSocketDebuggerUrl", ""))
+        if not m:
+            continue
+        ws = WebSocket(m.group(1))
+        try:
+            state = cdp(ws, 1, "Runtime.evaluate", {"expression": VISIBLE_PROBE, "returnByValue": True})
+        finally:
+            ws.close()
+        visibility, _, focus = str((state.get("result") or {}).get("value", "")).partition(":")
+        if visibility == "visible":
+            shown.append((m.group(1), focus == "true"))
+    if len(shown) > 1:
+        shown = [p for p in shown if p[1]]  # several windows: the one with focus
+    if len(shown) != 1:
+        raise AttachError("no_page", "Could not tell which browser page to use: there is not exactly one visible page. Bring the page with the upload field to the front and try again.")
+    return shown[0][0]
+
+
+def attach_file(body):
+    """Hands a file on this computer to a page's file input over the debugging port, so no file
+    chooser opens. Types and clicks nothing. Every failure raises and attaches nothing."""
+    path, selector = body.get("path"), body.get("selector")
+    if not isinstance(path, str) or not 1 <= len(path) <= 4096 or "\0" in path or not re.match(r"^(/|~/)", path):
+        raise BadRequest("path must be an absolute path, or one starting with ~/")
+    if selector is not None and (not isinstance(selector, str) or not 1 <= len(selector) <= 500):
+        raise BadRequest("selector must be a CSS selector of 1-500 characters")
+    path = os.path.realpath(os.path.expanduser(path))
+    if not os.path.isfile(path) or not os.access(path, os.R_OK):
+        raise AttachError("file_not_found", f"There is no readable file at {path} on this computer. Nothing was attached. Put the file there first (desktop_put_file).")
+    try:
+        ws = WebSocket(page_to_use())
+    except AttachError:
+        raise
+    except Exception:
+        raise AttachError("no_debugging_port", "The browser's debugging port is not reachable. Chromium must be restarted once after desktop_apply_settings (this closes its open pages), or it is not running. Nothing was attached. Use the file chooser instead: ctrl+L, type the path, click Open.")
+    try:
+        found = cdp(ws, 1, "Runtime.evaluate",
+                    {"expression": FILE_INPUT_PROBE % json.dumps(selector), "returnByValue": False})
+        node = found.get("result") or {}
+        if node.get("type") == "string":
+            raise AttachError(*ATTACH_REFUSALS.get(node.get("value"), ("attach_failed", "No file input was found. Nothing was attached.")))
+        if not node.get("objectId"):
+            raise AttachError("attach_failed", "No file input was found. Nothing was attached.")
+        cdp(ws, 2, "DOM.setFileInputFiles", {"files": [path], "objectId": node["objectId"]})
+        done = cdp(ws, 3, "Runtime.callFunctionOn", {
+            "objectId": node["objectId"], "returnByValue": True,
+            "functionDeclaration": "function () { return this.files && this.files.length ? this.files[0].name : ''; }"})
+        name = (done.get("result") or {}).get("value")
+        if not name:
+            raise AttachError("attach_failed", "The browser did not keep the file. Nothing was attached.")
+        return {"ok": True, "file_name": name}
+    finally:
+        ws.close()
+
+
 def coord(body, key, limit):
     v = body.get(key)
     if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < limit:
@@ -252,6 +379,8 @@ def run_input(body):
                 raise BadRequest("keys must be 1-20 key combos like 'ctrl+l'")
             for k in keys:
                 xdo("key", "--", k)
+        elif action == "attach_file":
+            return attach_file(body)
         else:
             raise BadRequest("unknown action")
 
@@ -340,13 +469,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {"image_base64": base64.b64encode(screenshot()).decode(),
                                         "mime_type": "image/jpeg", "width": WIDTH, "height": HEIGHT})
             if self.path == "/input":
-                run_input(self.read_json())
-                return self.reply(200, {"ok": True})
+                return self.reply(200, run_input(self.read_json()) or {"ok": True})
             if self.path == "/exec":
                 return self.reply(200, run_exec(self.read_json()))
             self.reply(404, {"error": "not_found"})
         except BadRequest as e:
             self.reply(400, {"error": "invalid_request", "message": str(e)})
+        except AttachError as e:
+            self.reply(409, {"error": e.error, "message": e.message})
         except NotPasswordField:
             self.reply(409, {"error": "not_a_password_field"})
         except subprocess.CalledProcessError as e:
