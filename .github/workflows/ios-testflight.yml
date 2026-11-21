@@ -432,6 +432,22 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/archive-tv.log" | tail -n 25
           test "${PIPESTATUS[0]}" -eq 0
 
+      # An unsigned archive carries no entitlements, and the export would sign without the keychain
+      # group the Top Shelf shares with the app. Put them back with an ad hoc signature (codesign
+      # allows it, only xcodebuild refuses on tvOS); the export re-signs with the distribution
+      # certificate and keeps them. $(AppIdentifierPrefix) is the team id and a dot.
+      - name: Put the entitlements back into the archive
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/MaskinTV.xcarchive/Products/Applications/Maskin.app"
+          embed() {
+            sed "s/\$(AppIdentifierPrefix)/${APPLE_TEAM_ID}./g" "$1" > "$RUNNER_TEMP/entitlements.plist"
+            codesign --force --sign - --entitlements "$RUNNER_TEMP/entitlements.plist" "$2"
+          }
+          embed apps/apple/Apps/MaskinTVTopShelf/MaskinTVTopShelf.entitlements "$app/PlugIns/MaskinTVTopShelf.appex"
+          embed apps/apple/Apps/MaskinTV/MaskinTV.entitlements "$app"
+
       - name: Keep the debug symbols
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
