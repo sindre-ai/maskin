@@ -96,8 +96,9 @@ const optionalWorkspaceId = z
 
 // Used by writes/reads that create or enumerate ambiguously-scoped
 // resources (a brand-new loop with no existing id to inherit a workspace
-// from, or an object creation call) with side effects that are expensive to
-// get wrong. list_objects no longer needs it (wave 2, T4); only its
+// from) with side effects that are expensive to get wrong. create_objects left
+// this list: a call without workspace_id now runs in the caller's own workspace.
+// list_objects no longer needs it (wave 2, T4); only its
 // MASKIN_MCP_LIST_CONTRACT=off definition still requires it. Requiring an explicit workspace_id here —
 // instead of silently falling back to DEFAULT_WORKSPACE_ID like tools that
 // operate on an already-identified resource — means a call can never land in
@@ -106,14 +107,20 @@ const WORKSPACE_ID_DESCRIPTION =
 	'Workspace ID to operate in. Call list_workspaces to discover available workspaces.'
 const requiredWorkspaceId = z.string().uuid().describe(WORKSPACE_ID_DESCRIPTION)
 
-// create_objects is the one tool whose missing-key errors name the key and
+// create_objects' missing-key errors name the key and
 // show a correct call, so the agent's second attempt works. The text is static
 // (it only fires when the key is absent), so it never echoes a received value.
 // It changes what the error says, never what the schema accepts.
 export const CREATE_OBJECTS_EXAMPLE_CALL =
-	'{"workspace_id":"<workspace uuid>","nodes":[{"$id":"n1","type":"task","status":"todo","title":"Short title"}]}'
+	'{"nodes":[{"$id":"n1","type":"task","status":"todo","title":"Short title"}]}'
 const createObjectsMissingKey = (key: string, where: 'call' | 'node') => ({
 	required_error: `Missing required key "${key}" on the ${where}. Correct call: ${CREATE_OBJECTS_EXAMPLE_CALL}`,
+})
+
+// A missing-key message that names the key and, where it helps, shows a correct call. Static text:
+// it only fires when the key is absent, so it never echoes a received value.
+const requiredKey = (key: string, what: string, example?: string) => ({
+	required_error: `Missing required key "${key}": ${what}.${example ? ` Correct call: ${example}` : ''}`,
 })
 
 // Single agent-facing param covering everything needed to run an agent on a
@@ -362,10 +369,7 @@ export const tools = {
 		description:
 			'Create objects with optional relationships in one atomic call. Call get_workspace_schema first (statuses, metadata fields and relationship types vary per workspace). To create a Loop use create_loop. Edges may use $id references to nodes in this call, or existing UUIDs. Attach files by uploading with create_file (or choosing from list_files) and passing `file_ids` on a node. In human-facing text use titles, not UUIDs; add a short id suffix only when two titles are near-identical.',
 		inputSchema: z.object({
-			workspace_id: z
-				.string(createObjectsMissingKey('workspace_id', 'call'))
-				.uuid()
-				.describe(WORKSPACE_ID_DESCRIPTION),
+			workspace_id: optionalWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
@@ -431,7 +435,13 @@ export const tools = {
 			"Get objects by ID. Returns {id, type, title, status, contextLine, url, workspaceId} plus an always-on `setup` block ({checks, next_steps, prose}) flagging gaps such as thin content or no driver. Add blocks with `include`: `content`, `metadata`, `relationships` (edges with sourceTitle and targetTitle), `connected_objects`, `events` (recent changes and comments), `files`. Relationships and connected objects cap at 100 per object (see `relationships_page` / `connected_objects_page`); page the rest with list_relationships and `object_id`. For a loop's deeper setup check call get_loop. In human-facing text use `title`, not the UUID. Before telling anyone whether something was sent, done, approved or on hold, read the task and its contact here: drafts pages, target lists and search snapshots can lag, and the task wins.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			ids: z.array(z.string().uuid()).min(1).max(50),
+			ids: z
+				.array(
+					z.string().uuid(),
+					requiredKey('ids', 'a list of object ids', 'get_objects({"ids":["<object uuid>"]})'),
+				)
+				.min(1)
+				.max(50),
 			include: z
 				.array(
 					z.enum([
@@ -1338,12 +1348,20 @@ export const tools = {
 			'Get a file with its content and a viewer URL. Over 50 MB: `content` is empty, `contentOmitted: true` and a short-lived `downloadUrl` is given. `encoding` is "utf8" (`content` is the raw string) or "base64". `annotations` are pinned reviewer comments (CSS `selector`, `bounds`, `comment`). Pass `contentHash` as `if_match` to update_file to refuse your write if someone saved in between. HTML pages (deck, website, dashboard, custom view) are mostly embedded fonts and inline CSS or script, so raw `content` is huge: pass `format: "text"` for `content_text`, the page\'s words as markdown (headings, tables, links, labels, slide notes), plus `title`, `meta_description`, `json_ld`, `source_object_id`, `contentHash`, `extracted: true`. A `note` means the page is drawn by script: read the raw file. A large raw HTML read opens with `readable_with`. Other text files are unchanged by format "text"; binary ignores it. There is no offset or limit; use format "text" rather than paging raw bytes.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid(),
+			id: z.string(requiredKey('id', 'the file id', 'get_file({"id":"<file uuid>"})')).uuid(),
 			format: z
 				.enum(['raw', 'text'])
 				.optional()
 				.describe(
 					'"raw" (default): stored bytes as `content`. "text": `content_text`, for HTML the readable words as markdown, other text files unchanged.',
+				),
+			offset: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Start `content` or `content_text` at this character. A long file comes back cut, and the reply says which offset to pass to read on.',
 				),
 		}),
 	},
@@ -1704,7 +1722,7 @@ export const tools = {
 			"Create an automation trigger that fires an agent on a schedule (cron) or on an event; the `config` param shows both shapes. To fire only for items with a given driver, add `conditions` to the event config, e.g. { entity_type: 'task', action: 'status_changed', conditions: [{ field: 'driver', operator: 'equals', value: '<actor UUID>' }] }; driver works on created, updated, status_changed and commented events. To start whoever drives the item, put target: 'item_driver' in the event config and omit target_actor_id (same four events; skipped if no agent drives it); otherwise target_actor_id is required and must be an agent. For a one-off, pass `run_at` instead of `type` and `config`: it runs once, then disables itself and shows as one-time in list_triggers. Never use a cron with a fixed day and month for a one-off; it repeats every year. Say in the prompt what to do if the run starts late. Call list_triggers first and reuse a trigger when one fits. The result is the saved trigger in short form plus `warnings`, notes that never block the save. The model route (llm_route, llm_oauth_slot) comes from the target agent and workspace settings; sending either in config is rejected.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			name: z.string(),
+			name: z.string(requiredKey('name', 'a short trigger name')),
 			type: z
 				.enum(['cron', 'event'])
 				.optional()
@@ -1722,7 +1740,9 @@ export const tools = {
 				.describe(
 					'Run once at this ISO 8601 time (e.g. 2026-11-12T09:00:00Z), then disable. Must be in the future. Use instead of type and config.',
 				),
-			action_prompt: z.string().describe(TRIGGER_PROMPT_GUIDANCE),
+			action_prompt: z
+				.string(requiredKey('action_prompt', 'what the agent should do when the trigger fires'))
+				.describe(TRIGGER_PROMPT_GUIDANCE),
 			target_actor_id: z
 				.string()
 				.uuid()
@@ -2232,13 +2252,16 @@ export const tools = {
 	},
 	list_for_you: {
 		description:
-			'What needs one person, as the web For You page shows it: dead, read and answered cards removed, ranked, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id. Returns { total, next_offset, items }: total counts the whole list, offset pages through it, next_offset is null at the end. Each item { rank, source (curated or decision), headline, rationale, notification_id, comment_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card due today. object_id, title, type and status are null for a card with no object. To answer a card use create_comment (or update_objects to change the object); to retire a dead card use withdraw_decision_card with its comment_id.',
+			'What needs one person, as the web For You page shows it: dead, read and answered cards removed, ranked, then decision cards agents addressed to them. Use this, not list_notifications, to say what needs a person. Pass their actor id, or leave it out for your own list. Returns { total, next_offset, items }: total counts the whole list, offset pages through it, next_offset is null at the end. Each item { rank, source (curated or decision), headline, rationale, notification_id, comment_id, object_id, title, type, status, due_at, ask }; start with rank 1 and say first any card due today. object_id, title, type and status are null for a card with no object. To answer a card use create_comment (or update_objects to change the object); to retire a dead card use withdraw_decision_card with its comment_id.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z
 				.string()
 				.uuid()
-				.describe('The person whose list to read. A person can read only their own.'),
+				.optional()
+				.describe(
+					'The person whose list to read. Leave out for your own. Agents may read any member; a person only their own.',
+				),
 			limit: z
 				.number()
 				.int()
@@ -2299,7 +2322,16 @@ export const tools = {
 			'Update a notification by ID. Can change status (pending, seen, resolved, dismissed) and/or metadata.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			id: z.string().uuid(),
+			id: z
+				.string(
+					requiredKey(
+						'id',
+						'the notification id',
+						'update_notification({"id":"<notification uuid>","status":"seen"})',
+					),
+				)
+				.uuid()
+				.describe('Notification ID.'),
 			status: z
 				.enum(['pending', 'seen', 'resolved', 'dismissed'])
 				.optional()

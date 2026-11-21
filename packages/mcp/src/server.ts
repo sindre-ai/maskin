@@ -428,6 +428,17 @@ async function fetchEventHistoryPage(
 	return { page, nextCursor }
 }
 
+/** A file record with its `content` and `content_text` starting at character `offset`, plus the offset. */
+function sliceFileFrom(file: unknown, offset: number): unknown {
+	if (!file || typeof file !== 'object') return file
+	const out: Record<string, unknown> = { ...(file as Record<string, unknown>), offset }
+	for (const key of ['content', 'content_text']) {
+		const value = out[key]
+		if (typeof value === 'string') out[key] = value.slice(offset)
+	}
+	return out
+}
+
 /** Read `.url` off an enriched row without paying the TS cost each time. */
 function pickUrl(row: unknown): string | undefined {
 	if (!row || typeof row !== 'object') return undefined
@@ -3586,6 +3597,8 @@ const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
 		types: 'edge_type_allow_list',
 	},
 	get_objects: {
+		object_id: 'ids: ["<uuid>"]',
+		object_ids: 'ids',
 		include_content: 'include: ["content"]',
 		include_body: 'include: ["content"]',
 		include_metadata: 'include: ["metadata"]',
@@ -3873,7 +3886,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, nodes, edges } = args
+			const { nodes, edges } = args
+			// Left out, the call runs in the caller's own workspace (the session's, or the default).
+			const workspace_id = args.workspace_id ?? config.defaultWorkspaceId
 			const wsOpts = { workspaceId: workspace_id }
 
 			// /api/graph doesn't understand file_ids — strip them from the body
@@ -6523,9 +6538,12 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
 			const fileQuery = args.format === 'text' ? '?format=text' : ''
-			const result = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
+			const fetched = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
 				workspaceId: wsId,
 			})
+			// A read past the first characters starts where the caller left off, so a file the
+			// response cap cut can still be read to the end.
+			const result = args.offset ? sliceFileFrom(fetched, args.offset) : fetched
 			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
 			// Images go back as a real image block so the model can see them; the
 			// base64 bytes would otherwise arrive as ~50k chars of opaque text.
@@ -6739,6 +6757,24 @@ export function createMcpServer(config: McpConfig) {
 				structuredContent: {
 					comments: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
+				// If the token cap trims this page, the walk resumes right after the last comment
+				// that ships. The history walk pages by offset, so the cursor carries the new offset.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const index = pagedRows.findIndex(
+						(row) =>
+							String((row as { id?: unknown }).id) === String((lastShipped as { id?: unknown }).id),
+					)
+					const row = pagedRows[index] as
+						| { id: number | string; createdAt?: string | null }
+						| undefined
+					if (!row?.createdAt) return null
+					return encodeCursor({
+						s: pagination.snapshotAt,
+						o: pagination.order,
+						k: { sortValue: row.createdAt, id: String(row.id) },
+						n: (pagination.cursor?.n ?? 0) + index + 1,
+					})
 				},
 			}
 		},
@@ -7380,6 +7416,11 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, run_at, ...fields } = args
+			if (!fields.target_actor_id && fields.config?.target !== 'item_driver') {
+				throw new Error(
+					'Missing required key "target_actor_id": the agent to start (find one with list_actors), or set config.target to "item_driver" to start the item\'s driver.',
+				)
+			}
 			const body = oneTimeOrScheduledBody(fields, run_at)
 			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
@@ -8458,7 +8499,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			// Without for_actor_id the route reads the caller's own list.
+			const params = new URLSearchParams(args.actor_id ? { for_actor_id: args.actor_id } : {})
 			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as { items?: ForYouItemLike[] }
