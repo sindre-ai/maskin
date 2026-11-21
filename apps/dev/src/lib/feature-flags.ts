@@ -193,6 +193,14 @@ export const FLAGS = {
 	 * the Entra app registration is approved for customers and the provider is on for everyone.
 	 */
 	AZURE_DEVOPS: 'azure-devops',
+	/**
+	 * Gates the Zoom integration (task [Add Zoom integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/db07585a-26e3-462f-b73e-e2690e0f142b)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Zoom Marketplace app is approved for customers and the provider is on for everyone.
+	 */
+	ZOOM: 'zoom',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -23,15 +23,21 @@ export function RouteError({
 	error,
 	compact,
 	title = 'Something went wrong',
+	message,
 	onRetry,
+	reset,
 	className,
 }: {
 	error: Error
 	/** Inline variant for panels — no min-h, no vertical centering, tighter spacing. */
 	compact?: boolean
 	title?: string
-	/** Override the default `router.invalidate()` retry (e.g. `query.refetch`). */
+	/** Plain words shown in place of `error.message`, for pages where the code error means nothing to the person. */
+	message?: string
+	/** Override the default retry (e.g. `query.refetch`). */
 	onRetry?: () => void
+	/** The route error boundary's `reset`. Without it the boundary keeps showing the error after a retry. */
+	reset?: () => void
 	className?: string
 }) {
 	const router = useRouter()
@@ -53,15 +59,22 @@ export function RouteError({
 	}, [error, compact])
 
 	const handleRetry = () => {
-		if (onRetry) onRetry()
-		else router.invalidate()
+		if (onRetry) {
+			onRetry()
+			return
+		}
+		// A render error leaves the router's own state untouched, so refetch the cached queries
+		// as well, then clear the boundary so the page renders again.
+		router.invalidate()
+		router.options.context?.queryClient?.invalidateQueries()
+		reset?.()
 	}
 
 	if (compact) {
 		return (
 			<div className={cn('py-8 text-center', className)}>
 				<p className="text-sm font-medium text-foreground">{title}</p>
-				<p className="mt-1 text-xs text-muted-foreground">{error.message}</p>
+				<p className="mt-1 text-xs text-muted-foreground">{message ?? error.message}</p>
 				<Button variant="outline" size="sm" onClick={handleRetry} className="mt-3">
 					Try again
 				</Button>
@@ -73,7 +86,7 @@ export function RouteError({
 		<div className={cn('flex min-h-[50vh] items-center justify-center', className)}>
 			<div className="text-center space-y-4 max-w-md">
 				<h2 className="text-lg font-semibold text-foreground">{title}</h2>
-				<p className="text-sm text-muted-foreground">{error.message}</p>
+				<p className="text-sm text-muted-foreground">{message ?? error.message}</p>
 				<Button onClick={handleRetry}>Try again</Button>
 			</div>
 		</div>

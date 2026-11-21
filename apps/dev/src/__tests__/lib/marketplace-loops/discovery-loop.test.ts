@@ -22,7 +22,7 @@ describe('Product Discovery Flow definition', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Flow')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.5.1')
+		expect(DISCOVERY_LOOP.version).toBe('1.6.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -212,6 +212,15 @@ describe('Product Discovery Flow definition', () => {
 		expect(briefing?.actionPrompt).toMatch(/Opportunity shortlist refresh/)
 		expect(briefing?.actionPrompt).toMatch(/results-data/)
 		expect(briefing?.actionPrompt).toMatch(/up to 7/)
+	})
+
+	it('tells the Product Discovery Agent how to read Miro boards, read-only, and to say when it cannot', () => {
+		const prompt = getActorData(DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT).systemPrompt ?? ''
+		expect(prompt).toMatch(/# Miro boards/)
+		expect(prompt).toMatch(/If a Miro connection is granted to you/)
+		expect(prompt).toMatch(/content_search/)
+		expect(prompt).toMatch(/If the Miro connection is missing/)
+		expect(prompt).toMatch(/do not create or edit anything/)
 	})
 
 	it('ships the Opportunity shortlist page with its data block empty', () => {

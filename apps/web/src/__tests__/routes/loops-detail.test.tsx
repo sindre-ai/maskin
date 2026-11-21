@@ -154,6 +154,7 @@ vi.mock('@/components/loops/loop-pill', () => ({
 		waiting_on_you: { label: 'Waiting on you', text: '', dot: '' },
 	},
 	isLiveLoopPill: () => true,
+	loopPillStyle: (pill: string) => ({ label: pill, text: '', dot: '' }),
 }))
 vi.mock('@/components/objects/object-detail-body', () => ({
 	ObjectDetailBody: () => null,

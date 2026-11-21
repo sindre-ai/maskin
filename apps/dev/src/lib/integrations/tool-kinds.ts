@@ -78,6 +78,15 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'pipelines_run',
 		'pipelines_artifact',
 	]),
+	// Zoom's hosted server (checked against Zoom's published tool list on 20 Nov 2026, not yet against a
+	// live tools/list). Only the four tools the requested scopes cover are reads. search_zoom, the Docs
+	// and Hub tools are left out: they need scopes Maskin does not ask for, and some of them write.
+	zoom: new Set([
+		'search_meetings',
+		'get_meeting_assets',
+		'get_recording_resource',
+		'recordings_list',
+	]),
 	// Stripe's hosted tool names are not read verbs (stripe_api_read), and stripe_api_write takes
 	// any POST, PATCH, PUT or DELETE, so only these exact tools are reads. Left out on purpose
 	// because they act or are unproven as reads: stripe_analytics (runs query jobs),

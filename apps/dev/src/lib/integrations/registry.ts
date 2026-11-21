@@ -80,6 +80,7 @@ import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as zapierConfig } from './providers/zapier/config'
+import { config as zoomConfig } from './providers/zoom/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -255,6 +256,10 @@ providers.set('sentry', {
 
 providers.set('zapier', {
 	config: zapierConfig,
+})
+
+providers.set('zoom', {
+	config: zoomConfig,
 })
 
 providers.set('stripe', {
