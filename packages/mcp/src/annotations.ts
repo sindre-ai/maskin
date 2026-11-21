@@ -228,6 +228,7 @@ const ROWS: Record<string, Row> = {
 	desktop_scroll: row('Desktop scroll'),
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
+	desktop_attach_file: row('Desktop attach file'),
 	desktop_run: row('Desktop run command', { destructive: true }),
 	desktop_put_file: row('Desktop put file'),
 	desktop_apply_settings: row('Desktop apply settings'),
