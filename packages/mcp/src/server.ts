@@ -142,6 +142,14 @@ export interface McpConfig {
 	 */
 	forwardMarker?: string
 	/**
+	 * Leave the hero card out of `structuredContent`. The card is a widget-only copy of data the
+	 * response already carries in full, so a caller that draws no widgets (a Maskin agent session)
+	 * only pays for it. Set by `routes/mcp.ts` for agent sessions; the HTTP server is built per
+	 * POST and never sees the client's `initialize`, so widget support cannot be read from the
+	 * client's capabilities. Unset keeps the card, which is what a widget host needs.
+	 */
+	omitHeroCard?: boolean
+	/**
 	 * Protocol era and allowlisted version label for telemetry, next to
 	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
 	 * sets the fallback (legacy, none) because the SDK does not expose the
@@ -206,6 +214,18 @@ function uiMeta(
 	resourceUri: string,
 ): Record<string, unknown> {
 	return { ...meta(toolName, config, workspaceId), ui: { resourceUri, csp: CSP } }
+}
+
+/**
+ * The `heroCard` key for a response's `structuredContent`, or nothing when the caller draws no
+ * widgets (`config.omitHeroCard`). Only for tools whose full record also sits in
+ * `structuredContent`: where the card is the only carrier of the rows, dropping it drops the data.
+ */
+function heroCardBlock(
+	config: McpConfig,
+	heroCard: HeroCardPayload,
+): { heroCard?: HeroCardPayload } {
+	return config.omitHeroCard ? {} : { heroCard }
 }
 
 function addUrl(
@@ -3531,7 +3551,7 @@ async function listObjectsPage(
 			},
 		],
 		structuredContent: {
-			heroCard,
+			...heroCardBlock(config, heroCard),
 			objects: rows,
 			page: {
 				limit: pagination.limit,
@@ -4190,7 +4210,7 @@ export function createMcpServer(config: McpConfig) {
 					...(wait ? [{ type: 'text' as const, text: JSON.stringify({ wait }) }] : []),
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					results: slimResults,
 					objects: canonicalObjects,
 					...(wait ? { wait } : {}),
@@ -4797,7 +4817,7 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					objects: enriched,
 					page: {
 						limit: pagination.limit,
@@ -4901,7 +4921,7 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					objects: enriched,
 					page: {
 						limit: result.length,
@@ -5438,6 +5458,20 @@ export function createMcpServer(config: McpConfig) {
 				// never serializes onto the wire.
 				[TELEMETRY_VIEW]: view,
 				_meta: uiMeta('list_actors', config, scopeWorkspaceId, pickCollectionResourceUri(heroCard)),
+				// The rows live in the heroCard only, so the text carries them too: a client that
+				// reads text (a live voice call) gets the same rows the card holds.
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'actors',
+							rows: heroObjects,
+							limit: pagination.limit,
+							nextCursor,
+							total: totalCount,
+						}),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					...(nextCursor
@@ -5452,16 +5486,7 @@ export function createMcpServer(config: McpConfig) {
 							}
 						: {}),
 				},
-				// The SDK's CallToolResult type requires `content` because Zod's
-				// `Infer` treats a `ZodDefault` field as required on the output side,
-				// even though nothing in the SDK's tool-dispatch path (`mcp.js`'s
-				// `Promise.resolve(cb(args, extra))`) actually validates the return
-				// value against that schema — this handler genuinely omits `content`
-				// at runtime (see the `list_actors: flag ... never emits a content
-				// channel` tests); this is a static-type artifact only, not a real
-				// contract violation.
-				// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-			} as any
+			}
 		},
 	)
 
@@ -5560,7 +5585,7 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-				structuredContent: { heroCard, actor: withUrl },
+				structuredContent: { ...heroCardBlock(config, heroCard), actor: withUrl },
 			}
 		},
 	)
@@ -6740,24 +6765,18 @@ export function createMcpServer(config: McpConfig) {
 				pagination,
 				args.workspace_id,
 			)
+			// One payload on both channels, so the text and the structured copy cannot drift.
+			const payload = buildListPayload({
+				key: 'comments',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: null,
+			})
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: listPageText({
-							key: 'comments',
-							rows: pagedRows,
-							limit: pagination.limit,
-							nextCursor,
-							total: null,
-						}),
-					},
-				],
-				structuredContent: {
-					comments: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
-				},
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
 				// If the token cap trims this page, the walk resumes right after the last comment
 				// that ships. The history walk pages by offset, so the cursor carries the new offset.
 				[RESUME_CURSOR]: (lastShipped: unknown) => {
