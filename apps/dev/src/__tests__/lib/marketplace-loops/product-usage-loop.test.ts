@@ -1,3 +1,4 @@
+import { PRODUCT_USAGE_SETUP_MARKER, PRODUCT_USAGE_SETUP_SECTION } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 import {
 	getActorData,
@@ -29,18 +30,19 @@ function shippedText() {
 describe('Product Usage flow definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(PRODUCT_USAGE_LOOP.slug).toBe('product-usage-loop')
-		expect(PRODUCT_USAGE_LOOP.name).toBe('Product Usage')
+		expect(PRODUCT_USAGE_LOOP.name).toBe('Product Analytics')
 		expect(PRODUCT_USAGE_LOOP.useCase).toBe('Discovery')
-		expect(PRODUCT_USAGE_LOOP.version).toBe('1.0.0')
+		expect(PRODUCT_USAGE_LOOP.version).toBe('1.1.0')
 		expect(PRODUCT_USAGE_LOOP.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships one actor, two triggers and two skills, no duplicates', () => {
+	it('ships one actor, three triggers and two skills, no duplicates', () => {
 		expect(PRODUCT_USAGE_ACTOR_IDS.length).toBe(1)
 		expect(getActorData(PRODUCT_USAGE_ACTOR_IDS[0] as string).name).toBe('Product Analyst')
 		expect(PRODUCT_USAGE_TRIGGER_IDS.map((id) => getTriggerData(id).name).sort()).toEqual([
+			'Daily anomaly check (06:30 UTC)',
 			'Owner heartbeat (Tue to Fri 07:56 UTC)',
-			'Weekly usage read (Mon 07:00 UTC)',
+			'Weekly product read (Monday 07:00 UTC)',
 		])
 		expect(PRODUCT_USAGE_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'drive-to-outcome',
@@ -79,10 +81,10 @@ describe('Product Usage flow definition', () => {
 	// heartbeat must not start a read of its own in that case.
 	it('says so once and stops when no product analytics tool is connected', () => {
 		const monday = PRODUCT_USAGE_TRIGGER_IDS.map(getTriggerData).find((t) =>
-			t.name.startsWith('Weekly usage read'),
+			t.name.startsWith('Weekly product read'),
 		)
 		const prompt = monday?.actionPrompt ?? ''
-		expect(prompt).toMatch(/If none is connected/)
+		expect(prompt).toMatch(/If no product analytics tool is connected/)
 		expect(prompt).toMatch(/does not already say so, post one line/)
 		expect(prompt).toMatch(/Then stop\. File nothing and read no other source/)
 		const heartbeat = PRODUCT_USAGE_TRIGGER_IDS.map(getTriggerData).find((t) =>
@@ -144,7 +146,10 @@ describe('Product Usage flow definition', () => {
 	})
 
 	it('ships the Results tab as a neutral starter page scoped to the installed flow', () => {
-		expect(PRODUCT_USAGE_VIEW_IDS.map((id) => getViewData(id).name)).toEqual(['Results'])
+		expect(PRODUCT_USAGE_VIEW_IDS.map((id) => getViewData(id).name)).toEqual([
+			'Results',
+			'Lifecycle',
+		])
 		const view = getViewData(PRODUCT_USAGE_VIEW_IDS[0] as string)
 		expect(view.html).toContain(`"scope":"${LOOP_ID_TOKEN}"`)
 
@@ -168,5 +173,55 @@ describe('Product Usage flow definition', () => {
 		]
 		for (const pattern of forbidden) expect(text).not.toMatch(pattern)
 		expect(text.match(UUID) ?? []).toEqual([])
+	})
+
+	it('ships the Lifecycle tab as a neutral starter page scoped to the installed flow', () => {
+		const view = getViewData(PRODUCT_USAGE_VIEW_IDS[1] as string)
+		expect(view.name).toBe('Lifecycle')
+		expect(view.html).toMatch(new RegExp(`"scope":\\s*"${LOOP_ID_TOKEN}"`))
+
+		const data = view.html.match(
+			/<script id="lifecycle-data" type="application\/json">(.*?)<\/script>/s,
+		)
+		expect(data).not.toBeNull()
+		const parsed = JSON.parse(data?.[1] ?? '{}') as {
+			stages: Array<{ status: string; rows: unknown[] }>
+		}
+		expect(parsed.stages.length).toBeGreaterThan(0)
+		for (const stage of parsed.stages) {
+			expect(stage.status).toBe('Not readable yet')
+			expect(stage.rows).toEqual([])
+		}
+
+		const text = view.html
+		const forbidden = [
+			/sebastian|sebk|magnus/i,
+			/vaerksted|skjald|meshfirm|posthog/i,
+			/maskin\.io/i,
+			/\bCTO\b|\bCCO\b|chief of staff/i,
+			/\b20\d\d\b/,
+			/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b/,
+			/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}\b/,
+		]
+		for (const pattern of forbidden) expect(text).not.toMatch(pattern)
+		expect(text.match(UUID) ?? []).toEqual([])
+	})
+
+	// The agents find the flow by its name and read its Setup section, so both must be there.
+	it('names the flow Product Analytics everywhere the agents look it up', () => {
+		const prompts = [
+			getActorData(PRODUCT_USAGE_ACTOR_IDS[0] as string).systemPrompt,
+			...PRODUCT_USAGE_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt),
+		].join('\n')
+		expect(prompts).toMatch(/flow named Product Analytics/)
+		expect(prompts).not.toMatch(/Product Usage|loop-results-view/)
+		expect(PRODUCT_USAGE_LOOP.description).toContain(PRODUCT_USAGE_SETUP_SECTION)
+	})
+
+	it('ships Setup as a template with empty lines for the installer to fill', () => {
+		const lines = PRODUCT_USAGE_SETUP_SECTION.split('\n').filter((l) => l.startsWith('- '))
+		expect(lines.length).toBeGreaterThan(5)
+		expect(PRODUCT_USAGE_SETUP_SECTION.startsWith(PRODUCT_USAGE_SETUP_MARKER)).toBe(true)
+		expect(lines.some((l) => l.endsWith(':'))).toBe(true)
 	})
 })
