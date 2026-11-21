@@ -10,7 +10,7 @@
 -- source plus a bounded created_at window and still use the first two columns.
 --
 -- `events` is written on every mutation, so the build is CONCURRENTLY and alone in its file
--- (see packages/db/MIGRATIONS.md Rule 1). Down: drizzle/down/0172_events_notification_dedupe_idx_down.sql.
+-- (see packages/db/MIGRATIONS.md Rule 1). Down: drizzle/down/0174_events_notification_dedupe_idx_down.sql.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "events_notification_dedupe_idx"
   ON "events" USING btree (
     "workspace_id",

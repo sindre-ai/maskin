@@ -421,14 +421,6 @@ export const events = pgTable(
 		index('events_approval_lookup_idx')
 			.on(t.workspaceId, t.entityId, t.id)
 			.where(sql`${t.action} IN ('approved', 'delivered', 'auto_sent')`),
-		// The self-start gate's count of triggers an agent made from self-started runs
-		// (services/self-start-limits.ts). Holds only those trigger events. Built CONCURRENTLY in
-		// migration 0173.
-		index('events_self_start_trigger_idx')
-			.on(t.workspaceId, t.actorId, t.entityId)
-			.where(
-				sql`${t.entityType} = 'trigger' AND ${t.action} = 'created' AND (${t.data} ->> 'created_from_start_reason') IS NOT NULL`,
-			),
 		// "Was this notification card already sent?" before a card is written (self-start limits,
 		// run-death alerts, daily-budget cards). Built CONCURRENTLY in migration 0174.
 		index('events_notification_dedupe_idx')
@@ -438,11 +430,6 @@ export const events = pgTable(
 				sql`(${t.data} -> 'metadata' ->> 'dedupe_key')`,
 			)
 			.where(sql`${t.entityType} = 'notification' AND ${t.action} = 'created'`),
-		// The viewer's threaded replies behind the For You cards (lib/for-you-visibility.ts).
-		// Holds only threaded comments. Built CONCURRENTLY in migration 0175.
-		index('events_threaded_replies_idx')
-			.on(t.workspaceId, t.actorId, t.id)
-			.where(sql`${t.action} = 'commented' AND (${t.data} ->> 'parentEventId') IS NOT NULL`),
 	],
 )
 
