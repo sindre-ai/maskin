@@ -5,8 +5,8 @@
  * One call, made from startSession() before any row is written: admitSessionStart(). It
  *   1. labels the session with WHY it started (`config.start_reason`, one place),
  *   2. caps automatic continuations of one reason on one object at 2 in a row,
- *   3. backs off after 2 self-started runs in a row that changed nothing on the object, and asks a
- *      person after 3,
+ *   3. tells a person when 3 self-started runs in a row changed nothing on the object (a For You
+ *      card, once a day per agent and item). It never stops a start,
  *   4. holds a per-agent daily token budget for self-started runs (warns at 80%, stops at 100%),
  *   5. holds work that is not urgent while the workspace's daily target is used up: it waits in a
  *      session row of its own (`Admitted.hold`) and runs later (held-session-release.ts).
@@ -57,14 +57,11 @@ import { resolveSourceActor } from './push-schedule-shared'
 
 export const SELF_START_LIMITS_KILLSWITCH_ENV_VAR = 'FEATURE_SELF_START_LIMITS'
 export const SELF_START_CARD_SOURCE = 'self_start_limits'
-/** Wait after the 2nd run in a row that changed nothing; doubled for each run after that. */
-export const BACKOFF_BASE_MS = 60 * 60_000
-export const BACKOFF_CEILING_MS = 24 * 60 * 60_000
-export const NO_CHANGE_RUNS_BEFORE_BACKOFF = 2
 /** Triggers an agent may leave pending that it made while running a self-started session. */
 export const MAX_PENDING_TRIGGERS_FROM_SELF_STARTED_RUNS = 3
-export const NO_CHANGE_RUNS_BEFORE_DECISION = 3
-/** Written on the object when a person is asked to extend, reassign or close; marks the extend reply. */
+/** Quiet self-started runs in a row after which a person is told. Nothing is refused. */
+export const NO_CHANGE_RUNS_BEFORE_NOTICE = 3
+/** Written on the object when a person is told about quiet runs; marks the person's reply. */
 export const BACKOFF_ASK_ACTION = 'self_start_backoff_ask'
 export const GATE_BOOKKEEPING_ACTIONS = ['self_start_cap_note', BACKOFF_ASK_ACTION]
 /** Share of the daily budget at which the warning goes out. */
@@ -73,11 +70,7 @@ export const BUDGET_WARN_SHARE = 0.8
 const STREAK_LOOKBACK = 8
 const CARD_RANK = 20
 
-export type AdmissionRefusal =
-	| 'continuation_cap'
-	| 'no_change_backoff'
-	| 'no_change_decision'
-	| 'agent_daily_budget'
+export type AdmissionRefusal = 'continuation_cap' | 'agent_daily_budget'
 
 export class SessionNotAdmittedError extends HTTPException {
 	constructor(
@@ -227,42 +220,6 @@ export function noChangeStreak(
 
 export function noChangeRuns(sessions: StreakSession[], changedAt: Date[]): number {
 	return noChangeStreak(sessions, changedAt).runs
-}
-
-/** 0 before the 2nd run; then 1x, 2x, 4x ... the base wait, up to the ceiling. */
-export function backoffWaitMs(runsWithNoChange: number): number {
-	if (runsWithNoChange < NO_CHANGE_RUNS_BEFORE_BACKOFF) return 0
-	const doublings = runsWithNoChange - NO_CHANGE_RUNS_BEFORE_BACKOFF
-	return Math.min(BACKOFF_BASE_MS * 2 ** doublings, BACKOFF_CEILING_MS)
-}
-
-/** `atCeiling` is set only when the wait is the longest there is: a person is asked again then. */
-export type BackoffDecision =
-	| { kind: 'admit'; atCeiling?: true }
-	| { kind: 'wait'; retryAt: Date; waitMs: number; atCeiling?: true }
-	| { kind: 'ask' }
-
-/**
- * After 3 quiet runs the first time, a person is asked and nothing starts. Once a person has
- * extended, the quiet count runs on: each further quiet run doubles the wait up to the ceiling.
- */
-export function backoffDecision(input: {
-	runsWithNoChange: number
-	lastEndedAt: Date | null
-	now: Date
-	extended?: boolean
-}): BackoffDecision {
-	if (input.runsWithNoChange >= NO_CHANGE_RUNS_BEFORE_DECISION && !input.extended) {
-		return { kind: 'ask' }
-	}
-	const waitMs = backoffWaitMs(input.runsWithNoChange)
-	if (waitMs === 0) return { kind: 'admit' }
-	const ceiling = waitMs >= BACKOFF_CEILING_MS ? ({ atCeiling: true } as const) : {}
-	if (!input.lastEndedAt) return { kind: 'admit', ...ceiling }
-	const retryAt = new Date(input.lastEndedAt.getTime() + waitMs)
-	return retryAt.getTime() > input.now.getTime()
-		? { kind: 'wait', retryAt, waitMs, ...ceiling }
-		: { kind: 'admit', ...ceiling }
 }
 
 export type BudgetState = 'ok' | 'warn' | 'blocked'
@@ -715,44 +672,13 @@ async function checkObjectLimits(
 		since: oldest,
 		ignoreEventIds: extendCommentIds,
 	})
-	const { runs: quiet, extended } = noChangeStreak(recent, changes)
-	const decision = backoffDecision({
-		runsWithNoChange: quiet,
-		// The wait counts from the last self-started run, not from the person's extend reply.
-		lastEndedAt: recent.find((s) => !s.extend)?.completedAt ?? null,
-		now,
-		extended,
-	})
-	if (decision.kind !== 'ask' && 'atCeiling' in decision) {
-		// The wait is the longest there is: ask again, at most once a day for this agent and item.
+	const { runs: quiet } = noChangeStreak(recent, changes)
+	// Quiet runs never stop a start: a person is told, at most once a day for this agent and item.
+	if (quiet >= NO_CHANGE_RUNS_BEFORE_NOTICE) {
 		await askOnce(db, input, {
-			dedupeKey: `backoff_ceiling:${objectId}:${input.actorId}:${now.toISOString().slice(0, 10)}`,
-			headline: 'An agent keeps running here and nothing changes. Extend, reassign or close?',
-			rationale: `${quiet} runs in a row started on their own and changed nothing on the item, and the wait between runs is now the longest there is (24 hours). Recommended: close it, or reassign it if it still matters. To extend, reply on the item; the wait stays this long until something changes.`,
-		})
-	}
-	if (decision.kind === 'wait') {
-		await refuse(db, input, {
-			refusal: 'no_change_backoff',
-			decision: 'deferred',
-			reason,
-			retryAt: decision.retryAt,
-			message: `Not started yet: ${quiet} runs in a row changed nothing here. Next run is allowed after ${decision.retryAt.toISOString()}.`,
-			data: { runs_with_no_change: quiet, wait_ms: decision.waitMs },
-		})
-	}
-	if (decision.kind === 'ask') {
-		await askOnce(db, input, {
-			dedupeKey: `backoff:${objectId}:${input.actorId}:${recent[0]?.id ?? 'none'}`,
-			headline: 'An agent keeps running here and nothing changes. Extend, reassign or close?',
-			rationale: `${quiet} runs in a row started on their own and changed nothing on the item, so I stopped starting more. Recommended: close it, or reassign it if it still matters. To extend, reply on the item and the agent will run again, more slowly each time while nothing changes. Nothing else happens until you decide.`,
-		})
-		await refuse(db, input, {
-			refusal: 'no_change_decision',
-			decision: 'blocked',
-			reason,
-			message: `Not started: ${quiet} runs in a row changed nothing here. A person has been asked to extend, reassign or close it.`,
-			data: { runs_with_no_change: quiet },
+			dedupeKey: `no_change:${objectId}:${input.actorId}:${now.toISOString().slice(0, 10)}`,
+			headline: 'An agent keeps running here and nothing changes. Close or reassign?',
+			rationale: `${quiet} runs in a row started on their own and changed nothing on the item. They are still starting. Recommended: close it, or reassign it if it still matters. Nothing else happens unless you act.`,
 		})
 	}
 }

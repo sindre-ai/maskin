@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-	BACKOFF_BASE_MS,
-	BACKOFF_CEILING_MS,
 	type StreakSession,
 	agentBudgetLimit,
 	agentBudgetWarnOnly,
-	backoffDecision,
-	backoffWaitMs,
 	budgetState,
 	capNoteText,
 	classifyStartReason,
@@ -171,8 +167,8 @@ describe('noChangeRuns', () => {
 	})
 })
 
-describe('an extend reply', () => {
-	// Three quiet runs (1, 2, 3), a person asked at hour 4, the person's reply started run 5.
+describe('a reply after a notice', () => {
+	// Three quiet runs (1, 2, 3), a person was told at hour 4, the person's reply started run 5.
 	const threeQuiet = () => [
 		session({ n: 5, reason: 'person' }),
 		session({ n: 3 }),
@@ -212,65 +208,6 @@ describe('an extend reply', () => {
 	it('resets the count when the run after the extend changed something', () => {
 		const marked = markExtendSessions([session({ n: 8 }), ...threeQuiet()], [at(4)])
 		expect(noChangeStreak(marked, [at(8.2)])).toEqual({ runs: 0, extended: false })
-	})
-
-	it('doubles the wait for the next run: 1x before the ask, 2x after the extend', () => {
-		const lastEndedAt = at(3.5)
-		expect(backoffDecision({ runsWithNoChange: 2, lastEndedAt, now: at(3.6) })).toMatchObject({
-			kind: 'wait',
-			waitMs: BACKOFF_BASE_MS,
-		})
-		expect(backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(4.6) })).toEqual({
-			kind: 'ask',
-		})
-		expect(
-			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(4.6), extended: true }),
-		).toMatchObject({ kind: 'wait', waitMs: 2 * BACKOFF_BASE_MS })
-		expect(
-			backoffDecision({ runsWithNoChange: 3, lastEndedAt, now: at(4.6), extended: true }),
-		).not.toHaveProperty('atCeiling')
-	})
-
-	it('flags the ceiling so a person is asked again, only there', () => {
-		expect(
-			backoffDecision({ runsWithNoChange: 9, lastEndedAt: at(0), now: at(1), extended: true }),
-		).toMatchObject({ kind: 'wait', waitMs: BACKOFF_CEILING_MS, atCeiling: true })
-	})
-})
-
-describe('back-off', () => {
-	it('has no wait before the 2nd quiet run, then doubles up to the ceiling', () => {
-		expect(backoffWaitMs(0)).toBe(0)
-		expect(backoffWaitMs(1)).toBe(0)
-		expect(backoffWaitMs(2)).toBe(BACKOFF_BASE_MS)
-		expect(backoffWaitMs(3)).toBe(2 * BACKOFF_BASE_MS)
-		expect(backoffWaitMs(4)).toBe(4 * BACKOFF_BASE_MS)
-		expect(backoffWaitMs(20)).toBe(BACKOFF_CEILING_MS)
-	})
-
-	it('holds the next run until the wait after the last run has passed', () => {
-		const lastEndedAt = at(0)
-		const early = backoffDecision({ runsWithNoChange: 2, lastEndedAt, now: at(0.5) })
-		expect(early).toEqual({
-			kind: 'wait',
-			retryAt: new Date(lastEndedAt.getTime() + BACKOFF_BASE_MS),
-			waitMs: BACKOFF_BASE_MS,
-		})
-		expect(backoffDecision({ runsWithNoChange: 2, lastEndedAt, now: at(1.5) })).toEqual({
-			kind: 'admit',
-		})
-	})
-
-	it('asks a person after 3 quiet runs, whatever the time', () => {
-		expect(backoffDecision({ runsWithNoChange: 3, lastEndedAt: at(0), now: at(100) })).toEqual({
-			kind: 'ask',
-		})
-	})
-
-	it('lets the first quiet run be followed straight away', () => {
-		expect(backoffDecision({ runsWithNoChange: 1, lastEndedAt: at(0), now: at(0) })).toEqual({
-			kind: 'admit',
-		})
 	})
 })
 
