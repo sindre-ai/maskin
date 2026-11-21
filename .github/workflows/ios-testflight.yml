@@ -498,7 +498,9 @@ jobs:
             app=$(ls -d "$RUNNER_TEMP"/ipa-tv/Payload/*.app | head -n 1)
             for bundle in "$app" "$app"/PlugIns/*.appex; do
               echo "== $bundle"
-              codesign -d --entitlements - "$bundle" 2>&1 | grep -E 'Authority|keychain|application-identifier|Identifier' || true
+              codesign -d --entitlements - "$bundle" 2>&1 | grep -E 'keychain|application-identifier' || true
+              codesign -d --entitlements - "$bundle" 2>&1 | grep -q 'keychain-access-groups' \
+                || { echo "::error::$bundle lost its keychain-access-groups entitlement."; exit 1; }
             done
           else
             echo "Uploaded Apple TV build $BUILD_NUMBER to App Store Connect."
