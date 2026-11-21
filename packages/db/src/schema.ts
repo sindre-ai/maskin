@@ -1243,6 +1243,27 @@ export const readings = pgTable(
 	],
 )
 
+// ── Comment Mentions ───────────────────────────────────────────────────────
+
+// Who was mentioned by someone else's comment, on which entity: one row per person and entity,
+// however many comments mention them. Filled by the comment_mentions_record trigger on `events`
+// as each comment is inserted (plus a one-time backfill), so it is never written from app code.
+// It answers "which entities can have an unread mention for this person?" without reading every
+// comment (GET /api/subscriptions/unread, apps/dev/src/lib/unread-candidates.ts). actor_id and
+// entity_id have no foreign keys on purpose: mentions come straight from the request body and may
+// name actors that no longer exist, and entities are not only objects. See 0171_comment_mentions.sql.
+export const commentMentions = pgTable(
+	'comment_mentions',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id').notNull(),
+		entityId: uuid('entity_id').notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId, t.entityId] })],
+)
+
 // ── Plan Limit Emails ──────────────────────────────────────────────────────
 
 // One row per workspace, billing period and kind of mail sent when a workspace uses up its plan.
