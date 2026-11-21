@@ -22,7 +22,7 @@ import type { LoopSettings } from './loop-settings'
 // actual current under a fixed label.
 const MEETING_LOOP_SETTINGS: LoopSettings = {
 	entryCondition:
-		"A meeting ends or is scheduled, with a Google Meet transcript, a notetaker transcript or a person's written reflection.",
+		"A meeting ends or is scheduled, with a transcript from a connected meeting or notetaker tool, or a person's written reflection.",
 	closeCondition:
 		'The meeting is processed: one meeting object holds the analysis, attendees are linked, insights and tasks are filed, and every commitment is done or has a dated owner. A meeting with no recording stays at happened, with that said in its body.',
 	tags: ['Context'],
