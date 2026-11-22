@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { createTestApp } from '../setup'
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
@@ -8,7 +9,12 @@ const SECRET = 'client-secret-do-not-store-in-clear'
 const API_KEY = 'api-key-do-not-store-in-clear'
 
 const originalFetch = globalThis.fetch
-const ENV_KEYS = ['POSTHOG_API_KEY', 'INTEGRATION_ENCRYPTION_KEY'] as const
+const ENV_KEYS = [
+	'FF_TESTER_ACTOR_IDS',
+	'FF_TESTER_FEATURES',
+	'POSTHOG_API_KEY',
+	'INTEGRATION_ENCRYPTION_KEY',
+] as const
 const originalEnv: Record<string, string | undefined> = {}
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -22,9 +28,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
 	for (const key of ENV_KEYS) originalEnv[key] = process.env[key]
+	process.env.FF_TESTER_ACTOR_IDS = ACTOR_ID
+	process.env.FF_TESTER_FEATURES = 'dinero-connect'
 	process.env.INTEGRATION_ENCRYPTION_KEY = '0123456789abcdef'.repeat(4)
 	// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
 	delete process.env.POSTHOG_API_KEY
+	_resetFeatureFlagConfig()
 })
 
 afterEach(() => {
@@ -34,6 +43,7 @@ afterEach(() => {
 		else process.env[key] = originalEnv[key]
 	}
 	vi.restoreAllMocks()
+	_resetFeatureFlagConfig()
 })
 
 async function setup() {
@@ -62,6 +72,20 @@ function dinero(token: Response, companies?: Response) {
 }
 
 describe('POST /api/integrations/dinero/connect', () => {
+	it('answers 404 and calls nobody while the flag is off for this person', async () => {
+		process.env.FF_TESTER_FEATURES = ''
+		_resetFeatureFlagConfig()
+		const fetchMock = vi.fn()
+		globalThis.fetch = fetchMock as unknown as typeof fetch
+		const { app, calls } = await setup()
+
+		const res = await app.request(connectRequest(keys))
+
+		expect(res.status).toBe(404)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(calls.inserts).toHaveLength(0)
+	})
+
 	it('refuses wrong keys on the spot and stores nothing', async () => {
 		globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse({}, 401)) as unknown as typeof fetch
 		const { app, calls } = await setup()

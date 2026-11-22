@@ -1008,12 +1008,17 @@ export const api = {
 				// Deepdots signs in with these (the connect route stores nothing if they fail).
 				email?: string
 				password?: string
+				// Dinero signs in with these three (the connect route stores nothing if they fail).
+				client_id?: string
+				client_secret?: string
+				organization_id?: number
 			},
 		) =>
 			request<{
 				install_url?: string
 				webhook_url?: string
 				integration_id?: string
+				company_name?: string | null
 				// Populated by Resend's two-call handshake (Task 2) — the domain-status
 				// records the customer must add to their DNS plus the initial pending
 				// verification state.

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FLAGS, isFlagEnabled, parseFeatureFlagConfig } from '../../../../../lib/feature-flags'
 import { isAuthRevokedError } from '../../../../../lib/integrations/errors'
 import {
 	DINERO_TOKEN_URL,
@@ -56,7 +57,8 @@ afterEach(() => {
 describe('Dinero provider config', () => {
 	it('is a custom-auth provider whose MCP needs only the Maskin key', () => {
 		expect(config.name).toBe('dinero')
-		expect(config.auth.type).toBe('oauth2_custom')
+		// 'manual' so iOS says it is set up from a computer; renewal still runs through customAuth.
+		expect(config.auth.type).toBe('manual')
 		expect(config.mcp?.autoInject).toBe(false)
 		expect(JSON.stringify(config.mcp?.server)).not.toContain('DINERO_TOKEN')
 	})
@@ -180,5 +182,18 @@ describe('keysFrom', () => {
 	it('needs all three values', () => {
 		expect(keysFrom(due())).toEqual(KEYS)
 		expect(keysFrom(due({ clientSecret: '' }))).toBeNull()
+	})
+})
+
+describe('Dinero flag', () => {
+	it('is off unless the actor is a tester', () => {
+		const actor = '00000000-0000-4000-8000-000000000001'
+		const off = parseFeatureFlagConfig({})
+		const on = parseFeatureFlagConfig({
+			FF_TESTER_ACTOR_IDS: actor,
+			FF_TESTER_FEATURES: FLAGS.DINERO_CONNECT,
+		})
+		expect(isFlagEnabled(actor, FLAGS.DINERO_CONNECT, off)).toBe(false)
+		expect(isFlagEnabled(actor, FLAGS.DINERO_CONNECT, on)).toBe(true)
 	})
 })

@@ -6,6 +6,7 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { buildRequest, trimOrganization } from '../lib/integrations/providers/dinero/api'
 import { DineroAuthError, requestToken } from '../lib/integrations/providers/dinero/auth'
 import { logger } from '../lib/logger'
@@ -67,6 +68,10 @@ const connectRoute = createRoute({
 			description: 'Signed in, but the connection could not be saved',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		404: {
+			description: 'Dinero is not switched on for this person',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		502: {
 			description: 'Dinero could not be reached. Nothing is stored.',
 			content: { 'application/json': { schema: errorSchema } },
@@ -79,6 +84,10 @@ app.openapi(connectRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	assertWorkspaceWriterRole(c.get('workspaceRole'))
+
+	if (!isFlagEnabled(actorId, FLAGS.DINERO_CONNECT)) {
+		return c.json(createApiError('NOT_FOUND', 'Dinero is not available yet'), 404)
+	}
 
 	const body = c.req.valid('json')
 	const keys = { clientId: body.client_id, clientSecret: body.client_secret, apiKey: body.api_key }

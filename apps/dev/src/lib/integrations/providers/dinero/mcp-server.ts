@@ -22,6 +22,7 @@ import {
 	trimVatTypes,
 	trimVoucher,
 } from './api'
+import { DINERO_PROVIDER } from './config'
 
 /**
  * In-process MCP server for Dinero, served over Streamable HTTP at
@@ -40,7 +41,7 @@ import {
  * Every call fires integration_tool_called with ids and an outcome only. No arguments, no rows,
  * no error text.
  */
-export const DINERO_PROVIDER = 'dinero'
+export { DINERO_PROVIDER }
 export const DINERO_FETCH_TIMEOUT_MS = 20_000
 /** Dinero refuses a file over 6 MB. */
 export const DINERO_FILE_MAX_BYTES = 6 * 1024 * 1024

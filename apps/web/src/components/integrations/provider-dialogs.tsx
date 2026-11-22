@@ -15,6 +15,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useCompleteIntegration,
 	useConnectDeepdots,
+	useConnectDinero,
 	useConnectIntegration,
 	useLinkGithubInstallation,
 	useLinkableGithubInstallations,
@@ -173,6 +174,131 @@ export function DeepdotsConnectDialog({
 							type="submit"
 							disabled={!email.trim() || !password || connect.isPending || !canWrite}
 						>
+							{connect.isPending ? 'Checking…' : 'Connect'}
+						</Button>
+					</div>
+				</form>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+// Dinero signs in with three values from a personal integration (client id, client secret and
+// an API key for one company). Maskin signs in now and refuses wrong keys on the spot. The
+// company id field only shows when Dinero says the keys can see more than one company.
+export function DineroConnectDialog({
+	workspaceId,
+	open,
+	onClose,
+}: {
+	workspaceId: string
+	open: boolean
+	onClose: () => void
+}) {
+	const connect = useConnectDinero(workspaceId)
+	const canWrite = useCanWrite()
+	const [clientId, setClientId] = useState('')
+	const [clientSecret, setClientSecret] = useState('')
+	const [apiKey, setApiKey] = useState('')
+	const [companyId, setCompanyId] = useState('')
+
+	const needsCompany = connect.isError && /company id/i.test(connect.error.message)
+	const parsedCompany = Number.parseInt(companyId, 10)
+	const ready = Boolean(clientId.trim() && clientSecret.trim() && apiKey.trim())
+
+	const close = () => {
+		setClientId('')
+		setClientSecret('')
+		setApiKey('')
+		setCompanyId('')
+		connect.reset()
+		onClose()
+	}
+	const handleConnect = () => {
+		if (!canWrite) return
+		connect.mutate(
+			{
+				client_id: clientId.trim(),
+				client_secret: clientSecret.trim(),
+				api_key: apiKey.trim(),
+				...(needsCompany && Number.isInteger(parsedCompany) && parsedCompany > 0
+					? { organization_id: parsedCompany }
+					: {}),
+			},
+			{ onSuccess: close },
+		)
+	}
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && close()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Connect Dinero</DialogTitle>
+					<DialogDescription>
+						In Dinero, create a personal integration and an API key for the one company agents may
+						use. It needs a Pro or Total plan. Paste the three values here. Maskin signs in now to
+						check them. Agents can read the company and save draft vouchers; nothing is booked.
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-3"
+					onSubmit={(e) => {
+						e.preventDefault()
+						if (ready) handleConnect()
+					}}
+				>
+					<div className="space-y-2">
+						<Label htmlFor="dinero-client-id">Client ID</Label>
+						<Input
+							id="dinero-client-id"
+							autoComplete="off"
+							value={clientId}
+							onChange={(e) => setClientId(e.target.value)}
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="dinero-client-secret">Client secret</Label>
+						<Input
+							id="dinero-client-secret"
+							type="password"
+							autoComplete="new-password"
+							value={clientSecret}
+							onChange={(e) => setClientSecret(e.target.value)}
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="dinero-api-key">API key</Label>
+						<Input
+							id="dinero-api-key"
+							type="password"
+							autoComplete="new-password"
+							value={apiKey}
+							onChange={(e) => setApiKey(e.target.value)}
+						/>
+					</div>
+					{needsCompany && (
+						<div className="space-y-2">
+							<Label htmlFor="dinero-company-id">Company id</Label>
+							<Input
+								id="dinero-company-id"
+								inputMode="numeric"
+								autoComplete="off"
+								value={companyId}
+								onChange={(e) => setCompanyId(e.target.value)}
+								placeholder="The number after app.dinero.dk/"
+							/>
+						</div>
+					)}
+					{connect.isError && (
+						<p role="alert" className="text-sm text-destructive">
+							{connect.error.message}
+						</p>
+					)}
+					<div className="flex justify-end gap-2">
+						<Button type="button" variant="ghost" onClick={close}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!ready || connect.isPending || !canWrite}>
 							{connect.isPending ? 'Checking…' : 'Connect'}
 						</Button>
 					</div>

@@ -220,6 +220,15 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	DEVELOPER_DATA_INTEGRATIONS: 'developer-data-integrations',
+	/**
+	 * Gates connecting Dinero (task
+	 * [Build a Dinero draft tool for the flow](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/34a57774-104c-42d9-bc76-e6592d7c6d97)).
+	 * Actor-scoped, read by the integrations routes: off means Dinero is missing from
+	 * GET /api/integrations/providers and its connect call answers 404, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working: the tool route is not gated. Retire once a
+	 * real Dinero company has been connected and a draft saved, and Dinero is on for everyone.
+	 */
+	DINERO_CONNECT: 'dinero-connect',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

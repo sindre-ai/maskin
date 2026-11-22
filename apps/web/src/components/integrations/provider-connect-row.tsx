@@ -4,6 +4,7 @@ import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
 	DeepdotsConnectDialog,
+	DineroConnectDialog,
 	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
@@ -70,6 +71,7 @@ export function ProviderRow({
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
 	onRequestDeepdotsConnect,
+	onRequestDineroConnect,
 	linkableCount,
 	onRequestLink,
 	returnTo,
@@ -90,6 +92,8 @@ export function ProviderRow({
 	onRequestResendConnect?: () => void
 	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
 	onRequestDeepdotsConnect?: () => void
+	/** Dinero signs in with a client id, secret and API key, so Connect opens a three-field form. */
+	onRequestDineroConnect?: () => void
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -132,6 +136,10 @@ export function ProviderRow({
 		}
 		if (provider.name === 'deepdots' && onRequestDeepdotsConnect) {
 			onRequestDeepdotsConnect()
+			return
+		}
+		if (provider.name === 'dinero' && onRequestDineroConnect) {
+			onRequestDineroConnect()
 			return
 		}
 		connect.mutate({ provider: provider.name, returnTo })
@@ -724,6 +732,7 @@ export function ProviderConnectRow({
 	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [resendOpen, setResendOpen] = useState(false)
 	const [deepdotsOpen, setDeepdotsOpen] = useState(false)
+	const [dineroOpen, setDineroOpen] = useState(false)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere binds to the existing installation.
@@ -764,6 +773,9 @@ export function ProviderConnectRow({
 					}
 					onRequestDeepdotsConnect={
 						provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
+					}
+					onRequestDineroConnect={
+						provider.name === 'dinero' ? () => setDineroOpen(true) : undefined
 					}
 					linkableCount={linkableCount}
 					onRequestLink={() => setLinkGithubOpen(true)}
@@ -806,6 +818,13 @@ export function ProviderConnectRow({
 					workspaceId={workspaceId}
 					open={deepdotsOpen}
 					onClose={() => setDeepdotsOpen(false)}
+				/>
+			)}
+			{provider.name === 'dinero' && (
+				<DineroConnectDialog
+					workspaceId={workspaceId}
+					open={dineroOpen}
+					onClose={() => setDineroOpen(false)}
 				/>
 			)}
 			{provider.name === 'resend' && (

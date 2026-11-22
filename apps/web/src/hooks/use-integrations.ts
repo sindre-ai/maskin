@@ -80,6 +80,22 @@ export function useConnectDeepdots(workspaceId: string) {
 	})
 }
 
+/** Connect Dinero: the backend signs in once and stores the keys only if Dinero accepts them. */
+export function useConnectDinero(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: {
+			client_id: string
+			client_secret: string
+			api_key: string
+			organization_id?: number
+		}) => api.integrations.connect(workspaceId, 'dinero', input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 /** Server-side DNS pre-check the Resend connect flow fires on leaving Step 2.
  *  The backend runs `node:dns.resolveMx()` on the entered domain and returns
  *  the existing MX list plus a `warn` flag — set when the user typed a bare
