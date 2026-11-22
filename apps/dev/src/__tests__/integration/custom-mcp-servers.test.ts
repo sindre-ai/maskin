@@ -17,6 +17,7 @@ vi.mock('node:dns/promises', async (orig) => ({
 }))
 vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: vi.fn(async () => {}) }))
 
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { decrypt, encrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
 import { describeAgentAccess } from '../../lib/integrations/agent-access-view'
@@ -406,6 +407,48 @@ describe('Custom server gateway (Integration)', () => {
 		const none = await gatewayCall(s, body.id, s.agentB.id, 'list_docs')
 		expect(((await none.json()) as { result: { isError: boolean } }).result.isError).toBe(true)
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('counts one receipt_draft_booked for a saved Dinero draft, and none for a failed or other call', async () => {
+		vi.stubEnv('DINERO_DRAFT_TOOLS', 'create_purchase_draft')
+		try {
+			const s = await setup()
+			const { body } = await addServer(s, 'Dinero', {
+				type: 'http',
+				url: 'https://mcp.dinero.dk/',
+			})
+			await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, {
+				access: 'read_write',
+			})
+			const booked = () =>
+				vi.mocked(capturePosthogEvent).mock.calls.filter((c) => c[0] === 'receipt_draft_booked')
+			vi.mocked(capturePosthogEvent).mockClear()
+
+			await gatewayCall(s, body.id, s.agentA.id, 'list_contacts')
+			expect(booked()).toHaveLength(0)
+
+			fetchMock.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({ jsonrpc: '2.0', id: 1, result: { isError: true, content: [] } }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				),
+			)
+			await gatewayCall(s, body.id, s.agentA.id, 'create_purchase_draft')
+			await new Promise((r) => setTimeout(r, 50))
+			expect(booked()).toHaveLength(0)
+
+			const res = await gatewayCall(s, body.id, s.agentA.id, 'create_purchase_draft')
+			expect(await res.json()).toMatchObject({ result: { content: [{ text: 'ok' }] } })
+			await vi.waitFor(() => expect(booked()).toHaveLength(1))
+			expect(booked()[0]?.[2]).toMatchObject({
+				connector: 'dinero',
+				workspace_id: s.ws.id,
+				actor_id: s.agentA.id,
+				flow_slug: null,
+			})
+		} finally {
+			vi.unstubAllEnvs()
+		}
 	})
 
 	it('forwards the message it judged when a key is repeated, so upstream sees one value per key', async () => {

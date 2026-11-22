@@ -24,6 +24,7 @@ const TIER1_EXACT = new Set([
 	'driver_woken',
 	'meeting_transcript_landed',
 	'notification_sent',
+	'receipt_draft_booked',
 ])
 const TIER1_PREFIXES = [
 	'foryou_card_',
