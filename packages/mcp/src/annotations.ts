@@ -264,9 +264,9 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotationEntry>> = O
  * The extension id prefix is left off, the same way the platform rows above read.
  */
 export function extensionToolTitle(toolName: string): string {
-	const words = toolName.split(/[_\-\s]+/).filter(Boolean)
-	if (words.length === 0) return toolName
-	return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
+	const [first, ...rest] = toolName.split(/[_\-\s]+/).filter(Boolean)
+	if (first === undefined) return toolName
+	return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(' ')
 }
 
 /**
