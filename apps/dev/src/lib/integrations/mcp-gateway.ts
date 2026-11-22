@@ -1,4 +1,5 @@
 import { PILOT_REFUSAL } from '@maskin/shared'
+import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../mcp-session-header'
 import { type AgentAccess, canRead, canWrite } from './agent-access'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
 import {
@@ -98,6 +99,8 @@ export function gatewayServerSpec(provider: string): Record<string, unknown> {
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			// Tells the gateway which chat the call comes from, so an Allow in this chat counts.
+			[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
 		},
 	}
 }

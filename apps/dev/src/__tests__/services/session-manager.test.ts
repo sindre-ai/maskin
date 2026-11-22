@@ -2535,6 +2535,7 @@ describe('SessionManager', () => {
 					headers: {
 						Authorization: 'Bearer ${MASKIN_API_KEY}',
 						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+						'X-Maskin-Session-Id': '${SESSION_ID}',
 					},
 				})
 			})
@@ -2629,6 +2630,7 @@ describe('SessionManager', () => {
 					headers: {
 						Authorization: 'Bearer ${MASKIN_API_KEY}',
 						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+						'X-Maskin-Session-Id': '${SESSION_ID}',
 					},
 				})
 			})
