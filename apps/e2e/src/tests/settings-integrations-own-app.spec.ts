@@ -69,7 +69,7 @@ test.describe('Settings — Integrations own sign-in app form', () => {
 			await openDiscover(page)
 			await page.getByPlaceholder(/Search integrations/).fill('Salesforce')
 
-			await page.getByRole('button', { name: 'Connect' }).click()
+			await page.getByRole('button', { name: 'Connect', exact: true }).click()
 			const dialog = page.getByRole('dialog')
 			await expect(dialog.getByText('Connect Salesforce')).toBeVisible()
 			// The callback the customer's app must list is shown and copyable.
