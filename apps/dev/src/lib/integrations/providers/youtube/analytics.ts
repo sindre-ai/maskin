@@ -1,4 +1,5 @@
-import { YoutubeError } from './errors'
+import { type YoutubeClientContext, youtubeRead } from './client'
+import { YoutubeError, isYoutubeError } from './errors'
 
 /**
  * Request rules for youtube__get_analytics (YouTube Analytics API reports.query), checked before
@@ -149,4 +150,41 @@ export function buildAnalyticsQuery(input: AnalyticsInput): Record<string, strin
 	}
 
 	return params
+}
+
+/**
+ * Run one Analytics report for the connected channel. The request is validated first, so a refused
+ * call never costs quota. One call is one unit of the analytics bucket; repeat reads within 15
+ * minutes come from the cache at no cost. The body comes back as Google gives it: no rates, no
+ * growth figures, no scores.
+ */
+export async function getAnalytics(client: YoutubeClientContext, input: AnalyticsInput) {
+	const params = buildAnalyticsQuery(input)
+	try {
+		return await youtubeRead(client, {
+			tool: 'youtube__get_analytics',
+			api: 'analytics',
+			path: 'reports',
+			params,
+			units: 1,
+			bucket: 'analytics',
+		})
+	} catch (err) {
+		// A connection made before yt-analytics.readonly was requested has no report access.
+		if (
+			isYoutubeError(err) &&
+			err.code === 'PERMISSION_DENIED' &&
+			err.reason === 'insufficientPermissions'
+		) {
+			throw new YoutubeError({
+				code: 'RECONSENT_REQUIRED',
+				message: 'The connected YouTube grant does not include Analytics access.',
+				provider_status: err.providerStatus,
+				reason: err.reason,
+				integration_id: err.integrationId,
+				hint: 'Ask a workspace member to reconnect YouTube in Settings → Integrations.',
+			})
+		}
+		throw err
+	}
 }

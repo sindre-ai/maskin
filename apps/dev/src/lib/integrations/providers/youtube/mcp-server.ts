@@ -15,6 +15,13 @@ import {
 	type ProposeInput,
 	proposeYoutubeWrite,
 } from '../../../youtube/propose'
+import {
+	ANALYTICS_DIMENSIONS,
+	ANALYTICS_MAX_RANGE_DAYS,
+	ANALYTICS_MAX_ROWS,
+	ANALYTICS_METRICS,
+	getAnalytics,
+} from './analytics'
 import { getOwnCaptions } from './captions'
 import { parseChannelRef } from './channel-ref'
 import { type YoutubeClientContext, youtubeRead } from './client'
@@ -286,6 +293,36 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				units: 1,
 			})
 		},
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'get_analytics',
+		`Run one YouTube Analytics report for the connected channel and get it back as the Analytics API returns it (columnHeaders and rows), with no computed rates or scores. Own channel only, never revenue. Allowed metrics: ${ANALYTICS_METRICS.join(', ')}. Allowed dimensions: ${ANALYTICS_DIMENSIONS.join(', ')}. The date range is at most ${ANALYTICS_MAX_RANGE_DAYS} days and a report has at most ${ANALYTICS_MAX_ROWS} rows. Retention is the elapsedVideoTimeRatio dimension with the audienceWatchRatio metric and a video_id: it is refused without a video_id. Traffic sources are the insightTrafficSourceType dimension. Anything outside these limits is refused before any call. Each call uses one of a small daily Analytics allowance shared by the whole product, so ask for a whole report at once; repeat reads within 15 minutes are served from a cache at no cost. Needs the yt-analytics.readonly permission: a connection made before it was asked for fails with RECONSENT_REQUIRED until the channel is reconnected.`,
+		{
+			start_date: z.string().describe('First day of the range, YYYY-MM-DD, inclusive.'),
+			end_date: z.string().describe('Last day of the range, YYYY-MM-DD, inclusive.'),
+			metrics: z.array(z.string()).describe('One or more allowed metrics.'),
+			dimensions: z.array(z.string()).optional().describe('Allowed dimensions to group by.'),
+			sort: z
+				.array(z.string())
+				.optional()
+				.describe(
+					'Metrics or dimensions from this report to sort by. A leading minus sorts descending.',
+				),
+			video_id: z
+				.string()
+				.optional()
+				.describe('Limit the report to one video of the channel. Required for retention.'),
+			max_results: z
+				.number()
+				.optional()
+				.describe(`Rows to return, 1 to ${ANALYTICS_MAX_ROWS}. Default ${ANALYTICS_MAX_ROWS}.`),
+		},
+		// Checked inside getAnalytics, not in the schema, so a bad call still emits the tool-called
+		// event, and before the client so it never costs quota.
+		(args, client) => getAnalytics(client, args),
 	)
 
 	registerTool(

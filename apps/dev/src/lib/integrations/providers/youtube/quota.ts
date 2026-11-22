@@ -10,19 +10,28 @@ import { YoutubeError } from './errors'
  *  - search: 100 search.list calls a day at Google, held to 60 global and 20 per workspace.
  *  - upload: 100 videos.insert calls a day at Google, held to 20 global and 5 per workspace.
  *  - analytics: the YouTube Analytics API has no published default quota (Researcher, 2026-11-04).
- *    Until the real number is read from the console (smoke S2) the global cap is the spec's 200
- *    calls a day and a workspace gets a quarter of it. Both are ASSUMED: set them from a fraction
- *    of the real number when it is posted on the part 3 task.
+ *    The cap is ASSUMED, see ASSUMED_ANALYTICS_DAILY_QUOTA below.
  * Search, upload and analytics are counted in calls (1 unit each). The caps are conservative on
  * purpose, so one looping agent cannot drain the shared budget for everyone.
  */
 export type YoutubeQuotaBucket = 'data' | 'search' | 'upload' | 'analytics'
 
+/**
+ * ASSUMED: Analytics API calls a day. The spec's default until Sebastian reads the real number from
+ * the Quotas tab of the YouTube Analytics API in the Google Cloud console (smoke S2) and posts it on
+ * the part 3 task. The CTO lifted the wait for it on 22 Nov 2026. When the number is known, this is
+ * the one line to change: the global cap is this value and a workspace gets a quarter of it.
+ */
+export const ASSUMED_ANALYTICS_DAILY_QUOTA = 200
+
 export const BUCKET_CAPS: Record<YoutubeQuotaBucket, { global: number; workspace: number }> = {
 	data: { global: 5_000, workspace: 1_000 },
 	search: { global: 60, workspace: 20 },
 	upload: { global: 20, workspace: 5 },
-	analytics: { global: 200, workspace: 50 },
+	analytics: {
+		global: ASSUMED_ANALYTICS_DAILY_QUOTA,
+		workspace: Math.floor(ASSUMED_ANALYTICS_DAILY_QUOTA / 4),
+	},
 }
 
 export const GLOBAL_DAILY_CAP = BUCKET_CAPS.data.global

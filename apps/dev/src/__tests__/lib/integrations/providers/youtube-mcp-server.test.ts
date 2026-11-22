@@ -65,6 +65,7 @@ describe('maskin-youtube tool server', () => {
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'youtube__add_to_playlist',
 			'youtube__create_playlist',
+			'youtube__get_analytics',
 			'youtube__get_channel',
 			'youtube__get_own_captions',
 			'youtube__get_public_channel',

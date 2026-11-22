@@ -8,6 +8,7 @@ import { type YoutubeQuotaBucket, chargeYoutubeQuota } from './quota'
 import { getYoutubeAccessToken, getYoutubeIntegrationId } from './token'
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3'
+const YOUTUBE_ANALYTICS_API_BASE = 'https://youtubeanalytics.googleapis.com/v2'
 
 export interface YoutubeClientContext {
 	db: Database
@@ -21,8 +22,10 @@ export interface YoutubeClientContext {
 export interface YoutubeRead {
 	/** Tool name, part of the cache key. */
 	tool: string
-	/** Path under youtube/v3, for example channels. */
+	/** Path under youtube/v3, for example channels. Under the Analytics API (v2) when api is analytics. */
 	path: string
+	/** Which Google API the path is under. Defaults to the Data API. */
+	api?: 'data' | 'analytics'
 	params: Record<string, string>
 	/** Quota units the call costs. */
 	units: number
@@ -61,7 +64,8 @@ export async function youtubeRead<T = unknown>(
 	await chargeYoutubeQuota(db, workspaceId, read.units, read.bucket ?? 'data')
 
 	const accessToken = await getYoutubeAccessToken(db, integrationId, workspaceId)
-	const url = `${YOUTUBE_API_BASE}/${read.path}?${new URLSearchParams(read.params).toString()}`
+	const base = read.api === 'analytics' ? YOUTUBE_ANALYTICS_API_BASE : YOUTUBE_API_BASE
+	const url = `${base}/${read.path}?${new URLSearchParams(read.params).toString()}`
 
 	let res: Response
 	try {
