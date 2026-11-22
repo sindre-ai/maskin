@@ -54,6 +54,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	stripe: { category: 'Sales & payments', domain: 'stripe.com' },
 	supabase: { category: 'Docs & data', domain: 'supabase.com' },
 	ubersuggest: { category: 'Analytics', domain: 'neilpatel.com' },
+	dinero: { category: 'Sales & payments', domain: 'dinero.dk' },
 	uniconta: { category: 'Sales & payments', domain: 'uniconta.com' },
 	zoom: { category: 'Chat & social', domain: 'zoom.us' },
 	apollo: { category: 'Sales & payments', domain: 'apollo.io' },

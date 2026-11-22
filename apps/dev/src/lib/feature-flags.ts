@@ -249,6 +249,15 @@ export const FLAGS = {
 	 * Uniconta sign-in has worked and Uniconta is on for everyone.
 	 */
 	UNICONTA_CONNECT: 'uniconta-connect',
+	/**
+	 * Gates connecting Dinero (task
+	 * [Add Dinero integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f1c15747-e94d-44f2-8834-441a57345e48)).
+	 * Actor-scoped, read by the integrations routes: off means Dinero is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Dinero sign-in has worked, the draft-only tool list is set and Dinero is on for everyone.
+	 */
+	DINERO: 'dinero',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
