@@ -59,6 +59,7 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import { config as lookerConfig } from './providers/looker/config'
 import { config as makeConfig } from './providers/make/config'
 import {
 	config as microsoftConfig,
@@ -79,6 +80,7 @@ import { config as outreachConfig } from './providers/outreach/config'
 import { config as pagerdutyConfig } from './providers/pagerduty/config'
 import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as powerBiConfig } from './providers/power-bi/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as retoolConfig } from './providers/retool/config'
 import { config as salesforceConfig } from './providers/salesforce/config'
@@ -304,6 +306,14 @@ providers.set('box', {
 
 providers.set('lattice', {
 	config: latticeConfig,
+})
+
+providers.set('looker', {
+	config: lookerConfig,
+})
+
+providers.set('power-bi', {
+	config: powerBiConfig,
 })
 
 providers.set('fireflies', {

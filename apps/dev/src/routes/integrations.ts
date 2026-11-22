@@ -85,8 +85,10 @@ import {
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { LATTICE_PROVIDER } from '../lib/integrations/providers/lattice/config'
+import { LOOKER_PROVIDER } from '../lib/integrations/providers/looker/config'
 import { MEETING_NOTES_PROVIDERS } from '../lib/integrations/providers/meeting-notes'
 import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
+import { POWER_BI_PROVIDER } from '../lib/integrations/providers/power-bi/config'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
 	isSubdomainName,
@@ -302,6 +304,8 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	[SALESFORCE_PROVIDER, FLAGS.SALESFORCE],
 	[BOX_PROVIDER, FLAGS.CUSTOMER_APP_TOOLS],
 	[LATTICE_PROVIDER, FLAGS.CUSTOMER_APP_TOOLS],
+	[LOOKER_PROVIDER, FLAGS.CUSTOMER_APP_TOOLS],
+	[POWER_BI_PROVIDER, FLAGS.CUSTOMER_APP_TOOLS],
 	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
 		name,
 		FLAGS.MEETING_NOTES_INTEGRATIONS,
@@ -336,7 +340,21 @@ app.openapi(listProvidersRoute, (async (c) => {
 			externalIdDisplay: p.config.externalIdDisplay,
 			// The vendor wants the customer's own sign-in app: Settings asks for its id and secret first.
 			...(p.config.auth.type === 'oauth2' &&
-				p.config.auth.config.customerApp && { customerApp: true }),
+				p.config.auth.config.customerApp && {
+					customerApp: true,
+					// A public client has no secret to paste. A tool with a per-customer address
+					// says what to ask for; the form shows it as one more box.
+					...(p.config.auth.config.tokenAuthMethod === 'none' && { customerAppPublic: true }),
+					...(p.config.auth.config.customerValue && {
+						customerValue: {
+							label: p.config.auth.config.customerValue.label,
+							placeholder: p.config.auth.config.customerValue.placeholder,
+							...(p.config.auth.config.customerValue.help && {
+								help: p.config.auth.config.customerValue.help,
+							}),
+						},
+					}),
+				}),
 			// Serve the MCP surface so clients that aren't the web UI can discover
 			// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
 			// provider with autoInject=false is otherwise undiscoverable and reads
@@ -1466,7 +1484,13 @@ app.openapi(connectRoute, (async (c) => {
 	let clientApp: OAuthClientApp | undefined
 	if (resolved.config.auth.type === 'oauth2' && resolved.config.auth.config.customerApp) {
 		clientApp = (await loadOAuthApp(db, getKmsProvider(), workspaceId, providerName)) ?? undefined
-		if (!clientApp && !process.env[resolved.config.auth.config.clientIdEnv]) {
+		// A tool at a per-customer address has no server-wide fallback: it needs the saved value.
+		const needsSavedValue = !!resolved.config.auth.config.customerValue
+		if (
+			needsSavedValue
+				? !clientApp?.value
+				: !clientApp && !process.env[resolved.config.auth.config.clientIdEnv]
+		) {
 			return c.json(
 				createApiError(
 					'BAD_REQUEST',

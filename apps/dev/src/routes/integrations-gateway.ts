@@ -7,6 +7,7 @@ import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { CustomerValueError, fillCustomerValue } from '../lib/integrations/customer-value'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -22,9 +23,11 @@ import {
 	toolsCallName,
 	withReadOnlyHeaders,
 } from '../lib/integrations/mcp-gateway'
+import { loadOAuthApp } from '../lib/integrations/oauth-app'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
+import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { checkPilotHold } from '../lib/pilot-hold'
 import { decideSend, pilotIsReason } from '../lib/send-gate'
@@ -142,6 +145,29 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		return jsonRpcError(403, -32001, `${label} is switched off for agent sessions.`)
 	}
 
+	// A tool at a per-customer address: the server URL carries a place for the workspace's saved
+	// value. It is checked again here, so a stored value that no longer passes is never called.
+	let upstreamUrl = server.url
+	if (resolved.config.auth.type === 'oauth2') {
+		try {
+			const app = resolved.config.auth.config.customerValue
+				? await loadOAuthApp(db, getKmsProvider(), workspaceId, provider)
+				: null
+			upstreamUrl = fillCustomerValue(
+				server.url,
+				resolved.config.auth.config.customerValue,
+				app?.value,
+			)
+		} catch (err) {
+			if (!(err instanceof CustomerValueError)) throw err
+			return jsonRpcError(
+				400,
+				-32001,
+				`${label} needs its address. Add it under Settings → Integrations.`,
+			)
+		}
+	}
+
 	const access = (await resolveAgentAccess(db, workspaceId, integration.id, actorId)) ?? 'none'
 
 	return proxyMcp(c, {
@@ -152,7 +178,7 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		integrationId: integration.id,
 		access,
 		cacheKey: `${workspaceId}:${provider}`,
-		upstreamUrl: server.url,
+		upstreamUrl,
 		upstreamHeaders: async () => {
 			let token: string
 			try {

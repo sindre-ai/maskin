@@ -6,13 +6,16 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js'
+import { fillCustomerValue } from '../integrations/customer-value'
 import { isAuthRevokedError } from '../integrations/errors'
+import { loadOAuthApp } from '../integrations/oauth-app'
 import { TokenManager } from '../integrations/oauth/token-manager'
 import { GITHUB_MCP_SERVER_SPEC } from '../integrations/providers/github/config'
 import { createGoogleMeetMcpServer } from '../integrations/providers/google-meet/mcp-server'
 import { createLinkedInMcpServer } from '../integrations/providers/linkedin-unipile/mcp-server'
 import { createSlackMcpServer } from '../integrations/providers/slack/mcp-server'
 import { getProvider } from '../integrations/registry'
+import { getKmsProvider } from '../keychain-kms'
 import { hashServerSpec, hashToolSchema } from './schema-hash'
 import type { CapabilitySource } from './sources'
 
@@ -119,7 +122,11 @@ async function probeInProcess(
 }
 
 /** Class C, hosted HTTP: one authenticated tools/list with the customer's own token. */
-async function probeHosted(db: Database, source: CapabilitySource): Promise<ProbeResult> {
+async function probeHosted(
+	db: Database,
+	workspaceId: string,
+	source: CapabilitySource,
+): Promise<ProbeResult> {
 	if (!source.provider || !source.integrationId)
 		throw new Error('Hosted source without integration')
 	const provider = getProvider(source.provider)
@@ -131,6 +138,13 @@ async function probeHosted(db: Database, source: CapabilitySource): Promise<Prob
 	// An auth-revoked error is not retried: the integration needs a reconnect.
 	const token = await new TokenManager().getValidToken(db, source.integrationId, provider)
 	const expand = (text: string) => text.split(`\${${mcp.envKey}}`).join(token)
+	// A tool at a per-customer address is probed at this workspace's own address.
+	const customerValue =
+		provider.config.auth.type === 'oauth2' ? provider.config.auth.config.customerValue : undefined
+	const app = customerValue
+		? await loadOAuthApp(db, getKmsProvider(), workspaceId, source.provider)
+		: null
+	const serverUrl = fillCustomerValue(spec.url, customerValue, app?.value)
 	const headers: Record<string, string> = {}
 	for (const [name, value] of Object.entries(spec.headers ?? {})) headers[name] = expand(value)
 
@@ -139,7 +153,7 @@ async function probeHosted(db: Database, source: CapabilitySource): Promise<Prob
 		const client = new Client({ name: 'capability-scan', version: '1.0.0' }, { capabilities: {} })
 		try {
 			await client.connect(
-				new StreamableHTTPClientTransport(new URL(expand(spec.url)), { requestInit: { headers } }),
+				new StreamableHTTPClientTransport(new URL(expand(serverUrl)), { requestInit: { headers } }),
 				{ timeout: HOSTED_TIMEOUT_MS },
 			)
 			return { tools: hashListed(await listAllTools(client, HOSTED_TIMEOUT_MS)), specHash: null }
@@ -169,7 +183,7 @@ export const probeSource: ProbeFn = async (db, workspaceId, source) => {
 		case 'in_process':
 			return probeInProcess(db, workspaceId, source)
 		case 'hosted_http':
-			return probeHosted(db, source)
+			return probeHosted(db, workspaceId, source)
 		case 'stdio_spec':
 			return probeStdioSpec()
 	}

@@ -1,3 +1,4 @@
+import { fillCustomerValue } from '../customer-value'
 import { getEnvOrThrow } from '../env'
 import type { OAuth2Config, StoredCredentials } from '../types'
 import { createS256CodeChallenge } from './pkce'
@@ -45,7 +46,10 @@ function parseOAuthErrorField(body: string): string | undefined {
 /** A workspace's own sign-in app. When one is passed it wins over the server settings. */
 export interface OAuthClientApp {
 	clientId: string
+	/** Empty for a public client (tokenAuthMethod 'none'), which has no secret. */
 	clientSecret: string
+	/** The customer's own address or tenant (OAuth2Config.customerValue), put into the URLs. */
+	value?: string
 }
 
 export class OAuth2Handler {
@@ -59,6 +63,11 @@ export class OAuth2Handler {
 		this.customParser = customParser
 	}
 
+	/** A URL of the tool's setup with the customer's value in it, checked again on the way in. */
+	private url(template: string): string {
+		return fillCustomerValue(template, this.config.customerValue, this.app?.value)
+	}
+
 	private clientId(): string {
 		return this.app?.clientId ?? getEnvOrThrow(this.config.clientIdEnv)
 	}
@@ -68,7 +77,7 @@ export class OAuth2Handler {
 	 * If PKCE is enabled, pass a code verifier to include a code challenge.
 	 */
 	createAuthorizationUrl(state: string, redirectUri: string, codeVerifier?: string): string {
-		const url = new URL(this.config.authorizationUrl)
+		const url = new URL(this.url(this.config.authorizationUrl))
 		url.searchParams.set('response_type', 'code')
 		url.searchParams.set('client_id', this.clientId())
 		url.searchParams.set('redirect_uri', redirectUri)
@@ -133,7 +142,7 @@ export class OAuth2Handler {
 		const headers = this.buildAuthHeaders()
 		headers.set('Content-Type', 'application/x-www-form-urlencoded')
 
-		const response = await fetch(this.config.revokeUrl, {
+		const response = await fetch(this.url(this.config.revokeUrl), {
 			method: 'POST',
 			headers,
 			body: body.toString(),
@@ -168,7 +177,7 @@ export class OAuth2Handler {
 			body.set('client_id', this.clientId())
 		}
 
-		const tokenUrl = urlOverride ?? this.config.tokenUrl
+		const tokenUrl = this.url(urlOverride ?? this.config.tokenUrl)
 		const response = await fetch(tokenUrl, {
 			method: 'POST',
 			headers,

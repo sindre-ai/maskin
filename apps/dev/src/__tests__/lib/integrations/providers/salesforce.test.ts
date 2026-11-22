@@ -47,6 +47,6 @@ describe('Salesforce provider config', () => {
 		const asking = listProviders()
 			.filter((p) => p.config.auth.type === 'oauth2' && p.config.auth.config.customerApp)
 			.map((p) => p.config.name)
-		expect(asking.sort()).toEqual(['box', 'lattice', 'salesforce'])
+		expect(asking.sort()).toEqual(['box', 'lattice', 'looker', 'power-bi', 'salesforce'])
 	})
 })
