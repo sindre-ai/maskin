@@ -689,6 +689,7 @@ describe('youtube write tools', () => {
 		const { tools } = await client.listTools()
 		const byName = new Map(tools.map((t) => [t.name, t]))
 		const reads = [
+			'youtube__get_analytics',
 			'youtube__get_channel',
 			'youtube__get_own_captions',
 			'youtube__get_public_channel',
