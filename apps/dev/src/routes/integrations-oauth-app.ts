@@ -180,7 +180,7 @@ app.put('/:provider/app', async (c) => {
 			return c.json(
 				createApiError(
 					'CONFLICT',
-					`Disconnect ${guarded.displayName} first: it is signed in with the saved app, so a different app id would strand it. The same app id with a new secret is fine`,
+					`Disconnect ${guarded.displayName} first: it is signed in with the saved app, so a different app id or address would strand it. The same app id and address with a new secret is fine`,
 				),
 				409,
 			)

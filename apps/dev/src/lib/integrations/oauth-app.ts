@@ -186,8 +186,13 @@ export async function saveOAuthApp(
 
 		let integrationId: string
 		if (existing) {
-			const savedId = (existing.config as AppConfig | null)?.client_id
-			if (savedId && savedId !== input.clientId && (await isConnected(tx, workspaceId, provider))) {
+			// A token was issued to the saved app at the saved address: a different id or address
+			// would strand it.
+			const saved = existing.config as AppConfig | null
+			const changed =
+				(!!saved?.client_id && saved.client_id !== input.clientId) ||
+				(!!saved?.value && saved.value !== input.value)
+			if (changed && (await isConnected(tx, workspaceId, provider))) {
 				throw new OAuthAppInUseError()
 			}
 			integrationId = existing.id

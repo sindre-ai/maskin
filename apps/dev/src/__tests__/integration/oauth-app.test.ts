@@ -359,6 +359,27 @@ describe('a tool at the customer own address', () => {
 		expect(await loadOAuthApp(db, kms, b.id, 'looker')).toBeNull()
 	})
 
+	it('refuses a different address while the tool is connected, and allows it before', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const first = { provider: 'looker', clientSecret: null, value: 'acme.looker.com' }
+		await save(ws.id, first)
+		// Not connected yet: the address can still change.
+		await save(ws.id, { ...first, value: 'acme.cloud.looker.com' })
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'looker',
+			status: 'active',
+			externalId: 'looker-conn',
+			credentials: 'x',
+			createdBy: getTestActorId(),
+		})
+		await expect(save(ws.id, { ...first, value: 'other.looker.com' })).rejects.toBeInstanceOf(
+			OAuthAppInUseError,
+		)
+		// Same id and address: a rotation is fine.
+		await expect(save(ws.id, { ...first, value: 'acme.cloud.looker.com' })).resolves.toBeDefined()
+	})
+
 	it('the route refuses an address that is not a public vendor host, and writes nothing', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		const app = appFor(ws.id)
