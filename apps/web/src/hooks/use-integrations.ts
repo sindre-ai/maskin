@@ -105,6 +105,17 @@ export function useSaveOAuthApp(workspaceId: string, provider: string) {
 	})
 }
 
+/** Removes the workspace's own sign-in app. Refused by the server while the tool is connected. */
+export function useDeleteOAuthApp(workspaceId: string, provider: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: () => api.integrations.deleteOAuthApp(workspaceId, provider),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 /** Server-side DNS pre-check the Resend connect flow fires on leaving Step 2.
  *  The backend runs `node:dns.resolveMx()` on the entered domain and returns
  *  the existing MX list plus a `warn` flag — set when the user typed a bare
