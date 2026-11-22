@@ -358,6 +358,8 @@ export const providerInfoSchema = z.object({
 	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key', 'manual']),
 	events: z.array(providerEventSchema),
 	externalIdDisplay: z.enum(['email', 'installation']).optional(),
+	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
+	customerApp: z.boolean().optional(),
 	// THIS is the schema the /api/integrations/providers route registers as its
 	// response — `providerInfoSchema` in @maskin/shared is a separate, narrower
 	// declaration with no route wired to it. A field added only there is absent

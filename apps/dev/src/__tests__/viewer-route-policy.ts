@@ -267,16 +267,6 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	],
 	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
 	[
-		'PUT',
-		'/api/integrations/:provider/app',
-		'human workspace admin or owner only, checked in the handler (a viewer gets 403)',
-	],
-	[
-		'DELETE',
-		'/api/integrations/:provider/app',
-		'human workspace admin or owner only, checked in the handler (a viewer gets 403)',
-	],
-	[
 		'POST',
 		'/api/custom-mcp-servers/:id/gateway',
 		'MCP gateway, forwards tool calls to a custom server with its stored headers',
