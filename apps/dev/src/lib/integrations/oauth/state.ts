@@ -26,6 +26,8 @@ export interface OAuthStatePayload {
 	 * resolves, a cancel on the consent screen redirects back to that page.
 	 */
 	origin?: string
+	/** Set when the sign-in is to a custom tool server (provider custom-mcp): which one. */
+	customMcpServerId?: string
 }
 
 /**

@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto'
-import { lookup } from 'node:dns/promises'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { agentGrants, integrations, sessions } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import { setCookie } from 'hono/cookie'
 import { restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -14,7 +14,6 @@ import {
 	type CustomMcpServer,
 	customMcpServerSchema,
 	isGatewayable,
-	isPublicHost,
 	maskServer,
 	readCustomServer,
 	summarizeServer,
@@ -26,12 +25,29 @@ import {
 	misplacedReferences,
 	referencedVars,
 } from '../lib/integrations/custom-mcp-keychain'
+import {
+	SignInError,
+	blobForServer,
+	getAccessToken,
+	lockBlob,
+	readSignIn,
+	resolvesPublicly,
+	signOut,
+	startSignIn,
+} from '../lib/integrations/custom-mcp-oauth'
+import { sanitizeReturnPath } from '../lib/integrations/oauth/return-path'
+import { encodeState } from '../lib/integrations/oauth/state'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
 	assertWorkspaceWriterRole,
 	isWorkspaceHumanAdminOrOwner,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+import {
+	OAUTH_NONCE_COOKIE_MAX_AGE,
+	oauthNonceCookieName,
+	resolvePublicOrigin,
+} from './integrations'
 import { GatewayUpstreamError, proxyMcp } from './integrations-gateway'
 
 type Env = {
@@ -57,6 +73,8 @@ const serverResponseSchema = z.object({
 	name: z.string(),
 	// Env and header values come back as the mask; send the mask back to keep a value.
 	server: customMcpServerSchema,
+	// True once a person has signed in to the server in a browser and Maskin holds the token.
+	signed_in: z.boolean().optional(),
 })
 
 const writeBodySchema = z.object({ name: nameSchema, server: customMcpServerSchema }).strict()
@@ -321,7 +339,15 @@ app.openapi(getServerRoute, (async (c) => {
 	const row = await loadRow(db, workspaceId, id)
 	const server = row ? readCustomServer(row) : null
 	if (!row || !server) return c.json(createApiError('NOT_FOUND', 'Tool server not found'), 404)
-	return c.json({ id, name: row.displayName ?? '', server: maskServer(server) }, 200)
+	return c.json(
+		{
+			id,
+			name: row.displayName ?? '',
+			server: maskServer(server),
+			signed_in: readSignIn(row) !== null,
+		},
+		200,
+	)
 }) as RouteHandler<typeof getServerRoute, Env>)
 
 // ── PUT /api/custom-mcp-servers/:id ──────────────────────────────────────
@@ -400,11 +426,18 @@ app.openapi(updateServerRoute, (async (c) => {
 		)
 	}
 
+	let signedIn = false
 	await db.transaction(async (tx) => {
+		// A renewal of the sign-in writes the same record, so read it again under its lock: the
+		// refresh token it holds may have moved since this request began.
+		await lockBlob(tx, id)
+		const [fresh] = await tx.select().from(integrations).where(eq(integrations.id, id)).limit(1)
+		const credentials = blobForServer(server, fresh ?? row)
+		signedIn = readSignIn({ credentials }) !== null
 		await tx
 			.update(integrations)
 			.set({
-				credentials: encrypt(JSON.stringify({ server })),
+				credentials,
 				config: configFor(server),
 				displayName: name,
 				updatedAt: new Date(),
@@ -428,23 +461,180 @@ app.openapi(updateServerRoute, (async (c) => {
 		})
 	})
 
-	return c.json({ id, name, server: maskServer(server) }, 200)
+	return c.json({ id, name, server: maskServer(server), signed_in: signedIn }, 200)
 }) as RouteHandler<typeof updateServerRoute, Env>)
+
+// ── POST /api/custom-mcp-servers/:id/oauth/start ────────────────────────
+//
+// For a server that signs people in with a browser (Dinero's does): a person starts the sign-in
+// here, opens the address it returns, agrees once, and the callback (GET
+// /api/integrations/custom-mcp/callback) keeps the token. After that the gateway sends the token
+// upstream and renews it, with no browser. The agent never sees it.
+
+const signInBodySchema = z.object({ return_to: z.string().max(300).optional() }).strict()
+
+const startSignInRoute = createRoute({
+	method: 'post',
+	path: '/{id}/oauth/start',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Start signing in to a custom MCP server in a browser (humans only)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: { content: { 'application/json': { schema: signInBodySchema } }, required: false },
+	},
+	responses: {
+		200: {
+			description: 'Open this address in a browser to sign in. It is good for 10 minutes',
+			content: {
+				'application/json': { schema: z.object({ authorization_url: z.string().url() }) },
+			},
+		},
+		...errorResponses,
+		502: {
+			description: 'The server could not be reached to start the sign-in',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+/** The person who added a server, or a workspace admin: the same two who may change it. */
+async function mayChange(
+	db: Database,
+	row: { createdBy: string },
+	callerId: string,
+	workspaceId: string,
+): Promise<boolean> {
+	return (
+		row.createdBy === callerId || (await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))
+	)
+}
+
+app.openapi(startSignInRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can sign in to a tool server'), 403)
+	}
+	const { id } = c.req.valid('param')
+	const body = (await c.req.json().catch(() => ({}))) as { return_to?: unknown }
+	const row = await loadRow(db, workspaceId, id)
+	const server = row ? readCustomServer(row) : null
+	if (!row || !server) return c.json(createApiError('NOT_FOUND', 'Tool server not found'), 404)
+	if (!(await mayChange(db, row, callerId, workspaceId))) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only the person who added this or a workspace admin can sign in to it',
+			),
+			403,
+		)
+	}
+	// The token is held and sent by the gateway, so only a server the gateway can sit in front of.
+	if (!isGatewayable(server)) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'A browser sign-in needs an HTTP server at a public address, so Maskin can hold the token',
+			),
+			400,
+		)
+	}
+
+	const nonce = randomBytes(16).toString('hex')
+	const state = encodeState({
+		workspaceId,
+		actorId: callerId,
+		ts: Date.now(),
+		nonce,
+		customMcpServerId: id,
+		returnTo: sanitizeReturnPath(body.return_to, workspaceId),
+	})
+	const origin = resolvePublicOrigin(c.req.url, c.req.header())
+	try {
+		const authorizationUrl = await startSignIn(db, {
+			integrationId: id,
+			server,
+			redirectUri: `${origin}/api/integrations/${CUSTOM_MCP_PROVIDER}/callback`,
+			nonce,
+			state,
+		})
+		// Binds the sign-in to this browser: the callback needs the cookie to match the state.
+		setCookie(c, oauthNonceCookieName(CUSTOM_MCP_PROVIDER), nonce, {
+			httpOnly: true,
+			sameSite: 'Lax',
+			secure: origin.startsWith('https://'),
+			path: '/api/integrations',
+			maxAge: OAUTH_NONCE_COOKIE_MAX_AGE,
+		})
+		return c.json({ authorization_url: authorizationUrl }, 200)
+	} catch (err) {
+		if (!(err instanceof SignInError)) throw err
+		return c.json(createApiError('BAD_REQUEST', err.message), err.kind === 'transient' ? 502 : 400)
+	}
+}) as RouteHandler<typeof startSignInRoute, Env>)
+
+// ── DELETE /api/custom-mcp-servers/:id/oauth ─────────────────────────────
+
+const signOutRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/oauth',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: 'Forget the browser sign-in of a custom MCP server (humans only)',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'The stored sign-in is gone. The server itself is unchanged',
+			content: { 'application/json': { schema: z.object({ signed_in: z.literal(false) }) } },
+		},
+		...errorResponses,
+	},
+})
+
+app.openapi(signOutRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can sign out of a tool server'), 403)
+	}
+	const { id } = c.req.valid('param')
+	const row = await loadRow(db, workspaceId, id)
+	if (!row || !readCustomServer(row)) {
+		return c.json(createApiError('NOT_FOUND', 'Tool server not found'), 404)
+	}
+	if (!(await mayChange(db, row, callerId, workspaceId))) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only the person who added this or a workspace admin can sign out of it',
+			),
+			403,
+		)
+	}
+	if (await signOut(db, id)) {
+		await recordEvent(db, {
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: id,
+			data: { provider: CUSTOM_MCP_PROVIDER, change: 'tool_server_signed_out' },
+		})
+	}
+	return c.json({ signed_in: false as const }, 200)
+}) as RouteHandler<typeof signOutRoute, Env>)
 
 // ── /api/custom-mcp-servers/:id/gateway ──────────────────────────────────
 //
 // The agent's way to a gated custom server (see isGatewayable): it signs in with its own key,
 // Maskin holds the server's headers, and a write is refused for an agent without Read & write.
 // The upstream URL comes only from the stored row, never from the request.
-
-async function resolvesPublicly(host: string): Promise<boolean> {
-	try {
-		const addrs = await lookup(host, { all: true })
-		return addrs.length > 0 && addrs.every((a) => isPublicHost(a.address))
-	} catch {
-		return false
-	}
-}
 
 async function gateway(c: import('hono').Context<{ Variables: Env['Variables'] }>) {
 	const db = c.get('db')
@@ -521,7 +711,29 @@ async function gateway(c: import('hono').Context<{ Variables: Env['Variables'] }
 				throw err
 			}
 			// A header still holding a ${PLACEHOLDER} only the container could fill is dropped.
-			return Object.fromEntries(Object.entries(headers).filter(([, v]) => !/\$\{[^}]*\}/.test(v)))
+			const out = Object.fromEntries(
+				Object.entries(headers).filter(([, v]) => !/\$\{[^}]*\}/.test(v)),
+			)
+			// A server a person signed in to in a browser: the stored token, renewed when it is about
+			// to run out, goes upstream in place of any Authorization header saved with the server.
+			let token: string | null
+			try {
+				token = await getAccessToken(db, row)
+			} catch (err) {
+				if (!(err instanceof SignInError)) throw err
+				throw new GatewayUpstreamError(
+					err.kind === 'rejected'
+						? `${label} needs a person to sign in to it again.`
+						: `${label} could not renew its sign-in just now. Try again.`,
+				)
+			}
+			if (token) {
+				for (const name of Object.keys(out)) {
+					if (name.toLowerCase() === 'authorization') delete out[name]
+				}
+				out.Authorization = `Bearer ${token}`
+			}
+			return out
 		},
 	})
 }

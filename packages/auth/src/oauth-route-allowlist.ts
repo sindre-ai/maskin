@@ -201,6 +201,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'PATCH /api/claude-oauth/nickname',
 	'POST /api/claude-oauth/promote',
 	'POST /api/claude-oauth/swap',
+	'DELETE /api/custom-mcp-servers/:id/oauth',
+	'POST /api/custom-mcp-servers/:id/oauth/start',
 	'DELETE /api/integrations/:id',
 	'PATCH /api/integrations/:id',
 	'POST /api/integrations/:id/complete',

@@ -21,8 +21,10 @@ import { decrypt, encrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
 import { describeAgentAccess } from '../../lib/integrations/agent-access-view'
 import { MASKED_VALUE, isPublicHost, readCustomServer } from '../../lib/integrations/custom-mcp'
+import { readSignIn } from '../../lib/integrations/custom-mcp-oauth'
 import { migrateAgentToolServers } from '../../lib/integrations/migrate-agent-tool-servers'
 import customMcpServersRoutes from '../../routes/custom-mcp-servers'
+import integrationsRoutes from '../../routes/integrations'
 import { clearGatewayAnnotationCache } from '../../routes/integrations-gateway'
 import integrationsGrantsRoutes from '../../routes/integrations-grants'
 import { SessionManager } from '../../services/session-manager'
@@ -46,6 +48,7 @@ function appFor(actorId: string, actorType: 'human' | 'agent' = 'human') {
 	app.onError((_e, c) => c.json(createApiError('INTERNAL_ERROR', 'Internal server error'), 500))
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
+	app.route('/api/integrations', integrationsRoutes)
 	return app
 }
 
@@ -585,6 +588,397 @@ describe('Custom server gateway (Integration)', () => {
 		for (const h of ['tools.example.com', '93.184.216.34', '2606:4700::1111']) {
 			expect(isPublicHost(h), h).toBe(true)
 		}
+	})
+})
+
+describe('Browser sign-in to a custom server (Integration)', () => {
+	const MCP = 'https://mcp.books.example/mcp'
+	const LOGIN = 'https://login.books.example'
+	const SIGN_IN_SERVER = {
+		type: 'http' as const,
+		url: MCP,
+		headers: { Authorization: 'Bearer saved-header-value' },
+		allowed_tools: ['list_vouchers', 'create_voucher_draft'],
+	}
+
+	let fetchMock: ReturnType<typeof vi.fn>
+	/** What the fake server saw, in order. */
+	let seen: { upstreamAuth: Array<string | null>; refreshTokens: string[]; registrations: number }
+	let issued: number
+	let refreshAnswer: () => Response
+	let metadata: Record<string, unknown>
+
+	const reply = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+		new Response(JSON.stringify(body), {
+			status,
+			headers: { 'content-type': 'application/json', ...headers },
+		})
+
+	beforeEach(() => {
+		clearGatewayAnnotationCache()
+		seen = { upstreamAuth: [], refreshTokens: [], registrations: 0 }
+		issued = 0
+		metadata = {
+			issuer: LOGIN,
+			authorization_endpoint: `${LOGIN}/authorize`,
+			token_endpoint: `${LOGIN}/token`,
+			registration_endpoint: `${LOGIN}/register`,
+			code_challenge_methods_supported: ['S256'],
+			token_endpoint_auth_methods_supported: ['none'],
+			scopes_supported: ['mcp', 'offline_access'],
+		}
+		refreshAnswer = () => {
+			issued++
+			return reply({
+				access_token: `access-${issued + 1}`,
+				refresh_token: `refresh-${issued + 1}`,
+				expires_in: 3600,
+			})
+		}
+		fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+			const url = String(input)
+			const headers = new Headers(init?.headers)
+			if (url === MCP) {
+				const auth = headers.get('authorization')
+				if (!auth) {
+					return reply({ error: 'unauthorized' }, 401, {
+						'www-authenticate': `Bearer resource_metadata="${MCP.replace('/mcp', '')}/.well-known/oauth-protected-resource"`,
+					})
+				}
+				seen.upstreamAuth.push(auth)
+				return reply({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: 'ok' }] } })
+			}
+			if (url === 'https://mcp.books.example/.well-known/oauth-protected-resource') {
+				return reply({
+					resource: MCP,
+					authorization_servers: [LOGIN],
+					scopes_supported: ['mcp'],
+				})
+			}
+			if (url === `${LOGIN}/.well-known/oauth-authorization-server`) return reply(metadata)
+			if (url === `${LOGIN}/register`) {
+				seen.registrations++
+				return reply({ client_id: 'client-1', token_endpoint_auth_method: 'none' }, 201)
+			}
+			if (url === `${LOGIN}/token`) {
+				const form = new URLSearchParams(String(init?.body))
+				if (form.get('grant_type') === 'authorization_code') {
+					return reply({ access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600 })
+				}
+				seen.refreshTokens.push(form.get('refresh_token') ?? '')
+				await new Promise((r) => setTimeout(r, 25))
+				return refreshAnswer()
+			}
+			throw new Error(`Unexpected outbound fetch: ${url}`)
+		})
+		vi.stubGlobal('fetch', fetchMock)
+	})
+	afterEach(() => vi.unstubAllGlobals())
+
+	async function startSignIn(s: Setup, id: string) {
+		const res = await call(s, 'POST', `/api/custom-mcp-servers/${id}/oauth/start`, {})
+		return res
+	}
+
+	/** Start, open the address the way a browser would, and come back to the callback. */
+	async function signIn(s: Setup, id: string, over: { cookie?: string; code?: string } = {}) {
+		const started = await startSignIn(s, id)
+		expect(started.status).toBe(200)
+		const { authorization_url } = (await started.json()) as { authorization_url: string }
+		const url = new URL(authorization_url)
+		const setCookie = started.headers.get('set-cookie') ?? ''
+		const cookie = over.cookie ?? setCookie.split(';')[0] ?? ''
+		const back = await s.app.request(
+			`/api/integrations/custom-mcp/callback?state=${encodeURIComponent(url.searchParams.get('state') ?? '')}&code=${over.code ?? 'the-code'}`,
+			{ headers: { cookie } },
+		)
+		return { url, back, cookie, state: url.searchParams.get('state') ?? '' }
+	}
+
+	async function gatewayTool(s: Setup, id: string, name = 'list_vouchers') {
+		return appFor(s.agentA.id, 'agent').request(`/api/custom-mcp-servers/${id}/gateway`, {
+			method: 'POST',
+			headers: {
+				'X-Workspace-Id': s.ws.id,
+				'content-type': 'application/json',
+				authorization: 'Bearer ank_agent_key',
+			},
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name, arguments: {} },
+			}),
+		})
+	}
+
+	async function booksServer(s: Setup, access: 'read' | 'read_write' = 'read_write') {
+		const { body } = await addServer(s, 'Books', SIGN_IN_SERVER)
+		await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, { access })
+		return body.id
+	}
+
+	async function storedBlob(id: string) {
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, id))
+		return { row, blob: JSON.parse(decrypt(row.credentials as string)) }
+	}
+
+	/** Makes the stored token one the server would call expired. */
+	async function expireToken(id: string) {
+		const { blob } = await storedBlob(id)
+		blob.oauth.expiresAt = Date.now() - 1000
+		await db
+			.update(integrations)
+			.set({ credentials: encrypt(JSON.stringify(blob)) })
+			.where(eq(integrations.id, id))
+	}
+
+	it('starts a sign-in with PKCE, the resource and a refresh-token scope, and binds it to the browser', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		const res = await startSignIn(s, id)
+		expect(res.status).toBe(200)
+		const { authorization_url } = (await res.json()) as { authorization_url: string }
+		const url = new URL(authorization_url)
+		expect(`${url.origin}${url.pathname}`).toBe(`${LOGIN}/authorize`)
+		expect(url.searchParams.get('client_id')).toBe('client-1')
+		expect(url.searchParams.get('response_type')).toBe('code')
+		expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+		expect(url.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/)
+		expect(url.searchParams.get('resource')).toBe(MCP)
+		expect(url.searchParams.get('scope')?.split(' ')).toEqual(['mcp', 'offline_access'])
+		expect(url.searchParams.get('redirect_uri')).toMatch(
+			/\/api\/integrations\/custom-mcp\/callback$/,
+		)
+		expect(res.headers.get('set-cookie')).toContain('maskin_oauth_nonce_custom-mcp=')
+		expect(res.headers.get('set-cookie')).toContain('HttpOnly')
+		// Nothing is signed in until the browser comes back.
+		const { row, blob } = await storedBlob(id)
+		expect(readSignIn(row)).toBeNull()
+		expect(blob.oauth_pending.codeVerifier).toBeTruthy()
+		expect(JSON.stringify(blob.oauth_pending)).not.toContain('refresh')
+	})
+
+	it('finishes the sign-in once, keeps the token with the server and shows it as signed in', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		const { back } = await signIn(s, id)
+		expect(back.status).toBe(302)
+		expect(
+			new URL(back.headers.get('location') as string).searchParams.get('tool_server_sign_in'),
+		).toBe('done')
+
+		const { row, blob } = await storedBlob(id)
+		expect(readSignIn(row)?.accessToken).toBe('access-1')
+		expect(blob.oauth.refreshToken).toBe('refresh-1')
+		expect(blob.oauth_pending).toBeUndefined()
+		expect(row.credentials).not.toContain('access-1')
+		expect(blob.server.url).toBe(MCP)
+
+		const read = (await (await call(s, 'GET', `/api/custom-mcp-servers/${id}`)).json()) as {
+			signed_in: boolean
+			server: object
+		}
+		expect(read.signed_in).toBe(true)
+		expect(JSON.stringify(read)).not.toContain('access-1')
+		const audit = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, id), eq(events.action, 'updated')))
+		expect(audit.map((e) => (e.data as { change?: string }).change)).toContain(
+			'tool_server_signed_in',
+		)
+		expect(JSON.stringify(audit)).not.toContain('access-1')
+	})
+
+	it('sends the stored token upstream in place of a saved Authorization header, never the agent key', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+		fetchMock.mockClear()
+		expect((await gatewayTool(s, id)).status).toBe(200)
+		const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+		const sent = new Headers(init.headers)
+		expect(sent.get('authorization')).toBe('Bearer access-1')
+		expect(JSON.stringify([...sent.entries()])).not.toContain('saved-header-value')
+		expect(JSON.stringify([...sent.entries()])).not.toContain('ank_agent_key')
+	})
+
+	it('still refuses a tool off the list once signed in', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+		fetchMock.mockClear()
+		const res = await gatewayTool(s, id, 'book_voucher')
+		const json = (await res.json()) as { result: { isError: boolean } }
+		expect(json.result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect((await gatewayTool(s, id, 'create_voucher_draft')).status).toBe(200)
+	})
+
+	it('renews an expired token with no browser, and keeps the rotated refresh token', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+
+		await expireToken(id)
+		expect((await gatewayTool(s, id)).status).toBe(200)
+		expect(seen.refreshTokens).toEqual(['refresh-1'])
+		expect(seen.upstreamAuth.at(-1)).toBe('Bearer access-2')
+		expect((await storedBlob(id)).blob.oauth.refreshToken).toBe('refresh-2')
+
+		// A token that is still good is not renewed on the next call.
+		expect((await gatewayTool(s, id)).status).toBe(200)
+		expect(seen.refreshTokens).toHaveLength(1)
+
+		// The second renewal spends the rotated token, not the first one.
+		await expireToken(id)
+		expect((await gatewayTool(s, id)).status).toBe(200)
+		expect(seen.refreshTokens).toEqual(['refresh-1', 'refresh-2'])
+		expect(seen.upstreamAuth.at(-1)).toBe('Bearer access-3')
+	})
+
+	it('renews once when several calls arrive with an expired token', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+		await expireToken(id)
+		const results = await Promise.all([gatewayTool(s, id), gatewayTool(s, id), gatewayTool(s, id)])
+		expect(results.map((r) => r.status)).toEqual([200, 200, 200])
+		expect(seen.refreshTokens).toEqual(['refresh-1'])
+		expect(new Set(seen.upstreamAuth.slice(-3))).toEqual(new Set(['Bearer access-2']))
+	})
+
+	it('tells the agent a person has to sign in again when the renewal is refused', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+		await expireToken(id)
+		refreshAnswer = () => reply({ error: 'invalid_grant' }, 400)
+		const res = await gatewayTool(s, id)
+		expect(res.status).toBe(502)
+		const json = (await res.json()) as { error: { message: string } }
+		expect(json.error.message).toContain('needs a person to sign in to it again')
+		expect(JSON.stringify(json)).not.toContain('refresh-1')
+	})
+
+	it('keeps the sign-in through an edit of the name, and drops it when the URL changes', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+
+		const renamed = await call(s, 'PUT', `/api/custom-mcp-servers/${id}`, {
+			name: 'Books renamed',
+			server: { ...SIGN_IN_SERVER, headers: { Authorization: MASKED_VALUE } },
+		})
+		expect(renamed.status).toBe(200)
+		expect(((await renamed.json()) as { signed_in: boolean }).signed_in).toBe(true)
+		expect(readSignIn((await storedBlob(id)).row)?.accessToken).toBe('access-1')
+
+		const moved = await call(s, 'PUT', `/api/custom-mcp-servers/${id}`, {
+			name: 'Books renamed',
+			server: { ...SIGN_IN_SERVER, url: 'https://other.books.example/mcp', headers: {} },
+		})
+		expect(moved.status).toBe(200)
+		expect(((await moved.json()) as { signed_in: boolean }).signed_in).toBe(false)
+		expect(readSignIn((await storedBlob(id)).row)).toBeNull()
+	})
+
+	it('forgets the sign-in on sign-out and goes back to the saved headers', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		await signIn(s, id)
+		const out = await call(s, 'DELETE', `/api/custom-mcp-servers/${id}/oauth`)
+		expect(out.status).toBe(200)
+		const { row, blob } = await storedBlob(id)
+		expect(readSignIn(row)).toBeNull()
+		expect(blob.server.url).toBe(MCP)
+		await gatewayTool(s, id)
+		expect(seen.upstreamAuth.at(-1)).toBe('Bearer saved-header-value')
+	})
+
+	it('refuses a callback from another browser, a replay, and a callback with no code', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+
+		const other = await signIn(s, id, { cookie: 'maskin_oauth_nonce_custom-mcp=not-the-nonce' })
+		expect(other.back.status).toBe(400)
+		expect(readSignIn((await storedBlob(id)).row)).toBeNull()
+
+		const first = await signIn(s, id)
+		expect(first.back.status).toBe(302)
+		const replay = await s.app.request(
+			`/api/integrations/custom-mcp/callback?state=${encodeURIComponent(first.state)}&code=the-code`,
+			{ headers: { cookie: first.cookie } },
+		)
+		expect(
+			new URL(replay.headers.get('location') as string).searchParams.get('tool_server_sign_in'),
+		).toBe('failed')
+
+		const denied = await signIn(s, id, { code: '' })
+		expect(
+			new URL(denied.back.headers.get('location') as string).searchParams.get(
+				'tool_server_sign_in',
+			),
+		).toBe('failed')
+	})
+
+	it('does not finish a sign-in when the URL changed since it started', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		const started = await startSignIn(s, id)
+		const { authorization_url } = (await started.json()) as { authorization_url: string }
+		const state = new URL(authorization_url).searchParams.get('state') ?? ''
+		const cookie = (started.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+		// The change drops the started sign-in with the old URL.
+		await call(s, 'PUT', `/api/custom-mcp-servers/${id}`, {
+			name: 'Books',
+			server: { ...SIGN_IN_SERVER, url: 'https://other.books.example/mcp', headers: {} },
+		})
+		const back = await s.app.request(
+			`/api/integrations/custom-mcp/callback?state=${encodeURIComponent(state)}&code=the-code`,
+			{ headers: { cookie } },
+		)
+		expect(
+			new URL(back.headers.get('location') as string).searchParams.get('tool_server_sign_in'),
+		).toBe('failed')
+		expect(readSignIn((await storedBlob(id)).row)).toBeNull()
+	})
+
+	it('refuses to start for an agent, for a server it cannot hold a token for, and for a server with no sign-in', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		const asAgent = await appFor(s.agentA.id, 'agent').request(
+			`/api/custom-mcp-servers/${id}/oauth/start`,
+			{
+				method: 'POST',
+				headers: { 'X-Workspace-Id': s.ws.id, 'Content-Type': 'application/json' },
+				body: '{}',
+			},
+		)
+		expect(asAgent.status).toBe(403)
+
+		const { body: local } = await addServer(s, 'Local files', { type: 'stdio', command: 'npx' })
+		expect((await startSignIn(s, local.id)).status).toBe(400)
+
+		// A server that offers no way to register an app is named plainly, not guessed at.
+		metadata.registration_endpoint = undefined
+		const res = await startSignIn(s, id)
+		expect(res.status).toBe(400)
+		expect(((await res.json()) as { error: { message: string } }).error.message).toContain(
+			'register itself',
+		)
+	})
+
+	it('will not call a sign-in address that is not https', async () => {
+		const s = await setup()
+		const id = await booksServer(s)
+		metadata.token_endpoint = 'http://login.books.example/token'
+		const res = await startSignIn(s, id)
+		expect(res.status).toBe(400)
+		expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain(
+			'http://login.books.example/token',
+		)
 	})
 })
 

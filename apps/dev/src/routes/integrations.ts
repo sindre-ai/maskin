@@ -38,6 +38,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, type FlagId, isFlagEnabled } from '../lib/feature-flags'
 import { requireCredentials } from '../lib/integrations/credential-column'
 import { CUSTOM_MCP_PROVIDER } from '../lib/integrations/custom-mcp'
+import { completeSignIn } from '../lib/integrations/custom-mcp-oauth'
 import { disconnectIntegrationRow } from '../lib/integrations/disconnect'
 import { getEnvOrThrow } from '../lib/integrations/env'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
@@ -1764,6 +1765,12 @@ app.openapi(callbackRoute, (async (c) => {
 			),
 			400,
 		)
+	}
+
+	// A browser sign-in to a custom tool server. Its one-time record sits with the server, not in a
+	// pending integration row, so it is finished on its own path (finishCustomMcpSignIn).
+	if (providerName === CUSTOM_MCP_PROVIDER) {
+		return finishCustomMcpSignIn(c, db, stateData, query)
 	}
 
 	// Verify one-time nonce to prevent replay attacks
@@ -4401,13 +4408,84 @@ webhookApp.post('/:provider', async (c) => {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/**
+ * The end of a browser sign-in to a custom tool server (started by
+ * POST /api/custom-mcp-servers/:id/oauth/start). The state and the browser binding were checked by
+ * the caller; this checks the person is still a member, trades the code for a token and sends the
+ * browser back to the page it came from with the outcome in the query.
+ */
+async function finishCustomMcpSignIn(
+	c: Context<Env>,
+	db: Database,
+	stateData: OAuthStatePayload,
+	query: Record<string, string>,
+): Promise<Response> {
+	const back = (outcome: 'done' | 'failed') => {
+		clearOAuthNonceCookie(c, CUSTOM_MCP_PROVIDER)
+		const url = new URL(frontendUrlForReturn(stateData.workspaceId, stateData.returnTo))
+		url.searchParams.set('tool_server_sign_in', outcome)
+		return c.redirect(url.toString())
+	}
+
+	const [member] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, stateData.workspaceId),
+				eq(workspaceMembers.actorId, stateData.actorId),
+			),
+		)
+		.limit(1)
+	if (!member) {
+		return c.json(createApiError('FORBIDDEN', 'Actor is no longer a member of this workspace'), 400)
+	}
+
+	const serverId = stateData.customMcpServerId
+	if (!serverId || !z.string().uuid().safeParse(serverId).success) {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid state parameter'), 400)
+	}
+	// The person said no on the server's page, or it came back without a code.
+	if (query.error || !query.code) return back('failed')
+
+	try {
+		await completeSignIn(db, {
+			integrationId: serverId,
+			workspaceId: stateData.workspaceId,
+			nonce: stateData.nonce,
+			code: query.code,
+		})
+	} catch (err) {
+		logger.warn('Tool server sign-in did not finish', {
+			workspaceId: stateData.workspaceId,
+			integrationId: serverId,
+			reason: err instanceof Error ? err.message : String(err),
+		})
+		return back('failed')
+	}
+	try {
+		await recordEvent(db, {
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: serverId,
+			data: { provider: CUSTOM_MCP_PROVIDER, change: 'tool_server_signed_in' },
+		})
+	} catch (auditErr) {
+		// The token is saved and the sign-in worked; a missing audit row must not undo that.
+		logger.warn('Failed to record the tool server sign-in', { error: String(auditErr) })
+	}
+	return back('done')
+}
+
 /** Lifetime of the state-binding cookie, in seconds. Matches the 10-minute
  *  `state` age check in the callback so neither outlives the other. */
-const OAUTH_NONCE_COOKIE_MAX_AGE = 10 * 60
+export const OAUTH_NONCE_COOKIE_MAX_AGE = 10 * 60
 
 /** Per-provider so two connect flows started in different tabs (e.g. GitHub and
  *  Slack) do not clobber each other's binding. */
-function oauthNonceCookieName(providerName: string): string {
+export function oauthNonceCookieName(providerName: string): string {
 	return `maskin_oauth_nonce_${providerName}`
 }
 
