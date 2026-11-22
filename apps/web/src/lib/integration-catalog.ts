@@ -21,6 +21,7 @@ interface CatalogEntry {
 
 const CATALOG: Record<string, CatalogEntry> = {
 	attio: { category: 'Sales & payments', domain: 'attio.com' },
+	box: { category: 'Files', domain: 'box.com' },
 	cloudflare: { category: 'Code', domain: 'cloudflare.com' },
 	datadog: { category: 'Analytics', domain: 'datadoghq.com' },
 	fathom: { category: 'Chat & social', domain: 'fathom.video' },
@@ -33,6 +34,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	'google-search-console': { category: 'Analytics', domain: 'search.google.com' },
 	granola: { category: 'Chat & social', domain: 'granola.ai' },
 	hex: { category: 'Analytics', domain: 'hex.tech' },
+	lattice: { category: 'Docs & data', domain: 'lattice.com' },
 	linear: { category: 'Code', domain: 'linear.app' },
 	'linkedin-unipile': { category: 'Chat & social', domain: 'linkedin.com' },
 	microsoft: { category: 'Chat & social', domain: 'microsoft.com' },

@@ -43,10 +43,10 @@ describe('Salesforce provider config', () => {
 		expect(FLAGS.SALESFORCE).toBe('salesforce')
 	})
 
-	it('is the only provider that asks for a customer app so far', () => {
+	it('is one of the providers that ask for a customer app', () => {
 		const asking = listProviders()
 			.filter((p) => p.config.auth.type === 'oauth2' && p.config.auth.config.customerApp)
 			.map((p) => p.config.name)
-		expect(asking).toEqual(['salesforce'])
+		expect(asking.sort()).toEqual(['box', 'lattice', 'salesforce'])
 	})
 })
