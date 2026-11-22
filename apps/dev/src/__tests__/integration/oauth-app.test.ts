@@ -22,6 +22,7 @@ import {
 	saveOAuthApp,
 } from '../../lib/integrations/oauth-app'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
+import { ViewerReadOnlyError } from '../../lib/workspace-auth'
 import integrationsRoutes from '../../routes/integrations'
 import oauthAppRoutes from '../../routes/integrations-oauth-app'
 import { insertWorkspace } from '../factories'
@@ -58,9 +59,13 @@ function appFor(workspaceId: string, role = 'owner', actorType = 'human') {
 		c.set('workspaceRole', role)
 		await next()
 	})
-	app.onError((_err, c) =>
-		c.json(createApiError('INTERNAL_ERROR', 'Internal server error'), { status: 500 }),
-	)
+	app.onError((err, c) => {
+		// The real app maps this to 403 in createApp's onError.
+		if (err instanceof ViewerReadOnlyError) {
+			return c.json(createApiError('FORBIDDEN', err.message), 403)
+		}
+		return c.json(createApiError('INTERNAL_ERROR', 'Internal server error'), { status: 500 })
+	})
 	app.route('/api/integrations', oauthAppRoutes as never)
 	app.route('/api/integrations', integrationsRoutes as never)
 	return {
