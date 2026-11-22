@@ -104,6 +104,8 @@ type QueryGuards = {
 	/** Deadline for a query sent when `saturationAt` queries are already in flight. */
 	queuedQueryTimeoutMs?: number
 	onQueryTimeout?: (info: QueryTimeoutInfo) => void
+	/** Called when the server refuses a write because the connection is on a read-only node. */
+	onReadOnlyConnection?: (info: { sql: string }) => void
 	/** Called each time the in-flight count rises to `saturationAt`. */
 	onSaturated?: (inFlight: number) => void
 	saturationAt?: number
@@ -111,6 +113,9 @@ type QueryGuards = {
 }
 
 const SQL_PREVIEW_CHARS = 80
+
+/** "cannot execute ... in a read-only transaction": a write that reached a standby or demoted primary. */
+export const READ_ONLY_SQLSTATE = '25006'
 
 // postgres.js queries are lazy thenables: nothing is sent until `then` runs. Time from there to
 // the result, so the figure includes any wait for a pooled connection. Past the deadline, reject
@@ -122,6 +127,7 @@ function timeQuery<T extends PromiseLike<unknown>>(
 		queryTimeoutMs,
 		queuedQueryTimeoutMs,
 		onQueryTimeout,
+		onReadOnlyConnection,
 		onSaturated,
 		saturationAt,
 		inFlight,
@@ -178,6 +184,13 @@ function timeQuery<T extends PromiseLike<unknown>>(
 			},
 			(err) => {
 				record()
+				if ((err as { code?: unknown } | null)?.code === READ_ONLY_SQLSTATE) {
+					try {
+						onReadOnlyConnection?.({ sql: sqlText.slice(0, SQL_PREVIEW_CHARS) })
+					} catch {
+						// the original error is what the caller needs to see
+					}
+				}
 				throw err
 			},
 		)
@@ -201,6 +214,8 @@ export type TimeQueriesOptions = {
 	queuedQueryTimeoutMs?: number
 	/** Called when a query hits the deadline, before it is cancelled and rejected. */
 	onQueryTimeout?: (info: QueryTimeoutInfo) => void
+	/** Called when a write is refused as read-only, i.e. the connection is on a node that is no longer the primary. */
+	onReadOnlyConnection?: (info: { sql: string }) => void
 	/** Called when the in-flight count rises to `saturationAt`, i.e. every pooled connection is busy. */
 	onSaturated?: (inFlight: number) => void
 	saturationAt?: number
@@ -250,8 +265,10 @@ export const DEFAULT_POOL_SIZE = 10
 export type PoolRecycleInfo = {
 	/** Queries the database was running when it was asked; null if it could not be asked. */
 	runningQueries: number | null
-	/** The first characters of the query that got no answer. */
+	/** The first characters of the query that got no answer, or was refused as read-only. */
 	sql: string
+	/** Why the pool was replaced. */
+	reason: 'no_answer' | 'read_only'
 }
 
 /** Queries the database is busy with at that moment. A backlog of real work is not a lost connection. */
@@ -298,6 +315,16 @@ export function createDb(
 	const minIntervalMs = options.recycleMinIntervalMs ?? POOL_RECYCLE_MIN_INTERVAL_MS
 	let lastAttemptAt = Number.NEGATIVE_INFINITY
 	let deciding = false
+	const replacePool = (info: PoolRecycleInfo) => {
+		const next = openClient()
+		// drizzle sets up the client's date and json handling when it is built; do the same here.
+		drizzle(next)
+		const old = client
+		client = next
+		// Give queries that are really running a moment, then close every socket.
+		void old.end({ timeout: 2 }).catch(() => {})
+		options.onPoolRecycled?.(info)
+	}
 	const recycleIfLost = async (info: QueryTimeoutInfo) => {
 		if (deciding || Date.now() - lastAttemptAt < minIntervalMs) return
 		deciding = true
@@ -312,17 +339,18 @@ export function createDb(
 				// A fresh connection could not be asked either; a new pool cannot make that worse.
 			}
 			if (running !== null && running >= DATABASE_BUSY_QUERIES) return
-			const next = openClient()
-			// drizzle sets up the client's date and json handling when it is built; do the same here.
-			drizzle(next)
-			const old = client
-			client = next
-			// Give queries that are really running a moment, then close every socket.
-			void old.end({ timeout: 2 }).catch(() => {})
-			options.onPoolRecycled?.({ runningQueries: running, sql: info.sql })
+			replacePool({ runningQueries: running, sql: info.sql, reason: 'no_answer' })
 		} finally {
 			deciding = false
 		}
+	}
+	// After a failover the pool can hold connections to the old primary, which now refuses every
+	// write as read-only until they are closed. A busy database does not change that, so there is
+	// no probe: the refusal itself says these connections are on the wrong node.
+	const recycleIfReadOnly = (info: { sql: string }) => {
+		if (deciding || Date.now() - lastAttemptAt < minIntervalMs) return
+		lastAttemptAt = Date.now()
+		replacePool({ runningQueries: null, sql: info.sql, reason: 'read_only' })
 	}
 
 	return drizzle(
@@ -332,6 +360,10 @@ export function createDb(
 			onQueryTimeout: (info) => {
 				options.onQueryTimeout?.(info)
 				void recycleIfLost(info)
+			},
+			onReadOnlyConnection: (info) => {
+				options.onReadOnlyConnection?.(info)
+				recycleIfReadOnly(info)
 			},
 			onSaturated: options.onSaturated,
 			saturationAt: poolSize,
