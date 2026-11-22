@@ -103,6 +103,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/oauth/token', 'public, the one-time code or refresh token is the credential'],
 	// Group B leftovers: no handler logic or no workspace data.
 	['DELETE', '/api/integrations/deepdots/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/dinero/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
@@ -246,6 +247,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
  */
 export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['POST', '/api/integrations/deepdots/mcp', 'MCP endpoint, tools read as the workspace'],
+	['POST', '/api/integrations/dinero/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/google-drive/mcp', 'MCP endpoint, tools act as the workspace'],
 	['POST', '/api/integrations/google-meet/mcp', 'MCP endpoint, tools act as the workspace'],
 	[

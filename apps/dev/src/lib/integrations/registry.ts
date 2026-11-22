@@ -15,6 +15,8 @@ import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { config as datadogConfig } from './providers/datadog/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
+import { dineroAuth } from './providers/dinero/auth'
+import { config as dineroConfig } from './providers/dinero/config'
 // Import provider configs
 import { config as fathomConfig } from './providers/fathom/config'
 import { config as firefliesConfig } from './providers/fireflies/config'
@@ -368,6 +370,14 @@ providers.set('ubersuggest', {
 providers.set('deepdots', {
 	config: deepdotsConfig,
 	customAuth: deepdotsAuth,
+})
+
+// dinero — connects from a client id, secret and API key form (routes/integrations-dinero.ts),
+// mounted before the generic /api/integrations routes. The generic connect route would try to
+// build an OAuth redirect and fail, so it must not run for it.
+providers.set('dinero', {
+	config: dineroConfig,
+	customAuth: dineroAuth,
 })
 
 // linkedin-unipile — the connect + callback flow is LinkedIn's Hosted Auth

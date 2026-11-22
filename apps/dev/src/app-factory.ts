@@ -67,6 +67,8 @@ import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsDeepdotsRoutes from './routes/integrations-deepdots'
 import integrationsDeepdotsMcpRoutes from './routes/integrations-deepdots-mcp'
+import integrationsDineroRoutes from './routes/integrations-dinero'
+import integrationsDineroMcpRoutes from './routes/integrations-dinero-mcp'
 import integrationsGatewayRoutes from './routes/integrations-gateway'
 import integrationsGmailRoutes from './routes/integrations-gmail'
 import integrationsGoogleDisconnectRoutes from './routes/integrations-google-disconnect'
@@ -588,6 +590,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/skjald', integrationsSkjaldConnectRoutes)
 	// Deepdots connects from an email and password form, not an OAuth redirect.
 	app.route('/api/integrations/deepdots', integrationsDeepdotsRoutes)
+	// Dinero connects from a client id, secret and API key form, not an OAuth redirect.
+	app.route('/api/integrations/dinero', integrationsDineroRoutes)
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
@@ -600,6 +604,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
+	app.route('/api/integrations/dinero/mcp', integrationsDineroMcpRoutes)
 	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)

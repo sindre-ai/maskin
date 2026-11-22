@@ -47,6 +47,16 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
+	// Dinero, served by Maskin. Curated: the one write (dinero_save_draft_purchase_voucher) is left
+	// out on purpose, so a Read agent can look at the books but not save a draft.
+	dinero: new Set([
+		'dinero_get_company',
+		'dinero_list_purchase_accounts',
+		'dinero_list_vat_types',
+		'dinero_list_contacts',
+		'dinero_list_entries',
+		'dinero_get_purchase_voucher',
+	]),
 	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
 	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
 	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list
