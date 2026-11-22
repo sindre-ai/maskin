@@ -49,6 +49,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'netlify',
 			'new-relic',
 			'notion',
+			'numina',
 			'otter',
 			'outreach',
 			'pagerduty',

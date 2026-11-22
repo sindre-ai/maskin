@@ -41,6 +41,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	netlify: { category: 'Code', domain: 'netlify.com' },
 	'new-relic': { category: 'Analytics', domain: 'newrelic.com' },
 	notion: { category: 'Docs & data', domain: 'notion.so' },
+	numina: { category: 'Sales & payments', domain: 'numina.app' },
 	otter: { category: 'Chat & social', domain: 'otter.ai' },
 	pagerduty: { category: 'Analytics', domain: 'pagerduty.com' },
 	planetscale: { category: 'Docs & data', domain: 'planetscale.com' },

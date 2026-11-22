@@ -170,6 +170,7 @@ describe('Integrations Routes', () => {
 				'miro',
 				'mixpanel',
 				'notion',
+				'numina',
 				'posthog',
 				'resend',
 				'sentry',
