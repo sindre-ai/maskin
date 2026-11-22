@@ -258,6 +258,18 @@ export const FLAGS = {
 	 * Dinero sign-in has worked, the draft-only tool list is set and Dinero is on for everyone.
 	 */
 	DINERO: 'dinero',
+	/**
+	 * Gates the ten integrations that sign in through an app Maskin owns at the vendor, or need the
+	 * vendor to approve Maskin first: HubSpot, Asana, DocuSign, Figma, Dropbox, Intercom, Pipedrive,
+	 * Ramp, Squarespace and Xero (task
+	 * [Add fourteen tools that need Maskin's own app](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e09203c0-8d1c-472b-b668-f9312024a5f2)).
+	 * Actor-scoped, read by the integrations routes: off means the ten are missing from
+	 * GET /api/integrations/providers and their connect call is refused. On is not enough on its own:
+	 * a provider also stays hidden until its CLIENT_ID is set on the server. A workspace that is
+	 * already connected keeps working through the gateway. Retire once a real sign-in has worked for
+	 * each and the providers are on for everyone.
+	 */
+	OWN_APP_INTEGRATIONS: 'own-app-integrations',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
