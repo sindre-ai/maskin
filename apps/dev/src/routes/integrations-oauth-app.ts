@@ -1,5 +1,6 @@
-import { OpenAPIHono, z } from '@hono/zod-openapi'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
+import { providerParamsSchema } from '@maskin/shared'
 import type { Context } from 'hono'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { CredentialValueError } from '../lib/integrations/credential-value'
@@ -14,6 +15,7 @@ import { getProvider } from '../lib/integrations/registry'
 import type { OAuth2Config } from '../lib/integrations/types'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
+import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 import { buildRedirectUri, providerVisible } from './integrations'
 import { type Env, readSecretBody } from './integrations-keychain'
@@ -21,9 +23,8 @@ import { type Env, readSecretBody } from './integrations-keychain'
 // The paste form for a workspace's own sign-in app (OAuth2Config.customerApp). Mounted on the
 // same prefix as the integrations router, in its own file so that router stays untouched.
 //
-// Built as plain Hono routes, not createRoute: the Apple client is generated from the OpenAPI
-// document and cannot be regenerated without a Swift toolchain, so the document is left alone
-// until the iOS form is built. The viewer gate is in the handler (HAND_GATED_ROUTES).
+// In the OpenAPI document so the iPhone app's generated client has them. The viewer gate is the
+// 'x-viewer-policy' tag on the two write routes, and the handler also checks for a person.
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const putBodySchema = z
@@ -35,6 +36,23 @@ const putBodySchema = z
 		value: z.string().trim().min(1).max(253).optional(),
 	})
 	.strict()
+
+const appStatusSchema = z.object({
+	configured: z.boolean(),
+	clientId: z.string().optional(),
+	updatedAt: z.string().optional(),
+	/** The URL the vendor's app must list as its callback. */
+	callbackUrl: z.string(),
+})
+
+const appRouteResponses = {
+	400: { description: 'Invalid request', content: { 'application/json': { schema: errorSchema } } },
+	403: { description: 'Not allowed', content: { 'application/json': { schema: errorSchema } } },
+	404: {
+		description: 'Unknown provider',
+		content: { 'application/json': { schema: errorSchema } },
+	},
+}
 
 type Guard =
 	| { ok: true; displayName: string; oauth: OAuth2Config }
@@ -96,11 +114,6 @@ async function guard(
 	return { ok: true, displayName, oauth: auth.config }
 }
 
-function workspaceIdOf(c: Context<Env>): string | null {
-	const parsed = z.string().uuid().safeParse(c.req.header('x-workspace-id'))
-	return parsed.success ? parsed.data : null
-}
-
 async function statusBody(c: Context<Env>, db: Database, workspaceId: string, provider: string) {
 	const status = await getOAuthAppStatus(db, workspaceId, provider)
 	// The URL the vendor's app must list as its callback.
@@ -108,23 +121,61 @@ async function statusBody(c: Context<Env>, db: Database, workspaceId: string, pr
 }
 
 // GET /api/integrations/:provider/app: whether a workspace saved its own app, and its app id. Never the secret.
-app.get('/:provider/app', async (c) => {
+const getAppRoute = createRoute({
+	method: 'get',
+	path: '/{provider}/app',
+	tags: ['integrations'],
+	summary: "Read a workspace's own sign-in app for a tool (app id only, never the secret)",
+	request: { params: providerParamsSchema, headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Whether an app is saved, and its app id',
+			content: { 'application/json': { schema: appStatusSchema } },
+		},
+		...appRouteResponses,
+	},
+})
+
+app.openapi(getAppRoute, (async (c) => {
 	const db = c.get('db')
-	const provider = c.req.param('provider')
-	const workspaceId = workspaceIdOf(c)
-	if (!workspaceId) return c.json(createApiError('BAD_REQUEST', 'X-Workspace-Id is required'), 400)
+	const { provider } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const guarded = await guard(c, db, provider, workspaceId, false)
 	if (!guarded.ok) return c.json(createApiError(guarded.code, guarded.message), guarded.status)
 	return c.json(await statusBody(c, db, workspaceId, provider), 200)
-})
+}) as RouteHandler<typeof getAppRoute, Env>)
 
 // PUT /api/integrations/:provider/app: save or replace the app (workspace admins and owners only).
-app.put('/:provider/app', async (c) => {
+const putAppRoute = createRoute({
+	method: 'put',
+	path: '/{provider}/app',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: "Save or replace a workspace's own sign-in app for a tool (admins and owners only)",
+	// No `request.body` on purpose, as for every route that carries a secret (see
+	// integrations-keychain.ts): the request validator would parse the body into strings and cached
+	// objects that readSecretBody can never zero. The handler reads the raw bytes itself and
+	// putBodySchema guards the shape. The iPhone app sends this PUT by hand for the same reason.
+	request: { params: providerParamsSchema, headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Saved. The secret is not returned',
+			content: { 'application/json': { schema: appStatusSchema } },
+		},
+		...appRouteResponses,
+		409: {
+			description:
+				'The tool is connected with the saved app: a different app id would strand it. The same id with a new secret is fine',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(putAppRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
-	const provider = c.req.param('provider')
-	const workspaceId = workspaceIdOf(c)
-	if (!workspaceId) return c.json(createApiError('BAD_REQUEST', 'X-Workspace-Id is required'), 400)
+	const { provider } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const guarded = await guard(c, db, provider, workspaceId, true)
 	if (!guarded.ok) return c.json(createApiError(guarded.code, guarded.message), guarded.status)
 
@@ -194,15 +245,31 @@ app.put('/:provider/app', async (c) => {
 		throw err
 	}
 	return c.json(await statusBody(c, db, workspaceId, provider), 200)
-})
+}) as RouteHandler<typeof putAppRoute, Env>)
 
 // DELETE /api/integrations/:provider/app: remove the app (refused while the tool is connected).
-app.delete('/:provider/app', async (c) => {
+const deleteAppRoute = createRoute({
+	method: 'delete',
+	path: '/{provider}/app',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary: "Remove a workspace's own sign-in app for a tool (refused while the tool is connected)",
+	request: { params: providerParamsSchema, headers: workspaceIdHeader },
+	responses: {
+		204: { description: 'Removed' },
+		...appRouteResponses,
+		409: {
+			description: 'The tool is still connected and signs in and renews with this app',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(deleteAppRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
-	const provider = c.req.param('provider')
-	const workspaceId = workspaceIdOf(c)
-	if (!workspaceId) return c.json(createApiError('BAD_REQUEST', 'X-Workspace-Id is required'), 400)
+	const { provider } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const guarded = await guard(c, db, provider, workspaceId, true)
 	if (!guarded.ok) return c.json(createApiError(guarded.code, guarded.message), guarded.status)
 
@@ -220,6 +287,6 @@ app.delete('/:provider/app', async (c) => {
 		)
 	}
 	return c.body(null, 204)
-})
+}) as RouteHandler<typeof deleteAppRoute, Env>)
 
 export default app

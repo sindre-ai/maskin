@@ -109,6 +109,7 @@ import { config as unicontaConfig } from './providers/uniconta/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as zapierConfig } from './providers/zapier/config'
+import { config as zendeskConfig } from './providers/zendesk/config'
 import { config as zoomConfig } from './providers/zoom/config'
 import { config as zoominfoConfig } from './providers/zoominfo/config'
 
@@ -314,6 +315,10 @@ providers.set('looker', {
 
 providers.set('power-bi', {
 	config: powerBiConfig,
+})
+
+providers.set('zendesk', {
+	config: zendeskConfig,
 })
 
 providers.set('fireflies', {

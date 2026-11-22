@@ -14,6 +14,8 @@ export const OAUTH_APP_MODE = 'oauth_app'
 /** Source on the audit row an app write leaves. */
 export const OAUTH_APP_SOURCE = 'oauth_app_form'
 
+const PUBLIC_CLIENT_MARKER = 'public-client'
+
 export interface OAuthApp {
 	clientId: string
 	/** Empty for a public client, which has no secret. */
@@ -166,11 +168,10 @@ export async function saveOAuthApp(
 		...(input.clientSecret === null && { public: true }),
 		...(input.value && { value: input.value }),
 	}
-	let sealed: { credentials: string; dekCiphertext: string } | null = null
-	if (input.clientSecret !== null) {
-		assertValidCredentialValue(input.clientSecret)
-		sealed = await encryptEnvelope(kms, workspaceId, input.clientSecret)
-	}
+	if (input.clientSecret !== null) assertValidCredentialValue(input.clientSecret)
+	// An active row must hold credentials (database rule), so a public client seals a fixed marker
+	// instead of a secret. It is never read: the config's public flag short-circuits the lookup.
+	const sealed = await encryptEnvelope(kms, workspaceId, input.clientSecret ?? PUBLIC_CLIENT_MARKER)
 
 	return db.transaction(async (tx) => {
 		// One app per tool per workspace. The unique index does not cover a NULL actor, so serialise here.
@@ -201,8 +202,8 @@ export async function saveOAuthApp(
 				.set({
 					status: 'active',
 					config,
-					credentials: sealed?.credentials ?? null,
-					dekCiphertext: sealed?.dekCiphertext ?? null,
+					credentials: sealed.credentials,
+					dekCiphertext: sealed.dekCiphertext,
 					updatedAt: new Date(),
 				})
 				.where(eq(integrations.id, integrationId))
@@ -214,8 +215,8 @@ export async function saveOAuthApp(
 				provider: OAUTH_APP_PROVIDER,
 				externalId: provider,
 				status: 'active',
-				credentials: sealed?.credentials ?? null,
-				dekCiphertext: sealed?.dekCiphertext ?? null,
+				credentials: sealed.credentials,
+				dekCiphertext: sealed.dekCiphertext,
 				config,
 				providerMode: OAUTH_APP_MODE,
 				displayName: input.displayName,

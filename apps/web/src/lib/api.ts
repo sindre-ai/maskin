@@ -1010,11 +1010,15 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		/** Removes the saved app. The server refuses while the tool is still connected. */
+		deleteOAuthApp: (workspaceId: string, provider: string) =>
+			request<void>(`/integrations/${provider}/app`, { method: 'DELETE', workspaceId }),
 		connect: (
 			workspaceId: string,
 			provider: string,
 			body?: {
 				api_key?: string
+				project_id?: string
 				receive_subdomain?: string
 				install_new_org?: boolean
 				origin?: string

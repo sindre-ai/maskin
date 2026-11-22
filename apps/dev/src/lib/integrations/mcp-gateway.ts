@@ -84,6 +84,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'vercel',
 	'webflow',
 	'zapier',
+	'zendesk',
 	'zoom',
 	'zoominfo',
 ])

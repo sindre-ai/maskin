@@ -3,7 +3,8 @@ import Observation
 
 public protocol IntegrationKeyAPI: Sendable {
 	/// `POST /api/integrations/{provider}/connect` with the pasted key (the api_key providers).
-	func connect(provider: String, key: String, idempotencyKey: String) async throws
+	/// `projectID` is PostHog's optional project; nil leaves the field out.
+	func connect(provider: String, key: String, projectID: String?, idempotencyKey: String) async throws
 }
 
 /// Connecting a provider that takes a pasted key (PostHog), on a form in the app.
@@ -11,6 +12,8 @@ public protocol IntegrationKeyAPI: Sendable {
 @Observable
 public final class ConnectWithKeyStore: Identifiable {
 	public var key = ""
+	/// PostHog only: the project agents start in. Empty means PostHog's own default.
+	public var projectID = ""
 	public private(set) var isSaving = false
 	public private(set) var error: String?
 	public private(set) var didConnect = false
@@ -27,7 +30,14 @@ public final class ConnectWithKeyStore: Identifiable {
 	}
 
 	public var trimmedKey: String { key.trimmingCharacters(in: .whitespacesAndNewlines) }
-	public var canSave: Bool { !trimmedKey.isEmpty && !isSaving && !didConnect }
+	/// Only PostHog asks for a project.
+	public var takesProject: Bool { providerID == "posthog" }
+	public var trimmedProjectID: String { projectID.trimmingCharacters(in: .whitespacesAndNewlines) }
+	/// A project id is a number; empty is fine.
+	public var projectIDIsValid: Bool {
+		trimmedProjectID.isEmpty || (trimmedProjectID.count <= 12 && trimmedProjectID.allSatisfy(\.isASCIIDigit))
+	}
+	public var canSave: Bool { !trimmedKey.isEmpty && projectIDIsValid && !isSaving && !didConnect }
 
 	public func save() async {
 		guard canSave else { return }
@@ -35,7 +45,10 @@ public final class ConnectWithKeyStore: Identifiable {
 		error = nil
 		defer { isSaving = false }
 		do {
-			try await api.connect(provider: providerID, key: trimmedKey, idempotencyKey: UUID().uuidString)
+			try await api.connect(
+				provider: providerID, key: trimmedKey,
+				projectID: takesProject && !trimmedProjectID.isEmpty ? trimmedProjectID : nil,
+				idempotencyKey: UUID().uuidString)
 			key = ""
 			didConnect = true
 		} catch {
@@ -48,13 +61,20 @@ public struct APIIntegrationKeySource: IntegrationKeyAPI {
 	private let http: SettingsHTTP
 	public init(http: SettingsHTTP) { self.http = http }
 
-	public func connect(provider: String, key: String, idempotencyKey: String) async throws {
-		struct Body: Encodable { var api_key: String }
+	public func connect(provider: String, key: String, projectID: String?, idempotencyKey: String) async throws {
+		struct Body: Encodable {
+			var api_key: String
+			var project_id: String?
+		}
 		let (data, status) = try await http.send(
 			"POST", "api/integrations/\(provider)/connect",
-			body: try JSONEncoder().encode(Body(api_key: key)), key: idempotencyKey)
+			body: try JSONEncoder().encode(Body(api_key: key, project_id: projectID)), key: idempotencyKey)
 		guard status == 200 else {
 			throw SettingsHTTP.error(status: status, data: data, fallback: "Couldn't connect that key. Check it and try again.")
 		}
 	}
+}
+
+private extension Character {
+	var isASCIIDigit: Bool { isASCII && isNumber }
 }

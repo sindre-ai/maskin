@@ -75,6 +75,7 @@ filter:
     - /api/integrations/providers
     - /api/integrations/{id}
     - /api/integrations/{provider}/connect
+    - /api/integrations/{provider}/app
     - /api/integrations/linkedin-unipile/connect
     - /api/integrations/github/pending-selection/{id}
     - /api/integrations/github/select-installation

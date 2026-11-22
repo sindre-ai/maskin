@@ -71,6 +71,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'vercel',
 			'webflow',
 			'zapier',
+			'zendesk',
 			'zoom',
 			'zoominfo',
 		])
