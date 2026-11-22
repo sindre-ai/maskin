@@ -10,6 +10,9 @@ describe('categoryFor', () => {
 		expect(categoryFor('notion')).toBe('Docs & data')
 		expect(categoryFor('stripe')).toBe('Sales & payments')
 		expect(categoryFor('attio')).toBe('Sales & payments')
+		expect(categoryFor('numina')).toBe('Accounting')
+		expect(categoryFor('dinero')).toBe('Accounting')
+		expect(categoryFor('uniconta')).toBe('Accounting')
 	})
 
 	it('lists a provider the catalog does not know under Docs & data', () => {

@@ -309,6 +309,13 @@ struct IntegrationFilterTests {
 		#expect(store.connectedToolServers(query: "nope", category: nil).isEmpty)
 	}
 
+	@Test func bookkeepingProvidersFallUnderAccounting() {
+		for provider in ["numina", "dinero", "uniconta"] {
+			#expect(IntegrationCategory.category(for: provider) == .accounting)
+		}
+		#expect(IntegrationCategory.category(for: "stripe") == .salesAndPayments)
+	}
+
 	@Test func unknownProvidersFallUnderDocsAndData() {
 		#expect(IntegrationCategory.category(for: "brand-new") == .docsAndData)
 		#expect(IntegrationCategory.category(for: "slack") == .chatAndSocial)
