@@ -6,7 +6,7 @@ import OpenAPIRuntime
 /// inside this file. Error messages are fixed sentences: no response bodies, ids or keys are
 /// interpolated into anything that could be logged or shown.
 public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, IntegrationsAPI,
-	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI
+	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI, OwnAppAPI
 {
 	private let client: Client
 	public let workspaceID: String
@@ -157,7 +157,8 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 				}
 				return IntegrationProvider(
 					id: row.name, displayName: row.displayName, authKind: kind,
-					showsEmail: row.externalIdDisplay == .email, eventCount: row.events.count)
+					showsEmail: row.externalIdDisplay == .email, eventCount: row.events.count,
+					customerApp: row.customerApp == true)
 			}
 		default:
 			throw SettingsError("Couldn't load integrations.")
@@ -421,6 +422,100 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 		case .forbidden: throw SettingsError("Only a workspace admin can change object types.")
 		case .badRequest: throw SettingsError("That change isn't allowed.")
 		default: throw SettingsError("Couldn't save that change.")
+		}
+	}
+
+	// MARK: Own sign-in app
+
+	/// The server's own sentence when it sent one: these routes name fields and never echo a value,
+	/// so it is safe to show. Otherwise the fixed sentence.
+	private static func sentence(_ message: String?, fallback: String) -> String {
+		let text = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+		return (text?.isEmpty == false) ? text! : fallback
+	}
+
+	public func status(provider: String) async throws -> OwnAppStatus {
+		do {
+			let output = try await client.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+				.init(
+					path: .init(provider: provider),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+			switch output {
+			case .ok(let ok):
+				let body = try ok.body.json
+				return OwnAppStatus(
+					configured: body.configured, clientId: body.clientId, callbackURL: body.callbackUrl)
+			case .forbidden: throw SettingsError("You can't see the sign-in app here.")
+			default: throw SettingsError("Couldn't load the app.")
+			}
+		} catch let error as SettingsError {
+			throw error
+		} catch {
+			throw Self.map(error)
+		}
+	}
+
+	public func save(provider: String, clientId: String, clientSecret: String, idempotencyKey: String)
+		async throws -> OwnAppStatus
+	{
+		do {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
+				try await client.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+					.init(
+						path: .init(provider: provider),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+						body: .json(.init(clientId: clientId, clientSecret: clientSecret))))
+			}
+			switch output {
+			case .ok(let ok):
+				let body = try ok.body.json
+				return OwnAppStatus(
+					configured: body.configured, clientId: body.clientId, callbackURL: body.callbackUrl)
+			case .badRequest(let response):
+				throw SettingsError(
+					Self.sentence(
+						(try? response.body.json)?.error.message, fallback: "Check the app id and secret and try again."))
+			case .forbidden:
+				throw SettingsError("Only a workspace admin or owner can change the sign-in app.")
+			case .notFound: throw SettingsError("This tool does not take its own sign-in app.")
+			case .conflict(let response):
+				throw SettingsError(
+					Self.sentence(
+						(try? response.body.json)?.error.message,
+						fallback: "Disconnect the tool first: a different app id would strand it."))
+			default: throw SettingsError("Couldn't save the app.")
+			}
+		} catch let error as SettingsError {
+			throw error
+		} catch {
+			throw Self.map(error)
+		}
+	}
+
+	public func remove(provider: String, idempotencyKey: String) async throws {
+		do {
+			let output = try await IdempotencyKey.bind(idempotencyKey) {
+				try await client.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+					.init(
+						path: .init(provider: provider),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+			}
+			switch output {
+			case .noContent: return
+			case .forbidden:
+				throw SettingsError("Only a workspace admin or owner can change the sign-in app.")
+			case .notFound: throw SettingsError("No sign-in app is saved for this tool.")
+			case .conflict(let response):
+				throw SettingsError(
+					Self.sentence(
+						(try? response.body.json)?.error.message,
+						fallback: "Disconnect the tool first: it still signs in and renews with this app."))
+			default: throw SettingsError("Couldn't remove the app.")
+			}
+		} catch let error as SettingsError {
+			throw error
+		} catch {
+			throw Self.map(error)
 		}
 	}
 }

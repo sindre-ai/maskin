@@ -160,6 +160,11 @@ const putAppRoute = createRoute({
 			content: { 'application/json': { schema: appStatusSchema } },
 		},
 		...appRouteResponses,
+		409: {
+			description:
+				'The tool is connected with the saved app: a different app id would strand it. The same id with a new secret is fine',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
