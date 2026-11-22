@@ -5,6 +5,7 @@ import {
 	seedMarketplaceIfEmpty,
 	seedMarketplaceLoops,
 } from '../../lib/dev-bootstrap'
+import { ACCOUNTING_LOOP } from '../../lib/marketplace-loops/accounting-loop'
 import { CUSTOMER_VOICE_LOOP } from '../../lib/marketplace-loops/customer-voice-loop'
 import {
 	DISCOVERY_ACTOR_IDS,
@@ -27,6 +28,7 @@ const ALL_PACKAGES = [
 	CUSTOMER_VOICE_LOOP,
 	KNOWLEDGE_WIKI_LOOP,
 	PRODUCT_USAGE_LOOP,
+	ACCOUNTING_LOOP,
 ]
 
 function matchingMarketplaceRows() {
