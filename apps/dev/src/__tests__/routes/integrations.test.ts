@@ -22,6 +22,13 @@ vi.mock('../../lib/integrations/registry', async () => {
 	}
 })
 
+// Delegates to the real flag check; the own-app tests below turn it on for one flag.
+vi.mock('../../lib/feature-flags', async () => {
+	const actual =
+		await vi.importActual<typeof import('../../lib/feature-flags')>('../../lib/feature-flags')
+	return { ...actual, isFlagEnabled: vi.fn(actual.isFlagEnabled) }
+})
+
 // Stub fetchInstallationAccount so the github callback path doesn't make a
 // live api.github.com call during unit tests. Keep `githubAuth` as-is so the
 // registry's customAuth handler still works.
@@ -40,6 +47,7 @@ vi.mock('../../lib/integrations/providers/github/auth', async () => {
 })
 
 const { getProvider } = await import('../../lib/integrations/registry')
+const { FLAGS, isFlagEnabled } = await import('../../lib/feature-flags')
 const { default: integrationsRoutes, webhookApp } = await import('../../routes/integrations')
 const { fetchInstallationAccount } = await import('../../lib/integrations/providers/github/auth')
 
@@ -194,6 +202,64 @@ describe('Integrations Routes', () => {
 					.map((p) => p.name)
 					.sort(),
 			).toEqual(['github', 'linkedin-unipile'])
+		})
+
+		describe('own-app providers (flag and app id)', () => {
+			const actual = vi.mocked(isFlagEnabled).getMockImplementation()
+			const flagOnlyFor = (flag: string | null) =>
+				vi.mocked(isFlagEnabled).mockImplementation((_actor, id) => id === flag)
+			const namesOf = async (): Promise<string[]> => {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+				const res = await app.request(jsonGet('/api/integrations/providers'))
+				return ((await res.json()) as Array<{ name: string }>).map((p) => p.name)
+			}
+
+			afterEach(() => {
+				if (actual) vi.mocked(isFlagEnabled).mockImplementation(actual)
+				vi.unstubAllEnvs()
+			})
+
+			it('hides them when the flag is off, even with the app id set', async () => {
+				vi.stubEnv('XERO_CLIENT_ID', 'id')
+				flagOnlyFor(null)
+				expect(await namesOf()).not.toContain('xero')
+			})
+
+			it('hides one whose app id is not set, and lists one whose app id is', async () => {
+				flagOnlyFor(FLAGS.OWN_APP_INTEGRATIONS)
+				vi.stubEnv('XERO_CLIENT_ID', 'id')
+				vi.stubEnv('RAMP_CLIENT_ID', '')
+				const names = await namesOf()
+				expect(names).toContain('xero')
+				expect(names).not.toContain('ramp')
+			})
+
+			it('refuses to connect one whose app id is not set', async () => {
+				flagOnlyFor(FLAGS.OWN_APP_INTEGRATIONS)
+				vi.stubEnv('FIGMA_CLIENT_ID', '')
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/figma/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+				expect(res.status).toBe(400)
+			})
+
+			it('connects one whose app id is set', async () => {
+				flagOnlyFor(FLAGS.OWN_APP_INTEGRATIONS)
+				vi.stubEnv('XERO_CLIENT_ID', 'xero-test-id')
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/xero/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+				expect(res.status).toBe(200)
+				expect((await res.json()).install_url).toContain(
+					'login.xero.com/identity/connect/authorize',
+				)
+			})
 		})
 
 		// The handler casts its response rather than parsing it, so a field can be

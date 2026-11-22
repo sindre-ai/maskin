@@ -1,4 +1,5 @@
 import { PILOT_REFUSAL } from '@maskin/shared'
+import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../mcp-session-header'
 import { type AgentAccess, canRead, canWrite } from './agent-access'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
 import {
@@ -37,6 +38,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'airtable',
 	'amplitude',
 	'apollo',
+	'asana',
 	'atlassian',
 	'attio',
 	'azure-devops',
@@ -48,13 +50,18 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'cloudflare',
 	'datadog',
 	'dinero',
+	'docusign',
+	'dropbox',
 	'fathom',
+	'figma',
 	'fireflies',
 	'gmail',
 	'gong',
 	'google-calendar',
 	'granola',
 	'hex',
+	'hubspot',
+	'intercom',
 	'lattice',
 	'linear',
 	'looker',
@@ -70,19 +77,23 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'otter',
 	'outreach',
 	'pagerduty',
+	'pipedrive',
 	'planetscale',
 	'posthog',
 	'power-bi',
+	'ramp',
 	'resend',
 	'retool',
 	'salesforce',
 	'sentry',
+	'squarespace',
 	'stripe',
 	'supabase',
 	'ubersuggest',
 	'uniconta',
 	'vercel',
 	'webflow',
+	'xero',
 	'zapier',
 	'zendesk',
 	'zoom',
@@ -103,6 +114,8 @@ export function gatewayServerSpec(provider: string): Record<string, unknown> {
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			// Tells the gateway which chat the call comes from, so an Allow in this chat counts.
+			[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
 		},
 	}
 }

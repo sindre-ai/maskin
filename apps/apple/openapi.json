@@ -37554,6 +37554,293 @@
 				}
 			}
 		},
+		"/api/integrations/{id}/chat-grants/{grantId}": {
+			"delete": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Remove one chat-only grant (humans only). The next call from that chat is refused",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "grantId",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"grantId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"grantId"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Not active",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/{id}/default-access": {
 			"put": {
 				"x-viewer-policy": "writer",
@@ -38174,6 +38461,304 @@
 				}
 			}
 		},
+		"/api/integrations/{id}/decline-from-chat": {
+			"post": {
+				"x-viewer-policy": "writer",
+				"tags": [
+					"integrations"
+				],
+				"summary": "Record that a person pressed Not now on an access card (humans only)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"sessionId": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"sessionId"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Recorded. Nothing is granted and no session is restarted",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"actorId": {
+											"type": "string",
+											"format": "uuid"
+										}
+									},
+									"required": [
+										"actorId"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Not allowed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Not active",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/integrations/{id}/allow-access": {
 			"post": {
 				"x-viewer-policy": "writer",
@@ -38218,6 +38803,14 @@
 											"read",
 											"read_write"
 										]
+									},
+									"scope": {
+										"type": "string",
+										"enum": [
+											"chat",
+											"always"
+										],
+										"default": "always"
 									}
 								},
 								"required": [
@@ -39991,6 +40584,10 @@
 												"items": {
 													"type": "object",
 													"properties": {
+														"id": {
+															"type": "string",
+															"format": "uuid"
+														},
 														"actorId": {
 															"type": "string",
 															"format": "uuid"
@@ -39998,11 +40595,19 @@
 														"conversationId": {
 															"type": "string",
 															"format": "uuid"
+														},
+														"expiresAt": {
+															"type": [
+																"string",
+																"null"
+															]
 														}
 													},
 													"required": [
+														"id",
 														"actorId",
-														"conversationId"
+														"conversationId",
+														"expiresAt"
 													]
 												}
 											}
@@ -40408,6 +41013,10 @@
 											"items": {
 												"type": "object",
 												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"actorId": {
 														"type": "string",
 														"format": "uuid"
@@ -40415,11 +41024,19 @@
 													"conversationId": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"expiresAt": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
+													"id",
 													"actorId",
-													"conversationId"
+													"conversationId",
+													"expiresAt"
 												]
 											}
 										}
@@ -40860,6 +41477,10 @@
 											"items": {
 												"type": "object",
 												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"actorId": {
 														"type": "string",
 														"format": "uuid"
@@ -40867,11 +41488,19 @@
 													"conversationId": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"expiresAt": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
+													"id",
 													"actorId",
-													"conversationId"
+													"conversationId",
+													"expiresAt"
 												]
 											}
 										}
@@ -41681,6 +42310,10 @@
 											"items": {
 												"type": "object",
 												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
 													"actorId": {
 														"type": "string",
 														"format": "uuid"
@@ -41688,11 +42321,19 @@
 													"conversationId": {
 														"type": "string",
 														"format": "uuid"
+													},
+													"expiresAt": {
+														"type": [
+															"string",
+															"null"
+														]
 													}
 												},
 												"required": [
+													"id",
 													"actorId",
-													"conversationId"
+													"conversationId",
+													"expiresAt"
 												]
 											}
 										}
@@ -50453,6 +51094,29 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"chat_lift": {
+														"type": "object",
+														"properties": {
+															"hours": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															},
+															"text": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"tool": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 80
+															}
+														},
+														"required": [
+															"hours",
+															"text"
+														]
 													}
 												},
 												"required": [
@@ -54096,6 +54760,29 @@
 														"type": "string",
 														"minLength": 1,
 														"maxLength": 300
+													},
+													"chat_lift": {
+														"type": "object",
+														"properties": {
+															"hours": {
+																"type": "integer",
+																"exclusiveMinimum": 0
+															},
+															"text": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"tool": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 80
+															}
+														},
+														"required": [
+															"hours",
+															"text"
+														]
 													}
 												},
 												"required": [
