@@ -55,7 +55,7 @@ export function ApiKeyDialog({
 			{
 				provider: provider.name,
 				apiKey,
-				projectId: takesProject ? projectId.trim() : undefined,
+				projectId: takesProject && projectId.trim() ? projectId.trim() : undefined,
 				returnTo,
 			},
 			{
