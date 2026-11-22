@@ -8,12 +8,19 @@ vi.mock('../../../../lib/logger', () => ({
 }))
 
 const getIntegrationCredential = vi.fn()
+const getCredential = vi.fn()
+const listYoutubeConnections = vi.fn()
 const getValidToken = vi.fn()
 const chargeYoutubeQuota = vi.fn()
 const trackYoutubeToolCalled = vi.fn()
 
 vi.mock('../../../../lib/integrations/lookup', () => ({
 	getIntegrationCredential: (...args: unknown[]) => getIntegrationCredential(...args),
+	getCredential: (...args: unknown[]) => getCredential(...args),
+}))
+vi.mock('../../../../lib/integrations/providers/youtube/connections', () => ({
+	YOUTUBE_PROVIDER: 'youtube',
+	listYoutubeConnections: (...args: unknown[]) => listYoutubeConnections(...args),
 }))
 vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
 	TokenManager: class {
@@ -54,6 +61,10 @@ const urlOf = (call: unknown[]) => new URL(String(call[0]))
 beforeEach(() => {
 	clearYoutubeCache()
 	getIntegrationCredential.mockReset().mockResolvedValue({ id: 'int-1' })
+	getCredential.mockReset()
+	listYoutubeConnections
+		.mockReset()
+		.mockResolvedValue([{ integration_id: 'int-1', account: 'a@example.com' }])
 	getValidToken.mockReset().mockResolvedValue('ya29.token')
 	chargeYoutubeQuota.mockReset().mockResolvedValue(undefined)
 	trackYoutubeToolCalled.mockReset()

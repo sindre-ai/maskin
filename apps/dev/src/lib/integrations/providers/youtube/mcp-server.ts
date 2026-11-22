@@ -11,6 +11,7 @@ import {
 import { logger } from '../../../logger'
 import {
 	type ProposeCommon,
+	type ProposeContext,
 	type ProposeInput,
 	proposeYoutubeWrite,
 } from '../../../youtube/propose'
@@ -53,6 +54,7 @@ const OUTCOME_BY_CODE: Partial<Record<YoutubeErrorCode, YoutubeOutcome>> = {
 	INVALID_INPUT: 'invalid_input',
 	NOT_CONNECTED: 'not_connected',
 	RECONSENT_REQUIRED: 'not_connected',
+	INTEGRATION_REQUIRED: 'invalid_input',
 }
 
 /** A session a flow trigger started, as opposed to a person's chat. Best-effort: false on any failure. */
@@ -115,6 +117,11 @@ export function createYoutubeMcpServer(
  * Every tool goes through this one wrapper, so anything that must happen on every youtube__ call
  * has one place to live. It emits one youtube_tool_called event per call, on a cache hit and on a
  * quota refusal too. The event never throws and carries a category, never an error string.
+ *
+ * It also gives every tool the optional integration_id argument. With several connected Google
+ * accounts a call without it is refused with the list of connections (see getYoutubeIntegrationId),
+ * so no tool can answer for a channel the caller did not name. `run` receives the client context
+ * with that id in it: pass that client on to youtubeRead.
  */
 function registerTool<Shape extends z.ZodRawShape>(
 	server: McpServer,
@@ -122,21 +129,34 @@ function registerTool<Shape extends z.ZodRawShape>(
 	name: YoutubeToolName,
 	description: string,
 	inputSchema: Shape,
-	run: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown>,
+	run: (
+		args: z.infer<z.ZodObject<Shape>>,
+		client: YoutubeClientContext & { sessionId?: string | null },
+	) => Promise<unknown>,
 	/** A write tool only asks: it holds the change for a person and says so in its event. */
 	options: { write?: boolean } = {},
 ) {
 	const toolName = `youtube__${name}`
 	server.registerTool(
 		toolName,
-		{ description, inputSchema, annotations: { readOnlyHint: !options.write } },
+		{
+			description: `${description} Optional integration_id picks one connected YouTube account; needed only when several are connected.`,
+			inputSchema: { ...inputSchema, integration_id: z.string().uuid().optional() },
+			annotations: { readOnlyHint: !options.write },
+		},
 		// The SDK types this callback from the schema shape, which is generic here, so TypeScript
 		// cannot resolve it. run() above is what keeps each tool's arguments typed.
-		(async (args: unknown) => {
+		(async (input: Record<string, unknown> & { integration_id?: string }) => {
+			const { integration_id, ...args } = input
 			let outcome: YoutubeOutcome = options.write ? 'pending_approval' : 'ok'
 			let result: ReturnType<typeof jsonResult> | ReturnType<typeof toolError>
 			try {
-				result = jsonResult(await run(args as z.infer<z.ZodObject<Shape>>))
+				result = jsonResult(
+					await run(args as unknown as z.infer<z.ZodObject<Shape>>, {
+						...ctx,
+						integrationId: integration_id,
+					}),
+				)
 			} catch (err) {
 				outcome = (isYoutubeError(err) && OUTCOME_BY_CODE[err.code]) || 'upstream_error'
 				result = toolError(toolName, err)
@@ -182,15 +202,13 @@ async function getUploadsPlaylistId(client: YoutubeClientContext): Promise<strin
 }
 
 function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
-	const client: YoutubeClientContext = ctx
-
 	registerTool(
 		server,
 		ctx,
 		'get_channel',
 		'Get the connected YouTube channel: title, description, subscriber, view and video counts, and the id of its uploads playlist. Returns the channel as the YouTube Data API returns it. Costs 1 quota unit; repeat reads within 15 minutes are served from a cache at no cost. If the Google account owns several channels, the one chosen at connect time is returned.',
 		{},
-		() =>
+		(_args, client) =>
 			youtubeRead(client, {
 				tool: 'youtube__get_channel',
 				path: 'channels',
@@ -211,7 +229,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 					`1 to ${MAX_VIDEO_IDS} YouTube video ids, for example from youtube__list_recent_videos.`,
 				),
 		},
-		({ video_ids }) => {
+		({ video_ids }, client) => {
 			// Checked here, not in the schema, so a bad call still emits the tool-called event, and
 			// before the client so it never costs quota.
 			if (video_ids.length === 0 || video_ids.some((id) => id.trim() === '')) {
@@ -253,7 +271,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.optional()
 				.describe('The nextPageToken from a previous response, to get the next page.'),
 		},
-		async ({ max_results, page_token }) => {
+		async ({ max_results, page_token }, client) => {
 			const uploadsPlaylistId = await getUploadsPlaylistId(client)
 			const params: Record<string, string> = {
 				part: 'snippet,contentDetails',
@@ -297,7 +315,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.describe('Pages to read in this call.'),
 			page_token: z.string().optional().describe('The next_page_token of an earlier call.'),
 		},
-		(args) => listComments(client, args),
+		(args, client) => listComments(client, args),
 	)
 
 	registerTool(
@@ -315,7 +333,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.describe('Caption language code, for example en. Default: the best track the video has.'),
 			format: z.enum(['srt', 'vtt']).default('srt').describe('Caption file format.'),
 		},
-		(args) => getOwnCaptions(client, args),
+		(args, client) => getOwnCaptions(client, args),
 	)
 
 	registerTool(
@@ -337,7 +355,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.default(MAX_SEARCH_RESULTS)
 				.describe('How many results, 1 to 10. Defaults to 10.'),
 		},
-		({ q, type, max_results }) =>
+		({ q, type, max_results }, client) =>
 			youtubeRead(client, {
 				tool: 'youtube__search',
 				path: 'search',
@@ -360,7 +378,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.max(300)
 				.describe('A channel id, a handle such as @name, or a channel URL.'),
 		},
-		({ channel }) =>
+		({ channel }, client) =>
 			youtubeRead(client, {
 				tool: 'youtube__get_public_channel',
 				path: 'channels',
@@ -383,7 +401,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.max(MAX_VIDEO_IDS)
 				.describe(`Video ids, 1 to ${MAX_VIDEO_IDS}.`),
 		},
-		({ ids }) =>
+		({ ids }, client) =>
 			youtubeRead(client, {
 				tool: 'youtube__get_public_videos',
 				path: 'videos',
@@ -414,8 +432,8 @@ const videoIdField = z.string().min(1).max(32).describe('The video id, for examp
 
 /** Every write tool only asks, and none of them calls Google: see lib/youtube/propose.ts. */
 function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
-	const propose = (common: ProposeCommon, request: ProposeInput) =>
-		proposeYoutubeWrite(ctx, common, request)
+	const propose = (client: ProposeContext, common: ProposeCommon, request: ProposeInput) =>
+		proposeYoutubeWrite(client, common, request)
 	const write = { write: true }
 	const held =
 		'Holds the change for a person to approve and returns the id of the held request. It never changes anything on YouTube itself: the change goes out only after a person approves the card, and the request lapses after 7 days. Quota (50 units) is charged when it runs.'
@@ -442,8 +460,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			category_id: z.string().min(1).max(8).optional().describe('New YouTube category id.'),
 			note: noteField,
 		},
-		({ object_id, note, ...args }) =>
-			propose({ object_id, note }, { tool: 'update_video_metadata', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'update_video_metadata', args }),
 		write,
 	)
 
@@ -458,7 +476,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			file_id: z.string().uuid().describe('The id of the image file in this workspace.'),
 			note: noteField,
 		},
-		({ object_id, note, ...args }) => propose({ object_id, note }, { tool: 'set_thumbnail', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'set_thumbnail', args }),
 		write,
 	)
 
@@ -474,8 +493,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			privacy_status: z.enum(['private', 'unlisted', 'public']).default('private'),
 			note: noteField,
 		},
-		({ object_id, note, ...args }) =>
-			propose({ object_id, note }, { tool: 'create_playlist', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'create_playlist', args }),
 		write,
 	)
 
@@ -496,8 +515,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				.describe('Place in the playlist, counting from 0. Default: the end.'),
 			note: noteField,
 		},
-		({ object_id, note, ...args }) =>
-			propose({ object_id, note }, { tool: 'add_to_playlist', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'add_to_playlist', args }),
 		write,
 	)
 
@@ -512,7 +531,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			text: z.string().min(1).max(5000).describe('The comment, exactly as it should appear.'),
 			note: noteField,
 		},
-		({ object_id, note, ...args }) => propose({ object_id, note }, { tool: 'post_comment', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'post_comment', args }),
 		write,
 	)
 
@@ -528,8 +548,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			text: z.string().min(1).max(5000).describe('The reply, exactly as it should appear.'),
 			note: noteField,
 		},
-		({ object_id, note, ...args }) =>
-			propose({ object_id, note }, { tool: 'reply_to_comment', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'reply_to_comment', args }),
 		write,
 	)
 
@@ -543,7 +563,8 @@ function registerWriteTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			video_id: videoIdField,
 			note: noteField,
 		},
-		({ object_id, note, ...args }) => propose({ object_id, note }, { tool: 'like', args }),
+		({ object_id, note, ...args }, client) =>
+			propose(client, { object_id, note }, { tool: 'like', args }),
 		write,
 	)
 }
@@ -556,7 +577,7 @@ function registerUploadTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		'upload_video',
 		'Prepare the upload of a Maskin video file to the connected YouTube channel. Nothing is sent yet: this holds the request and puts an approval card in front of the workspace owners. When a person approves, the server uploads the video as PRIVATE, always, whatever you ask for. To make it unlisted, public or scheduled you need a second approval with youtube__publish_video. Set ai_generated when the video is AI generated or altered. Returns an action id; read the result with youtube__get_upload_status.',
 		uploadVideoInput,
-		(args) => prepareUpload(ctx, args),
+		(args, client) => prepareUpload(client, args),
 		{ write: true },
 	)
 
@@ -566,7 +587,7 @@ function registerUploadTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		'publish_video',
 		'Ask for a private video on the connected channel to become unlisted, public, or public at a set time (publish_at, ISO 8601 with a time zone, in the future). Nothing is sent yet: a person approves the exact change on a card that shows the time. A time that has passed is refused, because YouTube would publish at once. Returns an action id.',
 		publishVideoInput,
-		(args) => prepareVisibilityChange(ctx, args),
+		(args, client) => prepareVisibilityChange(client, args),
 		{ write: true },
 	)
 
@@ -576,6 +597,6 @@ function registerUploadTools(server: McpServer, ctx: YoutubeMcpContext): void {
 		'get_upload_status',
 		'How an upload or publish request stands: pending approval, approved and uploading (with bytes sent), executed (with the YouTube video id for an upload) or failed (with a result code). Never returns the request itself.',
 		uploadStatusInput,
-		(args) => readUploadStatus(ctx, args),
+		(args, client) => readUploadStatus(client, args),
 	)
 }

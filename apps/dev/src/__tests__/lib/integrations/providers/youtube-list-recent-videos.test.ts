@@ -3,6 +3,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getIntegrationCredential = vi.fn()
+const getCredential = vi.fn()
+const listYoutubeConnections = vi.fn()
 const getValidToken = vi.fn()
 const chargeYoutubeQuota = vi.fn()
 
@@ -14,6 +16,11 @@ vi.mock('../../../../lib/analytics/youtube-events', () => ({
 }))
 vi.mock('../../../../lib/integrations/lookup', () => ({
 	getIntegrationCredential: (...args: unknown[]) => getIntegrationCredential(...args),
+	getCredential: (...args: unknown[]) => getCredential(...args),
+}))
+vi.mock('../../../../lib/integrations/providers/youtube/connections', () => ({
+	YOUTUBE_PROVIDER: 'youtube',
+	listYoutubeConnections: (...args: unknown[]) => listYoutubeConnections(...args),
 }))
 vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
 	TokenManager: class {
@@ -56,6 +63,10 @@ describe('youtube__list_recent_videos through the real client', () => {
 	beforeEach(() => {
 		clearYoutubeCache()
 		getIntegrationCredential.mockReset().mockResolvedValue({ id: 'int-1' })
+		getCredential.mockReset()
+		listYoutubeConnections
+			.mockReset()
+			.mockResolvedValue([{ integration_id: 'int-1', account: 'a@example.com' }])
 		getValidToken.mockReset().mockResolvedValue('ya29.token')
 		chargeYoutubeQuota.mockReset().mockResolvedValue(undefined)
 		fetchSpy = vi
