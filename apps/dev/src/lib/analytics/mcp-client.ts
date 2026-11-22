@@ -13,6 +13,7 @@ export const MCP_CLIENTS = [
 	'vscode',
 	'claude_desktop',
 	'claude_ai',
+	'chatgpt',
 	'other',
 ] as const
 
@@ -47,6 +48,7 @@ export function classifyMcpClient(userAgent: string | null | undefined): McpClie
 // Only allowlisted clients get a label of their own, so the grant can never inject free text.
 const OAUTH_CLIENT_HOSTS: Readonly<Record<string, McpClient>> = {
 	'claude.ai': 'claude_ai',
+	'chatgpt.com': 'chatgpt',
 }
 
 export function oauthClientLabel(clientId: string): McpClient {
