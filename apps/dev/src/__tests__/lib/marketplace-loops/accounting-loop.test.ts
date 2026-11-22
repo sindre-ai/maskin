@@ -97,6 +97,47 @@ describe('Accounting loop definition', () => {
 		expect(actorTexts().join('\n')).toMatch(/do not try to sign in yourself/i)
 	})
 
+	// The allowed list has no field in the Custom tools form, so the text is the only way an owner
+	// learns the call and the names. Names are Dinero's own, read from its live tool list.
+	it('names the call and the allowed Dinero tools in the install text', () => {
+		const allowed = [
+			'CreatePurchaseVoucher',
+			'upload_file',
+			'list_organizations',
+			'list_accounting_years',
+			'get_chart_of_accounts',
+			'list_purchase_accounts',
+			'list_vat_types',
+			'list_contacts',
+			'get_contact',
+			'GetContactByName',
+			'list_vouchers',
+			'get_purchase_voucher',
+			'list_files',
+			'list_voucher_file_cards',
+			'get_purchase_drafts_for_file',
+			'SearchBankTransactions',
+		]
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(check).toMatch(/PUT \/api\/custom-mcp-servers\/\{id\}/)
+		expect(check).toMatch(/add allowed_tools to the server/)
+		for (const name of allowed) {
+			expect(check).toContain(name)
+			expect(prompt).toContain(name)
+			expect(ACCOUNTING_LOOP.description).toContain(name)
+		}
+		// None of the tools that book, change, delete, pay or send is on the list the text gives.
+		for (const name of ['CreateFinanceVoucher', 'BookVoucher', 'book_finance_voucher']) {
+			expect(ACCOUNTING_LOOP.description).not.toContain(name)
+			expect(prompt).not.toContain(name)
+		}
+		// The check still stops on a tool that books, and on any Dinero tool off the list.
+		expect(check).toMatch(/every Dinero tool you have is on the list/)
+		expect(check).toMatch(/A tool that books, changes or deletes is offered, or a Dinero tool/)
+	})
+
 	it('has no key-based install step left', () => {
 		const all = [ACCOUNTING_LOOP.description, ...actorTexts(), ...skillTexts()].join('\n')
 		expect(all).not.toMatch(/client ID|client secret|Connect Dinero form|no browser sign-in/i)
