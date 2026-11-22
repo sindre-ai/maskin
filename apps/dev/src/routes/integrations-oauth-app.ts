@@ -193,7 +193,7 @@ app.openapi(putAppRoute, (async (c) => {
 		)
 	}
 	if (!publicClient && secret === undefined) {
-		return c.json(createApiError('BAD_REQUEST', 'The app secret is required'), 400)
+		return c.json(createApiError('BAD_REQUEST', 'Invalid fields: clientSecret'), 400)
 	}
 	const valueSpec = guarded.oauth.customerValue
 	let value: string | undefined
