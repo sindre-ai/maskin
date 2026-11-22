@@ -79,6 +79,7 @@ describe('Accounting loop definition', () => {
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
 		expect(check).toMatch(/add Dinero's own server as a custom tool/)
 		expect(check).toMatch(/only the one company/)
+		expect(check).toMatch(/needs someone technical/)
 		expect(check).toMatch(/Limit the tool to reading and saving drafts/)
 		expect(check).toMatch(/read and write access/)
 		expect(check).toMatch(/at the start of every job/i)
@@ -89,6 +90,7 @@ describe('Accounting loop definition', () => {
 	it('says the Dinero sign-in runs out and the flow cannot renew it', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(/early version/)
 		expect(check).toMatch(/runs out after about an hour/)
 		expect(check).toMatch(/cannot renew it/)
 		expect(ACCOUNTING_LOOP.description).toMatch(/runs out after about an hour/)
