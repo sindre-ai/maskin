@@ -9,6 +9,7 @@ import {
 	config as azureDevopsConfig,
 	parseTokenResponse as azureDevopsParseTokenResponse,
 } from './providers/azure-devops/config'
+import { config as boxConfig } from './providers/box/config'
 import { config as calendlyConfig } from './providers/calendly/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clayConfig } from './providers/clay/config'
@@ -50,6 +51,7 @@ import { config as googleSearchConsoleConfig } from './providers/google-search-c
 import { startGscBackfill } from './providers/google-search-console/sync'
 import { config as granolaConfig } from './providers/granola/config'
 import { config as hexConfig } from './providers/hex/config'
+import { config as latticeConfig } from './providers/lattice/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -294,6 +296,14 @@ providers.set('zoom', {
 
 providers.set('salesforce', {
 	config: salesforceConfig,
+})
+
+providers.set('box', {
+	config: boxConfig,
+})
+
+providers.set('lattice', {
+	config: latticeConfig,
 })
 
 providers.set('fireflies', {

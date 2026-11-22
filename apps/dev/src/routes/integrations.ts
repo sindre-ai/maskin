@@ -61,6 +61,7 @@ import { frontendUrlForReturn, sanitizeReturnPath } from '../lib/integrations/oa
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
+import { BOX_PROVIDER } from '../lib/integrations/providers/box/config'
 import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
 import { DINERO_PROVIDER } from '../lib/integrations/providers/dinero/config'
 import {
@@ -83,6 +84,7 @@ import {
 } from '../lib/integrations/providers/google-drive/watch'
 import { processDriveWebhook } from '../lib/integrations/providers/google-drive/webhook-handler'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { LATTICE_PROVIDER } from '../lib/integrations/providers/lattice/config'
 import { MEETING_NOTES_PROVIDERS } from '../lib/integrations/providers/meeting-notes'
 import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
@@ -298,6 +300,8 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	[AZURE_DEVOPS_PROVIDER, FLAGS.AZURE_DEVOPS],
 	[ZOOM_PROVIDER, FLAGS.ZOOM],
 	[SALESFORCE_PROVIDER, FLAGS.SALESFORCE],
+	[BOX_PROVIDER, FLAGS.CUSTOMER_APP_TOOLS],
+	[LATTICE_PROVIDER, FLAGS.CUSTOMER_APP_TOOLS],
 	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
 		name,
 		FLAGS.MEETING_NOTES_INTEGRATIONS,
