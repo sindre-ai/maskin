@@ -6,6 +6,8 @@ import { TestWrapper } from '../../setup'
 
 const connectMutate = vi.fn()
 const saveMutate = vi.fn()
+const removeMutate = vi.fn()
+let removeError: Error | null = null
 let savedApp: { configured: boolean; clientId?: string; callbackUrl: string } = {
 	configured: false,
 	callbackUrl: 'https://api.example.com/api/integrations/salesforce/callback',
@@ -16,6 +18,13 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useDisconnectIntegration: () => ({ mutate: vi.fn(), isPending: false }),
 	useLinkableGithubInstallations: () => ({ data: [], isLoading: false }),
 	useOAuthApp: () => ({ data: savedApp }),
+	useDeleteOAuthApp: () => ({
+		mutate: removeMutate,
+		reset: vi.fn(),
+		isPending: false,
+		isError: !!removeError,
+		error: removeError,
+	}),
 	useSaveOAuthApp: () => ({
 		mutate: saveMutate,
 		reset: vi.fn(),
@@ -56,6 +65,8 @@ describe('Connect for a tool that wants the customer own app', () => {
 	beforeEach(() => {
 		connectMutate.mockClear()
 		saveMutate.mockClear()
+		removeMutate.mockClear()
+		removeError = null
 		savedApp = {
 			configured: false,
 			callbackUrl: 'https://api.example.com/api/integrations/salesforce/callback',
@@ -93,6 +104,43 @@ describe('Connect for a tool that wants the customer own app', () => {
 		expect(connectMutate).toHaveBeenCalledWith({ provider: 'salesforce', returnTo: undefined })
 		await userEvent.click(screen.getByRole('button', { name: 'Change app' }))
 		expect(await screen.findByText('Change the Salesforce app')).toBeInTheDocument()
+	})
+
+	it('offers Remove only once an app is saved, and asks before deleting it', async () => {
+		renderRow(salesforce)
+		await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
+		await screen.findByText('Connect Salesforce')
+		expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
+	})
+
+	it('removes the saved app after a confirm', async () => {
+		savedApp = { ...savedApp, configured: true, clientId: '3MVG9abc' }
+		renderRow(salesforce)
+		await userEvent.click(screen.getByRole('button', { name: 'Change app' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+		expect(removeMutate).not.toHaveBeenCalled()
+		await userEvent.click(screen.getByRole('button', { name: 'Remove app' }))
+		expect(removeMutate).toHaveBeenCalledTimes(1)
+	})
+
+	it('keeps the app when the confirm is declined', async () => {
+		savedApp = { ...savedApp, configured: true, clientId: '3MVG9abc' }
+		renderRow(salesforce)
+		await userEvent.click(screen.getByRole('button', { name: 'Change app' }))
+		await userEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+		await userEvent.click(screen.getByRole('button', { name: 'Keep' }))
+		expect(removeMutate).not.toHaveBeenCalled()
+		expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+	})
+
+	it('shows the refusal while the tool is still connected', async () => {
+		savedApp = { ...savedApp, configured: true, clientId: '3MVG9abc' }
+		removeError = new Error(
+			'Disconnect Salesforce first: it still signs in and renews with this app',
+		)
+		renderRow(salesforce)
+		await userEvent.click(screen.getByRole('button', { name: 'Change app' }))
+		expect(await screen.findByRole('alert')).toHaveTextContent('Disconnect Salesforce first')
 	})
 
 	it('leaves every other tool alone: Connect signs in and nothing asks for an app', async () => {
