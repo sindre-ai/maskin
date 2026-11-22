@@ -78,12 +78,7 @@ export function explainFailure(err: unknown): string {
 		}
 		if (err.status === 404) return 'e-conomic does not know that address or record.'
 		if (err.status === 429) return 'e-conomic says too many requests. Wait a minute and try again.'
-		if (err.status === 0) return err.message
-		const hint =
-			err.body && typeof err.body === 'object'
-				? str((err.body as Record<string, unknown>).message)
-				: undefined
-		return `${err.message}${hint ? `: ${hint}` : ''}`
+		return err.message
 	}
 	return err instanceof Error ? err.message : 'Something went wrong'
 }

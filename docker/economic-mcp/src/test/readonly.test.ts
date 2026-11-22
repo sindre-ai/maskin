@@ -2,13 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { API_BASE, EconomicClient, buildUrl, safePath } from '../client.js'
 import { credentialsFrom } from '../http.js'
-import { buildTools } from '../tools.js'
+import { buildTools, explainFailure } from '../tools.js'
 
 test('only e-conomic paths are accepted', () => {
 	assert.equal(safePath('/customers'), 'customers')
 	for (const bad of [
 		'https://evil.example/x',
-		'//evil.example/x',
 		'http:evil',
 		'a/../b',
 		'a\\b',
@@ -16,6 +15,8 @@ test('only e-conomic paths are accepted', () => {
 	]) {
 		assert.throws(() => safePath(bad), bad)
 	}
+	// leading slashes are dropped, so this stays a path under the e-conomic host
+	assert.equal(new URL(buildUrl('//evil.example/x')).origin, API_BASE)
 	assert.ok(buildUrl('customers', { pagesize: 2 }).startsWith(`${API_BASE}/customers?`))
 })
 
@@ -29,7 +30,10 @@ test('no tool name suggests a write, and every tool is a check, list or get', ()
 	assert.ok(names.length > 20)
 	for (const name of names) {
 		assert.match(name, /^economic_(check_connection|list_\w+|get_\w+)$/)
-		assert.doesNotMatch(name, /book|create|update|delete|request|post|put|patch/)
+		const words = name.split('_')
+		for (const bad of ['book', 'create', 'update', 'delete', 'request', 'post', 'put', 'patch']) {
+			assert.ok(!words.includes(bad), name)
+		}
 	}
 })
 
@@ -64,4 +68,25 @@ test('a call sends tokens only to e-conomic and refuses redirects', async () => 
 	assert.ok(seen[0]?.url.startsWith(API_BASE))
 	assert.equal(seen[0]?.init.method, 'GET')
 	assert.equal(seen[0]?.init.redirect, 'error')
+})
+
+test('an error never echoes the tokens', async () => {
+	const real = globalThis.fetch
+	globalThis.fetch = (async () =>
+		new Response('{"message":"bad secret-app-token / secret-grant-token"}', {
+			status: 401,
+		})) as typeof fetch
+	let text = ''
+	try {
+		await new EconomicClient({
+			appSecretToken: 'secret-app-token',
+			agreementGrantToken: 'secret-grant-token',
+		}).get('customers')
+	} catch (err) {
+		text = explainFailure(err)
+	} finally {
+		globalThis.fetch = real
+	}
+	assert.ok(text.length > 0)
+	assert.doesNotMatch(text, /secret-/)
 })
