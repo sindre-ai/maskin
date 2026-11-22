@@ -274,9 +274,9 @@ describe('seedMarketplaceIfEmpty', () => {
 		expect(new Set(slugs).size).toBe(ALL_PACKAGES.length)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
-		// Market Watch is seeded first, Product Discovery second, Meeting Loop third — assert the
+		// Accounting is seeded first, Market Watch second, Product Discovery third — assert the
 		// discovery actor/trigger counts match its bundle.
-		const discoveryItems = itemInserts[1] as Array<{ itemType: string; sourceItemId: string }>
+		const discoveryItems = itemInserts[2] as Array<{ itemType: string; sourceItemId: string }>
 		expect(discoveryItems.filter((i) => i.itemType === 'actor').length).toBe(
 			DISCOVERY_ACTOR_IDS.length,
 		)
