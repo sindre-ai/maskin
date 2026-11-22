@@ -70,6 +70,7 @@ describe('maskin-youtube tool server', () => {
 			'youtube__get_public_channel',
 			'youtube__get_public_videos',
 			'youtube__get_upload_status',
+			'youtube__get_video_stats',
 			'youtube__like',
 			'youtube__list_comments',
 			'youtube__post_comment',

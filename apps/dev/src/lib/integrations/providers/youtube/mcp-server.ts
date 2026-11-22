@@ -18,7 +18,7 @@ import { getOwnCaptions } from './captions'
 import { parseChannelRef } from './channel-ref'
 import { type YoutubeClientContext, youtubeRead } from './client'
 import { COMMENTS_MAX_PAGES, COMMENTS_MAX_PER_PAGE, listComments } from './comments'
-import { type YoutubeErrorCode, isYoutubeError } from './errors'
+import { YoutubeError, type YoutubeErrorCode, isYoutubeError } from './errors'
 import {
 	prepareUpload,
 	prepareVisibilityChange,
@@ -170,6 +170,42 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
 				units: 1,
 			}),
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'get_video_stats',
+		'Get details and statistics for up to 50 videos by id: title, description, publish time, view, like and comment counts, and duration. Returns the videos as the YouTube Data API returns them, with no computed rates or rankings. Costs 1 quota unit per call whatever the number of ids; repeat reads of the same ids within 15 minutes are served from a cache at no cost.',
+		{
+			video_ids: z
+				.array(z.string())
+				.describe(
+					`1 to ${MAX_VIDEO_IDS} YouTube video ids, for example from youtube__list_recent_videos.`,
+				),
+		},
+		({ video_ids }) => {
+			// Checked here, not in the schema, so a bad call still emits the tool-called event, and
+			// before the client so it never costs quota.
+			if (video_ids.length === 0 || video_ids.some((id) => id.trim() === '')) {
+				throw new YoutubeError({
+					code: 'INVALID_INPUT',
+					message: 'video_ids must hold at least one non-empty video id.',
+				})
+			}
+			if (video_ids.length > MAX_VIDEO_IDS) {
+				throw new YoutubeError({
+					code: 'INVALID_INPUT',
+					message: `video_ids holds ${video_ids.length} ids; the most one call takes is ${MAX_VIDEO_IDS}. Split the list and call again.`,
+				})
+			}
+			return youtubeRead(client, {
+				tool: 'youtube__get_video_stats',
+				path: 'videos',
+				params: { part: 'snippet,statistics,contentDetails', id: video_ids.join(',') },
+				units: 1,
+			})
+		},
 	)
 
 	registerTool(
