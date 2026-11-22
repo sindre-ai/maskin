@@ -72,7 +72,7 @@ const optionalDesktopAgentId = z
 	.string()
 	.uuid()
 	.optional()
-	.describe('Agent whose computer; agents omit it (own computer), a person must pass it.')
+	.describe('Omit for your own computer (a person must pass it).')
 
 // Only the keys an agent writes are spelled out. Card and other server-owned keys still pass
 // through (passthrough) so the handler can reject card keys by name, and the API validates the
@@ -88,11 +88,9 @@ const agentMessageMetadataSchema = messageMetadataSchema
 	})
 	.passthrough()
 
-const optionalWorkspaceId = z
-	.string()
-	.uuid()
-	.optional()
-	.describe('Defaults to the current workspace.')
+// No description on purpose: it sits on about 108 tools and the name says it, so a sentence here
+// costs about 5 KB of every tool list. An omitted workspace_id is the current workspace.
+const optionalWorkspaceId = z.string().uuid().optional()
 
 // Used by writes/reads that create or enumerate ambiguously-scoped
 // resources (a brand-new loop with no existing id to inherit a workspace
