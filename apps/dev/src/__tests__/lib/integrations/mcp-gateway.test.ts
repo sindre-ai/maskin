@@ -60,6 +60,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'stripe',
 			'supabase',
 			'ubersuggest',
+			'uniconta',
 			'vercel',
 			'webflow',
 			'zapier',
