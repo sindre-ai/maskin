@@ -72,17 +72,24 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// Install step from the spec: the vendor address with no key and no Authorization header, one
-	// sign-in, a user that holds only the right company, and a check on every first run.
+	// Install step from the spec: the owner's own Dinero integration keys saved once in the connection
+	// form, no browser sign-in and no server address, and a check on every first run.
 	it('tells the owner how to connect Dinero and what the first run checks', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
-		expect(check).toContain('https://mcp.dinero.dk/')
-		expect(check).toMatch(/do not add an API key and do not add an Authorization header/i)
-		expect(check).toMatch(/every company on that user/)
-		expect(check).toMatch(/holds only the company/)
+		expect(check).toMatch(/client ID, the client secret and the API key/)
+		expect(check).toMatch(/Pro or Total plan/)
+		expect(check).toMatch(/one company/)
+		expect(check).toMatch(/no browser sign-in and no server address/)
+		expect(check).toMatch(/read and write access/)
 		expect(check).toMatch(/at the start of every job/i)
 		expect(actorTexts().join('\n')).toMatch(/connection check first/)
+	})
+
+	it('never sees or asks for the keys', () => {
+		const prompt = actorTexts().join('\n')
+		expect(prompt).toMatch(/never see the owner's Dinero keys and never ask for them in chat/)
+		expect(skillTexts().join('\n')).toMatch(/Never paste them in the chat/)
 	})
 
 	it('is draft only and takes receipts from uploaded files only', () => {
@@ -105,7 +112,7 @@ describe('Accounting loop definition', () => {
 		for (const text of texts) {
 			expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
 			expect(text).not.toMatch(/—|assum|Lane \d|Sebastian|Magnus|Maskin|bet\b/i)
-			expect(text).not.toMatch(/https?:\/\/(?!mcp\.dinero\.dk)/)
+			expect(text).not.toMatch(/https?:\/\//)
 			expect(text).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
 		}
 	})
