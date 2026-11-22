@@ -2,13 +2,16 @@ import type { ResolvedProvider } from './types'
 
 import { config as airtableConfig } from './providers/airtable/config'
 import { config as amplitudeConfig } from './providers/amplitude/config'
+import { config as apolloConfig } from './providers/apollo/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import {
 	config as azureDevopsConfig,
 	parseTokenResponse as azureDevopsParseTokenResponse,
 } from './providers/azure-devops/config'
+import { config as calendlyConfig } from './providers/calendly/config'
 import { config as canvaConfig } from './providers/canva/config'
+import { config as clayConfig } from './providers/clay/config'
 import { config as clickupConfig } from './providers/clickup/config'
 import { config as cloudflareConfig } from './providers/cloudflare/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
@@ -25,6 +28,7 @@ import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
+import { config as gongConfig } from './providers/gong/config'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import { config as googleDriveConfig } from './providers/google-drive/config'
@@ -52,6 +56,7 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import { config as makeConfig } from './providers/make/config'
 import {
 	config as microsoftConfig,
 	parseTokenResponse as microsoftParseTokenResponse,
@@ -60,11 +65,13 @@ import { resolveExternalId as microsoftResolveExternalId } from './providers/mic
 import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
+import { config as mondayConfig } from './providers/monday/config'
 import { config as neonConfig } from './providers/neon/config'
 import { config as netlifyConfig } from './providers/netlify/config'
 import { config as newRelicConfig } from './providers/new-relic/config'
 import { config as notionConfig } from './providers/notion/config'
 import { config as otterConfig } from './providers/otter/config'
+import { config as outreachConfig } from './providers/outreach/config'
 import { config as pagerdutyConfig } from './providers/pagerduty/config'
 import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
@@ -95,6 +102,7 @@ import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as zapierConfig } from './providers/zapier/config'
 import { config as zoomConfig } from './providers/zoom/config'
+import { config as zoominfoConfig } from './providers/zoominfo/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -330,6 +338,38 @@ providers.set('retool', {
 
 providers.set('hex', {
 	config: hexConfig,
+})
+
+providers.set('apollo', {
+	config: apolloConfig,
+})
+
+providers.set('zoominfo', {
+	config: zoominfoConfig,
+})
+
+providers.set('outreach', {
+	config: outreachConfig,
+})
+
+providers.set('gong', {
+	config: gongConfig,
+})
+
+providers.set('clay', {
+	config: clayConfig,
+})
+
+providers.set('calendly', {
+	config: calendlyConfig,
+})
+
+providers.set('monday', {
+	config: mondayConfig,
+})
+
+providers.set('make', {
+	config: makeConfig,
 })
 
 providers.set('stripe', {
