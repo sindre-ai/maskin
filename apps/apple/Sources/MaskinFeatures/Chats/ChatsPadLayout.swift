@@ -4,12 +4,12 @@ import SwiftUI
 
 /// How the iPad Chats screen lays out its two columns, from the window's shape alone.
 ///
-/// Landscape shows the list (430 pt) beside the thread. Portrait has room for only about 300 pt of
-/// thread next to a 360 pt list, so once a chat is open the list steps aside and the panel button in
-/// the thread's header brings it back. With no chat open the list shows.
+/// Landscape shows the list (430 pt) beside the thread. Portrait shows it too, 300 pt wide, with the
+/// thread taking the rest: opening a chat leaves the list where it is, so the next chat is one tap
+/// away. Only a narrow window (Slide Over, a one-third split) collapses to one column.
 enum ChatsPadLayout {
 	static let landscapeListWidth: CGFloat = 430
-	static let portraitListWidth: CGFloat = 360
+	static let portraitListWidth: CGFloat = 300
 
 	/// Portrait is a window taller than it is wide (this also covers a narrow split-screen window).
 	static func isPortrait(_ size: CGSize) -> Bool { size.width < size.height }
@@ -19,14 +19,21 @@ enum ChatsPadLayout {
 		portrait ? portraitListWidth : landscapeListWidth
 	}
 
-	/// Which columns show when the window turns or a chat is opened or closed.
-	static func visibility(portrait: Bool, hasSelection: Bool) -> NavigationSplitViewVisibility {
-		portrait && hasSelection ? .detailOnly : .all
+	/// Which columns show when the window turns or a chat is opened or closed. At regular width the
+	/// list always shows; a narrow window keeps one column at a time, so an open chat takes it.
+	static func visibility(portrait: Bool, hasSelection: Bool, regularWidth: Bool) -> NavigationSplitViewVisibility {
+		if regularWidth { return .all }
+		return portrait && hasSelection ? .detailOnly : .all
 	}
 
 	/// What the panel button does: hide the list when it shows, show it when it is hidden.
 	static func toggled(_ current: NavigationSplitViewVisibility) -> NavigationSplitViewVisibility {
 		current == .detailOnly ? .all : .detailOnly
+	}
+
+	/// The panel button only exists where the list can be hidden: landscape at regular width.
+	static func showsListToggle(isPad: Bool, regularWidth: Bool, portrait: Bool) -> Bool {
+		isPad && regularWidth && !portrait
 	}
 }
 
