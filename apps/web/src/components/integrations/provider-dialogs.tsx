@@ -16,6 +16,7 @@ import {
 	useCompleteIntegration,
 	useConnectDeepdots,
 	useConnectIntegration,
+	useDeleteOAuthApp,
 	useLinkGithubInstallation,
 	useLinkableGithubInstallations,
 	useOAuthApp,
@@ -207,8 +208,10 @@ export function OwnAppDialog({
 }) {
 	const { data: app } = useOAuthApp(workspaceId, provider.name, { enabled: open })
 	const save = useSaveOAuthApp(workspaceId, provider.name)
+	const remove = useDeleteOAuthApp(workspaceId, provider.name)
 	const connect = useConnectIntegration(workspaceId)
 	const canWrite = useCanWrite()
+	const [confirmingRemove, setConfirmingRemove] = useState(false)
 	const [clientId, setClientId] = useState('')
 	const [clientSecret, setClientSecret] = useState('')
 	const [copied, setCopied] = useState(false)
@@ -218,9 +221,18 @@ export function OwnAppDialog({
 	const close = () => {
 		setClientId('')
 		setClientSecret('')
+		setConfirmingRemove(false)
 		save.reset()
+		remove.reset()
 		connect.reset()
 		onClose()
+	}
+	const handleRemove = () => {
+		if (!canWrite) return
+		remove.mutate(undefined, {
+			onSuccess: close,
+			onError: () => setConfirmingRemove(false),
+		})
 	}
 	const handleSave = () => {
 		if (!canWrite || !clientId.trim() || !clientSecret) return
@@ -244,7 +256,13 @@ export function OwnAppDialog({
 		setCopied(true)
 		setTimeout(() => setCopied(false), 2000)
 	}
-	const error = save.isError ? save.error : connect.isError ? connect.error : null
+	const error = save.isError
+		? save.error
+		: remove.isError
+			? remove.error
+			: connect.isError
+				? connect.error
+				: null
 
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && close()}>
@@ -315,17 +333,58 @@ export function OwnAppDialog({
 							{error.message}
 						</p>
 					)}
-					<div className="flex justify-end gap-2">
-						<Button type="button" variant="ghost" onClick={close}>
-							Cancel
-						</Button>
-						<Button
-							type="submit"
-							disabled={!clientId.trim() || !clientSecret || pending || !canWrite}
-						>
-							{pending ? 'Saving…' : connected || replacing ? 'Save' : 'Save and connect'}
-						</Button>
-					</div>
+					{confirmingRemove ? (
+						<div className="space-y-3 rounded-md border p-3">
+							<p className="text-sm">
+								Remove the saved {provider.displayName} app? Its id and secret are deleted, and you
+								will paste them again to connect.
+							</p>
+							<div className="flex justify-end gap-2">
+								<Button
+									type="button"
+									variant="ghost"
+									onClick={() => setConfirmingRemove(false)}
+									disabled={remove.isPending}
+								>
+									Keep
+								</Button>
+								<Button
+									type="button"
+									variant="destructive"
+									onClick={handleRemove}
+									disabled={remove.isPending || !canWrite}
+								>
+									{remove.isPending ? 'Removing…' : 'Remove app'}
+								</Button>
+							</div>
+						</div>
+					) : (
+						<div className="flex justify-end gap-2">
+							{replacing && (
+								<Button
+									type="button"
+									variant="ghost"
+									className="mr-auto text-destructive"
+									onClick={() => {
+										remove.reset()
+										setConfirmingRemove(true)
+									}}
+									disabled={pending || !canWrite}
+								>
+									Remove
+								</Button>
+							)}
+							<Button type="button" variant="ghost" onClick={close}>
+								Cancel
+							</Button>
+							<Button
+								type="submit"
+								disabled={!clientId.trim() || !clientSecret || pending || !canWrite}
+							>
+								{pending ? 'Saving…' : connected || replacing ? 'Save' : 'Save and connect'}
+							</Button>
+						</div>
+					)}
 				</form>
 			</DialogContent>
 		</Dialog>
