@@ -131,6 +131,7 @@ import {
 	sendEphemeralResponse,
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
+import { UNICONTA_PROVIDER } from '../lib/integrations/providers/uniconta/config'
 import { ZOOM_PROVIDER } from '../lib/integrations/providers/zoom/config'
 import { getProvider, listProviders } from '../lib/integrations/registry'
 import { integrationScopeGaps, parseScopes } from '../lib/integrations/scope-drift'
@@ -301,6 +302,7 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 		name,
 		FLAGS.SALES_AUTOMATION_INTEGRATIONS,
 	]),
+	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
 ])
 
 const providerVisible = (providerName: string, actorId: string | undefined): boolean => {

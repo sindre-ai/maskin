@@ -230,6 +230,15 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
+	/**
+	 * Gates connecting Uniconta (task
+	 * [Connect Uniconta to the accounting flow](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e303850f-6315-428b-bb65-b764f7729314)).
+	 * Actor-scoped, read by the integrations routes: off means Uniconta is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Uniconta sign-in has worked and Uniconta is on for everyone.
+	 */
+	UNICONTA_CONNECT: 'uniconta-connect',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

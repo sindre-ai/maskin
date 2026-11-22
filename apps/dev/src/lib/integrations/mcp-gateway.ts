@@ -73,6 +73,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'stripe',
 	'supabase',
 	'ubersuggest',
+	'uniconta',
 	'vercel',
 	'webflow',
 	'zapier',
