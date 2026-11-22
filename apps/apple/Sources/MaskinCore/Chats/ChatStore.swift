@@ -764,7 +764,7 @@ public final class ChatStore {
 			return true
 		} catch {
 			// A cancelled request is the view going away, not the server failing.
-			if error is CancellationError || Task.isCancelled { return false }
+			if RemoteFailure.isCancellation(error) || Task.isCancelled { return false }
 			freshness.revalidateFailed()
 			isCatchingUp = false
 			if confirmed.isEmpty {
@@ -787,6 +787,8 @@ public final class ChatStore {
 			merge(page.messages)
 			hasEarlier = page.hasMore
 		} catch {
+			// A cancelled page is superseded by the next load; only a real failure is shown.
+			if RemoteFailure.isCancellation(error) || Task.isCancelled { return }
 			notice = Self.message(error)
 		}
 	}
@@ -838,7 +840,7 @@ public final class ChatStore {
 			} catch {
 				freshness.revalidateFailed()
 				isCatchingUp = false
-				if !(error is CancellationError), !Task.isCancelled, !confirmed.isEmpty {
+				if !RemoteFailure.isCancellation(error), !Task.isCancelled, !confirmed.isEmpty {
 					syncProblem = Self.message(error)
 				}
 			}
@@ -1252,9 +1254,11 @@ public final class ChatStore {
 	) -> String? {
 		var metadata = extra
 		if let recipient {
-			metadata = ChatSendMetadata(
-				mentions: [recipient.id], questionAnswer: extra?.questionAnswer,
-				hiddenFromChat: extra?.hiddenFromChat, cardAnswer: extra?.cardAnswer)
+			// The addressee comes first, then anyone the writer tagged; attachments ride along.
+			var merged = extra ?? ChatSendMetadata()
+			let tagged = (extra?.mentions ?? []).filter { $0 != recipient.id }
+			merged.mentions = Array(([recipient.id] + tagged).prefix(ChatSendMetadata.maxMentions))
+			metadata = merged
 		}
 		return send(
 			text, metadata: metadata, thread: ChatSendThread(rootID: rootID, alsoInChannel: alsoInChannel))

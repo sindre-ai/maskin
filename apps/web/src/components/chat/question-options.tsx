@@ -6,8 +6,9 @@ import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Check, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { QUESTION_DETAIL_LINES, splitQuestionText } from '@/lib/question-text-split'
+import { Check, ChevronDown, X } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 interface QuestionOptionsProps {
 	conversationId: string
@@ -169,6 +170,7 @@ export function QuestionOptions({
 		<div className="mt-2 flex flex-col gap-3">
 			{question.questions.map((q, index) => {
 				const chosen = picked[index] ?? []
+				const text = splitQuestionText(q.question)
 				return (
 					// Index as key for the same reason the state is index-keyed: headers
 					// are not unique, and the list is a fixed snapshot from one immutable
@@ -176,7 +178,8 @@ export function QuestionOptions({
 					// biome-ignore lint/suspicious/noArrayIndexKey: headers are not unique
 					<fieldset key={index} className="flex flex-col gap-1.5 border-0 p-0">
 						<legend className="eyebrow">{q.header}</legend>
-						<p className="text-[13.5px] leading-[1.5] text-foreground">{q.question}</p>
+						<p className="text-[13.5px] leading-[1.5] text-foreground">{text.lead}</p>
+						{text.detail ? <CutText text={text.detail} lines={QUESTION_DETAIL_LINES} /> : null}
 						<ViewerTooltip className="block">
 							{/* Options that come with a reason are full-width rows (label, then the reason),
 							    so the card says everything the agent wrote; plain options stay chips. */}
@@ -315,6 +318,70 @@ export function QuestionOptions({
 			) : null}
 			{isError ? (
 				<p className="text-[10.5px] text-destructive">Couldn't send that. Try again.</p>
+			) : null}
+		</div>
+	)
+}
+
+/**
+ * Running text cut after `lines` lines, with Show all / Show less when there is more. Text that
+ * fits shows in full with no button. The cut is the browser's own clamp, and whether it cut
+ * anything is read from the laid-out text, so no character count stands in for the layout.
+ */
+function CutText({ text, lines }: { text: string; lines: number }) {
+	const [expanded, setExpanded] = useState(false)
+	const [isCut, setIsCut] = useState(false)
+	const ref = useRef<HTMLParagraphElement>(null)
+
+	// Only measured while clamped, so once opened the button stays for Show less.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new text needs measuring again
+	useLayoutEffect(() => {
+		const el = ref.current
+		if (expanded || !el) return
+		const measure = () => setIsCut(el.scrollHeight > el.clientHeight + 1)
+		measure()
+		if (typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(measure)
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [expanded, text])
+
+	return (
+		<div className="flex flex-col items-start">
+			<p
+				ref={ref}
+				data-question-detail=""
+				data-cut={!expanded}
+				className="w-full whitespace-pre-wrap break-words text-[13px] leading-[1.5] text-foreground"
+				style={
+					expanded
+						? undefined
+						: {
+								display: '-webkit-box',
+								WebkitBoxOrient: 'vertical',
+								WebkitLineClamp: lines,
+								overflow: 'hidden',
+							}
+				}
+			>
+				{text}
+			</p>
+			{isCut ? (
+				<Button
+					type="button"
+					variant="link"
+					size="sm"
+					className="h-auto gap-1 px-0 py-1 text-xs"
+					aria-expanded={expanded}
+					onClick={() => setExpanded((open) => !open)}
+				>
+					{expanded ? 'Show less' : 'Show all'}
+					<ChevronDown
+						size={12}
+						aria-hidden
+						className={cn('transition-transform', expanded && 'rotate-180')}
+					/>
+				</Button>
 			) : null}
 		</div>
 	)

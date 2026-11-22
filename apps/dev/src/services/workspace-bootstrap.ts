@@ -24,7 +24,6 @@ import {
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
@@ -812,7 +811,7 @@ export async function provisionWorkspace(params: {
 		const ownedPlans = await ownedWorkspacePlans(tx, ownerActorId)
 		const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
 		const cap = ownershipCapForTier(effectiveTier)
-		if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(ownerActorId)) {
+		if (cap !== null && ownedPlans.length >= cap) {
 			throw new OwnershipCapExceededError({
 				actorId: ownerActorId,
 				effectiveTier,

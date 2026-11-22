@@ -17,13 +17,14 @@ describe('Meeting insights flow definition', () => {
 		expect(MEETING_LOOP.slug).toBe('meeting-loop')
 		expect(MEETING_LOOP.name).toBe('Meeting insights')
 		expect(MEETING_LOOP.useCase).toBe('Operations')
-		expect(MEETING_LOOP.version).toBe('1.1.0')
+		expect(MEETING_LOOP.version).toBe('1.2.0')
 		expect(MEETING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
 	it('ships entry condition, close condition and tags, with no targets', () => {
 		const settings = loopSettingsSchema.parse(MEETING_LOOP.settings)
-		expect(settings.entryCondition).toMatch(/Google Meet transcript/)
+		expect(settings.entryCondition).toMatch(/connected meeting or notetaker tool/)
+		expect(settings.entryCondition).not.toMatch(/Google Meet/)
 		expect(settings.closeCondition).toMatch(/stays at happened/)
 		expect(settings.tags).toEqual(['Context'])
 		expect(settings.targets).toBeUndefined()
@@ -36,13 +37,31 @@ describe('Meeting insights flow definition', () => {
 			.sort()
 		expect(withStep).toEqual([
 			'Catch-up ingest: meetings stuck at happened',
-			'Meeting ended: ingest Google Meet transcript on arrival',
-			'Notetaker sweep: ingest new meetings (every 2h, weekdays)',
+			'Google Meet transcript ready: ingest on arrival (optional fast path)',
+			'Meeting sweep: ingest new meetings (every 2h, weekdays)',
 		])
 		for (const id of MEETING_LOOP_TRIGGER_IDS) {
 			const prompt = getTriggerData(id).actionPrompt ?? ''
 			if (/in_loop/.test(prompt)) expect(prompt).toMatch(/Meeting insights flow.*list_loops/)
 		}
+	})
+
+	it('works with any meeting tool and treats Google Meet as an optional fast path', () => {
+		const [actorId] = MEETING_LOOP_ACTOR_IDS
+		expect(getActorData(actorId).systemPrompt).toMatch(/No single tool is required/)
+		const triggers = Object.fromEntries(
+			MEETING_LOOP_TRIGGER_IDS.map((id) => [getTriggerData(id).name, getTriggerData(id)]),
+		)
+		const sweep = triggers['Meeting sweep: ingest new meetings (every 2h, weekdays)']
+		expect(sweep.actionPrompt).toMatch(/main path for every meeting tool/)
+		expect(sweep.actionPrompt).toMatch(/Microsoft Teams/)
+		expect(sweep.actionPrompt).toMatch(/Zoom/)
+		expect(sweep.actionPrompt).toMatch(/names the meeting, notetaker and calendar tools it used/)
+		const fast = triggers['Google Meet transcript ready: ingest on arrival (optional fast path)']
+		expect(fast.actionPrompt).toMatch(/optional speed-up/)
+		// Google Meet is named only by its own fast trigger, and as an example elsewhere.
+		const settingsText = JSON.stringify(MEETING_LOOP.settings)
+		expect(settingsText).not.toMatch(/Google Meet/)
 	})
 
 	it('ships one actor, six triggers and eight skills, no duplicates', () => {
@@ -66,9 +85,9 @@ describe('Meeting insights flow definition', () => {
 			'Catch-up ingest: meetings stuck at happened',
 			'Daily check: meeting pipeline health',
 			'Draft agenda for scheduled internal meeting',
-			'Meeting ended: ingest Google Meet transcript on arrival',
+			'Google Meet transcript ready: ingest on arrival (optional fast path)',
 			'Meeting follow-up check (weekdays 14:00 UTC, weekly review Mondays)',
-			'Notetaker sweep: ingest new meetings (every 2h, weekdays)',
+			'Meeting sweep: ingest new meetings (every 2h, weekdays)',
 		])
 		for (const target of Object.values(byName)) expect(target).toBe(actorId)
 	})

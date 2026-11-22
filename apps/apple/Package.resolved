@@ -20,6 +20,15 @@
       }
     },
     {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa.git",
+      "state" : {
+        "revision" : "485e0622e00d60d71eb6b519822188e2eb7c29e3",
+        "version" : "9.35.0"
+      }
+    },
+    {
       "identity" : "swift-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-algorithms",

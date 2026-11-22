@@ -1483,19 +1483,18 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 		).toBeNull()
 	})
 
-	it('does not fall back for an enterprise billing owner', () => {
+	it('still falls back for an ops-allowlisted billing owner without the workspace flag', () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = '11111111-1111-4111-8111-111111111111'
-		expect(
-			resolveChatCredentials({
-				wsSettings: {},
-				workspace: {
-					enterprise: false,
-					billingOwnerId: '11111111-1111-4111-8111-111111111111',
-				},
-				agent: { provider: null, apiKey: null, model: null },
-			}),
-		).toBeNull()
+		const creds = resolveChatCredentials({
+			wsSettings: {},
+			workspace: {
+				enterpriseGranted: false,
+				billingOwnerId: '11111111-1111-4111-8111-111111111111',
+			},
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
 	})
 
 	it('still uses the enterprise workspace own credentials when configured', () => {

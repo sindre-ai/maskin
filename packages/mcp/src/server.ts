@@ -16,13 +16,16 @@ import {
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
+	PILOT_REFUSAL,
 	type WebAppTarget,
 	applyLoopView,
 	buildWebAppHref,
 	formatCopenhagenStamp,
+	isPilotHeldMaskinTool,
 	loopStatusTurnsTriggersOff,
 	normalizeLoopViewName,
 	readLoopViews,
+	resolveToolKind,
 	resolveWebAppBaseUrl,
 	slimForYouItems,
 	stripTrailingSlash,
@@ -2306,6 +2309,46 @@ function assertWriteStaysInSessionWorkspace(
 }
 
 /**
+ * Pilot flows hold the Maskin tools that leave the company or cannot be undone (delete_object,
+ * delete_file, delete_loop, delete_trigger, create_notification) and any tool nobody classified,
+ * such as an extension's. For those, with a session, the API is asked first: a session under a
+ * flow in pilot is refused and a card goes to a person; after they approve that exact call, the
+ * repeated call goes through once. A call with no session (a person's own chat) is not asked.
+ * If the question cannot be asked the call is held: not being able to ask never lets it through.
+ */
+async function assertNotHeldByPilot(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+	/** An extension tool whose name says it only reads: classified, so not held. */
+	extensionRead: boolean,
+): Promise<void> {
+	if (!isPilotHeldMaskinTool(toolName, toolName in TOOL_ANNOTATIONS || extensionRead)) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	let held: { held?: boolean; message?: string }
+	try {
+		const response = await apiFetch(
+			config,
+			'POST',
+			'/api/pilot-gate/check',
+			{ tool: toolName, arguments: args },
+			// The answer changes with every call (a card, then an approval), so it is never replayed.
+			{ idempotencyKey: randomUUID() },
+		)
+		held = (await response.json()) as { held?: boolean; message?: string }
+	} catch {
+		throw new Error(
+			`${PILOT_REFUSAL}. This flow could not be checked just now, so ${toolName} was held. Nothing was done. Try again shortly.`,
+		)
+	}
+	if (held.held) throw new Error(held.message ?? `${PILOT_REFUSAL}. Nothing was done.`)
+}
+
+/**
  * Inspects a mutation tool response to decide whether it actually mutated
  * something. Tools like `update_objects` aggregate per-target outcomes, so we
  * count one mutation event per call when at least one inner item explicitly
@@ -3613,6 +3656,10 @@ export function createMcpServer(config: McpConfig) {
 	// (and `createInvokeTool` in ./invoke.ts) can dispatch tools directly.
 	const handlers = new Map<string, McpToolHandler>()
 
+	// Extension tools whose names say they only read. Every other tool without a row in
+	// annotations.ts counts as outbound in a pilot flow.
+	const extensionReadTools = new Set<string>()
+
 	// The rollback switch for the list contract: off registers the pre-contract list_objects and
 	// search_objects (definition and handler). Read once at server creation, from the process
 	// environment, so a changed value needs a restart.
@@ -3708,6 +3755,7 @@ export function createMcpServer(config: McpConfig) {
 			let response: unknown
 			try {
 				assertWriteStaysInSessionWorkspace(config, name, args)
+				await assertNotHeldByPilot(config, name, args, extensionReadTools.has(name))
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -8300,6 +8348,84 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'fork_loop',
+		{
+			description: tools.fork_loop.description,
+			inputSchema: tools.fork_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) {
+				throw new Error('fork_loop needs a workspace. Pass workspace_id or configure a default.')
+			}
+			const reply = (body: Record<string, unknown>) => ({
+				_meta: meta('fork_loop', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }],
+			})
+
+			const { installs } = (await apiCall(
+				config,
+				'GET',
+				`/api/installed-loops?workspaceId=${encodeURIComponent(wsId)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as {
+				installs: Array<{
+					id: string
+					objectId: string | null
+					isLocked: boolean
+					forkedAt: string | null
+					loopName: string
+				}>
+			}
+			const install = installs.find((i) => i.objectId === id || i.id === id)
+			if (!install) {
+				return reply({
+					forked: false,
+					reason:
+						'This loop was not installed from the marketplace, so it is already owned by the workspace and there is nothing to fork. Edit its agents, triggers and skills directly. Use list_loops to find loop ids.',
+				})
+			}
+			if (!install.isLocked) {
+				return reply({
+					forked: false,
+					already_forked: true,
+					forked_at: install.forkedAt,
+					loop: install.loopName,
+					reason: 'This loop is already forked, so the workspace owns it. Nothing changed.',
+				})
+			}
+
+			const result = (await apiCall(
+				config,
+				'POST',
+				`/api/installed-loops/${install.id}/fork`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as {
+				id: string
+				objectId: string | null
+				installedVersion: string
+				forkedAt: string | null
+				detached: { actors: number; triggers: number; skills: number; integrations: number }
+			}
+
+			return reply({
+				forked: true,
+				loop: install.loopName,
+				loop_object_id: result.objectId,
+				installed_loop_id: result.id,
+				forked_from_version: result.installedVersion,
+				forked_at: result.forkedAt,
+				detached: result.detached,
+			})
+		},
+	)
+
+	registerAppTool(
+		server,
 		'set_loop_view',
 		{
 			description: tools.set_loop_view.description,
@@ -10544,107 +10670,142 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Get Started (Onboarding) ────────────────────────────
+	// ─── Marketplace (list + install) ────────────────────────
+	type MarketplaceWorkspaceResolution =
+		| { done: true; text: string }
+		| {
+				done: false
+				workspace: { id: string; name: string }
+				workspaces: Array<{ id: string; name: string }>
+				explicitWorkspace: boolean
+		  }
+
+	// Resolve the workspace for list_marketplace / install_loop. Only the API call sits in the
+	// try: a bad id thrown below must reach the caller as an error, not be mistaken for a
+	// connection problem.
+	async function resolveMarketplaceWorkspace(
+		toolName: string,
+		workspaceId: string | undefined,
+	): Promise<MarketplaceWorkspaceResolution> {
+		let workspaces: Array<{ id: string; name: string }>
+		try {
+			workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				skipWorkspace: true,
+			})) as Array<{ id: string; name: string }>
+		} catch {
+			const setupSteps =
+				config.transport === 'http'
+					? `  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with \`claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'\`\n  4. Run /reload-plugins, then call ${toolName} again`
+					: `  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call ${toolName} again`
+			return {
+				done: true,
+				text: `👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+			}
+		}
+
+		const effectiveWsId = workspaceId ?? config.defaultWorkspaceId
+		const workspace = effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]
+		if (effectiveWsId && !workspace) {
+			throw new Error(
+				`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
+			)
+		}
+		if (!workspace) {
+			return {
+				done: true,
+				text: `👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run ${toolName} again.`,
+			}
+		}
+		return { done: false, workspace, workspaces, explicitWorkspace: Boolean(effectiveWsId) }
+	}
+
 	registerAppTool(
 		server,
-		'get_started',
+		'list_marketplace',
 		{
-			description: tools.get_started.description,
-			inputSchema: tools.get_started.inputSchema.shape,
+			description: tools.list_marketplace.description,
+			inputSchema: tools.list_marketplace.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
 			const textResponse = (text: string) => ({
-				_meta: meta('get_started', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta('list_marketplace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text }],
 			})
 
-			// Resolve workspace. Only the API call sits in the try: a bad id thrown below
-			// must reach the caller as an error, not be mistaken for a connection problem.
-			let workspaces: Array<{ id: string; name: string }>
+			const resolved = await resolveMarketplaceWorkspace('list_marketplace', args.workspace_id)
+			if (resolved.done) return textResponse(resolved.text)
+			const { workspace } = resolved
+
+			let loops: Array<{
+				id: string
+				name: string
+				description: string
+				use_case: string | null
+				item_types: string[]
+			}> = []
 			try {
-				workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
 					skipWorkspace: true,
-				})) as Array<{ id: string; name: string }>
-			} catch {
-				const setupSteps =
-					config.transport === 'http'
-						? "  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again"
-						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
+				})) as {
+					loops: Array<{
+						id: string
+						name: string
+						description: string
+						use_case: string | null
+						item_types: string[]
+					}>
+				}
+				loops = result.loops ?? []
+			} catch (err) {
+				return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
+			}
+
+			if (loops.length === 0) {
 				return textResponse(
-					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+					`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
 				)
 			}
 
-			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-			const workspace = effectiveWsId
-				? workspaces.find((w) => w.id === effectiveWsId)
-				: workspaces[0]
-			if (effectiveWsId && !workspace) {
-				throw new Error(
-					`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
-				)
-			}
+			const loopLines = loops.map((l) => {
+				const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
+				const useCase = l.use_case ? ` · ${l.use_case}` : ''
+				return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
+			})
 
-			if (!workspace) {
-				return textResponse(
-					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again.',
-				)
-			}
+			return textResponse(
+				`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call install_loop with:\n  loop_id: "<id from above>"\n  workspace_name: "<name if they want to rename>"`,
+			)
+		},
+	)
 
-			// INSTALL with no workspace chosen on a multi-workspace account: the install
-			// writes to a workspace, so do not guess. The preview below only reads.
-			if (args.loop_id && args.confirm && !effectiveWsId && workspaces.length > 1) {
+	registerAppTool(
+		server,
+		'install_loop',
+		{
+			description: tools.install_loop.description,
+			inputSchema: tools.install_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const textResponse = (text: string) => ({
+				_meta: meta('install_loop', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text }],
+			})
+
+			const resolved = await resolveMarketplaceWorkspace('install_loop', args.workspace_id)
+			if (resolved.done) return textResponse(resolved.text)
+			const { workspace, workspaces, explicitWorkspace } = resolved
+
+			// The install writes to a workspace, so on a multi-workspace account do not guess.
+			if (!explicitWorkspace && workspaces.length > 1) {
 				const workspaceLines = workspaces.map((w) => `  • ${w.name} (id: ${w.id})`)
 				return textResponse(
 					`This account has more than one workspace, so nothing was installed.\n\n${workspaceLines.join('\n')}\n\nPass workspace_id to choose where to install.`,
 				)
 			}
 
-			// PREVIEW: list marketplace loops so the user can pick one.
-			if (!args.loop_id || !args.confirm) {
-				let loops: Array<{
-					id: string
-					name: string
-					description: string
-					use_case: string | null
-					item_types: string[]
-				}> = []
-				try {
-					const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
-						skipWorkspace: true,
-					})) as {
-						loops: Array<{
-							id: string
-							name: string
-							description: string
-							use_case: string | null
-							item_types: string[]
-						}>
-					}
-					loops = result.loops ?? []
-				} catch (err) {
-					return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
-				}
-
-				if (loops.length === 0) {
-					return textResponse(
-						`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
-					)
-				}
-
-				const loopLines = loops.map((l) => {
-					const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
-					const useCase = l.use_case ? ` · ${l.use_case}` : ''
-					return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
-				})
-
-				return textResponse(
-					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  loop_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
-				)
-			}
-
-			// INSTALL: rename workspace (if requested), then install the loop.
+			// Rename the workspace (if requested), then install the loop.
 			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
 				try {
 					await apiCall(
@@ -10771,6 +10932,9 @@ ${claudeCredsBlock}`,
 	// Register extension MCP tools (namespaced with extensionId prefix)
 	for (const ext of getAllModules()) {
 		for (const tool of ext.mcpTools ?? []) {
+			if (resolveToolKind({ name: tool.name }) === 'read') {
+				extensionReadTools.add(`${ext.id}_${tool.name}`)
+			}
 			try {
 				registerAppTool(
 					server,
@@ -10921,6 +11085,30 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_attach_file',
+		{
+			description: tools.desktop_attach_file.description,
+			inputSchema: tools.desktop_attach_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...input } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/input', agent_id),
+				{ action: 'attach_file', ...input },
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_attach_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

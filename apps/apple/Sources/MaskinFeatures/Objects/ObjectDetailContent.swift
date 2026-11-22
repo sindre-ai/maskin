@@ -41,6 +41,7 @@ struct ObjectDetailContent<Decision: View>: View {
 	var onOpenObject: ((String) -> Void)?
 	var onEdit: () -> Void = {}
 	var onReply: ((TimelineItem) -> Void)?
+	var onEditComment: ((TimelineItem) -> Void)?
 	var onShowActivity: () -> Void = {}
 	var onAnswer: (() -> Void)?
 	var sessionActions = ObjectSessionActions.none
@@ -65,12 +66,14 @@ struct ObjectDetailContent<Decision: View>: View {
 						sessionActions: sessionActions)
 					overview(object)
 					ObjectRelatedView(store: store, onOpenObject: onOpenObject)
-					ObjectActivityView(store: store, onOpenObject: onOpenObject, onReply: onReply, now: now)
+					ObjectActivityView(
+						store: store, onOpenObject: onOpenObject, onReply: onReply, onEdit: onEditComment, now: now)
 				case .header: ObjectHeaderView(store: store, object: object, interactiveChips: interactiveChips, onAnswer: onAnswer,
 						sessionActions: sessionActions)
 				case .overview: overview(object)
 				case .related: ObjectRelatedView(store: store, onOpenObject: onOpenObject)
-				case .activity: ObjectActivityView(store: store, onOpenObject: onOpenObject, onReply: onReply, now: now)
+				case .activity: ObjectActivityView(
+						store: store, onOpenObject: onOpenObject, onReply: onReply, onEdit: onEditComment, now: now)
 				}
 			} else if part == .all || part == .header {
 				switch store.phase {

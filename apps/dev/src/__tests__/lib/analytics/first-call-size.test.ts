@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FirstCallObserver } from '../../../lib/analytics/first-call-size'
+import { FirstCallObserver, parseStartPromptSizeLine } from '../../../lib/analytics/first-call-size'
 
 const init = (tools: string[]) =>
 	`${JSON.stringify({ type: 'system', subtype: 'init', tools, mcp_servers: [] })}\n`
@@ -112,5 +112,31 @@ describe('FirstCallObserver', () => {
 			cacheReadInputTokens: 5,
 			totalCostUsd: 0.3,
 		})
+	})
+
+	it('reads the start prompt size line before the first turn, and only the first one', () => {
+		const line = (learnings: number, capped: boolean) =>
+			`[system] start prompt size: persona_bytes=900 total_bytes=25000 learnings_bytes=${learnings} learnings_capped=${capped}\n`
+		const observer = new FirstCallObserver()
+		expect(observer.startPromptSize).toBeNull()
+		observer.feed(line(20_291, true))
+		observer.feed(line(5, false))
+		expect(observer.startPromptSize).toEqual({
+			personaBytes: 900,
+			totalBytes: 25_000,
+			learningsBytes: 20_291,
+			learningsCapped: true,
+		})
+		const first = observer.feed(result({ input_tokens: 1 }, 0.1))
+		expect(first).not.toBeNull()
+	})
+})
+
+describe('parseStartPromptSizeLine', () => {
+	it('returns null for a line that is not the size line or is malformed', () => {
+		expect(parseStartPromptSizeLine('[system] Context file written to x')).toBeNull()
+		expect(
+			parseStartPromptSizeLine('[system] start prompt size: persona_bytes=x total_bytes=1'),
+		).toBeNull()
 	})
 })

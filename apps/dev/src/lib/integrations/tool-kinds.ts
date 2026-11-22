@@ -59,6 +59,44 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 	]),
 	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
 	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
+	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list
+	// (19 Nov 2026, not yet checked against a live tools/list). Its tools are dispatchers that take an
+	// `action`, and the read and write sides are separate tools (the writes end in `_write`, or are
+	// repo_create_branch and the attachment upload and link tools), so a whole tool is a read or a write.
+	// The names are not read verbs (wit_work_item), so without this a Read agent would be refused all of them.
+	'azure-devops': new Set([
+		'core_list_orgs',
+		'core_list_projects',
+		'core_list_project_teams',
+		'core_list_group_members',
+		'repo_pull_request',
+		'repo_pull_request_thread',
+		'repo_repository',
+		'repo_branch',
+		'repo_file',
+		'repo_search_commits',
+		'search_code',
+		'wit_work_item',
+		'wit_query',
+		'wit_query_by_wiql',
+		'wit_backlog',
+		'search_workitem',
+		'wit_work_item_attachment',
+		'pipelines_build',
+		'pipelines_build_log',
+		'pipelines_definition',
+		'pipelines_run',
+		'pipelines_artifact',
+	]),
+	// Zoom's hosted server (checked against Zoom's published tool list on 20 Nov 2026, not yet against a
+	// live tools/list). Only the four tools the requested scopes cover are reads. search_zoom, the Docs
+	// and Hub tools are left out: they need scopes Maskin does not ask for, and some of them write.
+	zoom: new Set([
+		'search_meetings',
+		'get_meeting_assets',
+		'get_recording_resource',
+		'recordings_list',
+	]),
 	// Stripe's hosted tool names are not read verbs (stripe_api_read), and stripe_api_write takes
 	// any POST, PATCH, PUT or DELETE, so only these exact tools are reads. Left out on purpose
 	// because they act or are unproven as reads: stripe_analytics (runs query jobs),

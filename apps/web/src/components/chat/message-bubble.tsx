@@ -67,6 +67,7 @@ import { Fragment, type Ref, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { EditMessageCard } from './edit-message-card'
+import { FailedTurnNotice, isPermanentFailure } from './failed-turn-notice'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationAccessRequestCard } from './integration-access-request-card'
@@ -621,6 +622,9 @@ export function MessageBubble({
 							/>
 						</DraftNotesContext.Provider>
 					</div>
+				) : null}
+				{isPermanentFailure(message) ? (
+					<FailedTurnNotice message={message} workspaceId={workspaceId} onRetried={onRetried} />
 				) : null}
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
 				    the questions and each option's description; the message's markdown twin

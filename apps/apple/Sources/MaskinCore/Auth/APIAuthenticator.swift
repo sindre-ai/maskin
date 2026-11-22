@@ -25,6 +25,7 @@ public struct APIAuthenticator: Authenticating {
 	/// server did answer sends them in the wrong direction. The cause is logged (never the
 	/// credentials: only the error's own description), the screen shows plain copy.
 	static func classify(_ error: any Error) -> AuthError {
+		ErrorReporter.shared.reportThrown(error)
 		let underlying = (error as? ClientError)?.underlyingError ?? error
 		if underlying is URLError || error is URLError {
 			return .network(error.localizedDescription)

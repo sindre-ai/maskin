@@ -3,6 +3,9 @@ import MaskinCore
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 /// A photo from the picker, copied to a temp file (never loaded whole into memory).
 struct PickedImageFile: Transferable {
@@ -71,6 +74,11 @@ extension ChatComposerModel {
 /// PhotosPickerItem is not declared Sendable; it is only ever used from the one loading task.
 private struct ItemBox: @unchecked Sendable { let item: PhotosPickerItem }
 
+#if os(iOS)
+/// UIImage is not declared Sendable; the pages are only read by the one task that builds the PDF.
+private struct ScanPagesBox: @unchecked Sendable { let pages: [UIImage] }
+#endif
+
 enum AttachmentLoading {
 	/// A photo: copy to a temp file, downsample with ImageIO, upload as JPEG (or the original when
 	/// it is already small).
@@ -136,6 +144,19 @@ enum AttachmentLoading {
 				name: "\(base).\(result.fileExtension)", mimeType: result.mimeType, data: result.data)
 		}
 	}
+
+	/// Pages from the document scanner, drawn into one PDF. Done inside the task, off the main thread.
+	#if os(iOS)
+	static func scan(pages: [UIImage], name: String) -> @Sendable () async throws -> PreparedChatFile {
+		let box = ScanPagesBox(pages: pages)
+		return {
+			guard let data = ScannedDocument.pdf(from: box.pages) else {
+				throw ChatAttachmentError("Couldn't make a PDF from that scan.")
+			}
+			return PreparedChatFile(name: name, mimeType: "application/pdf", data: data)
+		}
+	}
+	#endif
 
 	/// A file from the Files picker, or one dropped on the bar (`deleteAfter` removes our temp copy).
 	/// Size is checked before a single byte is read. One too big for the JSON route is copied to our

@@ -19,6 +19,7 @@ import { vi } from 'vitest'
 import { z } from 'zod'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { conversationParticipantResponseSchema } from '../../lib/openapi-schemas'
+import { takeEditNotes } from '../../services/chat-session-context'
 import { evaluateAndRespond } from '../../services/conversation-responder'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
@@ -2806,6 +2807,48 @@ describe('Conversations Integration', () => {
 			expect(res.status).toBe(200)
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('leaves a note for a live session when an older message is edited', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Edit note test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const live = await insertSession(db, workspaceId, agent.id, ownerId, {
+				status: 'running',
+				conversationId: conversation.id,
+				interactive: true,
+				threadRootId: null,
+			})
+			const [older] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'older message' })
+				.returning()
+			await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'newest message' })
+
+			await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${older?.id}`,
+					{ content: 'older message, fixed' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			await new Promise((resolve) => setTimeout(resolve, 100))
+
+			const notes = takeEditNotes(live?.id ?? '')
+			expect(notes).toContain('edited an earlier message')
+			expect(notes).toContain('older message, fixed')
 		})
 
 		describe('tags in an edit', () => {

@@ -103,6 +103,7 @@ import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
 import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
+import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
@@ -618,6 +619,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
+	// Pilot flows hold outbound steps: the MCP server and the GitHub relay ask here before one runs.
+	app.route('/api/pilot-gate', pilotGateRoutes)
 	app.route('/api/guardrails', guardrailsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.

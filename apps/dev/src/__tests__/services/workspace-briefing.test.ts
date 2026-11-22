@@ -41,6 +41,9 @@ describe('buildWorkspaceStartupBlock', () => {
 				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_sub_chat if you need the answer now. Ask a person only for the cases below.',
 			)
 			expect(block).toContain(
+				'Before you contact anyone, person or agent, read their description (list_actors shows it, get_actor shows more) and pick the one whose description covers the topic. Read it fresh each time, because descriptions change. If more than one fits, contact each once. If none fits, say what is missing instead of guessing.',
+			)
+			expect(block).toContain(
 				'Before you ask a person to upload something again, check the chat\'s file list ("Files in this chat" in your starting prompt, or list_files with conversation_id). Link what you create to what you worked from.',
 			)
 			expect(block).toContain(

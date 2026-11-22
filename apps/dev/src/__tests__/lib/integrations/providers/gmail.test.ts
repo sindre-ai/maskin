@@ -526,3 +526,92 @@ describe('stopGmailWatch', () => {
 		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 })
+
+describe('fanOutGmailHistory', () => {
+	beforeEach(() => {
+		getValidTokenMock.mockReset().mockResolvedValue('ya29.access')
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function makeFanOutDb() {
+		const row: FakeIntegrationRow = {
+			id: 'int-fan',
+			provider: 'gmail',
+			workspaceId: 'ws-1',
+			config: { gmail: { historyId: '100', watchExpiresAt: 1, topicName: 't' } },
+		}
+		const updateCalls: Array<{ values: unknown }> = []
+		const db = {
+			select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([row]) }) }) }),
+			update: () => ({
+				set: (values: unknown) => {
+					updateCalls.push({ values })
+					return { where: () => ({ returning: () => Promise.resolve([{ id: row.id }]) }) }
+				},
+			}),
+		}
+		return { db, updateCalls }
+	}
+
+	function mockHistory(messagesAdded: Array<{ id: string; labelIds: string[] }>) {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			json: () =>
+				Promise.resolve({
+					historyId: '200',
+					history: [
+						{
+							id: '150',
+							messagesAdded: messagesAdded.map((m) => ({
+								message: { id: m.id, threadId: `t-${m.id}`, labelIds: m.labelIds },
+							})),
+						},
+					],
+				}),
+		} as Response)
+	}
+
+	async function runFanOut(db: unknown) {
+		const { fanOutGmailHistory } = await import(
+			'../../../../lib/integrations/providers/gmail/watch'
+		)
+		return fanOutGmailHistory({
+			db,
+			integrationId: 'int-fan',
+			workspaceId: 'ws-1',
+			normalized: { data: { historyId: '200', emailAddress: 'me@example.com' } },
+			// biome-ignore lint/suspicious/noExplicitAny: test fake doesn't need the full context type
+		} as any)
+	}
+
+	it('emits no event for a spam-labelled message and still advances the cursor', async () => {
+		const { db, updateCalls } = makeFanOutDb()
+		mockHistory([{ id: 'm-spam', labelIds: ['UNREAD', 'CATEGORY_PERSONAL', 'SPAM'] }])
+
+		const events = await runFanOut(db)
+
+		expect(events).toEqual([])
+		expect(updateCalls).toHaveLength(1)
+	})
+
+	it('still emits received for inbox mail next to a spam message', async () => {
+		const { db } = makeFanOutDb()
+		mockHistory([
+			{ id: 'm-spam', labelIds: ['SPAM'] },
+			{ id: 'm-inbox', labelIds: ['INBOX', 'UNREAD'] },
+		])
+
+		const events = await runFanOut(db)
+
+		expect(events).toHaveLength(1)
+		expect(events[0]).toMatchObject({
+			entityType: 'gmail.message',
+			action: 'received',
+			data: { messageId: 'm-inbox' },
+		})
+	})
+})

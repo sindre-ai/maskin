@@ -59,7 +59,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integration_providers',
 	'list_extensions',
 	'list_for_you',
-	'get_started',
+	'list_marketplace',
 ]
 
 // Pure reads that are not in READ_TOOL_NAMES; they keep re-throwing on error.
@@ -80,8 +80,8 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'get_trigger',
 ]
 
-// get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
-const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES = ['get_started']
+// Tools in READ_TOOL_NAMES that are not read-only. None today: install_loop split off list_marketplace.
+const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES: string[] = []
 
 // Tool names the default templates legitimately tell agents to call that live
 // on another MCP server, so they are never in the Maskin tool list.
@@ -313,12 +313,12 @@ describe('MCP surface pin', () => {
 			expect([...READ_ONLY_TOOLS].sort()).toEqual(expected)
 		})
 
-		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or get_started', () => {
+		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or install_loop', () => {
 			const readOnly = (name: string) => TOOL_ANNOTATIONS[name]?.readOnlyHint
 			for (const name of Object.keys(MUTATION_TOOL_KINDS)) {
 				expect(readOnly(name), `${name} is a mutation but readOnlyHint is true`).toBe(false)
 			}
-			for (const name of ['create_sub_chat', 'mark_read', 'get_started']) {
+			for (const name of ['create_sub_chat', 'mark_read', 'install_loop']) {
 				expect(readOnly(name), `${name} must not be read-only`).toBe(false)
 			}
 		})

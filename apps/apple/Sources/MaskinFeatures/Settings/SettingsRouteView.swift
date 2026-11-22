@@ -17,6 +17,7 @@ struct SettingsRouteView: View {
 		switch route {
 		case .profile: ProfileView(store: services.profileStore())
 		case .notifications: SettingsNotificationsPage(environment: environment)
+		case .permissions: PermissionsPage()
 		case .workspace:
 			WorkspaceSettingsView(
 				store: services.workspaceStore(), general: services.generalSettingsStore(),

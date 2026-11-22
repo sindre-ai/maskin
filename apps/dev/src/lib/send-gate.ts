@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events } from '@maskin/db/schema'
-import type { SendPermissionMode } from '@maskin/shared'
+import { PILOT_REFUSAL, type SendPermissionMode } from '@maskin/shared'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { recordEventReturning } from './events/record-event'
 import { logger } from './logger'
@@ -42,6 +42,33 @@ export async function decideSend(
 	return (await heldByPilotFlow(db, { ...params, sessionId: params.sessionId }))
 		? 'needs_approval'
 		: 'send_now'
+}
+
+/**
+ * Whether pilot is why a send waits: the setting says Always allow and the session runs under a
+ * flow in pilot. Asked only by a caller that is about to refuse a send, to word the refusal (see
+ * `withPilotReason`), so the agent is told the flow is the reason and not its own setting. Never
+ * throws: a failed lookup words the refusal the old way.
+ */
+export async function pilotIsReason(
+	db: Database | undefined,
+	params: { workspaceId: string; agentId: string; kind: string; sessionId?: string | null },
+): Promise<boolean> {
+	if (!db || !params.sessionId) return false
+	try {
+		const { mode } = await resolveSendMode(db, params)
+		return (
+			mode === 'always_allow' &&
+			(await heldByPilotFlow(db, { ...params, sessionId: params.sessionId }))
+		)
+	} catch {
+		return false
+	}
+}
+
+/** Puts the pilot reason in front of a refusal when pilot is why the send waits. */
+export function withPilotReason(message: string, pilot: boolean): string {
+	return pilot ? `${PILOT_REFUSAL}. ${message}` : message
 }
 
 /**

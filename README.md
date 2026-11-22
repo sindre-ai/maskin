@@ -29,7 +29,7 @@ An open-source workspace where AI agents run product development autonomously. H
 Paste this single prompt into Claude Code (or any MCP-compatible agent) to have it bootstrap the whole thing for you:
 
 ```
-Clone https://github.com/sindre-ai/maskin, cd into it, follow the "Onboarding a new user from Claude Code" section of CLAUDE.md, and hand off to the get_started MCP tool.
+Clone https://github.com/sindre-ai/maskin, cd into it, follow the "Onboarding a new user from Claude Code" section of CLAUDE.md, and hand off to the list_marketplace MCP tool.
 ```
 
 Claude will clone, `pnpm install`, start the dev stack in the background, wait for the startup banner, wire the MCP server into your Claude Code config using the auto-provisioned API key + workspace, run `/reload-plugins` so the Maskin tools are immediately available in the same session, and then ask you which template to set up (development / growth / custom). From clone to a running pipeline in one message, no session restart.
@@ -72,7 +72,7 @@ On a fresh database, `pnpm dev` automatically creates a default actor + workspac
    ```
    The first two apply pre-built templates (object types, statuses, custom fields, seed objects). The third walks you through a short questionnaire and tailors the workspace to whatever you're working on. Claude will ask a couple of light tailoring questions (workspace name, what you're building, near-term goal) — answer any, all, or none. Total time: under 3 minutes.
 
-Rename the default actor and workspace whenever you're ready — from the UI (Settings → Profile / Workspace) or via MCP (`update_actor`, `update_workspace`). Run `get_started` again any time on a different workspace by passing `workspace_id`.
+Rename the default actor and workspace whenever you're ready — from the UI (Settings → Profile / Workspace) or via MCP (`update_actor`, `update_workspace`). Run `list_marketplace` again any time on a different workspace by passing `workspace_id`.
 
 > Want demo data instead? Run `pnpm db:seed` for a pre-populated example workspace.
 
@@ -311,7 +311,7 @@ External agents connect via the Model Context Protocol (39 tools available), sup
 
 Maskin exposes 73 MCP tools over both stdio and HTTP. See **Quick Start → Get started from Claude Code** above for the one-command setup. Other clients (Claude Desktop, OpenAI agents, custom implementations) use the same env vars (`API_BASE_URL`, `API_KEY`, `WORKSPACE_ID`) — point them at `pnpm --filter @maskin/mcp start` for stdio, or `POST http://localhost:3000/mcp` for HTTP.
 
-The first tool a new agent should call is `get_started` — it previews the available marketplace loops for the workspace, then installs the one the user picks.
+The first tool a new agent should call is `list_marketplace` — it lists the available marketplace loops, and `install_loop` installs the one the user picks.
 
 ## Docker
 

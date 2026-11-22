@@ -18,6 +18,7 @@ const TIER1_EXACT = new Set([
 	'workspace_usage_snapshot',
 	'chat_session_started',
 	'chat_session_seeded',
+	'chat_session_rotated',
 	'integration_connect_started',
 	'integration_tool_called',
 	'driver_woken',

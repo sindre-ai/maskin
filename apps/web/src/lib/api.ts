@@ -1234,6 +1234,13 @@ export const api = {
 				workspaceId,
 				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
 			}),
+		/** `PATCH /events/:id`: change the text of a comment you wrote. */
+		update: (workspaceId: string, eventId: number, content: string) =>
+			request<EventResponse>(`/events/${eventId}`, {
+				method: 'PATCH',
+				body: { content },
+				workspaceId,
+			}),
 	},
 
 	imports: {
@@ -3202,6 +3209,8 @@ export interface MessageFinalOutput {
 	 * Mirrors messageFinalOutputSchema in packages/shared.
 	 */
 	error_kind?: 'transient' | 'permanent'
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail?: string
 	/** Replays spent before giving up on a transient failure. */
 	retries?: number
 	/**

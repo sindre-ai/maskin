@@ -228,6 +228,16 @@ function inListOrCode(state: EditorState): boolean {
 	return false
 }
 
+// The caret is in a list item with nothing in it (one empty paragraph), the item to leave the list from.
+function inEmptyListItem(state: EditorState): boolean {
+	const { $from } = state.selection
+	if ($from.depth < 2 || $from.parent.type.name !== 'paragraph' || $from.parent.content.size > 0) {
+		return false
+	}
+	const item = $from.node($from.depth - 1)
+	return item.type.name === 'listItem' && item.childCount === 1
+}
+
 /**
  * A table copied from a page or a sheet reaches the box with a body-only first row (a sheet has
  * no header cells), header cells in the body, or cells with several paragraphs. A markdown table
@@ -394,6 +404,10 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 								if (enter && !withMod && !triggerOpen && inListOrCode(view.state)) return false
 								if (handlers.current.props.onKeyDown(event)) return true
 								if (event.key === 'Enter' && event.shiftKey && !event.isComposing) {
+									// An empty item leaves the list, as Enter on it does.
+									if (inEmptyListItem(view.state)) {
+										return handlers.current.editor?.commands.liftListItem('listItem') ?? false
+									}
 									if (inListOrCode(view.state)) return false
 									return handlers.current.editor?.commands.splitBlock() ?? false
 								}

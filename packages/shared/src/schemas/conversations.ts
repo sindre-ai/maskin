@@ -63,6 +63,8 @@ export const messageFinalOutputSchema = z.object({
 	 * apps/dev/src/lib/turn-error-classifier.ts.
 	 */
 	error_kind: z.enum(['transient', 'permanent']).optional(),
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail: z.string().max(4000).optional(),
 	/** Replays spent before giving up on a transient failure. */
 	retries: z.number().int().min(0).max(10).optional(),
 	/**

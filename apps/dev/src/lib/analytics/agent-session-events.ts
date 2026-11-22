@@ -1,5 +1,11 @@
 import { logger } from '../logger'
+import type { StartPromptSize } from './first-call-size'
 import { capturePosthogEvent } from './posthog'
+
+/** Persona prompt size that gets a warning in the log (the CTO's number). Warn only, nothing is cut. */
+export const PERSONA_PROMPT_WARN_BYTES = 30 * 1024
+/** Whole start prompt size that gets a warning in the log (the CTO's number). Warn only, nothing is cut. */
+export const START_PROMPT_WARN_BYTES = 100 * 1024
 
 interface AgentSessionStartedWithPromptProps {
 	workspaceId: string
@@ -85,6 +91,34 @@ interface AgentSessionStartedWithPromptProps {
 		/** Whether the first call read from the prompt cache. */
 		cacheHit: boolean | null
 	}
+	/**
+	 * The start prompt sizes agent-run.sh reported. Rides on the event as
+	 * `learnings_bytes` and `learnings_capped`, and drives the oversized-prompt
+	 * warnings. Absent when the launch ended before the line was read.
+	 */
+	startPrompt?: StartPromptSize | null
+}
+
+/** One log line per oversized start, naming the agent and the size. The prompt is not changed. */
+function warnOversizedStartPrompt(p: AgentSessionStartedWithPromptProps, size: StartPromptSize) {
+	if (size.personaBytes > PERSONA_PROMPT_WARN_BYTES) {
+		logger.warn('Agent persona prompt is very large', {
+			agentId: p.agentId,
+			agentName: p.agentName,
+			sessionId: p.sessionId,
+			personaBytes: size.personaBytes,
+			warnAtBytes: PERSONA_PROMPT_WARN_BYTES,
+		})
+	}
+	if (size.totalBytes > START_PROMPT_WARN_BYTES) {
+		logger.warn('Agent start prompt is very large', {
+			agentId: p.agentId,
+			agentName: p.agentName,
+			sessionId: p.sessionId,
+			totalBytes: size.totalBytes,
+			warnAtBytes: START_PROMPT_WARN_BYTES,
+		})
+	}
 }
 
 /**
@@ -117,6 +151,7 @@ export async function trackAgentSessionStartedWithPrompt(
 	try {
 		const chars = p.systemPrompt.length
 		const tokens = approximatePromptTokens(p.systemPrompt)
+		if (p.startPrompt) warnOversizedStartPrompt(p, p.startPrompt)
 		await capturePosthogEvent(
 			'agent_session_started_with_prompt',
 			p.agentId,
@@ -138,6 +173,8 @@ export async function trackAgentSessionStartedWithPrompt(
 				first_call_input_tokens: p.firstCall?.firstCallInputTokens ?? undefined,
 				first_turn_cost: p.firstCall?.firstTurnCostUsd ?? undefined,
 				cache_hit: p.firstCall?.cacheHit ?? undefined,
+				learnings_bytes: p.startPrompt?.learningsBytes,
+				learnings_capped: p.startPrompt?.learningsCapped,
 			},
 			{ timestamp: p.launchedAt },
 		)

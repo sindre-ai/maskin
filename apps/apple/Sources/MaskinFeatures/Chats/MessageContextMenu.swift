@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Spec 7 §5 message actions, opened by a long-press on a message as a bottom sheet (the quick
 /// reactions, then Reply in thread and Copy as tiles, then the rest in groups, Delete last). All
-/// messages: Copy · Select text · Pin/Unpin. Your newest: Edit. Agent messages: Try again · Make it
+/// messages: Copy · Select text · Pin/Unpin. Your own: Edit. Agent messages: Try again · Make it
 /// shorter · Good answer · Not right. A top-level message also offers Reply in thread.
 struct MessageMenuActions {
 	/// Opens (or starts) the thread under this message.
