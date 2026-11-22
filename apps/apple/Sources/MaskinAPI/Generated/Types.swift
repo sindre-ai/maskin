@@ -1565,13 +1565,11 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/put`.
     public func put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
         path: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Path,
-        headers: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers,
-        body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Body
+        headers: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers
     ) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
         try await put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input(
             path: path,
-            headers: headers,
-            body: body
+            headers: headers
         ))
     }
     /// Remove a workspace's own sign-in app for a tool (refused while the tool is connected)

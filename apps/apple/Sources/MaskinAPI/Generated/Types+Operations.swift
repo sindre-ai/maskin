@@ -38296,64 +38296,17 @@ public enum Operations {
                 }
             }
             public var headers: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers
-            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/requestBody`.
-            @frozen public enum Body: Sendable, Hashable {
-                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/requestBody/json`.
-                public struct jsonPayload: Codable, Hashable, Sendable {
-                    /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/requestBody/json/clientId`.
-                    public var clientId: Swift.String
-                    /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/requestBody/json/clientSecret`.
-                    public var clientSecret: Swift.String
-                    /// Creates a new `jsonPayload`.
-                    ///
-                    /// - Parameters:
-                    ///   - clientId:
-                    ///   - clientSecret:
-                    public init(
-                        clientId: Swift.String,
-                        clientSecret: Swift.String
-                    ) {
-                        self.clientId = clientId
-                        self.clientSecret = clientSecret
-                    }
-                    public enum CodingKeys: String, CodingKey {
-                        case clientId
-                        case clientSecret
-                    }
-                    public init(from decoder: any Swift.Decoder) throws {
-                        let container = try decoder.container(keyedBy: CodingKeys.self)
-                        self.clientId = try container.decode(
-                            Swift.String.self,
-                            forKey: .clientId
-                        )
-                        self.clientSecret = try container.decode(
-                            Swift.String.self,
-                            forKey: .clientSecret
-                        )
-                        try decoder.ensureNoAdditionalProperties(knownKeys: [
-                            "clientId",
-                            "clientSecret"
-                        ])
-                    }
-                }
-                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/requestBody/content/application\/json`.
-                case json(Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Body.jsonPayload)
-            }
-            public var body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Body
             /// Creates a new `Input`.
             ///
             /// - Parameters:
             ///   - path:
             ///   - headers:
-            ///   - body:
             public init(
                 path: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Path,
-                headers: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers,
-                body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Body
+                headers: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers
             ) {
                 self.path = path
                 self.headers = headers
-                self.body = body
             }
         }
         @frozen public enum Output: Sendable, Hashable {
