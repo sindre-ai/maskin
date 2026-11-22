@@ -149,7 +149,10 @@ describe('youtubeRead', () => {
 		it('reads the chosen connection through the Keychain and keys the cache by it', async () => {
 			listYoutubeConnections.mockResolvedValue(TWO)
 			getCredential.mockImplementation(async (_db, _ws, id: string) => ({ id }))
-			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(CHANNEL))
+			// A fresh Response per call: a body can only be read once.
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockImplementation(async () => jsonResponse(CHANNEL))
 
 			await youtubeRead({ ...ctx, integrationId: 'int-2' }, read)
 			await youtubeRead({ ...ctx, integrationId: 'int-2' }, read)
