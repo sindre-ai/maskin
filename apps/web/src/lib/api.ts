@@ -1018,6 +1018,7 @@ export const api = {
 			provider: string,
 			body?: {
 				api_key?: string
+				project_id?: string
 				receive_subdomain?: string
 				install_new_org?: boolean
 				origin?: string

@@ -85,6 +85,8 @@ import { processDriveWebhook } from '../lib/integrations/providers/google-drive/
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { MEETING_NOTES_PROVIDERS } from '../lib/integrations/providers/meeting-notes'
 import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
+import { checkPostHogFirstData } from '../lib/integrations/providers/posthog/first-data-check'
+import { parsePostHogProjectId } from '../lib/integrations/providers/posthog/project-pin'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
 import {
 	isSubdomainName,
@@ -1005,6 +1007,7 @@ app.openapi(connectRoute, (async (c) => {
 	if (resolved.config.auth.type === 'api_key') {
 		const body = (await c.req.json().catch(() => ({}))) as {
 			api_key?: string
+			project_id?: unknown
 			return_to?: unknown
 		}
 		const apiKey = body.api_key
@@ -1014,6 +1017,27 @@ app.openapi(connectRoute, (async (c) => {
 				createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`),
 				400,
 			)
+		}
+
+		// PostHog only: the project agents start in, and a first look at whether it has data.
+		// The check never blocks the connection; its plain-words result sits on the tile.
+		let projectId: string | null = null
+		let statusNote: string | null = null
+		if (providerName === 'posthog') {
+			const parsedProject = parsePostHogProjectId(body.project_id)
+			if (!parsedProject.ok) {
+				return c.json(
+					createApiError('BAD_REQUEST', 'The PostHog project id is a number, like 12345'),
+					400,
+				)
+			}
+			projectId = parsedProject.projectId
+			statusNote = (await checkPostHogFirstData(apiKey, projectId)).message
+		}
+		// Reconnecting replaces the pin and the note, so an old project never lingers.
+		const connectConfig = {
+			...(projectId ? { project_id: projectId } : {}),
+			...(statusNote ? { status_note: statusNote } : {}),
 		}
 
 		const credentials: StoredCredentials = { accessToken: apiKey }
@@ -1028,6 +1052,7 @@ app.openapi(connectRoute, (async (c) => {
 				status: 'active',
 				externalId,
 				credentials: encryptedCredentials,
+				...(providerName === 'posthog' ? { config: connectConfig } : {}),
 				createdBy: actorId,
 			})
 			.onConflictDoUpdate({
@@ -1045,6 +1070,11 @@ app.openapi(connectRoute, (async (c) => {
 				set: {
 					status: 'active',
 					credentials: encryptedCredentials,
+					...(providerName === 'posthog'
+						? {
+								config: sql`(COALESCE(${integrations.config}, '{}'::jsonb) - 'project_id' - 'status_note') || ${JSON.stringify(connectConfig)}::jsonb`,
+							}
+						: {}),
 					updatedAt: new Date(),
 				},
 			})

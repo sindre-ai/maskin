@@ -44,14 +44,24 @@ export function ApiKeyDialog({
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const canWrite = useCanWrite()
+	const [projectId, setProjectId] = useState('')
+	const takesProject = provider?.name === 'posthog'
+	const projectIdInvalid =
+		takesProject && projectId.trim() !== '' && !/^\d{1,12}$/.test(projectId.trim())
 
 	const open = !!provider
 	const handleConnect = () => {
-		if (!provider || !canWrite) return
+		if (!provider || !canWrite || projectIdInvalid) return
 		connect.mutate(
-			{ provider: provider.name, apiKey, returnTo },
+			{
+				provider: provider.name,
+				apiKey,
+				projectId: takesProject && projectId.trim() ? projectId.trim() : undefined,
+				returnTo,
+			},
 			{
 				onSuccess: () => {
+					setProjectId('')
 					onClose()
 				},
 			},
@@ -84,11 +94,39 @@ export function ApiKeyDialog({
 							placeholder="Paste your API key"
 						/>
 					</div>
+					{takesProject && (
+						<div className="space-y-2">
+							<Label htmlFor="provider-project-id">Project id (optional)</Label>
+							<Input
+								id="provider-project-id"
+								inputMode="numeric"
+								value={projectId}
+								onChange={(e) => setProjectId(e.target.value)}
+								placeholder="For example 12345"
+								aria-invalid={projectIdInvalid}
+							/>
+							<p className="text-xs text-muted-foreground">
+								{projectIdInvalid
+									? 'The project id is a number, like 12345.'
+									: 'Agents start in this project. Leave it empty to use the one PostHog picks. You can find the number in the PostHog address after /project/.'}
+							</p>
+						</div>
+					)}
 					<div className="flex justify-end gap-2">
-						<Button type="button" variant="ghost" onClick={onClose}>
+						<Button
+							type="button"
+							variant="ghost"
+							onClick={() => {
+								setProjectId('')
+								onClose()
+							}}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!apiKey.trim() || connect.isPending || !canWrite}>
+						<Button
+							type="submit"
+							disabled={!apiKey.trim() || connect.isPending || !canWrite || projectIdInvalid}
+						>
 							Connect
 						</Button>
 					</div>

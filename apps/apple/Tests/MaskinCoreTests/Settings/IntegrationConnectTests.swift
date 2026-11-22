@@ -383,10 +383,10 @@ struct NativeConnectRequestTests {
 struct ConnectWithKeyStoreTests {
 	final class FakeKeyAPI: IntegrationKeyAPI, @unchecked Sendable {
 		var failure: SettingsError?
-		private(set) var sent: [(provider: String, key: String)] = []
-		func connect(provider: String, key: String, idempotencyKey: String) async throws {
+		private(set) var sent: [(provider: String, key: String, projectID: String?)] = []
+		func connect(provider: String, key: String, projectID: String?, idempotencyKey: String) async throws {
 			if let failure { throw failure }
-			sent.append((provider, key))
+			sent.append((provider, key, projectID))
 		}
 	}
 
@@ -402,6 +402,32 @@ struct ConnectWithKeyStoreTests {
 		#expect(api.sent.map(\.key) == ["phx_abc"])
 		#expect(store.didConnect && store.key.isEmpty && store.error == nil)
 		#expect(!store.canSave)
+	}
+
+	@Test("PostHog sends the project id when set and leaves it out when empty")
+	func projectPin() async {
+		let api = FakeKeyAPI()
+		let store = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: api)
+		store.key = "phx_abc"
+		store.projectID = " 12345 "
+		await store.save()
+		#expect(api.sent.map(\.projectID) == ["12345"])
+
+		let plain = FakeKeyAPI()
+		let unpinned = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: plain)
+		unpinned.key = "phx_abc"
+		await unpinned.save()
+		#expect(plain.sent.map(\.projectID) == [nil])
+	}
+
+	@Test("a project id that is not a number blocks saving")
+	func badProject() {
+		let store = ConnectWithKeyStore(providerID: "posthog", providerName: "PostHog", api: FakeKeyAPI())
+		store.key = "phx_abc"
+		store.projectID = "12a"
+		#expect(!store.projectIDIsValid && !store.canSave)
+		store.projectID = ""
+		#expect(store.canSave)
 	}
 
 	@Test("a refused key shows the server's sentence and keeps the field")

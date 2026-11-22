@@ -167,6 +167,7 @@ import {
 	type TokenMetadata,
 	stampTokenMetadata,
 } from '../lib/integrations/providers/github/token-metadata'
+import { withPostHogProjectPin } from '../lib/integrations/providers/posthog/project-pin'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
@@ -3481,7 +3482,9 @@ ${cont.continues_prompt}
 					{ providerMode: 'registered', status: 'active', exposed: true, access },
 					true,
 				)
-					? mcp.server
+					? integration.provider === 'posthog'
+						? withPostHogProjectPin(mcp.server, integration.config)
+						: mcp.server
 					: null
 
 			// A custom tool server is one row, one server: attached when the agent has access, and
