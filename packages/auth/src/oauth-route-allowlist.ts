@@ -288,6 +288,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'DELETE /api/extensions/:id/grants/:agentId',
 	'DELETE /api/files/uploads/:id',
 	'DELETE /api/integrations/:id/grants/:actorId',
+	'DELETE /api/integrations/:provider/app',
 	'DELETE /api/integrations/:provider/gateway',
 	'DELETE /api/integrations/deepdots/mcp',
 	'DELETE /api/integrations/google-drive/mcp',
@@ -328,6 +329,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/guardrails',
 	'GET /api/integrations/:id/audit-log',
 	'GET /api/integrations/:id/grants',
+	'GET /api/integrations/:provider/app',
 	'GET /api/integrations/:provider/gateway',
 	'GET /api/integrations/:provider/native-launch',
 	'GET /api/integrations/deepdots/mcp',
@@ -447,6 +449,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'PUT /api/integrations/:id/default-access',
 	'PUT /api/integrations/:id/grants',
 	'PUT /api/integrations/:id/grants/:actorId',
+	'PUT /api/integrations/:provider/app',
 	'PUT /api/notification-preferences',
 	'PUT /api/send-permissions',
 ]

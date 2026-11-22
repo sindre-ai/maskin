@@ -9,8 +9,9 @@ import {
 	integrations,
 	workspaceMembers,
 } from '@maskin/db/schema'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import { isGatedRow } from './custom-mcp'
+import { OAUTH_APP_MODE } from './oauth-app'
 
 /**
  * What one actor may do with one integration. The single place that answers it.
@@ -82,6 +83,8 @@ export async function resolveAgentAccess(
 	if (!row) return null
 	// An actor that does not exist gets nothing, whatever the integration.
 	if (row.actorType === null) return 'none'
+	// A saved sign-in app is settings, not a tool: no grant, default or chat Allow can open it.
+	if (row.providerMode === 'oauth_app') return 'none'
 	// A saved key or login needs an explicit grant for anyone. Other integrations let people through.
 	if (row.actorType !== 'agent' && !isKeychainMode(row.providerMode)) return 'read_write'
 	const access = effectiveAccess(row, row.grant)
@@ -190,6 +193,8 @@ export async function listAgentAccess(
 			and(
 				eq(integrations.workspaceId, workspaceId),
 				inArray(integrations.status, ['active', 'pending_undo']),
+				// A saved sign-in app is settings: no agent may be granted it, and none is shown it.
+				ne(integrations.providerMode, OAUTH_APP_MODE),
 			),
 		)
 		.orderBy(asc(integrations.createdAt))

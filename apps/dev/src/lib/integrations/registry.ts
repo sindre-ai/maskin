@@ -77,6 +77,7 @@ import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as retoolConfig } from './providers/retool/config'
+import { config as salesforceConfig } from './providers/salesforce/config'
 import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -283,6 +284,10 @@ providers.set('zapier', {
 
 providers.set('zoom', {
 	config: zoomConfig,
+})
+
+providers.set('salesforce', {
+	config: salesforceConfig,
 })
 
 providers.set('fireflies', {

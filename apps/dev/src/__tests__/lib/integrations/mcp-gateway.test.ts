@@ -56,6 +56,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'posthog',
 			'resend',
 			'retool',
+			'salesforce',
 			'sentry',
 			'stripe',
 			'supabase',

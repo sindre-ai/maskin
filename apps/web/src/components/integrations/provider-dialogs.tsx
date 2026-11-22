@@ -18,6 +18,8 @@ import {
 	useConnectIntegration,
 	useLinkGithubInstallation,
 	useLinkableGithubInstallations,
+	useOAuthApp,
+	useSaveOAuthApp,
 } from '@/hooks/use-integrations'
 import type { ProviderInfo } from '@/lib/api'
 import { Check, Copy, Plus } from 'lucide-react'
@@ -174,6 +176,154 @@ export function DeepdotsConnectDialog({
 							disabled={!email.trim() || !password || connect.isPending || !canWrite}
 						>
 							{connect.isPending ? 'Checking…' : 'Connect'}
+						</Button>
+					</div>
+				</form>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+/**
+ * The paste form for a tool whose vendor lets only the customer's own admin create the sign-in
+ * app (Salesforce). The app id and secret go to the server once; the secret is never shown again,
+ * so a replace asks for the whole pair. Saving a first app carries straight on to the sign-in.
+ */
+export function OwnAppDialog({
+	workspaceId,
+	provider,
+	open,
+	onClose,
+	returnTo,
+	connected,
+}: {
+	workspaceId: string
+	provider: ProviderInfo
+	open: boolean
+	onClose: () => void
+	returnTo?: string
+	/** The tool is already signed in: saving replaces the app and does not start a new sign-in. */
+	connected: boolean
+}) {
+	const { data: app } = useOAuthApp(workspaceId, provider.name, { enabled: open })
+	const save = useSaveOAuthApp(workspaceId, provider.name)
+	const connect = useConnectIntegration(workspaceId)
+	const canWrite = useCanWrite()
+	const [clientId, setClientId] = useState('')
+	const [clientSecret, setClientSecret] = useState('')
+	const [copied, setCopied] = useState(false)
+	const replacing = !!app?.configured
+	const pending = save.isPending || connect.isPending
+
+	const close = () => {
+		setClientId('')
+		setClientSecret('')
+		save.reset()
+		connect.reset()
+		onClose()
+	}
+	const handleSave = () => {
+		if (!canWrite || !clientId.trim() || !clientSecret) return
+		save.mutate(
+			{ clientId: clientId.trim(), clientSecret },
+			{
+				onSuccess: () => {
+					if (connected) {
+						close()
+						return
+					}
+					setClientSecret('')
+					connect.mutate({ provider: provider.name, returnTo })
+				},
+			},
+		)
+	}
+	const handleCopy = () => {
+		if (!app?.callbackUrl) return
+		navigator.clipboard.writeText(app.callbackUrl)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}
+	const error = save.isError ? save.error : connect.isError ? connect.error : null
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && close()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>
+						{replacing
+							? `Change the ${provider.displayName} app`
+							: `Connect ${provider.displayName}`}
+					</DialogTitle>
+					<DialogDescription>
+						{provider.displayName} lets only your own admin create the app that signs in. Create it
+						in your {provider.displayName} account, then paste its id and secret here. The secret is
+						stored encrypted and is never shown again.
+						{replacing && connected
+							? ' If you change to a different app, reconnect afterwards.'
+							: ''}
+					</DialogDescription>
+				</DialogHeader>
+				<form
+					className="space-y-3"
+					onSubmit={(e) => {
+						e.preventDefault()
+						handleSave()
+					}}
+				>
+					{app?.callbackUrl && (
+						<div className="space-y-2">
+							<Label htmlFor="own-app-callback">Callback URL to give the app</Label>
+							<div className="flex items-center gap-2">
+								<Input id="own-app-callback" readOnly value={app.callbackUrl} />
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									className="shrink-0"
+									onClick={handleCopy}
+									aria-label="Copy callback URL"
+								>
+									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+								</Button>
+							</div>
+						</div>
+					)}
+					<div className="space-y-2">
+						<Label htmlFor="own-app-id">App ID</Label>
+						<Input
+							id="own-app-id"
+							autoComplete="off"
+							value={clientId}
+							onChange={(e) => setClientId(e.target.value)}
+							placeholder={app?.clientId ?? 'Consumer key'}
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="own-app-secret">App secret</Label>
+						<Input
+							id="own-app-secret"
+							type="password"
+							autoComplete="new-password"
+							value={clientSecret}
+							onChange={(e) => setClientSecret(e.target.value)}
+							placeholder={replacing ? 'Paste the secret again to replace it' : 'Consumer secret'}
+						/>
+					</div>
+					{error && (
+						<p role="alert" className="text-sm text-destructive">
+							{error.message}
+						</p>
+					)}
+					<div className="flex justify-end gap-2">
+						<Button type="button" variant="ghost" onClick={close}>
+							Cancel
+						</Button>
+						<Button
+							type="submit"
+							disabled={!clientId.trim() || !clientSecret || pending || !canWrite}
+						>
+							{pending ? 'Saving…' : connected || replacing ? 'Save' : 'Save and connect'}
 						</Button>
 					</div>
 				</form>

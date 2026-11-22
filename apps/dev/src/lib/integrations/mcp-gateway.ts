@@ -69,6 +69,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'posthog',
 	'resend',
 	'retool',
+	'salesforce',
 	'sentry',
 	'stripe',
 	'supabase',
