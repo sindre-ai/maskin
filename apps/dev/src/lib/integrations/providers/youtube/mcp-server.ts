@@ -154,6 +154,33 @@ function registerTool<Shape extends z.ZodRawShape>(
 	)
 }
 
+const MAX_PAGE_SIZE = 50
+const GET_CHANNEL_PARAMS = { part: 'snippet,statistics,contentDetails', mine: 'true' }
+
+/**
+ * The uploads playlist id comes from the channel's contentDetails, so the caller never supplies
+ * it. The channel read uses the same tool name and arguments as get_channel, so it shares that
+ * tool's cache entry: when the channel was read in the last 15 minutes this costs nothing.
+ */
+async function getUploadsPlaylistId(client: YoutubeClientContext): Promise<string> {
+	const channels = await youtubeRead<{
+		items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }>
+	}>(client, {
+		tool: 'youtube__get_channel',
+		path: 'channels',
+		params: GET_CHANNEL_PARAMS,
+		units: 1,
+	})
+	const uploads = channels.items?.[0]?.contentDetails?.relatedPlaylists?.uploads
+	if (!uploads) {
+		throw new YoutubeError({
+			code: 'PROVIDER_ERROR',
+			message: 'The connected Google account has no YouTube channel with an uploads playlist.',
+		})
+	}
+	return uploads
+}
+
 function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 	const client: YoutubeClientContext = ctx
 
@@ -167,7 +194,7 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 			youtubeRead(client, {
 				tool: 'youtube__get_channel',
 				path: 'channels',
-				params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
+				params: GET_CHANNEL_PARAMS,
 				units: 1,
 			}),
 	)
@@ -203,6 +230,41 @@ function registerTools(server: McpServer, ctx: YoutubeMcpContext): void {
 				tool: 'youtube__get_video_stats',
 				path: 'videos',
 				params: { part: 'snippet,statistics,contentDetails', id: video_ids.join(',') },
+				units: 1,
+			})
+		},
+	)
+
+	registerTool(
+		server,
+		ctx,
+		'list_recent_videos',
+		'List the newest uploads of the connected YouTube channel, newest first, as playlist items as the YouTube Data API returns them (video id, title, publish time). Use the video ids with get_video_stats. Returns up to 50 items per page; when more exist the response carries nextPageToken, pass it back as page_token for the next page. Costs 1 quota unit, plus 1 more when the channel itself is not cached; repeat reads within 15 minutes are served from a cache at no cost.',
+		{
+			max_results: z
+				.number()
+				.int()
+				.min(1)
+				.max(MAX_PAGE_SIZE)
+				.optional()
+				.describe(`How many items to return, 1 to ${MAX_PAGE_SIZE}. Default ${MAX_PAGE_SIZE}.`),
+			page_token: z
+				.string()
+				.optional()
+				.describe('The nextPageToken from a previous response, to get the next page.'),
+		},
+		async ({ max_results, page_token }) => {
+			const uploadsPlaylistId = await getUploadsPlaylistId(client)
+			const params: Record<string, string> = {
+				part: 'snippet,contentDetails',
+				playlistId: uploadsPlaylistId,
+				maxResults: String(max_results ?? MAX_PAGE_SIZE),
+			}
+			if (page_token) params.pageToken = page_token
+			return youtubeRead(client, {
+				tool: 'youtube__list_recent_videos',
+				path: 'playlistItems',
+				params,
 				units: 1,
 			})
 		},

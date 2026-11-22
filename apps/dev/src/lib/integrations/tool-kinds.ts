@@ -51,6 +51,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 	youtube: new Set([
 		'youtube__get_channel',
 		'youtube__get_video_stats',
+		'youtube__list_recent_videos',
 		'youtube__search',
 		'youtube__get_public_channel',
 		'youtube__get_public_videos',
