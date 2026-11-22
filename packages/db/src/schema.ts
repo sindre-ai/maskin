@@ -421,6 +421,15 @@ export const events = pgTable(
 		index('events_approval_lookup_idx')
 			.on(t.workspaceId, t.entityId, t.id)
 			.where(sql`${t.action} IN ('approved', 'delivered', 'auto_sent')`),
+		// "Was this notification card already sent?" before a card is written (self-start limits,
+		// run-death alerts, daily-budget cards). Built CONCURRENTLY in migration 0174.
+		index('events_notification_dedupe_idx')
+			.on(
+				t.workspaceId,
+				sql`(${t.data} -> 'metadata' ->> 'source')`,
+				sql`(${t.data} -> 'metadata' ->> 'dedupe_key')`,
+			)
+			.where(sql`${t.entityType} = 'notification' AND ${t.action} = 'created'`),
 	],
 )
 
