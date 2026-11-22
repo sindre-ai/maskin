@@ -1,3 +1,4 @@
+import { SessionDetailPanel } from '@/components/agents/session-detail-panel'
 import {
 	getLatestActivityPreview,
 	isSessionIdleAwaitingInput,
@@ -8,13 +9,15 @@ import { useActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useSession, useSessionLogs } from '@/hooks/use-sessions'
 import { PauseCircle } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { ActorAvatar } from './actor-avatar'
 
 interface AgentWorkingBadgeProps {
 	sessionId: string
 	workspaceId: string
-	variant?: 'compact' | 'banner'
+	/** `inline` is the one thin line the item page draws under its meta row: spinner, "<name> is
+	 *  thinking", the time, and a Watch link that opens the session. */
+	variant?: 'compact' | 'banner' | 'inline'
 }
 
 export function AgentWorkingBadge({
@@ -25,6 +28,7 @@ export function AgentWorkingBadge({
 	const { data: session } = useSession(sessionId, workspaceId)
 	const { data: actor } = useActor(session?.actorId ?? '')
 	const { data: logs } = useSessionLogs(sessionId, workspaceId, true, { live: true })
+	const [watchOpen, setWatchOpen] = useState(false)
 	const duration = useDuration(session?.startedAt)
 	const idle = useMemo(() => isSessionIdleAwaitingInput(logs ?? []), [logs])
 	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
@@ -35,6 +39,32 @@ export function AgentWorkingBadge({
 	) : (
 		<Spinner />
 	)
+
+	if (variant === 'inline') {
+		return (
+			<div className="flex min-w-0 items-center gap-2 text-[12.5px] text-muted-foreground">
+				{Icon}
+				<span className="min-w-0 truncate">
+					<span className="font-semibold text-foreground">{actor?.name ?? 'An agent'}</span>
+					{idle ? ' is waiting' : ' is thinking'}
+				</span>
+				{duration && <span className="shrink-0">· {duration}</span>}
+				<button
+					type="button"
+					onClick={() => setWatchOpen(true)}
+					className="ml-1 shrink-0 rounded-md px-1.5 py-0.5 font-semibold text-brand transition-colors hover:bg-brand-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+				>
+					Watch
+				</button>
+				<SessionDetailPanel
+					session={session ?? null}
+					workspaceId={workspaceId}
+					open={watchOpen}
+					onOpenChange={setWatchOpen}
+				/>
+			</div>
+		)
+	}
 
 	if (variant === 'banner') {
 		return (

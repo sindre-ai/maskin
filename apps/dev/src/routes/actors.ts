@@ -7,6 +7,13 @@ import {
 	agentFiles,
 	agentSkills,
 	conversationParticipants,
+	conversationPendingTurns,
+	conversations,
+	extensions,
+	fileComments,
+	fileProposalChanges,
+	fileProposals,
+	fileUploads,
 	files,
 	imports,
 	integrations,
@@ -18,8 +25,11 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
+	starState,
 	subscriptions,
 	triggers,
+	voiceSessions,
+	workspaceInvitations,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces,
@@ -29,6 +39,7 @@ import {
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
+	normalizeActorInitials,
 	normalizeStarterPrompts,
 	normalizeTags,
 	updateActorSchema,
@@ -143,6 +154,11 @@ const actorStarterPromptsSql = sql<
 	string[]
 >`CASE WHEN jsonb_typeof(${actors.metadata}->'starter_prompts') = 'array' THEN ${actors.metadata}->'starter_prompts' ELSE '[]'::jsonb END`.mapWith(
 	(value: unknown) => normalizeStarterPrompts(typeof value === 'string' ? parseJson(value) : value),
+)
+
+/** The letters the agent chose for its avatar, or null. Cleaned on the way out like the starter prompts. */
+const actorInitialsSql = sql<string | null>`${actors.metadata}->>'initials'`.mapWith(
+	(value: unknown) => normalizeActorInitials(value),
 )
 
 function parseJson(text: string): unknown {
@@ -292,6 +308,17 @@ app.openapi(createActorRoute, async (c) => {
 		creatorType = callerType
 
 		const ownWorkspace = body.auto_create_workspace === true
+		// Same rule as POST /api/workspaces: only people create workspaces, and this
+		// flag runs the same provisioning plus a welcome session.
+		if (ownWorkspace && callerType === 'agent') {
+			refuse('agent_auto_create_workspace', callerId, callerType)
+			return c.json(
+				createApiError('BAD_REQUEST', 'Agents cannot create workspaces', [
+					{ field: 'auto_create_workspace', message: 'Not accepted from an agent caller' },
+				]),
+				400,
+			)
+		}
 		if (body.workspace_id && ownWorkspace) {
 			return c.json(
 				createApiError(
@@ -522,6 +549,9 @@ app.openapi(createActorRoute, async (c) => {
 				name: `${body.name}'s Workspace`,
 				ownerActorId: actor.id,
 				settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
+				// Only a client that shows the card step asks for it. Any other client (the iPhone
+				// app before it has the card step): sign-up works exactly as before.
+				awaitingCard: body.type === 'human' && body.card_step === true,
 			})
 			if (!created) {
 				logger.error('signup workspace provisioning returned no workspace row', {
@@ -818,6 +848,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
 					starter_prompts: actorStarterPromptsSql,
+					initials: actorInitialsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -875,6 +906,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					avatar_url: actorAvatarUrlSql,
 					tags: actorTagsSql,
 					starter_prompts: actorStarterPromptsSql,
+					initials: actorInitialsSql,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -1108,6 +1140,7 @@ app.openapi(getActorRoute, (async (c) => {
 				avatar_url: actorAvatarUrlSql,
 				tags: actorTagsSql,
 				starter_prompts: actorStarterPromptsSql,
+				initials: actorInitialsSql,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -1434,6 +1467,19 @@ app.openapi(updateActorRoute, (async (c) => {
 		)
 	}
 
+	// Initials are the letters on an agent's avatar, shown to everyone, so changing another actor's
+	// needs owner/admin, the same floor as its starter prompts. An agent may still set its own.
+	if (
+		body.initials !== undefined &&
+		id !== actorId &&
+		!(await isAdminOfSharedWorkspace(db, actorId, id, workspaceId))
+	) {
+		return c.json(
+			createApiError('FORBIDDEN', "Only workspace admins can change another actor's initials"),
+			403,
+		)
+	}
+
 	// envFrom names which API-service variables get copied into the agent's
 	// sessions, so only a human admin or owner may change it, even on the actor's
 	// own record. Sending the stored list back unchanged stays open.
@@ -1538,6 +1584,24 @@ app.openapi(updateActorRoute, (async (c) => {
 		starterPrompts = normalizeStarterPrompts(body.starter_prompts)
 	}
 
+	// Initials are the letters on an agent's avatar. Only agents carry them. They live on the actor's
+	// metadata; an empty value clears them, which removes the key so the automatic letters come back.
+	let initials: string | null | undefined
+	if (body.initials !== undefined) {
+		if (existing.type !== 'agent') {
+			return c.json(createApiError('BAD_REQUEST', 'Only an agent carries initials'), 400)
+		}
+		initials = body.initials === null ? null : normalizeActorInitials(body.initials)
+		if (body.initials !== null && body.initials.trim() !== '' && initials === null) {
+			return c.json(
+				createApiError('BAD_REQUEST', 'Initials must be 1 to 3 letters or digits', [
+					{ field: 'initials', message: 'Use 1 to 3 letters or digits' },
+				]),
+				400,
+			)
+		}
+	}
+
 	// A config read back masked must not overwrite the stored secrets with the mask.
 	let tools = body.tools
 	if (tools !== undefined) {
@@ -1601,6 +1665,11 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	const clearedMetadataKeys = [
+		...(mailbox === null ? ['mailbox'] : []),
+		...(initials === null ? ['initials'] : []),
+	]
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -1615,13 +1684,18 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.default_workspace_id !== undefined && {
 				defaultWorkspaceId: body.default_workspace_id,
 			}),
-			...((mailbox !== undefined || tags !== undefined || starterPrompts !== undefined) && {
-				// One metadata write for every key, so sending a mailbox, tags and starters together keeps all.
-				metadata: sql`${mailbox === null ? sql`coalesce(${actors.metadata}, '{}'::jsonb) - 'mailbox'` : sql`coalesce(${actors.metadata}, '{}'::jsonb)`} || ${JSON.stringify(
+			...((mailbox !== undefined ||
+				tags !== undefined ||
+				starterPrompts !== undefined ||
+				initials !== undefined) && {
+				// One metadata write for every key, so sending a mailbox, tags, starters and initials together keeps all.
+				// Clearing a key removes it: the merge below can not remove one, so it is taken out first.
+				metadata: sql`${clearedMetadataKeys.reduce((metadata, key) => sql`${metadata} - ${sql.raw(`'${key}'`)}`, sql`coalesce(${actors.metadata}, '{}'::jsonb)`)} || ${JSON.stringify(
 					{
 						...(mailbox ? { mailbox } : {}),
 						...(tags !== undefined ? { tags } : {}),
 						...(starterPrompts !== undefined ? { starter_prompts: starterPrompts } : {}),
+						...(initials ? { initials } : {}),
 					},
 				)}::jsonb`,
 			}),
@@ -1648,6 +1722,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
 			starter_prompts: actorStarterPromptsSql,
+			initials: actorInitialsSql,
 			default_workspace_id: actors.defaultWorkspaceId,
 		})
 
@@ -1842,6 +1917,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			avatar_url: actorAvatarUrlSql,
 			tags: actorTagsSql,
 			starter_prompts: actorStarterPromptsSql,
+			initials: actorInitialsSql,
 		})
 
 	if (!updated) {
@@ -2021,9 +2097,27 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Delete relationships
 		await tx.delete(relationships).where(eq(relationships.createdBy, id))
 
+		// Triggers that survive (created by someone else, aimed at someone else) may name
+		// this agent as a hand-off or escalation target.
+		await tx
+			.update(triggers)
+			.set({ handsOffToActorId: null })
+			.where(eq(triggers.handsOffToActorId, id))
+		await tx
+			.update(triggers)
+			.set({ escalatesToActorId: null })
+			.where(eq(triggers.escalatesToActorId, id))
+
 		// Delete per-actor feed bookkeeping
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
 		await tx.delete(readState).where(eq(readState.actorId, id))
+		await tx.delete(starState).where(eq(starState.actorId, id))
+
+		// Chat turns buffered for this agent, and the voice calls it took part in.
+		await tx.delete(conversationPendingTurns).where(eq(conversationPendingTurns.actorId, id))
+		await tx
+			.delete(voiceSessions)
+			.where(or(eq(voiceSessions.agentActorId, id), eq(voiceSessions.humanActorId, id)))
 
 		// Delete orphan-thread-detection ledger rows expecting a reply from this actor
 		await tx
@@ -2053,10 +2147,39 @@ app.openapi(deleteActorRoute, (async (c) => {
 			.update(workspaceSkills)
 			.set({ createdBy: null })
 			.where(eq(workspaceSkills.createdBy, id))
+		// Same for the rest of what an agent can author: chats it started, invitations it
+		// sent, comments it wrote, file changes it proposed, uploads it began. Fields that
+		// are optional (who resolved a comment, who decided a change, who created an
+		// extension) are cleared instead.
+		await tx
+			.update(conversations)
+			.set({ createdBy: actorId })
+			.where(eq(conversations.createdBy, id))
+		await tx
+			.update(workspaceInvitations)
+			.set({ invitedByActorId: actorId })
+			.where(eq(workspaceInvitations.invitedByActorId, id))
+		await tx.update(fileComments).set({ authorId: actorId }).where(eq(fileComments.authorId, id))
+		await tx.update(fileComments).set({ resolvedBy: null }).where(eq(fileComments.resolvedBy, id))
+		await tx.update(fileProposals).set({ authorId: actorId }).where(eq(fileProposals.authorId, id))
+		await tx
+			.update(fileProposalChanges)
+			.set({ decidedBy: null })
+			.where(eq(fileProposalChanges.decidedBy, id))
+		await tx.update(fileUploads).set({ createdBy: actorId }).where(eq(fileUploads.createdBy, id))
+		await tx.update(extensions).set({ createdBy: null }).where(eq(extensions.createdBy, id))
+
+		// A connection that belongs to this agent alone (its own LinkedIn account) goes with
+		// it: handing it to another actor would give that actor the agent's credentials.
+		await tx.delete(integrations).where(eq(integrations.actorId, id))
 
 		// Clean up workspace references
 		await tx.delete(workspaceMembers).where(eq(workspaceMembers.actorId, id))
 		await tx.update(workspaces).set({ createdBy: null }).where(eq(workspaces.createdBy, id))
+		await tx
+			.update(workspaces)
+			.set({ billingOwnerId: null })
+			.where(eq(workspaces.billingOwnerId, id))
 		await tx.update(integrations).set({ createdBy: actorId }).where(eq(integrations.createdBy, id))
 
 		// Clean up self-references and delete

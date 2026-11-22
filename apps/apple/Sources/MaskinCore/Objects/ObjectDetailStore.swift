@@ -39,6 +39,8 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	public var taskIds: [String] = []
 	/// The decision the comment asks for, when it carries one.
 	public var decision: CommentDecision?
+	/// The author changed the words after posting (`data.editedAt` on the stored event).
+	public var isEdited = false
 
 	/// A status move the event recorded (`data.changes` entry for `status`), when it is one.
 	public var statusChange: StatusChange?
@@ -154,6 +156,8 @@ public final class ObjectDetailStore {
 	public let objectId: String
 	public private(set) var object: WorkObject?
 	public private(set) var links: [ObjectLink] = []
+	/// The session that produced this item, when one did. Not cached: it appears after the first fetch.
+	public private(set) var origin: ObjectOrigin?
 	public private(set) var timeline: [TimelineItem] = []
 	public private(set) var phase: Phase = .loading
 	public private(set) var isOffline = false
@@ -334,6 +338,7 @@ public final class ObjectDetailStore {
 				// data; its own completion refetches.
 				if before == editCount { object = graph.object }
 				links = graph.links
+				origin = graph.origin
 				resolveFiles()
 				resolveLinkTitles()
 				mergeTimeline(graph.events)
@@ -504,6 +509,7 @@ public final class ObjectDetailStore {
 			item.parentEventId = Self.parentEventId(in: event.data)
 			item.taskIds = CommentTasks.ids(in: event.data)
 			item.decision = CommentDecision.parse(event.data?["decision"])
+			item.isEdited = event.data?["editedAt"]?.stringValue != nil
 			return item
 		}
 		let summary = (event.summary?.isEmpty == false ? event.summary : nil)
@@ -564,6 +570,36 @@ public final class ObjectDetailStore {
 		else { return }
 		timeline[i].delivery = .sending
 		await send(localId: localId)
+	}
+
+	/// Whether the caller can change this comment's words: their own, stored, not a decision card.
+	public func canEdit(_ item: TimelineItem) -> Bool {
+		guard case .comment = item.kind, item.eventId != nil, item.decision == nil, let me = currentActorId
+		else { return false }
+		return item.actorId == me
+	}
+
+	/// Shows the new words at once, sends them, and puts the old words back if the server refuses.
+	public func editComment(_ item: TimelineItem, to text: String) async {
+		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty, let eventId = item.eventId, canEdit(item),
+			let i = timeline.firstIndex(where: { $0.id == item.id }), case .comment(let old) = timeline[i].kind,
+			trimmed != old
+		else { return }
+		let wasEdited = timeline[i].isEdited
+		timeline[i].kind = .comment(trimmed)
+		timeline[i].isEdited = true
+		do {
+			try await remote.editComment(eventId: eventId, content: trimmed)
+			actionError = nil
+		} catch {
+			if let j = timeline.firstIndex(where: { $0.id == item.id }) {
+				timeline[j].kind = .comment(old)
+				timeline[j].isEdited = wasEdited
+			}
+			isOffline = (error as? ObjectsError)?.isOffline ?? isOffline
+			actionError = Self.message(error)
+		}
 	}
 
 	/// Drop an unsent comment.

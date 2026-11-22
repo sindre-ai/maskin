@@ -4,6 +4,7 @@ import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { recordReading } from '../../lib/readings'
 import {
 	ensureWorkspaceMember,
 	insertActor,
@@ -76,7 +77,7 @@ describe('Loops read API integration', () => {
 	it('returns metadata.tags as clean labels, and [] when a loop has none', async () => {
 		const tagged = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Outbound',
 			// Padded, duplicated (case-insensitively), empty and non-string entries are
 			// all tolerated: a hand-edited metadata blob must not 500 the list.
@@ -108,7 +109,7 @@ describe('Loops read API integration', () => {
 		const driver = await insertActor(db)
 		const driven = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Has a driver',
 			driver: driver.id,
 		})
@@ -145,7 +146,7 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		const foreign = await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Foreign loop',
 			driver: otherActor.id,
 		})
@@ -164,7 +165,7 @@ describe('Loops read API integration', () => {
 		const headers = { 'x-workspace-id': workspaceId }
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Retag me',
 		})
 
@@ -191,13 +192,13 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Foreign loop',
 		})
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Customer feedback',
 			content: 'Every customer who gives feedback hears back within 30 days',
 			metadata: {
@@ -231,8 +232,8 @@ describe('Loops read API integration', () => {
 		expect(row.id).toBe(loop.id)
 		expect(row.name).toBe('Customer feedback')
 		expect(row.content).toBe('Every customer who gives feedback hears back within 30 days')
-		expect(row.status).toBe('learning')
-		expect(row.pill).toBe('learning')
+		expect(row.status).toBe('pilot')
+		expect(row.pill).toBe('pilot')
 		expect(row.entryCondition).toBe('A new customer feedback item lands in the inbox')
 		expect(row.closeCondition).toBe('A personalised reply is sent within 30 days')
 		expect(row.inProgressCount).toBe(0)
@@ -249,7 +250,7 @@ describe('Loops read API integration', () => {
 		const ownerActorId = '11111111-1111-4111-8111-111111111111'
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Targets loop',
 			metadata: {
 				targets: [
@@ -298,15 +299,425 @@ describe('Loops read API integration', () => {
 		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
 	})
 
+	describe('flow targets from target objects', () => {
+		type TargetsBody = {
+			loops: Array<{
+				id: string
+				targets: Array<{
+					label: string
+					source: string
+					actual: number
+					target: number
+					ownerActorId?: string
+					pace_policy?: string
+				}> | null
+			}>
+		}
+
+		async function targetOf(loopId: string, overrides: Record<string, unknown>) {
+			const target = await insertObject(db, workspaceId, actorId, {
+				type: 'target',
+				status: 'open',
+				...overrides,
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: target.id,
+				targetType: 'object',
+				targetId: loopId,
+				type: 'target_of',
+			})
+			return target
+		}
+
+		async function listTargets(loopId: string) {
+			const res = await makeApp(actorId).request(
+				jsonGet(`/api/loops?id=${loopId}`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			return ((await res.json()) as TargetsBody).loops[0]?.targets
+		}
+
+		it('returns the same fields as an old row, taken from the linked target objects', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+			await targetOf(loop.id, {
+				title: 'Posts published',
+				driver: actorId,
+				metadata: { source: 'metric:posts.published', actual: 6, target: 8 },
+			})
+
+			expect(await listTargets(loop.id)).toEqual([
+				{
+					label: 'Posts published',
+					source: 'metric:posts.published',
+					actual: 6,
+					target: 8,
+					ownerActorId: actorId,
+					manual: true,
+				},
+			])
+		})
+
+		it('prefers target objects over old rows, and hides dropped targets', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'Flow',
+				metadata: {
+					targets: [{ label: 'Old row', source: 'old', actual: 1, target: 2 }],
+				},
+			})
+			await targetOf(loop.id, {
+				title: 'Kept',
+				metadata: { source: 'kept', actual: 3, target: 4 },
+			})
+			await targetOf(loop.id, {
+				title: 'Dropped',
+				status: 'dropped',
+				metadata: { source: 'dropped', actual: 5, target: 6 },
+			})
+
+			const targets = await listTargets(loop.id)
+			expect(targets?.map((t) => t.label)).toEqual(['Kept'])
+		})
+
+		it('keeps the hand-set actual of the old row when the object has none', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'Flow',
+				metadata: {
+					targets: [
+						{
+							label: 'Replies sent',
+							source: 'replies',
+							actual: 7,
+							target: 10,
+							pace_policy: 'strict',
+						},
+					],
+				},
+			})
+			await targetOf(loop.id, {
+				title: 'Replies sent',
+				metadata: { source: 'replies', target: 12 },
+			})
+
+			const [row] = (await listTargets(loop.id)) ?? []
+			expect(row).toMatchObject({ actual: 7, target: 12, pace_policy: 'strict' })
+		})
+
+		it('falls back to the old rows for a flow with no target objects, per flow', async () => {
+			const withObjects = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'With objects',
+			})
+			const withRows = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				title: 'With rows',
+				metadata: { targets: [{ label: 'Row', source: 'row', actual: 1, target: 2 }] },
+			})
+			await targetOf(withObjects.id, {
+				title: 'Object',
+				metadata: { source: 'object', actual: 3, target: 4 },
+			})
+
+			const res = await makeApp(actorId).request(
+				jsonGet('/api/loops', { 'x-workspace-id': workspaceId }),
+			)
+			const byId = new Map(((await res.json()) as TargetsBody).loops.map((l) => [l.id, l.targets]))
+			expect(byId.get(withObjects.id)?.map((t) => t.label)).toEqual(['Object'])
+			expect(byId.get(withRows.id)).toEqual([
+				{ label: 'Row', source: 'row', actual: 1, target: 2, manual: true },
+			])
+		})
+
+		it('ignores target objects with a missing number, and returns null with nothing left', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+			await targetOf(loop.id, { title: 'No numbers', metadata: { source: 'x' } })
+
+			expect(await listTargets(loop.id)).toBeNull()
+		})
+
+		describe('metric: targets and readings', () => {
+			type ReadTarget = {
+				label: string
+				actual: number
+				reading?: { readAt: string; source: string; expected: number | null }
+			}
+
+			const read = (subjectId: string, value: number, readAt: string, sourceRef: string) =>
+				recordReading(db, {
+					workspaceId,
+					subjectId,
+					measure: 'luma.registrations',
+					value,
+					readAt: new Date(readAt),
+					source: 'luma-api',
+					sourceRef,
+				})
+
+			async function metricTarget(
+				loopId: string,
+				metadata: Record<string, unknown>,
+				overrides: Record<string, unknown> = {},
+			) {
+				return targetOf(loopId, {
+					title: 'Registrations',
+					metadata: { source: 'metric:luma.registrations', actual: 2, target: 100, ...metadata },
+					...overrides,
+				})
+			}
+
+			it('shows the newest reading and its read time instead of the written actual', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await read(target.id, 10, '2026-11-01T08:00:00Z', 'slot-1')
+				await read(target.id, 42, '2026-11-02T08:00:00Z', 'slot-2')
+				await read(target.id, 30, '2026-11-01T20:00:00Z', 'slot-late-arrival')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(42)
+				expect(row.reading).toMatchObject({
+					readAt: '2026-11-02T08:00:00.000Z',
+					source: 'luma-api',
+					expected: null,
+				})
+			})
+
+			it('finds a reading recorded on the flow itself, and takes the newer of the two', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await read(target.id, 5, '2026-11-01T08:00:00Z', 'a')
+				await read(loop.id, 9, '2026-11-03T08:00:00Z', 'b')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(9)
+				expect(row.reading?.readAt).toBe('2026-11-03T08:00:00.000Z')
+			})
+
+			it('keeps the written actual and adds no reading when none exists', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				await metricTarget(loop.id, {})
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(2)
+				expect(row.reading).toBeUndefined()
+			})
+
+			it('does not use a reading of another measure', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const target = await metricTarget(loop.id, {})
+				await recordReading(db, {
+					workspaceId,
+					subjectId: target.id,
+					measure: 'stripe.paid',
+					value: 999,
+					readAt: new Date('2026-11-02T08:00:00Z'),
+					source: 'stripe',
+					sourceRef: 'inv-1',
+				})
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.actual).toBe(2)
+				expect(row.reading).toBeUndefined()
+			})
+
+			it('computes where the number should be today on read, as a straight line to the deadline', async () => {
+				const loop = await insertObject(db, workspaceId, actorId, { type: 'loop', title: 'Flow' })
+				const day = 86_400_000
+				const start = new Date(Date.now() - 10 * day)
+				const deadline = new Date(Date.now() + 10 * day)
+				const target = await metricTarget(
+					loop.id,
+					{ deadline: deadline.toISOString() },
+					{ createdAt: start },
+				)
+				await read(target.id, 40, new Date().toISOString(), 'now')
+
+				const [row] = ((await listTargets(loop.id)) ?? []) as ReadTarget[]
+				expect(row.reading?.expected).toBeCloseTo(50, 0)
+			})
+		})
+	})
+
+	it('reads metric: targets from the people linked to the flow, ignoring the stored number', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'pilot',
+			title: 'Phone sales',
+			metadata: {
+				targets: [
+					{
+						label: 'Calls today',
+						source: 'metric:phone_sales.calls_today',
+						actual: 20,
+						target: 100,
+					},
+					{
+						label: 'Calls this week',
+						source: 'metric:phone_sales.calls_this_week',
+						actual: 99,
+						target: 500,
+					},
+					{
+						label: 'Calls total',
+						source: 'metric:phone_sales.calls_total',
+						actual: 99,
+						target: 500,
+					},
+					{
+						label: 'Call-ready',
+						source: 'metric:phone_sales.call_ready',
+						actual: 41,
+						target: 1000,
+					},
+					{ label: 'Meetings', source: 'metric:phone_sales.meetings_booked', actual: 1, target: 3 },
+					{ label: 'Interested', source: 'metric:phone_sales.interested', actual: 9, target: 10 },
+					{
+						label: 'Owners reached',
+						source: 'metric:phone_sales.owners_reached',
+						actual: 9,
+						target: 30,
+					},
+					{ label: 'Typed by hand', source: 'calls the agent counted', actual: 7, target: 10 },
+					{
+						label: 'Unknown metric',
+						source: 'metric:linkedin.impressions',
+						actual: 4200,
+						target: 5000,
+					},
+				],
+			},
+		})
+		const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Copenhagen' }).format(
+			new Date(),
+		)
+		const people: Array<{ status: string; metadata: Record<string, unknown> }> = [
+			// Called today, owner reached, still queued as call-ready.
+			{
+				status: 'qualified',
+				metadata: { call_done: true, call_at: today, next_channel: 'call', owner_reached: true },
+			},
+			// Called on an old date: counts in the total only.
+			{ status: 'qualified', metadata: { call_done: true, call_at: '2020-01-01' } },
+			// Not called yet, call-ready.
+			{ status: 'qualified', metadata: { next_channel: 'call' } },
+			{ status: 'in_conversation', metadata: { call_done: true, call_at: today } },
+			{ status: 'meeting_booked', metadata: {} },
+			{ status: 'converted', metadata: {} },
+		]
+		for (const person of people) {
+			const row = await insertObject(db, workspaceId, actorId, { type: 'contact', ...person })
+			await insertRelationship(db, actorId, {
+				sourceId: loop.id,
+				sourceType: 'object',
+				targetId: row.id,
+				targetType: 'object',
+				type: 'in_loop',
+			})
+		}
+		// A person who is not linked to the flow is never counted.
+		await insertObject(db, workspaceId, actorId, {
+			type: 'contact',
+			status: 'meeting_booked',
+			metadata: { call_done: true, call_at: today, owner_reached: true },
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{ targets: Array<{ label: string; actual: number; manual: boolean }> }>
+		}
+		// Only the hand-typed row and the unknown metric key are manual; live rows are not.
+		expect((body.loops[0]?.targets ?? []).filter((t) => t.manual).map((t) => t.label)).toEqual([
+			'Typed by hand',
+			'Unknown metric',
+		])
+		const actualByLabel = Object.fromEntries(
+			(body.loops[0]?.targets ?? []).map((t) => [t.label, t.actual]),
+		)
+		expect(actualByLabel).toEqual({
+			'Calls today': 2,
+			'Calls this week': 2,
+			'Calls total': 3,
+			'Call-ready': 2,
+			Meetings: 2,
+			Interested: 3,
+			'Owners reached': 1,
+			'Typed by hand': 7,
+			'Unknown metric': 4200,
+		})
+	})
+
+	it('lets a checked reading win over the live count, and counts live only where there is none', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'pilot',
+			title: 'Phone sales',
+			metadata: {
+				targets: [
+					{
+						label: 'Calls total',
+						source: 'metric:phone_sales.calls_total',
+						actual: 5,
+						target: 500,
+					},
+					{ label: 'Meetings', source: 'metric:phone_sales.meetings_booked', actual: 9, target: 3 },
+				],
+			},
+		})
+		for (const person of [
+			{ status: 'qualified', metadata: { call_done: true, call_at: '2020-01-01' } },
+			{ status: 'meeting_booked', metadata: {} },
+		]) {
+			const row = await insertObject(db, workspaceId, actorId, { type: 'contact', ...person })
+			await insertRelationship(db, actorId, {
+				sourceId: loop.id,
+				sourceType: 'object',
+				targetId: row.id,
+				targetType: 'object',
+				type: 'in_loop',
+			})
+		}
+		await recordReading(db, {
+			workspaceId,
+			subjectId: loop.id,
+			measure: 'phone_sales.calls_total',
+			value: 77,
+			readAt: new Date('2026-11-02T08:00:00Z'),
+			source: 'stripe',
+			sourceRef: 'reading-1',
+		})
+
+		const res = await makeApp(actorId).request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{
+				targets: Array<{ label: string; actual: number; manual: boolean; reading?: unknown }>
+			}>
+		}
+		const byLabel = new Map((body.loops[0]?.targets ?? []).map((t) => [t.label, t]))
+		// The live count for calls_total would be 1; the reading's number stays.
+		expect(byLabel.get('Calls total')).toMatchObject({ actual: 77, manual: false })
+		expect(byLabel.get('Calls total')?.reading).toBeDefined()
+		// No reading: the live count fills in.
+		expect(byLabel.get('Meetings')).toMatchObject({ actual: 1, manual: false })
+		expect(byLabel.get('Meetings')?.reading).toBeUndefined()
+	})
+
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Wanted loop',
 		})
 		await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Other loop in the same workspace',
 		})
 
@@ -326,7 +737,7 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Foreign loop',
 		})
 
@@ -342,12 +753,12 @@ describe('Loops read API integration', () => {
 	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Bug intake',
 		})
 		const otherLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Unrelated loop',
 		})
 
@@ -412,13 +823,13 @@ describe('Loops read API integration', () => {
 		// override, every lead would count as in-progress forever.
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Lead qualification',
 			metadata: { closed_statuses: { lead: ['won', 'lost'] } },
 		})
 		const openLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'No override loop',
 		})
 
@@ -520,7 +931,7 @@ describe('Loops read API integration', () => {
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Content pipeline',
 		})
 		const liveContent = await insertObject(db, workspaceId, actorId, {
@@ -568,7 +979,7 @@ describe('Loops read API integration', () => {
 		// while the fallback table would have counted it closed.
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Strict validation loop',
 			metadata: { closed_statuses: { task: ['validated'] } },
 		})
@@ -605,12 +1016,12 @@ describe('Loops read API integration', () => {
 	it('computes medianTimeToCloseMs from closed children (updated_at − the in_loop edge created_at), null when none are closed', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Median timing',
 		})
 		const openLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'No closed children yet',
 		})
 
@@ -671,7 +1082,7 @@ describe('Loops read API integration', () => {
 		// must take the updated_at fallback (a constant 2s here).
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Many closed members',
 		})
 		const createdAt = new Date('2026-01-01T00:00:00.000Z')
@@ -709,7 +1120,7 @@ describe('Loops read API integration', () => {
 		async function setup(loopMetadata: Record<string, unknown>) {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Candidate loop',
 				metadata: loopMetadata,
 			})
@@ -956,7 +1367,7 @@ describe('Loops read API integration', () => {
 
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Keeps links',
 			})
 			const task = await linkTask(loop.id, { status: 'in_progress', title: 'Closes' })
@@ -995,7 +1406,7 @@ describe('Loops read API integration', () => {
 		it('uses the first event into the closed set, not later edits to the member', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Event-based close time',
 			})
 			const createdAt = new Date('2026-01-01T00:00:00.000Z')
@@ -1025,7 +1436,7 @@ describe('Loops read API integration', () => {
 		it('falls back to updated_at for a closed member with no status event', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'No events',
 			})
 			const createdAt = new Date('2026-01-01T00:00:00.000Z')
@@ -1047,7 +1458,7 @@ describe('Loops read API integration', () => {
 		it('measures time to close from when the member joined the loop, not from when the object was created', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Joins on day 1, converts on day 10',
 			})
 			const day = 86_400_000
@@ -1094,7 +1505,7 @@ describe('Loops read API integration', () => {
 		it('leaves a member that was already closed when it joined out of the median, but still counts it as closed', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Closed before joining',
 			})
 			const day = 86_400_000
@@ -1133,13 +1544,13 @@ describe('Loops read API integration', () => {
 		it('counts each loop with its own closed statuses and ignores members of other loops', async () => {
 			const lenient = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Counts review as closed',
 				metadata: { closed_statuses: { task: ['done', 'in_review'] } },
 			})
 			const strict = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Default closed statuses',
 			})
 			// The same two statuses in both loops: only the override changes the split.
@@ -1165,7 +1576,7 @@ describe('Loops read API integration', () => {
 		it('reads status events with one batched query for many closed members', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Batched',
 			})
 			const createdAt = new Date('2026-01-01T00:00:00.000Z')
@@ -1230,7 +1641,7 @@ describe('Loops read API integration', () => {
 	it('ignores relationships of a different type when computing loop membership', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Narrow membership',
 		})
 		const relatedButNotMember = await insertObject(db, workspaceId, actorId, {
@@ -1289,7 +1700,7 @@ describe('Loops read API integration', () => {
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Pipeline',
 			metadata: { trigger_ids: [trigA.id, trigB.id] },
 		})
@@ -1312,7 +1723,7 @@ describe('Loops read API integration', () => {
 		})
 		const learning = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Learning loop',
 		})
 		const supervised = await insertObject(db, workspaceId, actorId, {
@@ -1322,8 +1733,8 @@ describe('Loops read API integration', () => {
 		})
 		const fullyAutonomous = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'fully_autonomous',
-			title: 'Fully autonomous loop',
+			status: 'live',
+			title: 'Live loop',
 		})
 		const paused = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
@@ -1353,9 +1764,9 @@ describe('Loops read API integration', () => {
 		const body = (await res.json()) as { loops: Array<{ id: string; pill: string }> }
 		const byId = new Map(body.loops.map((r) => [r.id, r]))
 		expect(byId.get(draft.id)?.pill).toBe('draft')
-		expect(byId.get(learning.id)?.pill).toBe('learning')
+		expect(byId.get(learning.id)?.pill).toBe('pilot')
 		expect(byId.get(supervised.id)?.pill).toBe('supervised')
-		expect(byId.get(fullyAutonomous.id)?.pill).toBe('fully_autonomous')
+		expect(byId.get(fullyAutonomous.id)?.pill).toBe('live')
 		expect(byId.get(paused.id)?.pill).toBe('paused')
 		expect(byId.get(waiting.id)?.pill).toBe('waiting_on_you')
 	})
@@ -1372,7 +1783,7 @@ describe('Loops read API integration', () => {
 
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Loop with activity',
 				metadata: { trigger_ids: [trigger.id] },
 			})
@@ -1474,7 +1885,7 @@ describe('Loops read API integration', () => {
 		it('returns { events: [] } — not an error — for a loop with no triggers', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Empty loop',
 			})
 
@@ -1496,7 +1907,7 @@ describe('Loops read API integration', () => {
 			})
 			const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Foreign loop',
 				metadata: { trigger_ids: [otherTrigger.id] },
 			})
@@ -1534,7 +1945,7 @@ describe('Loops read API integration', () => {
 		const trig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Needs attention',
 			metadata: { trigger_ids: [trig.id] },
 		})
@@ -1564,7 +1975,7 @@ describe('Loops read API integration', () => {
 		const foreignTrig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'Three open asks',
 			metadata: { trigger_ids: [trigA.id, trigB.id, trigC.id] },
 		})
@@ -1604,7 +2015,7 @@ describe('Loops read API integration', () => {
 		const trig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'learning',
+			status: 'pilot',
 			title: 'All caught up',
 			metadata: { trigger_ids: [trig.id] },
 		})
@@ -1662,7 +2073,7 @@ describe('Loops read API integration', () => {
 
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Reply loop',
 				content: 'The loop replies to inbound',
 				// Deliberately reversed order so the response order proves it
@@ -1720,7 +2131,7 @@ describe('Loops read API integration', () => {
 			})
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Foreign actor loop',
 				metadata: { trigger_ids: [trig.id] },
 			})
@@ -1753,7 +2164,7 @@ describe('Loops read API integration', () => {
 			})
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'learning',
+				status: 'pilot',
 				title: 'Waiting loop',
 				metadata: { trigger_ids: [trig.id] },
 			})

@@ -1,7 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { FLOATING_CONTROLS } from '@/components/shared/floating-footer'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
-import { Button } from '@/components/ui/button'
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { LoopSummary } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
@@ -10,19 +9,12 @@ import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
 import { useNavigate } from '@tanstack/react-router'
 import { forwardRef, useCallback } from 'react'
 
-// Shown when the loop has no change history yet (mockup 2017–2022) — the
-// operator gets three things they could say instead of a blank bar.
-const SUGGESTIONS = [
-	'Close cycles faster',
-	'Ask me before anything ships',
-	'Hand the review to someone else',
-]
-
 /**
  * "Change by talking" composer, sticky at the bottom of the loop reader column
  * (mockup 1989–2036). Submitting a plain-language utterance opens a new chat
  * with this loop attached, so the operator edits the loop by describing what
- * should change rather than filling in a builder.
+ * should change rather than filling in a builder. When the flow has an agent
+ * driver, the chat opens with that agent and the typed text already in it.
  */
 export const LoopUtteranceInput = forwardRef<
 	HTMLDivElement,
@@ -30,10 +22,10 @@ export const LoopUtteranceInput = forwardRef<
 		loop: LoopSummary
 		/** Rendered above the composer — the PROPOSED EDIT card, when there is one. */
 		children?: React.ReactNode
-		/** Offer the suggestion chips (no change history yet). */
-		showSuggestions?: boolean
 		/** Idle prompt in the composer; defaults to the change-by-talking line. */
 		placeholder?: string
+		/** The agent the placeholder names; the chat opens with it. Omit to use the default agent. */
+		agent?: { id: string; name: string }
 		/** True while a voice capture is running — renders the listening indicator. */
 		listening?: boolean
 		/** Return true to consume the utterance in place (the PROPOSED EDIT card).
@@ -41,10 +33,7 @@ export const LoopUtteranceInput = forwardRef<
 		 *  only path for loops that carry no plan snapshot. */
 		onUtterance?: (utterance: string) => boolean
 	}
->(function LoopUtteranceInput(
-	{ loop, children, showSuggestions, placeholder, listening, onUtterance },
-	ref,
-) {
+>(function LoopUtteranceInput({ loop, children, placeholder, agent, listening, onUtterance }, ref) {
 	const { workspaceId } = useWorkspace()
 	const canWrite = useCanWrite()
 	const navigate = useNavigate()
@@ -56,10 +45,15 @@ export const LoopUtteranceInput = forwardRef<
 			navigate({
 				to: '/$workspaceId/chats/new',
 				params: { workspaceId },
-				search: { objectId: loop.id, objectTitle: loop.name ?? undefined, objectType: 'loop' },
+				search: {
+					objectId: loop.id,
+					objectTitle: loop.name ?? undefined,
+					objectType: 'loop',
+					...(agent ? { agentId: agent.id, agentName: agent.name, text: utterance } : {}),
+				},
 			})
 		},
-		[navigate, workspaceId, loop.id, loop.name, onUtterance, canWrite],
+		[navigate, workspaceId, loop.id, loop.name, agent, onUtterance, canWrite],
 	)
 
 	return (
@@ -70,23 +64,6 @@ export const LoopUtteranceInput = forwardRef<
 		>
 			<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
 				{children}
-				{showSuggestions && (
-					<div className="mb-2.5 flex flex-wrap gap-2" aria-label="Suggested changes">
-						{SUGGESTIONS.map((suggestion) => (
-							<ViewerTooltip key={suggestion}>
-								<Button
-									variant="outline"
-									size="sm"
-									className="rounded-full"
-									disabled={!canWrite}
-									onClick={() => void submit(suggestion)}
-								>
-									{suggestion}
-								</Button>
-							</ViewerTooltip>
-						))}
-					</div>
-				)}
 				{listening && (
 					<div className="mb-2.5 flex items-center gap-2">
 						<span
@@ -115,6 +92,7 @@ export const LoopUtteranceInput = forwardRef<
 						onRemoveObject={() => {}}
 						onRemoveNotification={() => {}}
 						onRemoveFile={() => {}}
+						alignStart
 						textareaLabel="Say what should change about this flow"
 					/>
 				</ViewerTooltip>

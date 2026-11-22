@@ -16,7 +16,7 @@ describe('formatToolName', () => {
 
 	it('capitalises only the first letter', () => {
 		expect(formatToolName('search')).toBe('Search')
-		expect(formatToolName('mcp__maskin__create_session')).toBe('Create session')
+		expect(formatToolName('mcp__maskin__create_sub_chat')).toBe('Create sub chat')
 		expect(formatToolName('mcp__x__getFooBar')).toBe('GetFooBar')
 	})
 })

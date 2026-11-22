@@ -23,6 +23,9 @@ let package = Package(
 		// Product analytics on iPhone (MaskinFeatures/Analytics/PostHogSink.swift, the only file that imports it).
 		// Pinned to an exact version: it runs inside the app, so a bump is a reviewed change.
 		.package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.93.6"),
+		// Crash and error reports on iPhone (MaskinFeatures/ErrorReporting/SentrySink.swift, the only file that imports it).
+		// Pinned to an exact version for the same reason as PostHog.
+		.package(url: "https://github.com/getsentry/sentry-cocoa.git", exact: "9.35.0"),
 	],
 	targets: [
 		// Tokens are generated from the design-system CSS: scripts/gen-tokens.mjs.
@@ -60,9 +63,11 @@ let package = Package(
 				"MaskinCore", "MaskinUI", "MaskinDesign", "MaskinAPI",
 				.product(name: "WebRTC", package: "WebRTC", condition: .when(platforms: [.iOS])),
 				.product(name: "PostHog", package: "posthog-ios", condition: .when(platforms: [.iOS])),
+				.product(name: "Sentry", package: "sentry-cocoa", condition: .when(platforms: [.iOS])),
 			],
 			// The Computer screen's page: noVNC bundled with a small bridge (scripts/computer-bridge).
-			resources: [.copy("Computer/Resources")]),
+			// The Edit screen's page: the shared markdown editor (scripts/editor-bridge).
+			resources: [.copy("Computer/Resources"), .copy("Objects/EditorPage")]),
 		.testTarget(name: "MaskinFeaturesTests", dependencies: ["MaskinFeatures"]),
 	]
 )

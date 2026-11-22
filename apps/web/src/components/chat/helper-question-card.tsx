@@ -68,7 +68,7 @@ export function HelperQuestionCard({
 									size="sm"
 									onClick={() => onViewThread(question.session_id)}
 								>
-									View thread
+									View background session
 								</Button>
 							) : undefined
 						}

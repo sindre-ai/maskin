@@ -19,6 +19,7 @@ public struct RootView: View {
 	@State private var links: InternalLinkDirectory
 	/// Thumbnails for the photos attached to chat messages.
 	@State private var chatImages: ChatImageLoader
+	@State private var attachmentDownloader: AttachmentDownloader
 private let onRuntimeReady: (AppRuntime) -> Void
 	/// Resolves the seeded Chief of Staff conversation's id for the signed-in workspace, if one
 	/// exists. The first-use screen offers "Open the welcome chat" only when this returns an id.
@@ -65,6 +66,11 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		_chatImages = State(
 			initialValue: ChatImageLoader(
 				files: APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider)))
+		_attachmentDownloader = State(
+			initialValue: AttachmentDownloader(
+				remote: APIFilesRemote(
+					client: environment.client, credentials: environment.auth.credentialsProvider,
+					baseURL: environment.baseURL, clientSource: environment.clientSource)))
 		_links = State(
 			initialValue: InternalLinkDirectory(store: { [weak environment] in
 				environment.flatMap { LinkedItemStores.store(for: $0) }
@@ -123,7 +129,16 @@ private let onRuntimeReady: (AppRuntime) -> Void
 		// outside links must fall through to the markdown view's own confirm-and-open path.
 		.environment(
 			\.markdownInternalLinkHandler,
-			{ @MainActor [runtime] url in DeepLink(url: url) != nil && runtime.open(url) })
+			{ @MainActor [runtime] url in
+				if DeepLink(url: url) != nil { return runtime.open(url) }
+				// A page of the workspace the app has no screen for (the marketplace's own address, a
+				// sub-page): say so, instead of sending the person to Safari and a login.
+				if DeepLink.isWorkspacePage(url) {
+					toast = "The app can't open this page yet."
+					return true
+				}
+				return false
+			})
 		.environment(\.markdownInternalLinkInfo, { @MainActor [links] url in links.info(for: url) })
 		.environment(\.markdownStandaloneLink, { @MainActor [environment] url, _ in
 			LinkedItemStores.standaloneStyle(for: url, environment: environment)
@@ -140,6 +155,7 @@ private let onRuntimeReady: (AppRuntime) -> Void
 				cached: { [chatImages] id in chatImages.cachedImage(for: id) },
 				load: { [chatImages] id in await chatImages.image(for: id) })
 		)
+		.environment(\.attachmentDownloader, attachmentDownloader)
 		.environment(\.openAttachment, { @MainActor [runtime] id in runtime.openFile(id) })
 		.task { onRuntimeReady(runtime) }
 		.task { ThreadWarmup.run() }
@@ -214,6 +230,12 @@ extension RootView {
 				token: token, remote: remote,
 				viewer: {
 					environment.auth.session.map { InviteViewer(apiKey: $0.apiKey, email: $0.email) }
+				},
+				signedUp: { signUp in
+					try environment.auth.adopt(
+						StoredSession(
+							apiKey: signUp.apiKey, actorId: signUp.actorId, name: signUp.name,
+							email: signUp.email, workspaceId: signUp.workspaceId))
 				},
 				joined: { workspaceId in
 					// Load the new workspace into the list first, then switch to it.

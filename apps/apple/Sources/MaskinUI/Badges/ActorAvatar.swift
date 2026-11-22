@@ -22,6 +22,13 @@ public enum ActorIdentity {
 		}
 	}
 
+	/// The letters to draw: the ones the agent chose for itself when it has set any (upper-cased),
+	/// else the automatic ones from its name. Same order as `resolveActorInitials` on the web.
+	public static func initials(for name: String, chosen: String?) -> String {
+		let set = chosen?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return set.isEmpty ? initials(for: name) : set.uppercased()
+	}
+
 	/// djb2-xor, identical to the web's `hashString`, so a given actor gets the same colour
 	/// on every client. (Swift's `hashValue` is randomised per process, so it cannot be used.)
 	public static func bucketHash(_ input: String) -> UInt32 {
@@ -184,12 +191,13 @@ public struct ActorAvatar: View {
 	}
 
 	/// The face: the logo tile for the Maskin platform agent, otherwise initials on the avatar gradient.
+	/// The initials are the ones the agent chose, looked up by `seed` like the picture, else the automatic ones.
 	@ViewBuilder
 	private func avatarFace(shape: AgentShape, isPlatform: Bool) -> some View {
 		if isPlatform {
 			MaskinLogoTile(size: size)
 		} else {
-			let initials = ActorIdentity.initials(for: name)
+			let initials = ActorIdentity.initials(for: name, chosen: pictures.initials(seed))
 			Text(initials)
 				.font(MaskinTypeface.sans(size * (initials.count > 2 ? 0.28 : 0.36), weight: .bold, relativeTo: .caption))
 				.lineLimit(1)

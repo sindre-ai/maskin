@@ -4,6 +4,7 @@ import {
 	OBJECT_DIFF_FIELDS,
 	TERMINAL_BET_STATUSES,
 	computeChanges,
+	loopStatusTurnsTriggersOff,
 	type updateObjectSchema,
 } from '@maskin/shared'
 import { and, eq, inArray, ne } from 'drizzle-orm'
@@ -12,6 +13,11 @@ import { trackSupportItemResolved } from './analytics/support-events'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
 import { insertNotificationsWithEvents } from './notifications'
+import {
+	OutcomeCheckRequiredError,
+	passedRoundStillValid,
+	requiresOutcomeCheck,
+} from './outcome-check'
 
 type ObjectUpdate = z.infer<typeof updateObjectSchema>
 
@@ -20,8 +26,15 @@ export interface ApplyObjectUpdateInput {
 	actorId: string
 	body: ObjectUpdate
 	sessionId?: string
+	/** The caller's actor type. Left unset by callers that act for a person (a card tap). */
+	actorType?: string
 	/** Apply only if the object is still in this status, checked under the row lock. */
 	onlyIfStatus?: string
+	/**
+	 * The outcome check round that passed for this close. An agent's close of a job with an
+	 * approved done-when list is refused without it (see lib/outcome-check.ts).
+	 */
+	outcomeCheckId?: string
 }
 
 export interface ApplyObjectUpdateResult {
@@ -29,6 +42,51 @@ export interface ApplyObjectUpdateResult {
 	row?: typeof objects.$inferSelect
 	/** Set when `onlyIfStatus` did not hold: the status the object is in now. */
 	staleStatus?: string | null
+}
+
+/** Thrown when an append or replace cannot be applied. Nothing is written. Maps to a 400. */
+export class BodyEditError extends Error {
+	constructor(message: string) {
+		super(`${message} Nothing was written.`)
+		this.name = 'BodyEditError'
+	}
+}
+
+/**
+ * The new body for an update that sends append or replace, worked out from the body as stored
+ * (the caller holds the row lock). Returns undefined when the update has neither. Throws
+ * BodyEditError when it mixes them with content or with each other, or when the piece to replace
+ * is missing or matches more than once without all.
+ */
+export function editBody(
+	stored: string | null,
+	edit: Pick<ObjectUpdate, 'content' | 'append' | 'replace'>,
+): string | undefined {
+	const { content, append, replace } = edit
+	if (append === undefined && replace === undefined) return undefined
+	if (content !== undefined) {
+		throw new BodyEditError(
+			'Send either content (the whole body) or one of append and replace, not both.',
+		)
+	}
+	if (append !== undefined && replace !== undefined) {
+		throw new BodyEditError('Send append or replace, not both, on one entry.')
+	}
+	const body = stored ?? ''
+	if (append !== undefined) return body + append
+
+	const { find, with: replacement, all } = replace as NonNullable<typeof replace>
+	const pieces = body.split(find)
+	const matches = pieces.length - 1
+	if (matches === 0) {
+		throw new BodyEditError('The text to replace was not found in the body.')
+	}
+	if (matches > 1 && !all) {
+		throw new BodyEditError(
+			`The text to replace was found ${matches} times. Add the words around it so it matches once, or set all to true to replace every match.`,
+		)
+	}
+	return pieces.join(replacement)
 }
 
 /**
@@ -44,7 +102,11 @@ export async function applyObjectUpdate(
 	input: ApplyObjectUpdateInput,
 ): Promise<ApplyObjectUpdateResult> {
 	const { id, actorId, body, sessionId } = input
-	const updateData: ObjectUpdate & { updatedAt: Date } = { ...body, updatedAt: new Date() }
+	const { append: _append, replace: _replace, ...fields } = body
+	const updateData: Omit<ObjectUpdate, 'append' | 'replace'> & { updatedAt: Date } = {
+		...fields,
+		updatedAt: new Date(),
+	}
 
 	// Re-read the row under FOR UPDATE *inside* the transaction rather than
 	// trusting the pre-transaction `existing` fetch above. `existing` is only
@@ -58,11 +120,30 @@ export async function applyObjectUpdate(
 	const [current] = await tx.select().from(objects).where(eq(objects.id, id)).for('update').limit(1)
 	if (!current) return {}
 
+	// The hold point: an agent closes a job with an approved done-when list only behind a passed
+	// check. The route runs the check before this transaction; this refuses when it did not.
+	if (
+		input.actorType === 'agent' &&
+		(await requiresOutcomeCheck(tx, current, body.status)) &&
+		!(await passedRoundStillValid(tx, {
+			objectId: id,
+			toStatus: body.status as string,
+			checkId: input.outcomeCheckId,
+		}))
+	) {
+		throw new OutcomeCheckRequiredError()
+	}
+
 	// A status change made from an answer to a card: the card was written about one status, so
 	// if the object has moved on since, leave it where it is.
 	if (input.onlyIfStatus !== undefined && current.status !== input.onlyIfStatus) {
 		return { staleStatus: current.status }
 	}
+
+	// An append or replace is applied to the body as stored under the lock, so two edits from
+	// two sessions at the same moment both land, and the caller never sends the unchanged part.
+	const editedContent = editBody(current.content, body)
+	if (editedContent !== undefined) updateData.content = editedContent
 
 	// Shallow-merge metadata against the locked row, not the pre-transaction
 	// read: a writer that committed between that read and the lock would
@@ -136,16 +217,19 @@ export async function applyObjectUpdate(
 		})
 	}
 
-	// Pausing a loop must pause its work: every trigger referenced in the
-	// loop's metadata.trigger_ids stops firing while the loop is paused, and
-	// resumes when the loop leaves paused. This PATCH is the single choke
+	// A loop's status decides whether it runs: every trigger referenced in the
+	// loop's metadata.trigger_ids stops firing while the loop is draft, paused
+	// or archived, and resumes when the loop moves to a running status (pilot,
+	// supervised or live). Moving between two off statuses (draft to paused,
+	// or any status to archived from an off one) or two on statuses changes
+	// nothing. This PATCH is the single choke
 	// point for loop status writes — the frontend's pause/resume button and
 	// the MCP update_loop tool both land here — so it's implemented once
 	// rather than duplicated per caller.
 	if (action === 'status_changed' && current.type === 'loop') {
-		const enteringPaused = row.status === 'paused' && current.status !== 'paused'
-		const leavingPaused = current.status === 'paused' && row.status !== 'paused'
-		if (enteringPaused || leavingPaused) {
+		const wasOff = loopStatusTurnsTriggersOff(current.status)
+		const isOff = loopStatusTurnsTriggersOff(row.status)
+		if (wasOff !== isOff) {
 			const meta = (row.metadata as Record<string, unknown> | null) ?? {}
 			const rawTriggerIds = meta.trigger_ids
 			const triggerIds = Array.isArray(rawTriggerIds)
@@ -154,7 +238,7 @@ export async function applyObjectUpdate(
 			if (triggerIds.length > 0) {
 				await tx
 					.update(triggers)
-					.set({ enabled: leavingPaused, updatedAt: new Date() })
+					.set({ enabled: !isOff, updatedAt: new Date() })
 					.where(
 						and(eq(triggers.workspaceId, current.workspaceId), inArray(triggers.id, triggerIds)),
 					)

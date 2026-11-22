@@ -1,4 +1,5 @@
 import {
+	DraftNotesContext,
 	renderLinkedCard,
 	renderLinkedChip,
 	renderLinkedGithubChip,
@@ -25,6 +26,7 @@ import { useLinkedChat } from '@/hooks/use-linked-chat'
 import { useLoop } from '@/hooks/use-loops'
 import { useToggleReaction } from '@/hooks/use-message-reactions'
 import { useObject } from '@/hooks/use-objects'
+import { useQuestionDraftNote } from '@/hooks/use-question-draft-notes'
 import { useTrigger } from '@/hooks/use-triggers'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
@@ -65,6 +67,7 @@ import { Fragment, type Ref, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ComputerRequestCard } from './computer-request-card'
 import { EditMessageCard } from './edit-message-card'
+import { FailedTurnNotice, isPermanentFailure } from './failed-turn-notice'
 import { HandedOffStrip } from './handed-off-strip'
 import { HandoffCard } from './handoff-card'
 import { IntegrationAccessRequestCard } from './integration-access-request-card'
@@ -76,7 +79,7 @@ import { type MessageAttachmentItem, MessageAttachments } from './message-attach
 import { MessageDivider } from './message-divider'
 import { ReactButton, ReactionChips } from './message-reactions'
 import { QuestionOptions } from './question-options'
-import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
+import { type MessageSpawnInfo, SpawnChip } from './spawn-indicator'
 import { TagChip } from './tag-chip'
 import { useThreadsPane } from './threads-context'
 import { VoiceMessageMetaTag } from './voice-call-boundary'
@@ -109,6 +112,12 @@ interface MessageBubbleProps {
 	onRetried?: (message: MessageResponse) => void
 	/** Opens the reply thread under this message. Without it the bubble has no Reply action. */
 	onReplyInThread?: () => void
+	/**
+	 * Opens the edit card, as if the pencil was tapped (the up arrow in the empty message box).
+	 * A request that was already there when the bubble mounted does nothing, so an old one
+	 * cannot pop the card open when the message scrolls back into view.
+	 */
+	editRequestNonce?: number
 }
 
 // With attachments, the fitted own bubble stays this wide so 'ok' does not make a tiny thumbnail.
@@ -136,6 +145,7 @@ export function MessageBubble({
 	updatedLinkedObjectIds,
 	onRetried,
 	onReplyInThread,
+	editRequestNonce,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const enterprise = useIsEnterpriseWorkspace()
@@ -165,6 +175,14 @@ export function MessageBubble({
 		() => (conversation?.participants ?? []).map((p) => p.actorId),
 		[conversation],
 	)
+	const handledEditNonceRef = useRef(editRequestNonce)
+	useEffect(() => {
+		if (editRequestNonce === undefined || editRequestNonce === handledEditNonceRef.current) return
+		handledEditNonceRef.current = editRequestNonce
+		if (!canAct || !canWrite) return
+		editMessage.reset()
+		setEditing(true)
+	}, [editRequestNonce, canAct, canWrite, editMessage.reset])
 	// Focus goes back to the pencil once the edit card closes, whether it saved or not.
 	const pencilRef = useRef<HTMLButtonElement | null>(null)
 	const wasEditing = useRef(false)
@@ -213,6 +231,17 @@ export function MessageBubble({
 	const question = message.metadata?.question
 	const isQuestionTwin =
 		question !== undefined && message.content === formatQuestionsAsMarkdown(question.questions)
+	// A question asked together with a draft that can still be approved goes into the draft's card.
+	const draftQuestion = useQuestionDraftNote(
+		workspaceId,
+		message.content,
+		question,
+		shownLinkedObjectIds,
+	)
+	const draftNotes = useMemo(
+		() => new Map(draftQuestion ? [[draftQuestion.draftId, draftQuestion.note]] : []),
+		[draftQuestion],
+	)
 	const shownContent =
 		isOwn && answers && answers.length > 0 && message.content.startsWith('**')
 			? answers
@@ -345,15 +374,12 @@ export function MessageBubble({
 					)}
 				>
 					{fitText && liftedAttachments ? (
-						<div className={cn('w-full', spawnInfo && 'pr-2')}>{liftedAttachments}</div>
+						<div className={'w-full'}>{liftedAttachments}</div>
 					) : (
 						liftedAttachments
 					)}
 					{hasPlate ? (
 						<>
-							{/* S2 · persistent spawn marker. The wrapper reserves the bar's gutter
-				    (`pr-2`) and owns the absolute placement, so the bar sits flush
-				    against the bubble and stays inside the box that measures overflow. */}
 							<div
 								className={cn(
 									// While fitting, the column above carries the width cap. The edit card takes the row,
@@ -368,11 +394,9 @@ export function MessageBubble({
 												: holdsCard
 													? 'relative w-[min(520px,88%)]'
 													: 'relative max-w-[min(560px,80%)]',
-									spawnInfo && 'pr-2',
 									editing && 'w-full',
 								)}
 							>
-								{spawnInfo ? <SpawnBar className="absolute right-0 top-0 h-full" /> : null}
 								<div
 									ref={plateRef}
 									className={
@@ -542,16 +566,9 @@ export function MessageBubble({
 				type={message.actorType ?? 'agent'}
 				id={message.actorId}
 				size="md"
-				className="mt-0.5 size-[30px] shrink-0 rounded-[9px] bg-secondary text-[11px] font-bold text-foreground"
+				className="mt-0.5 size-[30px] shrink-0"
 			/>
-			<div className={cn('relative min-w-0 flex-1', spawnInfo && 'pr-2')}>
-				{spawnInfo ? (
-					// S2 · agent-side messages can also spawn sessions (an agent that
-					// hands off work to a spawned session); render the same marker
-					// they'd see on their own bubble. Absolute-positioned in a gutter
-					// the column reserves, so it stays inside the column's box.
-					<SpawnBar className="absolute right-0 top-0 h-full" />
-				) : null}
+			<div className={'relative min-w-0 flex-1'}>
 				<div className="flex items-baseline gap-1.5">
 					{message.actorType === 'agent' && message.actorId ? (
 						<Link
@@ -585,29 +602,36 @@ export function MessageBubble({
 						    line as a card where it stands (a draft can be approved without leaving
 						    the chat) and a link in a sentence as a chip; an id another message holds
 						    the card for is a chip here, and a revised draft's card is tagged Updated. */}
-						<MarkdownContent
-							content={message.content}
-							size="sm"
-							renderVisuals
-							linkedCards={{
-								workspaceId,
-								enterprise,
-								conversationId: message.conversationId,
-								agentId: message.actorId,
-								skipIds: shownLinkedObjectIds,
-								updatedIds: updatedLinkedObjectIds,
-								renderCard: renderLinkedCard,
-								renderChip: renderLinkedChip,
-								renderGithubChip: renderLinkedGithubChip,
-								renderSettingsChip: renderLinkedSettingsChip,
-							}}
-						/>
+						<DraftNotesContext.Provider value={draftNotes}>
+							<MarkdownContent
+								content={message.content}
+								size="sm"
+								renderVisuals
+								linkedCards={{
+									workspaceId,
+									enterprise,
+									conversationId: message.conversationId,
+									agentId: message.actorId,
+									skipIds: shownLinkedObjectIds,
+									updatedIds: updatedLinkedObjectIds,
+									renderCard: renderLinkedCard,
+									renderChip: renderLinkedChip,
+									renderGithubChip: renderLinkedGithubChip,
+									renderSettingsChip: renderLinkedSettingsChip,
+								}}
+							/>
+						</DraftNotesContext.Provider>
 					</div>
+				) : null}
+				{isPermanentFailure(message) ? (
+					<FailedTurnNotice message={message} workspaceId={workspaceId} onRetried={onRetried} />
 				) : null}
 				{/* An agent's AskUserQuestion, surfaced as pickable options. The card carries
 				    the questions and each option's description; the message's markdown twin
-				    (`isQuestionTwin`) is only for readers that have no card. */}
-				{message.metadata?.question ? (
+				    (`isQuestionTwin`) is only for readers that have no card. When the message also
+				    links a draft that can still be approved, the question is a note in the draft's
+				    card instead (`draftQuestion`), so the person is asked once. */}
+				{message.metadata?.question && !draftQuestion ? (
 					<QuestionOptions
 						conversationId={message.conversationId}
 						workspaceId={workspaceId}

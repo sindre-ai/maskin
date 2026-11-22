@@ -1,11 +1,14 @@
 import type { ChatsFilter } from '@/components/chat/chats-filter-menu'
 import { ConversationList, ConversationListHeader } from '@/components/chat/conversation-list'
+import { ChatListColumn } from '@/components/chat/list-v2/chat-list-column'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { CHAT_PILLS, type ChatPill } from '@/lib/chat-list-v2'
 import { cn } from '@/lib/cn'
 import { useVoiceCallLive } from '@/lib/voice-call-view'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -14,6 +17,8 @@ import { useCallback, useState } from 'react'
 
 interface ChatsSearch {
 	filter?: ChatsFilter
+	/** The new chat list's pill (flag chat-list-v2). Undefined is All, so it never shows in the URL. */
+	pill?: ChatPill
 	/** Desktop focus mode — hides the list pane. */
 	wide?: boolean
 	/** S2 · Produced pane state (bet 34706e2f, task 5). Persisted in the URL
@@ -32,8 +37,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats')({
 	// so they never appear in the URL.
 	validateSearch: (search: Record<string, unknown>): ChatsSearch => {
 		const filter = FILTER_VALUES.find((f) => f === search.filter)
+		const pill = CHAT_PILLS.find((p) => p.value === search.pill)?.value
 		return {
 			filter: filter && filter !== 'all' ? filter : undefined,
+			pill: pill && pill !== 'all' ? pill : undefined,
 			wide: search.wide === true || search.wide === 'true' ? true : undefined,
 			produced: search.produced === true || search.produced === 'true' ? true : undefined,
 		}
@@ -72,7 +79,8 @@ function ChatsLayout() {
 	const navigate = useNavigate()
 	const [query, setQuery] = useState('')
 	const matches = useMatches()
-	const { filter = 'all', wide } = Route.useSearch()
+	const { filter = 'all', pill = 'all', wide } = Route.useSearch()
+	const chatListV2 = useFeatureFlag('chat-list-v2')
 	const leafMatch = matches[matches.length - 1]
 	const hasThread = !!leafMatch && THREAD_ROUTE_IDS.has(leafMatch.routeId)
 	const isDraft = leafMatch?.routeId === '/_authed/$workspaceId/chats/new'
@@ -102,6 +110,21 @@ function ChatsLayout() {
 		[navigate],
 	)
 
+	// A pill replaces the legacy filter, so the two never disagree in the URL.
+	const handlePillChange = useCallback(
+		(next: ChatPill) => {
+			navigate({
+				to: '.',
+				search: (prev: ChatsSearch) => ({
+					...prev,
+					filter: undefined,
+					pill: next === 'all' ? undefined : next,
+				}),
+			})
+		},
+		[navigate],
+	)
+
 	// From md the list column draws the "Chats" h1 itself, but below lg an open chat hides the
 	// list, so the nav row keeps the h1 then (and in focus mode).
 	const listTitleInColumn = !isMobile && !isDraft && !wide && !listAside && (!hasThread || isLg)
@@ -124,7 +147,20 @@ function ChatsLayout() {
 			hideBar={listTitleInColumn || (!isMobile && isDraft)}
 		/>
 	)
-	const listColumn = (
+	const listColumn = chatListV2 ? (
+		<ChatListColumn
+			workspaceId={workspaceId}
+			titled={!isMobile}
+			pageTitle={!isDraft}
+			filter={filter}
+			onFilterChange={handleFilterChange}
+			pill={pill}
+			onPillChange={handlePillChange}
+			query={query}
+			onQueryChange={setQuery}
+			hideStartLink={isDraft}
+		/>
+	) : (
 		<>
 			<ConversationListHeader
 				workspaceId={workspaceId}
@@ -174,14 +210,17 @@ function ChatsLayout() {
 			{header}
 			{hasThread ? null : <ChatsListTitle />}
 			<div className={cn('flex min-h-0 flex-1', SHELL_BLEED)}>
-				{wide || listAside || isDraft ? null : (
+				{wide || (listAside && hasThread) || isDraft ? null : (
 					// Below lg (iPad portrait) the list and the thread take turns: the list fills the
 					// width until a chat is open, then the thread replaces it. From lg they sit side by side.
 					<div
 						className={cn(
-							'hidden min-w-0 flex-col border-r border-border bg-background lg:flex lg:w-70 lg:flex-none xl:w-100',
-							// With a chat open the list is lg-and-up only; otherwise it fills the width from md.
-							!hasThread && 'md:flex md:flex-1',
+							'hidden min-w-0 flex-col bg-background lg:flex',
+							// With a chat open the list is a fixed column from lg; with nothing selected it
+							// fills the width from md and the thread pane stays unmounted.
+							hasThread
+								? 'border-r border-border lg:w-70 lg:flex-none xl:w-100'
+								: 'md:flex md:flex-1',
 						)}
 					>
 						{listColumn}
@@ -190,15 +229,17 @@ function ChatsLayout() {
 				{/* One gutter variable for the whole thread pane — the header,
 				    transcript and composer all read `--chat-gut` so they can never
 				    drift apart. */}
-				<div
-					className={cn(
-						'min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]',
-						// Below lg the pane only shows with a chat open; the list holds the width otherwise.
-						hasThread || wide || listAside ? 'flex' : 'max-lg:hidden lg:flex',
-					)}
-				>
-					<Outlet />
-				</div>
+				{hasThread || wide ? (
+					<div
+						className={cn(
+							'min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)] md:[--chat-gut:max(32px,calc((100%-900px)/2))]',
+							// Below lg the pane only shows with a chat open; the list holds the width otherwise.
+							'flex',
+						)}
+					>
+						<Outlet />
+					</div>
+				) : null}
 			</div>
 		</>
 	)

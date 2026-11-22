@@ -29,6 +29,7 @@ import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { backgroundTitle, buildBackgroundThreads } from '@/lib/session-thread'
 import { useWorkspace } from '@/lib/workspace-context'
+import { usesItemDriverTarget } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -79,7 +80,10 @@ export function AgentDetailView({
 	const isDisabled = portrait === 'paused'
 	const focus = useMemo(() => deriveAgentFocus(sessionList), [sessionList])
 	const triggerCount = useMemo(
-		() => (triggers ?? []).filter((t) => t.targetActorId === agent.id).length,
+		() =>
+			(triggers ?? []).filter(
+				(t) => t.targetActorId === agent.id && !usesItemDriverTarget(t.config),
+			).length,
 		[triggers, agent.id],
 	)
 	const triggerNames = useMemo(

@@ -1,9 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { trackNotificationSent } from '../../lib/analytics/notification-events'
 import { NotificationPushFanout } from '../../services/notification-push'
 import { PushLedger, type RecentPush } from '../../services/push-policy'
 import type { PushChannel } from '../../services/push-types'
 import { createTestContext } from '../setup'
+
+vi.mock('../../lib/analytics/notification-events', () => ({
+	trackNotificationSent: vi.fn(),
+}))
 
 const event = {
 	workspace_id: 'ws',
@@ -68,6 +73,33 @@ describe('NotificationPushFanout for human decisions only', () => {
 })
 
 describe('NotificationPushFanout', () => {
+	it('sends notification_sent once for a push that goes out, and carries the type on the message', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		const { fanout, sender } = setup([notif()])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({ notificationId: 'n-1', notificationType: 'message' }),
+		)
+		expect(trackNotificationSent).toHaveBeenCalledTimes(1)
+		expect(trackNotificationSent).toHaveBeenCalledWith({
+			workspaceId: 'ws',
+			actorId: 'human',
+			notificationId: 'n-1',
+			notificationType: 'message',
+			category: 'conversation',
+			rollup: false,
+		})
+	})
+
+	it('sends no notification_sent for a notification the policy keeps in the app', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		const { fanout, sender } = setup([notif({ targetActorId: 'agent' })])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).not.toHaveBeenCalled()
+		expect(trackNotificationSent).not.toHaveBeenCalled()
+	})
+
 	it('pushes to the target actor of a created notification', async () => {
 		const { fanout, sender } = setup([notif()])
 		await fanout.handleEvent(event)
@@ -616,6 +648,30 @@ describe('NotificationPushFanout channel switches', () => {
 		})
 		expect(phone.sendToActor).not.toHaveBeenCalled()
 		expect(browser.sendToActor).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends notification_sent only for a notification that reaches a channel', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		await run({})
+		expect(trackNotificationSent).toHaveBeenCalledTimes(1)
+	})
+
+	it('sends no notification_sent when every channel we hold is switched off', async () => {
+		vi.mocked(trackNotificationSent).mockClear()
+		// Push switch on, browser switch off, and the browser is the only channel registered:
+		// the policy lets the notification through but no target is left to receive it.
+		const { db, mockResults } = createTestContext()
+		mockResults.selectQueue = [
+			[notif()],
+			[prefsRow({ browserCategories: { conversation: false } })],
+		]
+		const browser = { channelKind: 'browser', isEnabled: () => true, sendToActor: vi.fn() }
+		const fanout = new NotificationPushFanout(db, new EventEmitter() as never, [
+			browser as unknown as PushChannel,
+		])
+		await fanout.handleEvent(event)
+		expect(browser.sendToActor).not.toHaveBeenCalled()
+		expect(trackNotificationSent).not.toHaveBeenCalled()
 	})
 
 	it('treats a browser switch never asked about as the push switch', async () => {

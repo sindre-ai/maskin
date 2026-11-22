@@ -132,6 +132,7 @@ describe('list_chats', () => {
 					{ name: 'Magnus', type: 'human' },
 				],
 				last_message_at: '2026-10-23T08:00:00.000Z',
+				last_message_at_copenhagen: '2026-10-23 10:00',
 				last_message: {
 					from: 'Magnus',
 					is_you: false,

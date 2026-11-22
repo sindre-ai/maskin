@@ -228,11 +228,14 @@ public final class Analytics {
 
 	/// A chat was created on the server. `participants` are the people and agents the person picked
 	/// (not themselves). The agent's name only feeds the web's kebab-cased role (`chief-of-staff`),
-	/// and only when the chat has that one agent and nobody else.
-	public func chatSessionStarted(conversationId: String, participants: [ChatParticipant]) {
+	/// and only when the chat has that one agent and nobody else. `entryPoint` says where the person
+	/// started it: `agent_one_shot` (the default) or `person_message_row` (the Message icon on a Members row).
+	public func chatSessionStarted(
+		conversationId: String, participants: [ChatParticipant], entryPoint: String = "agent_one_shot"
+	) {
 		var props: AnalyticsProperties = [
 			"entity_id": .string(conversationId), "entity_type": "session", "source": "iphone",
-			"entry_point": "agent_one_shot", "participant_count": .int(participants.count),
+			"entry_point": .string(entryPoint), "participant_count": .int(participants.count),
 		]
 		if participants.count == 1, let only = participants.first, only.kind == .agent,
 			let role = Self.agentRole(only.name)
@@ -263,6 +266,21 @@ public final class Analytics {
 				"object_id": .string(id), "mutation_type": .string(mutationType), "via": "single",
 				"bulk_batch_size": 1,
 			])
+	}
+
+	/// A tap on a delivered push. Says which notification it was and what kind (`notification_id`
+	/// and `notification_type` from the push payload), so opens can be set against the server's
+	/// `notification_sent`. Only an id and a plain category go out; a value of any other shape is dropped.
+	public func pushNotificationOpened(notificationId: String?, type: String?) {
+		var props: AnalyticsProperties = [:]
+		if let notificationId, Self.isPlainId(notificationId) { props["notification_id"] = .string(notificationId) }
+		if let type, Self.isPlainId(type) { props["type"] = .string(type) }
+		track("push_notification_opened", props)
+	}
+
+	private static func isPlainId(_ value: String) -> Bool {
+		!value.isEmpty && value.count <= 64
+			&& value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
 	}
 
 	/// Sends one event if the person has agreed and is signed in.

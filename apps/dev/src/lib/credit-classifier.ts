@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import {
 	type FailureReasonCode,
 	type SessionResultFailureReason,
@@ -5,6 +7,7 @@ import {
 	parseResultLine,
 } from '@maskin/shared'
 
+import { scrubString } from './sentry-scrub'
 import { parseCliResetBanner, parseRateLimitEventReset } from './subscription-limit-reset'
 
 /** What Anthropic's API (and the CLI that prints it) says when a key has no credit left. */
@@ -374,4 +377,57 @@ export function classifyClaudeAuthFailureText(
 		reset_at: null,
 		verbatim_output: text.slice(0, 300),
 	}
+}
+
+const UNCLASSIFIED_LINE_MAX = 300
+
+/** Key shapes that may sit in a run's last output line; the Sentry scrub only knows the Claude connector tokens. */
+const SECRET_LIKE = /\b(?:ank_|sk-ant-|sk-|ghp_|gho_|github_pat_|xox[a-z]-)[A-Za-z0-9_-]{8,}/g
+
+/**
+ * The reason saved on a run that exited non-zero when no classifier recognised the output.
+ * `verbatim_output` is the last line the run printed (the final result text when the tail
+ * has one), scrubbed and cut, so a new banner can be read without opening the log. It is
+ * a different code from the Claude limit codes on purpose: it is never retried, because a
+ * blind retry of a death nobody can name burns a start and can make a shared sign-in
+ * problem worse.
+ */
+export function classifyUnclassifiedExit(tail: string): SessionResultFailureReason {
+	const final = findFinalResult(tail)
+	const source =
+		final?.text.trim() ||
+		tail
+			.split('\n')
+			.map((l) => l.trim())
+			.filter(Boolean)
+			.pop() ||
+		''
+	const line = scrubString(source.replace(SECRET_LIKE, '[redacted]')).slice(
+		0,
+		UNCLASSIFIED_LINE_MAX,
+	)
+	return {
+		provider: 'unknown',
+		reason_code: 'unclassified',
+		human_message: 'The session ended with an error nothing recognised',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: line || null,
+	}
+}
+
+/**
+ * Groups unclassified deaths by what they said: digits and ids are blanked, so two
+ * runs that died on the same line (different run numbers, ids or times) share one key
+ * and reach the owner as one card.
+ */
+export function unclassifiedFingerprint(verbatimOutput: string | null): string {
+	const normalised = (verbatimOutput ?? '')
+		.toLowerCase()
+		.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '#')
+		.replace(/\d+/g, '#')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, 120)
+	return createHash('sha1').update(normalised).digest('hex').slice(0, 12)
 }

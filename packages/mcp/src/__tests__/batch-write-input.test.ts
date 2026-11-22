@@ -122,7 +122,7 @@ describe('batch write tools reject bad input instead of returning an empty succe
 		it('throws when the list has the wrong argument name, and writes nothing', async () => {
 			const call = callUpdateObjects({ objects: [{ id: OBJ_ID, status: 'done' }] })
 			await expect(call).rejects.toThrow(/Expected updates as an array/)
-			await expect(call).rejects.toThrow(/name the list updates \(not objects\)/)
+			await expect(call).rejects.toThrow(/Nothing was written/)
 			expect(apiCalls()).toHaveLength(0)
 		})
 
@@ -210,10 +210,33 @@ describe('batch write tools reject bad input instead of returning an empty succe
 		const validEdges = [{ source_id: OBJ_ID, target_id: OTHER_ID, type: 'relates_to' }]
 
 		it('errors on valid edges plus a misnamed updates list, and writes nothing', async () => {
-			const out = await callRegisteredUpdateObjects({ edges: validEdges, objects: validUpdates })
+			const out = await callRegisteredUpdateObjects({ edges: validEdges, changes: validUpdates })
 			expect(out.isError).toBe(true)
-			expect(out.text).toContain('Unrecognised argument name: objects')
+			expect(out.text).toContain('Unrecognised argument name: changes')
 			expect(out.text).toContain('Accepted names: workspace_id, updates, edges')
+			expect(apiCalls()).toHaveLength(0)
+		})
+
+		it('accepts objects as the updates list, so valid edges plus objects write both', async () => {
+			const out = await callRegisteredUpdateObjects({ edges: validEdges, objects: validUpdates })
+			expect(out.isError).toBeFalsy()
+			expect(writeCallsWith('PATCH')).toHaveLength(1)
+			expect(writeCallsWith('POST')).toHaveLength(1)
+		})
+
+		it('accepts the updates list sent as a JSON array in text', async () => {
+			const out = await callRegisteredUpdateObjects({ updates: JSON.stringify(validUpdates) })
+			expect(out.isError).toBeFalsy()
+			expect(writeCallsWith('PATCH')).toHaveLength(1)
+		})
+
+		it('names edges nested in an update entry, and writes nothing', async () => {
+			const out = await callRegisteredUpdateObjects({
+				updates: [{ id: OBJ_ID, edges: validEdges }],
+			})
+			expect(out.isError).toBe(true)
+			expect(out.text).toContain('(edges)')
+			expect(out.text).toContain('beside updates')
 			expect(apiCalls()).toHaveLength(0)
 		})
 

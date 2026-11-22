@@ -1,6 +1,7 @@
 import { HandoffCard } from '@/components/chat/handoff-card'
 import { HelperQuestionCard } from '@/components/chat/helper-question-card'
 import { PREVIEW_BOUNDS_ATTR } from '@/components/chat/linked-object-reference'
+import { ThreadWorkingLine } from '@/components/chat/list-v2/thread-working-line'
 import { useThreadsPane } from '@/components/chat/threads-context'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
@@ -84,6 +85,10 @@ interface ThreadMessagesProps {
 	sendingStep?: boolean
 	/** Opens the reply thread rooted at this message id. Without it bubbles have no Reply action. */
 	onOpenReplies?: (rootId: number) => void
+	/** Opens the edit card on this message, as if its pencil was tapped. One request per nonce. */
+	editRequest?: { messageId: number; nonce: number } | null
+	/** Draw the "agents are working" line below the person's last message (new chat list). */
+	showWorkingLine?: boolean
 }
 
 export function ThreadMessages({
@@ -95,6 +100,8 @@ export function ThreadMessages({
 	onSendStep,
 	sendingStep = false,
 	onOpenReplies,
+	editRequest,
+	showWorkingLine = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
@@ -591,6 +598,9 @@ export function ThreadMessages({
 										questionAnswered={answeredQuestionIds.has(message.id)}
 										spawnInfo={spawnByMessageId.get(message.id)}
 										onRetried={handleRetried}
+										editRequestNonce={
+											editRequest?.messageId === message.id ? editRequest.nonce : undefined
+										}
 										onReplyInThread={
 											onOpenReplies
 												? () => onOpenReplies(message.threadRootId ?? message.id)
@@ -664,6 +674,9 @@ export function ThreadMessages({
 				{/* Handoffs created after the newest message: the person sees the work
 				    begin instead of waiting for the agent's next message. */}
 				{renderHandoffCards(handoffsByNextMessage.get('end'))}
+				{showWorkingLine && timeline[timeline.length - 1]?.actorId === ownActorId ? (
+					<ThreadWorkingLine workspaceId={workspaceId} conversationId={conversationId} />
+				) : null}
 			</div>
 			<div ref={bottomAnchorRef} />
 			<VoiceTranscriptView

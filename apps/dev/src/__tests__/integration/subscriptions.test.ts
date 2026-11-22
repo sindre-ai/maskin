@@ -182,6 +182,74 @@ describe('Subscriptions Integration', () => {
 		expect(unreadAfter.items).toEqual([])
 	})
 
+	it('shows a mention that arrives after an earlier unread poll, and only the mentions of this person', async () => {
+		// The unread route keeps each person's list of mentioned entities between polls and only looks
+		// at what was written since. The first poll fills it; every later poll must still be exact.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headers = { 'x-workspace-id': workspaceId }
+		const first = await appA
+			.request(jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headers))
+			.then((r) => r.json())
+		const second = await appA
+			.request(jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headers))
+			.then((r) => r.json())
+
+		// Nothing mentions A yet: the poll fills the list with nothing in it.
+		const before = await appA
+			.request(jsonGet('/api/subscriptions/unread', headers))
+			.then((r) => r.json())
+		expect(before.items).toEqual([])
+
+		// B mentions A on the first object after that poll. A comment that mentions nobody
+		// on the second object must not appear.
+		const mention = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: first.id, content: 'late mention', mentions: [aId] },
+				headers,
+			),
+		)
+		expect(mention.status).toBe(201)
+		const plain = await appB.request(
+			jsonRequest('POST', '/api/events', { entity_id: second.id, content: 'no mention' }, headers),
+		)
+		expect(plain.status).toBe(201)
+
+		const after = await appA
+			.request(jsonGet('/api/subscriptions/unread', headers))
+			.then((r) => r.json())
+		expect(after.items.map((i: { entity_id: string }) => i.entity_id)).toEqual([first.id])
+		expect(after.items[0].unread_count).toBe(1)
+
+		// A reads it; a second mention on the same object arrives and shows up again.
+		const mentionBody = await mention.json()
+		await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions/read',
+				{ entity_type: 'object', entity_id: first.id, last_event_id: mentionBody.id },
+				headers,
+			),
+		)
+		const again = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: first.id, content: 'another one', mentions: [aId] },
+				headers,
+			),
+		)
+		expect(again.status).toBe(201)
+
+		const last = await appA
+			.request(jsonGet('/api/subscriptions/unread', headers))
+			.then((r) => r.json())
+		expect(last.items.map((i: { entity_id: string }) => i.entity_id)).toEqual([first.id])
+		expect(last.items[0].unread_count).toBe(1)
+	})
+
 	it('mark_unread clears the read_state row so the card reappears in the mixed feed with unread > 0', async () => {
 		// T3 on bet/foryou-swipe-unread: the reverse swipe deletes the actor's
 		// read_state row so the entity flips back to "unread" — both in the
@@ -1513,6 +1581,8 @@ describe('Subscriptions Integration', () => {
 			expect(item?.latest_mention).toBeDefined()
 			expect(item?.latest_mention?.content).toBe('second ask')
 			expect(item?.latest_mention?.attention).toBe(4)
+			// A person wrote it, so no run is named.
+			expect(item?.latest_mention?.session_id).toBeNull()
 			// Posting stamps the status the object had, so a card with no status button drops later.
 			expect(item?.latest_mention?.decision).toEqual({
 				...decision,

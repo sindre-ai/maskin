@@ -115,7 +115,12 @@ function ForYouFeed() {
 	// Cards opened by hand in List view, threads answered in this sitting, and
 	// options taken in this sitting.
 	const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set())
-	const [repliedKeys, setRepliedKeys] = useState<Set<string>>(() => new Set())
+	// Each reply keeps its card and the words sent, so the card can stay in the column as a
+	// receipt after the unread query drops it. `answeredEventId` is the thread's last event at
+	// the time of the reply: a later one is the agent answering, and the card opens again.
+	const [replied, setReplied] = useState<
+		Map<string, { item: UnreadItem; text: string; answeredEventId: number }>
+	>(() => new Map())
 	// A taken option marks the thread read, so the server drops it from the
 	// unread feed on the next fetch. The card is kept here with the option that
 	// was taken so its green receipt stays in place for the sitting, the way the
@@ -235,12 +240,13 @@ function ForYouFeed() {
 		(item: UnreadItem): FeedBucket => {
 			const key = feedItemKey(item)
 			if (decided.has(key)) return 'done'
-			if (repliedKeys.has(key)) return 'waiting'
+			const reply = replied.get(key)
+			if (reply && (item.latest_event_id ?? 0) <= reply.answeredEventId) return 'waiting'
 			// A mention that may be a question stays under the decisions; only a card that
 			// asks nothing of the person is an update.
 			return isInformational(item) ? 'fyi' : 'needs'
 		},
-		[decided, repliedKeys],
+		[decided, replied],
 	)
 
 	// The feed is one flat column ordered by bucket — decisions first, then
@@ -255,13 +261,17 @@ function ForYouFeed() {
 			.map((entry) => entry.item)
 			.filter((item) => !seen.has(feedItemKey(item)))
 			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
-		return [...live, ...handled]
+		const answered = [...replied.values()]
+			.map((entry) => entry.item)
+			.filter((item) => !seen.has(feedItemKey(item)) && !decided.has(feedItemKey(item)))
+			.filter((item) => !typeFilter || feedKindOf(item) === typeFilter)
+		return [...live, ...handled, ...answered]
 			.map((item, index) => ({ item, index }))
 			.sort(
 				(a, b) => bucketRank(bucketOf(a.item)) - bucketRank(bucketOf(b.item)) || a.index - b.index,
 			)
 			.map((entry) => entry.item)
-	}, [filteredRegular, decided, typeFilter, bucketOf])
+	}, [filteredRegular, decided, replied, typeFilter, bucketOf])
 
 	// The ordered column cut into its buckets, so each non-empty one can be headed.
 	const sections = useMemo(() => {
@@ -277,8 +287,10 @@ function ForYouFeed() {
 
 	const countOf = (bucket: FeedBucket) =>
 		sections.find((section) => section.bucket === bucket)?.items.length ?? 0
-	// Below 1024px the nav row is too short for the greeting beside Live, Display and New.
-	const isMobile = useMediaQuery('(max-width: 1023px)')
+	// On a phone the nav row draws the greeting after the menu button, like every other screen.
+	// A tablet (768 to 1023px) has no menu button and a nav row too short for the greeting beside
+	// Live, Display and New, so it draws the greeting in the page.
+	const greetingInPage = useMediaQuery('(min-width: 768px) and (max-width: 1023px)')
 	const greeting = greetingFor(getStoredActor()?.name, new Date())
 	const lead = leadLine(countOf('needs'), countOf('fyi'))
 
@@ -510,9 +522,11 @@ function ForYouFeed() {
 	// one answered (`answeredAt`), so the agent's answer to this reply still
 	// shows up live.
 	const handleReplied = useCallback(
-		(item: UnreadItem) => {
+		(item: UnreadItem, text: string) => {
 			const key = feedItemKey(item)
-			setRepliedKeys((prev) => new Set(prev).add(key))
+			setReplied((prev) =>
+				new Map(prev).set(key, { item, text, answeredEventId: item.latest_event_id ?? 0 }),
+			)
 			// A typed reply implies a read — emit here, next to the gesture, so
 			// the funnel counts it even if the mark-read call fails.
 			trackForyouCardMarkedRead({
@@ -520,8 +534,8 @@ function ForYouFeed() {
 				card_id: item.entity_id,
 			})
 			const forget = () => {
-				setRepliedKeys((prev) => {
-					const next = new Set(prev)
+				setReplied((prev) => {
+					const next = new Map(prev)
 					next.delete(key)
 					return next
 				})
@@ -594,9 +608,15 @@ function ForYouFeed() {
 			// included — a decided card restored as undecided would re-offer its
 			// options and let the reader post the same reply twice.
 			const restoredDecisions = [...decided].filter(([key]) => keys.has(key))
-			const restoredReplied = [...keys].filter((key) => repliedKeys.has(key))
+			const restoredReplied = [...replied].filter(([key]) => keys.has(key))
 			setDecided((prev) => {
 				if (restoredDecisions.length === 0) return prev
+				const next = new Map(prev)
+				for (const key of keys) next.delete(key)
+				return next
+			})
+			setReplied((prev) => {
+				if (restoredReplied.length === 0) return prev
 				const next = new Map(prev)
 				for (const key of keys) next.delete(key)
 				return next
@@ -617,13 +637,13 @@ function ForYouFeed() {
 							setDecided((prev) => new Map([...prev, ...restoredDecisions]))
 						}
 						if (restoredReplied.length > 0) {
-							setRepliedKeys((prev) => new Set([...prev, ...restoredReplied]))
+							setReplied((prev) => new Map([...prev, ...restoredReplied]))
 						}
 					},
 				},
 			})
 		},
-		[decided, repliedKeys, dismissItem, undismissItem],
+		[decided, replied, dismissItem, undismissItem],
 	)
 
 	// "Take every suggested option" — the recommended answer on every card that
@@ -707,8 +727,10 @@ function ForYouFeed() {
 		<PageHeader
 			gutter="wide"
 			title={greeting}
-			// On a phone or tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
-			hideTitle={isMobile}
+			// On a tablet the Live and Display buttons take the nav row, so the greeting moves into the page.
+			hideTitle={greetingInPage}
+			// On a phone the buttons drop to a second line rather than squeezing the greeting.
+			wrapActions
 			scrollLocked
 			actions={
 				<>
@@ -757,6 +779,9 @@ function ForYouFeed() {
 	// The tail rule closes an *empty* column — it says why there is nothing to
 	// read. With cards on the page it is noise, so it isn't drawn at all.
 	const feedIsEmpty = orderedCards.length === 0 && onboardingItems.length === 0
+	// An empty, unfiltered feed already says so in the centred message below, so the lead
+	// line ("You are clear") would repeat it.
+	const showLead = !(feedIsEmpty && !typeFilter)
 	const tail = feedIsEmpty
 		? feedTailLabel({
 				filtered: Boolean(typeFilter),
@@ -820,13 +845,15 @@ function ForYouFeed() {
 
 			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="flex w-full flex-col">
-					{isMobile ? <h1 className="page-title pb-2">{greeting}</h1> : null}
-					<p
-						className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
-						data-testid="foryou-greeting"
-					>
-						{lead}
-					</p>
+					{greetingInPage ? <h1 className="page-title pb-2">{greeting}</h1> : null}
+					{showLead && (
+						<p
+							className="max-w-[520px] pb-6 text-[17px] leading-[1.5] text-muted-foreground"
+							data-testid="foryou-greeting"
+						>
+							{lead}
+						</p>
+					)}
 
 					{/* Outside the width-capped column below, so the cards run to the page edge instead of clipping at the column. */}
 					<BriefingRow workspaceId={workspaceId} />
@@ -893,8 +920,9 @@ function ForYouFeed() {
 												onDecide={(option) => handleDecide(item, option)}
 												onDraftAction={(draft, action) => handleDraftAction(item, draft, action)}
 												onDraftsDone={() => handleDraftsDone(item)}
-												replied={repliedKeys.has(key)}
-												onReplied={() => handleReplied(item)}
+												replied={replied.has(key) && bucketOf(item) === 'waiting'}
+												repliedText={replied.get(key)?.text}
+												onReplied={(text) => handleReplied(item, text)}
 												onMarkRead={() => dismissAll([item], 'Marked as read')}
 											/>
 										)
@@ -909,7 +937,9 @@ function ForYouFeed() {
 							icon={<CheckCircle2 size={24} aria-hidden="true" />}
 							title={tail}
 							description={
-								typeFilter ? 'Nothing matches this filter.' : 'Nothing needs you right now.'
+								typeFilter
+									? 'Nothing matches this filter.'
+									: 'New items that need your OK show up here.'
 							}
 							action={
 								typeFilter ? (

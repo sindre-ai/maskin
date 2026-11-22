@@ -58,7 +58,7 @@ const GROUP_STATUSES_BY_TYPE: Record<string, Partial<Record<StatusGroupKey, read
 	},
 	loop: {
 		new: ['draft'],
-		in_progress: ['pilot', 'learning', 'supervised', 'live', 'fully_autonomous'],
+		in_progress: ['pilot', 'supervised', 'live'],
 		archived: ['paused', 'archived'],
 	},
 	event: {
@@ -83,8 +83,7 @@ const GROUP_STATUSES_BY_TYPE: Record<string, Partial<Record<StatusGroupKey, read
 		new: ['new_lead'],
 		in_progress: [
 			'qualified',
-			'connection_requested',
-			'messaged',
+			'initial_contact',
 			'in_conversation',
 			'meeting_booked',
 			'follow_up_later',

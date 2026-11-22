@@ -1,7 +1,10 @@
 import {
+	chatListPositionBucket,
+	chatListResultCountBucket,
 	commentShape,
 	deriveEntryAgentRole,
 	deriveSidebarViewport,
+	secondsSince,
 	trackAgentCreated,
 	trackAgentOpened,
 	trackAgentSessionStarted,
@@ -14,7 +17,12 @@ import {
 	trackChatFirstReplyReceived,
 	trackChatImageUpload,
 	trackChatLeft,
+	trackChatListSearchUsed,
+	trackChatMessageResent,
+	trackChatOpenedFromList,
+	trackChatRowAction,
 	trackChatSessionStarted,
+	trackChatStopClicked,
 	trackCommentPosted,
 	trackCreditLowShown,
 	trackEmailReturn,
@@ -24,12 +32,16 @@ import {
 	trackFileViewerPinPlaced,
 	trackFileViewerRoundSent,
 	trackFileViewerZoomUsed,
+	trackFlowError,
+	trackFlowStep,
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackKnowledgePageViewed,
+	trackLoopViewCardAction,
 	trackLoopViewed,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
+	trackNotificationOpened,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectUpdated,
@@ -240,6 +252,24 @@ describe('v1 taxonomy helpers', () => {
 			entry_agent_role: null,
 			participant_count: 2,
 		})
+	})
+
+	it('chat_session_started accepts the two person Message entry points', () => {
+		const capture = captureSpy()
+
+		for (const entry_point of ['person_message_row', 'person_message_page'] as const) {
+			trackChatSessionStarted({
+				entity_id: `sess-${entry_point}`,
+				entity_type: 'session',
+				entry_point,
+				entry_agent_role: null,
+				participant_count: 1,
+			})
+			expect(capture).toHaveBeenLastCalledWith(
+				'chat_session_started',
+				expect.objectContaining({ entry_point, participant_count: 1 }),
+			)
+		}
 	})
 
 	it('sindre_message_sent carries the session id and nothing else', () => {
@@ -584,6 +614,28 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
+	it('trackLoopViewCardAction sends the surface, the actor type, the action and ids only', () => {
+		const capture = captureSpy()
+
+		trackLoopViewCardAction({
+			entity_id: 'o-1',
+			object_type: 'bet',
+			loop_id: 'l-1',
+			action: 'status_change',
+		})
+
+		expect(capture).toHaveBeenCalledWith('loop_view_card_action', {
+			entity_id: 'o-1',
+			entity_type: 'object',
+			source: 'web',
+			flow_id: null,
+			surface: 'loop_view',
+			actor_type: 'human',
+			action: 'status_change',
+			object_type: 'bet',
+			loop_id: 'l-1',
+		})
+	})
 	it('loop_viewed and agent_opened carry their feature area', () => {
 		const capture = captureSpy()
 
@@ -618,6 +670,7 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			latency_ms: 1200,
+			session_id: null,
 			feature_area: 'chats',
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_left', {
@@ -626,6 +679,37 @@ describe('v1 taxonomy helpers', () => {
 			source: 'web',
 			flow_id: null,
 			outcome: 'abandoned',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_stop_clicked names the run that was stopped and how long it had been going', () => {
+		const capture = captureSpy()
+
+		trackChatStopClicked({ session_id: 's-1', seconds_running: 42 })
+
+		expect(capture).toHaveBeenCalledWith('chat_stop_clicked', {
+			entity_id: 's-1',
+			entity_type: 'session',
+			source: 'web',
+			flow_id: null,
+			session_id: 's-1',
+			seconds_running: 42,
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_message_resent carries the conversation id and the gap in seconds', () => {
+		const capture = captureSpy()
+
+		trackChatMessageResent({ entity_id: 'c-1', seconds_since_previous: 20 })
+
+		expect(capture).toHaveBeenCalledWith('chat_message_resent', {
+			entity_id: 'c-1',
+			entity_type: 'conversation',
+			source: 'web',
+			flow_id: null,
+			seconds_since_previous: 20,
 			feature_area: 'chats',
 		})
 	})
@@ -687,13 +771,14 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('sidebar.workspace_switcher.opened carries the workspaceId', () => {
+	it('sidebar.workspace_switcher.opened carries the workspaceId and pointerType', () => {
 		const capture = captureSpy()
 
-		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42' })
+		trackSidebarWorkspaceSwitcherOpened({ workspaceId: 'ws-42', pointerType: 'touch' })
 
 		expect(capture).toHaveBeenCalledWith('sidebar.workspace_switcher.opened', {
 			workspaceId: 'ws-42',
+			pointerType: 'touch',
 		})
 	})
 
@@ -866,7 +951,38 @@ describe('v1 taxonomy helpers', () => {
 				card_kind: 'decision',
 				card_id: 'bet-1',
 				action_id: 'quick_reply:approved',
+				seconds_to_action: null,
+				session_id: null,
 			})
+		})
+
+		it('foryou_card_action adds the seconds since the card was raised and the run that raised it', () => {
+			const capture = captureSpy()
+
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
+				seconds_to_action: 95,
+				session_id: 'run-1',
+			})
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_action', {
+				card_kind: 'decision',
+				card_id: 'bet-1',
+				action_id: 'quick_reply:approved',
+				seconds_to_action: 95,
+				session_id: 'run-1',
+			})
+		})
+
+		it('secondsSince rounds to whole seconds, never goes negative and is null without a time', () => {
+			const now = Date.parse('2026-11-11T10:02:00Z')
+
+			expect(secondsSince('2026-11-11T10:00:30.400Z', now)).toBe(90)
+			expect(secondsSince('2026-11-11T10:05:00Z', now)).toBe(0)
+			expect(secondsSince(null, now)).toBeNull()
+			expect(secondsSince('not a date', now)).toBeNull()
 		})
 	})
 })
@@ -1102,5 +1218,214 @@ describe('email_return', () => {
 		expect(trackEmailReturn('app_active', '?surface=web')).toBe(false)
 		expect(trackEmailReturn('app_active', '')).toBe(false)
 		expect(capture).not.toHaveBeenCalled()
+	})
+})
+
+describe('notification_opened', () => {
+	beforeEach(() => {
+		sessionStorage.clear()
+		__setInitializedForTesting(true)
+	})
+
+	it('fires once with the id, type and source after arriving from a browser notification', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackNotificationOpened('?notification=n-1&notification_type=needs_input')).toBe(true)
+		expect(capture).toHaveBeenCalledWith('notification_opened', {
+			notification_id: 'n-1',
+			type: 'needs_input',
+			source: 'web_push',
+		})
+	})
+
+	it('does not fire a second time for a reload of the same link, but does for another notification', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackNotificationOpened('?notification=n-1&notification_type=message')).toBe(true)
+		expect(trackNotificationOpened('?notification=n-1&notification_type=message')).toBe(false)
+		expect(trackNotificationOpened()).toBe(false)
+		expect(trackNotificationOpened('?notification=n-2&notification_type=message')).toBe(true)
+		expect(capture).toHaveBeenCalledTimes(2)
+	})
+
+	it('drops a type that is not a plain category and sends nothing for a malformed id', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		expect(trackNotificationOpened('?notification=n-3&notification_type=Hello%20there')).toBe(true)
+		expect(capture).toHaveBeenLastCalledWith('notification_opened', {
+			notification_id: 'n-3',
+			source: 'web_push',
+		})
+		sessionStorage.clear()
+		expect(trackNotificationOpened('?notification=a%20b%20c')).toBe(false)
+		expect(trackNotificationOpened('?surface=web')).toBe(false)
+		expect(capture).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('flow_step and flow_error', () => {
+	it('flow_step carries where the flow started and a timed duration when given', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({
+			flow: 'agent_computer',
+			step: 'first_frame',
+			flowId: 'flow-e',
+			durationMs: 812.6,
+			from: 'agent_page',
+		})
+
+		expect(capture).toHaveBeenCalledWith('flow_step', {
+			flow: 'agent_computer',
+			step: 'first_frame',
+			flow_id: 'flow-e',
+			surface: 'web',
+			duration_ms: 813,
+			from: 'agent_page',
+		})
+	})
+
+	it('flow_step carries flow, step, flow_id, surface and a null duration on the first step', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({ flow: 'agent_computer', step: 'view_opened', flowId: 'flow-a' })
+
+		expect(capture).toHaveBeenCalledWith('flow_step', {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flow_id: 'flow-a',
+			surface: 'web',
+			duration_ms: null,
+		})
+	})
+
+	it('flow_step sets duration_ms from the previous step of the same flow_id', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowStep({ flow: 'agent_computer', step: 'view_opened', flowId: 'flow-b' })
+		trackFlowStep({ flow: 'agent_computer', step: 'take_over_started', flowId: 'flow-b' })
+
+		const second = capture.mock.calls[1][1] as { duration_ms: unknown }
+		expect(typeof second.duration_ms).toBe('number')
+	})
+
+	it('flow_step sends nothing for a step outside the vocabulary', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		// @ts-expect-error unknown step names fail the type check
+		trackFlowStep({ flow: 'agent_computer', step: 'not_a_step', flowId: 'flow-c' })
+
+		expect(capture).not.toHaveBeenCalled()
+	})
+
+	it('flow_error carries a category and nothing else free-form', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackFlowError({
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flowId: 'flow-d',
+			errorCategory: 'connection_lost',
+		})
+
+		expect(capture).toHaveBeenCalledWith('flow_error', {
+			flow: 'agent_computer',
+			step: 'view_opened',
+			flow_id: 'flow-d',
+			surface: 'web',
+			error_category: 'connection_lost',
+		})
+	})
+})
+
+describe('chat list use', () => {
+	it('chat_opened_from_list carries the source, section and a position bucket, nothing else', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatOpenedFromList({ source: 'list', section: 'unread', position: 7 })
+
+		expect(capture).toHaveBeenCalledWith('chat_opened_from_list', {
+			source: 'list',
+			section: 'unread',
+			position_bucket: '4_10',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_list_search_used carries a result count bucket and no text', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatListSearchUsed({ result_count: 0 })
+
+		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
+			result_count_bucket: '0',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_opened_from_list adds marker, filter and group_by when the v2 list sends them', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatOpenedFromList({
+			source: 'list',
+			section: 'needs_you',
+			position: 1,
+			marker: 'error',
+			filter: 'needs_you',
+			group_by: 'type',
+		})
+
+		expect(capture).toHaveBeenCalledWith('chat_opened_from_list', {
+			source: 'list',
+			section: 'needs_you',
+			position_bucket: '1',
+			marker: 'error',
+			filter: 'needs_you',
+			group_by: 'type',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_row_action carries the action and how it was reached, nothing else', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatRowAction({ action: 'retry', via: 'hover' })
+
+		expect(capture).toHaveBeenCalledWith('chat_row_action', {
+			action: 'retry',
+			via: 'hover',
+			feature_area: 'chats',
+		})
+	})
+
+	it('chat_list_search_used carries the operators used and no text', () => {
+		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+		trackChatListSearchUsed({ result_count: 3, operators: ['from', 'is'] })
+
+		expect(capture).toHaveBeenCalledWith('chat_list_search_used', {
+			result_count_bucket: '2_5',
+			operators: 'from,is',
+			feature_area: 'chats',
+		})
+	})
+
+	it('buckets positions and result counts at their edges', () => {
+		expect([1, 2, 3, 4, 10, 11, 25, 26].map(chatListPositionBucket)).toEqual([
+			'1',
+			'2_3',
+			'2_3',
+			'4_10',
+			'4_10',
+			'11_25',
+			'11_25',
+			'26_plus',
+		])
+		expect([0, 1, 2, 5, 6, 20, 21].map(chatListResultCountBucket)).toEqual([
+			'0',
+			'1',
+			'2_5',
+			'2_5',
+			'6_20',
+			'6_20',
+			'21_plus',
+		])
 	})
 })

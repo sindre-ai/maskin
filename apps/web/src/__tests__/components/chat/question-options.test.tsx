@@ -1,7 +1,7 @@
 import type { MessageQuestion } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 const sendMutate = vi.fn()
@@ -260,6 +260,20 @@ describe('QuestionOptions', () => {
 		})
 	})
 
+	it('puts the cursor in the reply box, and Esc closes it and returns focus to the button', async () => {
+		const user = userEvent.setup()
+		renderOptions()
+
+		await user.click(screen.getByRole('button', { name: 'or type your reply' }))
+		const box = screen.getByRole('textbox', { name: 'Your reply' })
+		expect(box).toHaveFocus()
+
+		await user.keyboard('{Escape}')
+
+		expect(screen.queryByRole('textbox', { name: 'Your reply' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'or type your reply' })).toHaveFocus()
+	})
+
 	it("sends a helper's answer to its session, not to the chat", async () => {
 		sendMutate.mockClear()
 		inputMutate.mockClear()
@@ -274,5 +288,42 @@ describe('QuestionOptions', () => {
 		const payload = inputMutate.mock.calls[0]?.[0]
 		expect(payload.id).toBe(QUESTION.session_id)
 		expect(payload.question_answer.question_message_id).toBe(7)
+	})
+	describe('a question that carries a draft', () => {
+		const draft = 'Subject: Luma event\n\nHi Maya, thanks for hosting us next week.\nSee you there.'
+		const WITH_DRAFT: MessageQuestion = {
+			...QUESTION,
+			questions: [{ ...QUESTION.questions[0], question: `Send this to Maya? ${draft}` }],
+		}
+
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		it('shows the question as the headline and the draft below it with its line breaks', () => {
+			renderOptions(WITH_DRAFT)
+
+			expect(screen.getByText('Send this to Maya?')).toBeInTheDocument()
+			const detail = document.querySelector('[data-question-detail]')
+			expect(detail?.textContent).toBe(draft)
+			expect(detail).toHaveClass('whitespace-pre-wrap')
+			// Fits: no control.
+			expect(screen.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument()
+		})
+
+		it('cuts a draft that does not fit and opens and closes it with Show all / Show less', async () => {
+			// jsdom has no layout: say the text is taller than its box.
+			vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(300)
+			vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(120)
+			const user = userEvent.setup()
+			renderOptions(WITH_DRAFT)
+
+			const detail = document.querySelector<HTMLElement>('[data-question-detail]')
+			expect(detail).toHaveAttribute('data-cut', 'true')
+			await user.click(screen.getByRole('button', { name: /Show all/ }))
+			expect(detail).toHaveAttribute('data-cut', 'false')
+			await user.click(screen.getByRole('button', { name: /Show less/ }))
+			expect(detail).toHaveAttribute('data-cut', 'true')
+		})
 	})
 })

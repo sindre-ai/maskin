@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
@@ -9,6 +10,7 @@ import {
 import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { insertConversationMessage } from '../../services/conversation-messages'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { insertActor, insertWorkspace } from '../factories'
@@ -120,6 +122,31 @@ describe('Message threads', () => {
 		expect(root?.thread?.replyCount).toBe(1)
 		expect(root?.thread?.unreadCount).toBe(1)
 		expect(root?.thread?.participants.map((p) => p.actorId)).toEqual([ownerId, otherId])
+	})
+
+	it('leaves replies the chat hides out of the count, the unread count and the avatars', async () => {
+		await post(ownerId, { content: 'keep Qualifier', thread_root_id: rootId })
+		const helper = await insertActor(db, { type: 'agent' })
+		for (const metadata of [{ helper_return: randomUUID() }, { hidden_from_chat: true }]) {
+			await insertConversationMessage(db, {
+				conversationId,
+				workspaceId,
+				actorId: helper.id,
+				content: 'for the agent only',
+				metadata,
+				sessionId: null,
+				threadRootId: rootId,
+			})
+		}
+
+		const list = await appFor(otherId).request(
+			jsonGet(`/api/conversations/${conversationId}/messages`, ws()),
+		)
+		const { messages: page } = (await list.json()) as { messages: Msg[] }
+		const root = page.find((m) => m.id === rootId)
+		expect(root?.thread?.replyCount).toBe(1)
+		expect(root?.thread?.unreadCount).toBe(1)
+		expect(root?.thread?.participants.map((p) => p.actorId)).toEqual([ownerId])
 	})
 
 	it('returns only the thread replies when thread_root_id is given', async () => {

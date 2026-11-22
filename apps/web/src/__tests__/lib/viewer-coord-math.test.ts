@@ -4,6 +4,8 @@ import {
 	clampZoom,
 	computeFit,
 	docToStage,
+	settleFit,
+	settleSize,
 	stageToDoc,
 	zoomAt,
 	zoomStep,
@@ -40,6 +42,29 @@ describe('viewer-coord-math', () => {
 
 		it('replaces NaN with the min', () => {
 			expect(clampZoom(Number.NaN)).toBe(ZOOM_MIN)
+		})
+	})
+
+	describe('settling the fit', () => {
+		const slide = { w: 1920, h: 1080 }
+
+		it('keeps the same stage size object for a change under 1px', () => {
+			const prev = { w: 1200, h: 800 }
+			expect(settleSize(prev, { w: 1200.4, h: 799.6 })).toBe(prev)
+			expect(settleSize(prev, { w: 1185, h: 800 })).toEqual({ w: 1185, h: 800 })
+		})
+
+		it('does not change the fit zoom when the stage moves by under 1px', () => {
+			const stage = { w: 1200, h: 800 }
+			const k = computeFit(slide, stage)
+			const wobbled = settleSize(stage, { w: 1200.5, h: 800.5 })
+			expect(settleFit(k, computeFit(slide, wobbled))).toBe(k)
+		})
+
+		it('ignores a fit change under 1 percent and follows a larger one', () => {
+			expect(settleFit(0.8, 0.8 * 1.005)).toBe(0.8)
+			expect(settleFit(0.8, 0.8 * 0.995)).toBe(0.8)
+			expect(settleFit(0.8, 1)).toBe(1)
 		})
 	})
 

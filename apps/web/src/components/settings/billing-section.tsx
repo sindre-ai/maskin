@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -18,17 +19,27 @@ import type {
 	LinkedInIdentityAddonLine,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { planUsageState } from '@/lib/plan-usage'
 import { queryKeys } from '@/lib/query-keys'
 import { trialCardState } from '@/lib/trial'
-import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
+import {
+	OWNERSHIP_CAPS,
+	PLAN_PRICE_DKK,
+	type PaidPlan,
+	SEAT_CAPS,
+	formatKroner,
+	isPaidPlan,
+} from '@maskin/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { Check, ChevronDown, ChevronRight, Clock, ExternalLink } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
-	pro: 'Pro — $49/mo',
-	team: 'Team — $200/mo',
+	starter: `Starter — ${formatKroner(PLAN_PRICE_DKK.starter)}/mo`,
+	pro: `Pro — ${formatKroner(PLAN_PRICE_DKK.pro)}/mo`,
+	team: `Team — ${formatKroner(PLAN_PRICE_DKK.team)}/mo`,
+	ultra: `Ultra — ${formatKroner(PLAN_PRICE_DKK.ultra)}/mo`,
 	enterprise: 'Enterprise',
 }
 
@@ -79,13 +90,6 @@ function formatSeatCap(n: number | null): string {
 	return `Up to ${n} members per workspace`
 }
 
-// 1_000 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
-// PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
-// apps/dev/src/lib/billing-defaults.ts and the .env.example
-// MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping — enforced
-// by scripts/verify-billing-cap-literals.mjs.
-const CAP_DEFAULTS = { trial: 1_000, pro: 4_900, team: 20_000 } as const
-
 interface PlanCardConfig {
 	plan: BillingPlan
 	eyebrow: string
@@ -95,46 +99,43 @@ interface PlanCardConfig {
 	features: string[]
 }
 
+// Prices come from @maskin/shared (plan-pricing.ts), the same file the backend caps
+// are derived from; plan cards show no usage amount; scripts/verify-billing-cap-literals.mjs
+// fails CI when this file stops reading from it.
+function paidPlanCard(plan: PaidPlan, eyebrow: string, tagline: string): PlanCardConfig {
+	return {
+		plan,
+		eyebrow,
+		price: formatKroner(PLAN_PRICE_DKK[plan]),
+		priceSuffix: '/mo',
+		tagline,
+		features: [
+			'Usage included each month',
+			formatOwnershipCap(OWNERSHIP_CAPS[plan]),
+			formatSeatCap(SEAT_CAPS[plan]),
+			'Hosted by Maskin — no API key needed',
+		],
+	}
+}
+
 const PLAN_CONFIG: PlanCardConfig[] = [
 	{
 		plan: 'trial',
 		eyebrow: 'TRIAL',
 		price: 'Free',
 		priceSuffix: '/14 days',
-		tagline: 'Full product, no card. $10 of usage on the house.',
+		tagline: 'Full product, no card. Usage included.',
 		features: [
-			`${formatCredits(CAP_DEFAULTS.trial)} of usage included`,
+			'Usage included for the trial',
 			formatOwnershipCap(OWNERSHIP_CAPS.trial),
 			formatSeatCap(SEAT_CAPS.trial),
 			'Hosted by Maskin — no API key needed',
 		],
 	},
-	{
-		plan: 'pro',
-		eyebrow: 'PRO',
-		price: '$49',
-		priceSuffix: '/mo',
-		tagline: 'For teams running real workflows day to day.',
-		features: [
-			`${formatCredits(CAP_DEFAULTS.pro)} of usage included each month`,
-			formatOwnershipCap(OWNERSHIP_CAPS.pro),
-			formatSeatCap(SEAT_CAPS.pro),
-			'Hosted by Maskin — no API key needed',
-		],
-	},
-	{
-		plan: 'team',
-		eyebrow: 'TEAM',
-		price: '$200',
-		priceSuffix: '/mo',
-		tagline: 'Heavier flows, volume rates, one invoice.',
-		features: [
-			`${formatCredits(CAP_DEFAULTS.team)} of usage included each month`,
-			formatOwnershipCap(OWNERSHIP_CAPS.team),
-			formatSeatCap(SEAT_CAPS.team),
-			'Hosted by Maskin — no API key needed',
-		],
-	},
+	paidPlanCard('starter', 'STARTER', 'For trying real workflows on a small budget.'),
+	paidPlanCard('pro', 'PRO', 'For teams running real workflows day to day.'),
+	paidPlanCard('team', 'TEAM', 'Heavier flows, volume rates, one invoice.'),
+	paidPlanCard('ultra', 'ULTRA', 'The most usage, for the busiest teams.'),
 	{
 		plan: 'enterprise',
 		eyebrow: 'ENTERPRISE',
@@ -142,7 +143,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		priceSuffix: '',
 		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
 		features: [
-			'No Maskin-hosted token cap',
+			'No Maskin-hosted usage cap',
 			formatOwnershipCap(OWNERSHIP_CAPS.enterprise),
 			formatSeatCap(SEAT_CAPS.enterprise),
 			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
@@ -199,7 +200,7 @@ function getPlanCta(
 	isPaid: boolean,
 	enterprise: boolean,
 	checkoutPending: boolean,
-	handleUpgrade: (plan: 'pro' | 'team') => void,
+	handleUpgrade: (plan: PaidPlan) => void,
 	openSwitch: () => void,
 ): PlanCta | null {
 	if (planKey === usage.plan) return null
@@ -216,28 +217,23 @@ function getPlanCta(
 		return null
 	}
 
-	if (planKey === 'pro') {
-		if (isTrial || usage.status !== 'active') {
+	if (isPaidPlan(planKey)) {
+		// Anyone not on an active paid plan can buy any plan. On an active paid
+		// plan only a dearer one is offered here; changing down goes through the
+		// billing portal.
+		const dearer =
+			isPaidPlan(usage.plan) &&
+			PLAN_PRICE_DKK[planKey] > PLAN_PRICE_DKK[usage.plan] &&
+			usage.status === 'active'
+		if (isTrial || usage.status !== 'active' || dearer) {
 			return {
-				label: 'Upgrade to Pro',
-				onClick: () => handleUpgrade('pro'),
+				label: `Upgrade to ${planKey[0].toUpperCase()}${planKey.slice(1)}`,
+				onClick: () => handleUpgrade(planKey),
 				disabled: checkoutPending,
-			}
-		}
-		return null
-	}
-
-	if (planKey === 'team') {
-		if (
-			isTrial ||
-			usage.status !== 'active' ||
-			(usage.plan === 'pro' && usage.status === 'active')
-		) {
-			return {
-				label: 'Upgrade to Team',
-				onClick: () => handleUpgrade('team'),
-				disabled: checkoutPending,
-				variant: 'outline',
+				// One filled button per row of cards: the plan the person is most
+				// likely to want next. Pro is the entry for a trial or a lapsed plan.
+				variant:
+					planKey === 'pro' && (isTrial || usage.status !== 'active') ? undefined : 'outline',
 			}
 		}
 		return null
@@ -296,7 +292,7 @@ export function BillingSection({
 		return () => clearTimeout(timeout)
 	}, [workspaceId])
 
-	const handleUpgrade = (plan: 'pro' | 'team') => {
+	const handleUpgrade = (plan: PaidPlan) => {
 		trackUpgradeClicked({
 			source: 'billing_settings',
 			target_plan: plan,
@@ -340,7 +336,7 @@ export function BillingSection({
 	const usage = usageQuery.data
 	const badge = statusBadge(usage.plan, usage.status)
 	const isByo = usage.plan === 'enterprise'
-	const isPaid = usage.plan === 'pro' || usage.plan === 'team'
+	const isPaid = isPaidPlan(usage.plan)
 	const isTrial = usage.plan === 'trial'
 	const cap = usage.hard_cap_usd_cents ?? 0
 	const pct = cap > 0 ? Math.min(100, Math.round((usage.usd_cents_used / cap) * 100)) : 0
@@ -355,9 +351,8 @@ export function BillingSection({
 		<div>
 			<h2 className="px-2 pb-1 text-[15px] font-semibold text-foreground">Maskin Subscription</h2>
 			<p className="mb-3 px-2 text-xs text-muted-foreground">
-				Hosted LLM — pay Maskin, no API key needed. Included usage per period, billed at actual
-				dollar cost, then buy prepaid usage credits any time to keep going — you choose the amount,
-				nothing is auto-charged.
+				Hosted LLM — pay Maskin, no API key needed. Each plan includes usage for the period, billed
+				at actual cost. When it is used up, new work waits for the next period.
 			</p>
 
 			<TrialBanner usage={usage} onChoosePlan={() => setPlansOpenOverride(true)} />
@@ -389,7 +384,7 @@ export function BillingSection({
 					{plansOpen ? 'Hide plans' : 'Compare plans'}
 				</CollapsibleTrigger>
 				<CollapsibleContent>
-					<div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+					<div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
 						{visiblePlans.map((config) => (
 							<PlanCard
 								key={config.plan}
@@ -489,9 +484,27 @@ function UsageBanner({
 	// reserved for the workspace actually being blocked (no balance left) or
 	// the subscription itself being unhealthy (past_due/canceled).
 	const hasCredits = isPaid && usage.credit_balance_cents > 0
-	const hardBlocked = pct >= 100 && !hasCredits
+	// With the percent display on, the number, the colours and the 80% line come from the
+	// same stored cap the server stops on, and no dollar figure is shown.
+	const percentOn = usePlanPercentEnabled()
+	const percentState = percentOn ? planUsageState(usage) : null
+	const shownPct = percentState ? percentState.percent : pct
+	const hardBlocked = percentState ? percentState.paused : pct >= 100 && !hasCredits
 	const needsAttention =
-		usage.status === 'past_due' || usage.status === 'canceled' || (pct >= 85 && !hasCredits)
+		usage.status === 'past_due' ||
+		usage.status === 'canceled' ||
+		(percentState ? percentState.warn && !hasCredits : pct >= 85 && !hasCredits)
+	const barTone = percentState
+		? percentState.tone === 'error'
+			? 'bg-error'
+			: percentState.tone === 'warning'
+				? 'bg-warning'
+				: 'bg-primary'
+		: hardBlocked
+			? 'bg-error'
+			: pct >= 85
+				? 'bg-warning'
+				: 'bg-primary'
 
 	return (
 		<div
@@ -524,7 +537,9 @@ function UsageBanner({
 				<div>
 					<div className="flex items-baseline justify-between text-xs text-muted-foreground">
 						<span>
-							{formatCredits(usage.usd_cents_used)} / {formatCredits(cap)} used
+							{percentOn
+								? `${shownPct}% of plan used`
+								: `${formatCredits(usage.usd_cents_used)} / ${formatCredits(cap)} used`}
 						</span>
 						{periodMs !== null && periodMs > 0 && periodMs < DAY_MS ? (
 							<PeriodCountdown ms={periodMs} label={isTrial ? 'expires' : 'resets'} />
@@ -534,22 +549,30 @@ function UsageBanner({
 					</div>
 					<div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
 						<div
-							className={`h-full transition-all ${hardBlocked ? 'bg-error' : pct >= 85 ? 'bg-warning' : 'bg-primary'}`}
-							style={{ width: `${pct}%` }}
+							className={`h-full transition-all ${barTone}`}
+							style={{ width: `${shownPct}%` }}
 							role="progressbar"
-							aria-valuenow={pct}
+							aria-label="Plan usage"
+							aria-valuenow={shownPct}
 							aria-valuemin={0}
 							aria-valuemax={100}
 							tabIndex={-1}
 						/>
 					</div>
+					{percentState?.warn && (
+						<p className="mt-1.5 text-xs text-muted-foreground">
+							Work will wait at 100%. Choose a plan to keep going.
+						</p>
+					)}
 				</div>
 			)}
 
 			{isPaid && (usage.credit_topup_available || usage.credit_balance_cents > 0) && (
 				<div className="flex items-center justify-between gap-2">
 					<span className="text-xs text-muted-foreground">
-						{formatCredits(usage.credit_balance_cents)} usage credits
+						{percentOn
+							? 'Usage credits from earlier top-ups left'
+							: `${formatCredits(usage.credit_balance_cents)} usage credits`}
 					</span>
 					{usage.credit_topup_available && (
 						<Button size="sm" variant="outline" onClick={onBuyCredits}>
@@ -574,11 +597,13 @@ function UsageBanner({
 }
 
 // Renders the LinkedIn Identity SKU under the plan surface. The buyer-framing
-// paragraph is verbatim from the bet §Pricing so pricing copy stays inside
-// the pricing memo's control — do NOT paraphrase it. Displayed only when the
+// paragraph is verbatim from the pricing memo so pricing copy stays inside
+// its control — do NOT paraphrase it. With the percent display on, the memo's
+// approved usage wording replaces the dollar and token wording. Displayed only when the
 // backend returns a non-null `linkedin_identity_addon` (see
 // apps/dev/src/lib/linkedin-addon.ts).
 function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLine }) {
+	const percentOn = usePlanPercentEnabled()
 	const unit = formatDollars(line.unit_price_usd_cents)
 	const total = formatDollars(line.monthly_total_usd_cents, { withCents: true })
 	return (
@@ -590,8 +615,9 @@ function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLin
 				</span>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what
-				the model reasons through.
+				{percentOn
+					? 'The add-on covers the LinkedIn connection. Your plan usage continues to cover only what the model reasons through.'
+					: '$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what the model reasons through.'}
 			</p>
 		</div>
 	)
@@ -655,6 +681,7 @@ function DowngradeDialog({
 	enterprise: boolean
 }) {
 	const cancel = useBillingCancel(workspaceId)
+	const percentOn = usePlanPercentEnabled()
 
 	const handleConfirm = () => {
 		cancel.mutate(undefined, { onSuccess: () => onOpenChange(false) })
@@ -667,7 +694,7 @@ function DowngradeDialog({
 					<DialogTitle>{enterprise ? 'Downgrade to Free?' : 'Cancel subscription?'}</DialogTitle>
 					<DialogDescription>
 						{enterprise
-							? "You'll lose access to Maskin's hosted LLM and your remaining token credits for this period. You won't be charged again."
+							? `You'll lose access to Maskin's hosted LLM and your remaining ${percentOn ? 'usage' : 'token credits'} for this period. You won't be charged again.`
 							: "You'll go back to the free trial plan with Maskin's hosted LLM, on the trial's lower usage cap. You won't be charged again."}
 					</DialogDescription>
 				</DialogHeader>

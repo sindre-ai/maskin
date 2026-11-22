@@ -15,6 +15,26 @@ it was created from until it is deleted (`DELETE /desktops/:id`) and re-opened.
 `DESKTOP_IMAGE` in the agent-server environment overrides the image (default
 `magnusnoeddegaard/maskin-desktop:latest`).
 
+## ffmpeg and whisper
+
+The image carries ffmpeg 8 and ffprobe in `/usr/local/bin`, built with the whisper
+filter (speech to text) in a first Dockerfile stage, because Debian's ffmpeg 5.1 has no
+such filter and no prebuilt static ffmpeg 8 enables it. The English base model is at
+`/usr/local/share/whisper/ggml-base.en.bin` (also in `$WHISPER_MODEL`), about 150 MB.
+whisper.cpp, ffmpeg and the model are pinned in `ARG`s at the top of the Dockerfile
+with their sha256; change a version and its checksum together. A build fails if
+`ffmpeg -filters` does not list `whisper`. Pull requests that touch `docker/desktop/`
+build the image without pushing (`desktop-docker-check.yml`); expect 15 to 30 minutes
+on a cold cache.
+
+    ffmpeg -i in.mp4 -vn -af "whisper=model=$WHISPER_MODEL:language=en:destination=out.srt:format=srt" -f null -
+
+whisper runs on the CPU, so a long video takes a while. **`desktop_run` kills any command
+after 120 seconds.** Start renders and transcriptions detached with output to a log file,
+then poll the log:
+
+    nohup ffmpeg ... > /tmp/render.log 2>&1 &
+
 ## Build by hand (from a machine with Docker)
 
     docker build -t <registry>/maskin-desktop:latest docker/desktop
@@ -42,7 +62,8 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
   restores the chooser size from `dock/keyfile` (`org/gtk/settings/file-chooser`,
   `window-size` and `window-position`, both needed); unset it opens 1124x822, taller than
   the screen. Press ctrl+L, type the file's full path, then click Open or press alt+O. Enter and
-  double click close the chooser without choosing the file (tried on the 5 Nov image).
+  double click close the chooser without choosing the file (tried on the 5 Nov image). This
+  typed-path route is the fallback: `desktop_attach_file` (below) skips the chooser.
 - Chromium opens a page at 67 percent zoom (a page's `innerWidth` is 2866 on the 1920
   pixel screen). The default comes from `chromium/preferences.json`, installed as the
   profile's `Preferences`; change `partition.default_zoom_level.x` (log(zoom)/log(1.2):
@@ -58,6 +79,34 @@ bridge next to noVNC. The agent-server proxies to it; apps/dev exposes it as
 The screen is 1920x1080 and agents see all of it: `/screenshot` returns the full screen and
 `/input` coordinates are native pixels (`WIDTH/HEIGHT` in `desktopd.py` must match the
 entrypoint's `SCREEN_SIZE` default).
+
+A saved password is typed with `{"action": "type_secret", "require": "password_field"}`, never
+plain `type`. desktopd first asks Chromium's debugging port (127.0.0.1:9222, set in the
+Dockerfile flags) which element has focus, and types only if exactly one page has focus and it
+is an `<input type=password>`. Otherwise it answers 409 `not_a_password_field` and types
+nothing; so does a missing debugging port, a cross-origin frame, or a field showing its text.
+An image without this action answers 400 `unknown action`, so an older computer types nothing
+either. `POST /api/desktop/apply-settings` (MCP `desktop_apply_settings`) brings such a
+computer up to date in place: the server sends it the current `desktopd.py` (a copy kept in
+`apps/dev/src/lib/desktop-helper-source.ts`; after editing `desktopd.py` run
+`node apps/dev/scripts/sync-desktop-helper.mjs`, a test fails if they differ) and restarts it. A
+browser that is already running without the debugging port is not restarted for you: the
+answer says `chromium_restart_needed`.
+
+A file is attached to a page's upload field with `{"action": "attach_file", "path": "~/Downloads/a.png",
+"selector": "input[type=file]"}` (MCP `desktop_attach_file`), with no file chooser. desktopd finds the
+visible browser page over the same debugging port, picks the file input (the `selector`, else the
+focused one, else the page's only one, looking through open shadow roots but not into frames) and
+calls DevTools `DOM.setFileInputFiles`, which makes Chromium fire the page's `input` and `change`
+events once each, as a real pick does (checked on the desktop image's Chromium). It types and clicks
+nothing. It answers 409 with `error` and a plain `message` and attaches nothing when the file is
+missing (`file_not_found`), the page is unclear (`no_page`), there is no usable input
+(`no_file_input`), several match (`several_file_inputs`), the selector is not CSS (`bad_selector`) or
+the debugging port is closed (`no_debugging_port`). An upload field the page only creates on click, or
+one in another site's frame, is out of reach: use the chooser. A computer made before this answers
+400 `unknown action`, which apps/dev turns into a 409 telling the agent to run
+`desktop_apply_settings`; if the browser was started without the debugging port, that call says
+`chromium_restart_needed` and Chromium needs one restart (it closes open pages) before this works.
 
 It exists because `msb exec <vm> -- <cmd>` hangs (even `echo hi`) while the
 entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the host

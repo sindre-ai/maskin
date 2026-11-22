@@ -1,5 +1,5 @@
 import type { MessageResponse } from '@/lib/api'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -79,6 +79,9 @@ vi.mock('@/hooks/use-conversation', () => ({
 	useEditMessage: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
 	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
 	useSendMessage: () => ({ mutate: vi.fn() }),
+	// A draft card reads the chat to know whether its draft was skipped.
+	useConversationMessages: () => ({ data: undefined }),
+	flattenMessagesOldestFirst: () => [],
 }))
 
 vi.mock('@/hooks/use-conversations', () => ({
@@ -109,6 +112,7 @@ vi.mock('@/hooks/use-files', () => ({
 }))
 
 import { MessageBubble } from '@/components/chat/message-bubble'
+import { api } from '@/lib/api'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
 	return {
@@ -807,6 +811,35 @@ describe('MessageBubble — Reply in thread', () => {
 	})
 })
 
+describe('MessageBubble — edit request', () => {
+	const own = () => buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' })
+	const renderWithRequest = (message: MessageResponse, nonce?: number) =>
+		render(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={nonce} />, {
+			wrapper: TestWrapper,
+		})
+
+	it('opens the edit card when a new request arrives', () => {
+		const message = own()
+		const { rerender } = renderWithRequest(message)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+	})
+
+	it('ignores a request that was already there when the bubble mounted', () => {
+		renderWithRequest(own(), 1)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+	})
+
+	it('does not edit a message that is not yours', () => {
+		const message = buildMessage()
+		const { rerender } = renderWithRequest(message)
+		rerender(<MessageBubble workspaceId="ws-1" message={message} editRequestNonce={1} />)
+		expect(screen.queryByRole('button', { name: 'Edit message' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+	})
+})
+
 describe('MessageBubble — own bubble fits its text', () => {
 	const NATURAL_WIDTH = 560
 	const WIDEST_LINE = 200
@@ -864,5 +897,118 @@ describe('MessageBubble — own bubble fits its text', () => {
 	it('does not fit a message from someone else', () => {
 		const { container } = renderBubble(buildMessage({ content: 'a long line' }))
 		expect(container.querySelector('[style*="width"]')).toBeNull()
+	})
+})
+
+describe('MessageBubble question asked with a draft', () => {
+	const DRAFT_ID = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d'
+	const question = {
+		session_id: 'sess-1',
+		questions: [
+			{
+				header: 'Send',
+				question: 'Send this reply to Liz today?',
+				multi_select: false,
+				options: [
+					{ label: 'Send today', description: 'She asked for an answer by Friday.' },
+					{ label: 'Wait', description: 'Hold until Monday.' },
+				],
+			},
+		],
+	}
+	const draft = (delivery: 'draft' | 'approved' | 'sent') => ({
+		id: DRAFT_ID,
+		workspaceId: 'ws-1',
+		type: 'task',
+		title: 'Reply to Liz',
+		status: 'in_review',
+		content: 'Hej Liz, Thursday works.',
+		preview: {
+			kind: 'email',
+			label: 'Email',
+			provider: 'resend',
+			recipients: [],
+			subject: null,
+			details: [],
+			body: 'Hej Liz, Thursday works.',
+			maxLength: null,
+			missing: [],
+			warnings: [],
+			content_hash: 'hash-1',
+			delivery: { state: delivery, at: null },
+		},
+	})
+	const linkingMessage = () =>
+		buildMessage({
+			content: `Here is the reply:\n\n[Reply to Liz](https://maskin.io/ws-1/objects/${DRAFT_ID})`,
+			metadata: { question },
+		})
+
+	afterEach(() => vi.restoreAllMocks())
+
+	it('draws the question as a note in the draft card and no second question card', async () => {
+		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
+		renderBubble(linkingMessage())
+		// The question card shows until the draft has loaded; then it becomes a note in the draft's card.
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: 'Send today' })).not.toBeInTheDocument(),
+		)
+		expect(screen.getByText('Send this reply to Liz today?')).toBeInTheDocument()
+		expect(screen.getByText('She asked for an answer by Friday.')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Send today' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
+	})
+
+	it.each(['approved', 'sent'] as const)(
+		'draws no second question card once the draft is %s',
+		async (state) => {
+			vi.spyOn(api.objects, 'get').mockResolvedValue(draft(state) as never)
+			renderBubble(linkingMessage())
+			await waitFor(() =>
+				expect(screen.queryByRole('button', { name: 'Send today' })).not.toBeInTheDocument(),
+			)
+			expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
+		},
+	)
+
+	it('keeps the question card when it has more than two options', async () => {
+		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
+		const [first] = question.questions
+		const three = {
+			...question,
+			questions: [
+				{
+					...first,
+					options: [...first.options, { label: 'Ask Liz', description: 'Check first.' }],
+				},
+			],
+		}
+		renderBubble(buildMessage({ ...linkingMessage(), metadata: { question: three } }))
+		expect(await screen.findByRole('button', { name: 'Ask Liz' })).toBeInTheDocument()
+	})
+
+	it('keeps the question card when it allows several answers', async () => {
+		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
+		const multi = { ...question, questions: [{ ...question.questions[0], multi_select: true }] }
+		renderBubble(buildMessage({ ...linkingMessage(), metadata: { question: multi } }))
+		expect(await screen.findByRole('button', { name: 'Send today' })).toBeInTheDocument()
+	})
+
+	it('keeps the question card when the message links no draft', () => {
+		renderBubble(buildMessage({ content: 'No link here.', metadata: { question } }))
+		expect(screen.getByRole('button', { name: 'Send today' })).toBeInTheDocument()
+	})
+
+	it('keeps the question card when another message holds the draft card', async () => {
+		vi.spyOn(api.objects, 'get').mockResolvedValue(draft('draft') as never)
+		render(
+			<MessageBubble
+				workspaceId="ws-1"
+				message={linkingMessage()}
+				shownLinkedObjectIds={new Set([DRAFT_ID])}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(await screen.findByRole('button', { name: 'Send today' })).toBeInTheDocument()
 	})
 })

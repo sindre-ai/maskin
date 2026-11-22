@@ -27,32 +27,60 @@ export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
 
 /**
- * Loop statuses used by the pipeline concept: an iterative
- * multi-agent process wrapping triggers + agents + a pipeline of object
- * states. This is a graduated-trust ladder, not an on/off toggle — a loop
- * starts as a `draft`, earns more autonomy as it proves itself
- * (`learning` → `supervised` → `fully_autonomous`), and can be `paused` from
- * any point on that ladder. Pausing a loop disables every trigger referenced
- * in its `metadata.trigger_ids` (see the loop-status hook in
- * `apps/dev/src/routes/objects.ts`'s `PATCH /:id`); leaving `paused`
- * re-enables them. Kept here alongside the extension registration so backend
- * code paths that need the enum (read API, migrations, guards) stay pinned to
- * one source of truth.
+ * Terminal statuses per object type: an object in one of these values has
+ * stopped moving, so a loop counts it as closed and an agent's list of open
+ * driven work leaves it out. `bet` is `TERMINAL_BET_STATUSES` *plus*
+ * `archived`, a deliberate superset: archiving a bet must not fan out a retro
+ * or unread-feed row (so it is not in the list above), but an archived bet is
+ * no longer active work. `task` mirrors the done-set the validation flow treats
+ * as complete. `insight`'s only closed state is `discarded`.
+ *
+ * A fallback only: a loop can override a type with its own
+ * `metadata.closed_statuses`.
  */
-export const LOOP_STATUSES = [
-	'draft',
-	'paused',
-	'learning',
-	'supervised',
-	'fully_autonomous',
-] as const
+export const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
+	bet: [...TERMINAL_BET_STATUSES, 'archived'],
+	task: ['done', 'validated', 'discarded'],
+	insight: ['discarded'],
+}
+
+/**
+ * Loop statuses: one ladder of trust that every surface (API, MCP tools, web,
+ * iPhone, chat routing, next steps) shares. A loop starts as a `draft` (set
+ * up, nothing fires), earns autonomy as it proves itself (`pilot` →
+ * `supervised` → `live`), can be `paused` from any point, and is `archived`
+ * once retired.
+ *
+ * Status decides whether the loop runs: `draft`, `paused` and `archived` turn every
+ * trigger referenced in the loop's `metadata.trigger_ids` off, and moving to
+ * any other status turns them back on (see the loop-status hook in
+ * `apps/dev/src/lib/object-update.ts`). Kept here alongside the extension
+ * registration so backend code paths that need the enum (read API,
+ * migrations, guards) stay pinned to one source of truth.
+ */
+export const LOOP_STATUSES = ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'] as const
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
 
+/** The rungs where a loop is running work through its triggers. */
+export const LOOP_RUNNING_STATUSES = ['pilot', 'supervised', 'live'] as const
+
+/** Statuses that keep every trigger of the loop switched off. */
+export const LOOP_TRIGGERS_OFF_STATUSES = ['draft', 'paused', 'archived'] as const
+
+/** True when a loop in this status must have its triggers switched off. */
+export function loopStatusTurnsTriggersOff(status: string | null | undefined): boolean {
+	return (LOOP_TRIGGERS_OFF_STATUSES as readonly string[]).includes(status ?? '')
+}
+
 export {
+	loopTargetReadingSchema,
 	loopTargetSchema,
 	loopTargetSourceSchema,
+	loopTargetViewSchema,
 	type LoopTarget,
+	type LoopTargetReading,
 	type LoopTargetSource,
+	type LoopTargetView,
 } from './loop-targets'
 
 export const createObjectSchema = z.object({
@@ -68,6 +96,16 @@ export const createObjectSchema = z.object({
 export const updateObjectSchema = z.object({
 	title: z.string().optional(),
 	content: z.string().optional(),
+	/** Text added to the end of the stored body. Not sent together with content or replace. */
+	append: z.string().min(1).optional(),
+	/** Swap one exact piece of the stored body. Not sent together with content or append. */
+	replace: z
+		.object({
+			find: z.string().min(1),
+			with: z.string(),
+			all: z.boolean().optional(),
+		})
+		.optional(),
 	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
 	driver: z.string().uuid().nullable().optional(),

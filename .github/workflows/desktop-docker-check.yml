@@ -1,0 +1,43 @@
+name: Check desktop Docker image
+
+# Builds the desktop image on pull requests without pushing it, so a broken Dockerfile
+# (the ffmpeg + whisper build in particular) fails here and not on the merge to main.
+# desktop-docker.yml pushes after the merge.
+on:
+  pull_request:
+    paths:
+      - 'docker/desktop/**'
+      - '.github/workflows/desktop-docker.yml'
+      - '.github/workflows/desktop-docker-check.yml'
+
+concurrency:
+  group: desktop-docker-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/desktop
+          push: false
+          load: true
+          tags: maskin-desktop:check
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The Dockerfile already runs these while building. Running them again on the
+      # finished image checks what an agent gets: the binaries are on the PATH of the
+      # image's own user and the whisper filter is listed.
+      - name: Smoke test ffmpeg and ffprobe
+        run: |
+          docker run --rm --entrypoint ffprobe maskin-desktop:check -version
+          docker run --rm --entrypoint ffmpeg maskin-desktop:check -hide_banner -filters | tee filters.txt
+          grep -E '[[:space:]]whisper[[:space:]]' filters.txt

@@ -29,12 +29,12 @@ The runner is the Agent SDK one: TypeScript `query()` with the Maskin MCP attach
 HTTP, the harness key in the `Authorization` header, and a fresh uuid in `X-Maskin-Session-Id`
 for every run. Every result row records `runner: "agent-sdk"`.
 
-`create_session` over HTTP was checked first and cannot be the runner:
+`create_sub_chat` over HTTP was checked first and cannot be the runner:
 
 - Its input takes `workspace_id`, `actor_id`, `action_prompt`, `source_session_id`,
-  `initiated_from_object_id`, `spawned_by_message_id` and `wait`. There is no model and no
+  `initiated_from_object_id` and `spawned_by_message_id`. There is no model and no
   config, so the model cannot be pinned, and a before and after comparison needs the same model.
-- A local staging stack has no agent server. `create_session` there only writes a session row
+- A local staging stack has no agent server. `create_sub_chat` there only writes a session row
   that stays `pending`, so no agent would run.
 
 Where each number comes from:
@@ -66,10 +66,10 @@ runs do not collide.
 | `T2-read-by-ids` | no | get by ids | a note holds the three codes found in three seeded objects |
 | `T3-set-driver` | no | driver on update | the task's driver is the helper agent |
 | `T4-list-links` | yes | relationship listing | a note lists the three connected objects (edges in both directions) and none of the decoys |
-| `T5-start-session` | yes | `create_session` arguments | a session row exists for the helper agent, linked to the task, carrying the instruction text |
+| `T5-start-session` | yes | `create_sub_chat` arguments | a session row exists for the helper agent, linked to the task, carrying the instruction text |
 | `H6-skill-lookup` | no | skill lookup by id or name | the stored skill content is the old content plus `eval-marker-<run id>`, and the session has no error rows for `get_workspace_skill` or `update_workspace_skill` |
 
-`create_session` on the current surface has no `config` argument, so `T5` probes the arguments
+`create_sub_chat` on the current surface has no `config` argument, so `T5` probes the arguments
 it does have.
 
 The no-worse rule reads the original five (`T1` to `T5`). `H6` is reported on its own line and

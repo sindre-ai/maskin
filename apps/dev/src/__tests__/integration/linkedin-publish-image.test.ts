@@ -162,9 +162,11 @@ describe('linkedin publish_post with workspace file ids', () => {
 		expect(publishPost).not.toHaveBeenCalled()
 	})
 
-	it('refuses an image over 10 MB before reading it', async () => {
+	it('refuses an image over 10 MB', async () => {
 		const { actorId, ws, store } = await setup()
 		const publishPost = stubbedClient()
+		// Video is allowed on a post, so the type is read from the bytes before the cap is applied.
+		store.blobs.set(`test/${ws.id}/big`, Buffer.concat([PNG, Buffer.alloc(11 * 1024 * 1024)]))
 		const [big] = await db
 			.insert(files)
 			.values({

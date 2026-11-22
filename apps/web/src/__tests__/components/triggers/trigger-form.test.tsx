@@ -27,6 +27,15 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
 }))
 
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({
+		data: [
+			{ id: 'agent-1', name: 'Scout', type: 'agent' },
+			{ id: 'human-1', name: 'Magnus', type: 'human' },
+		],
+	}),
+}))
+
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => ({ data: [] }),
 }))
@@ -349,6 +358,41 @@ describe('TriggerForm', () => {
 		expect(screen.getByText('Disabled')).toBeInTheDocument()
 	})
 
+	it('shows a stored 20:00 UTC schedule as 21:00 in winter and 22:00 in summer', () => {
+		const trigger = buildTriggerResponse({
+			type: 'cron',
+			config: { expression: '0 20 * * *' },
+			targetActorId: 'agent-1',
+		})
+		vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-01-05T08:00:00Z') })
+		const winter = render(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText(/every day at 21:00/)).toBeInTheDocument()
+		winter.unmount()
+
+		vi.setSystemTime(new Date('2026-07-06T08:00:00Z'))
+		render(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText(/every day at 22:00/)).toBeInTheDocument()
+		expect(screen.queryByText(/UTC/)).not.toBeInTheDocument()
+		vi.useRealTimers()
+	})
+
+	it('shows a stored reminder time as Copenhagen date and time', () => {
+		const trigger = buildTriggerResponse({
+			type: 'reminder',
+			config: { scheduled_at: '2026-11-17T23:30:00.000Z' },
+			targetActorId: 'agent-1',
+		})
+		render(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />, {
+			wrapper: TestWrapper,
+		})
+		expect(document.querySelector('input[type="date"]')).toHaveValue('2026-11-18')
+		expect(document.querySelector('input[type="time"]')).toHaveValue('00:30')
+	})
+
 	it('reconciles the title to a rename that landed while the field was dirty', async () => {
 		const user = userEvent.setup()
 		const trigger = buildTriggerResponse({ name: 'Original name' })
@@ -446,6 +490,83 @@ describe('TriggerForm', () => {
 		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Analyst')
 	})
 
+	describe("the item's driver as the agent", () => {
+		const itemDriverTrigger = (config: Record<string, unknown>, type = 'event') =>
+			buildTriggerResponse({
+				type,
+				config,
+				// A saved item's-driver trigger keeps only a placeholder actor here.
+				targetActorId: 'human-1',
+			})
+		const savedBuildPayload = () =>
+			(
+				useAutoSave.mock.calls.at(-1)?.[0] as {
+					buildPayload: () => { target_actor_id: string; config: Record<string, unknown> } | null
+				}
+			).buildPayload()
+
+		it('reopens a saved one as the agent', () => {
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={itemDriverTrigger({
+						entity_type: 'task',
+						action: 'status_changed',
+						to_status: 'todo',
+						target: 'item_driver',
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent("The item's driver")
+			expect(savedBuildPayload()?.config).toMatchObject({ target: 'item_driver' })
+		})
+
+		it('saves the choice in the config and drops it when an agent is picked', async () => {
+			const user = userEvent.setup()
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={itemDriverTrigger({ entity_type: 'task', action: 'created' })}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(savedBuildPayload()?.config).not.toHaveProperty('target')
+
+			await user.click(screen.getByRole('combobox', { name: 'Agent' }))
+			await user.click(await screen.findByRole('option', { name: "The item's driver" }))
+			await waitFor(() =>
+				expect(savedBuildPayload()?.config).toMatchObject({ target: 'item_driver' }),
+			)
+
+			await user.click(screen.getByRole('combobox', { name: 'Agent' }))
+			await user.click(await screen.findByRole('option', { name: 'Analyst' }))
+			await waitFor(() => {
+				expect(savedBuildPayload()?.config).not.toHaveProperty('target')
+				expect(savedBuildPayload()?.target_actor_id).toBe('agent-2')
+			})
+		})
+
+		it('is not offered on a schedule', async () => {
+			const user = userEvent.setup()
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={itemDriverTrigger({ expression: '0 9 * * *' }, 'cron')}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('combobox', { name: 'Agent' }))
+			expect(await screen.findByRole('option', { name: 'Analyst' })).toBeInTheDocument()
+			expect(screen.queryByRole('option', { name: "The item's driver" })).not.toBeInTheDocument()
+		})
+	})
+
 	it('shows error message when error prop set', () => {
 		render(<TriggerForm {...defaultProps} error={new Error('Something broke')} />, {
 			wrapper: TestWrapper,
@@ -503,15 +624,15 @@ describe('TriggerForm', () => {
 
 	it('offers ADDITIONAL CONDITIONS on any event trigger, even with no field definitions', async () => {
 		const user = userEvent.setup()
-		// `workspace.settings` is empty, so this entity type has no field
-		// definitions — the same shape every integration-sourced type has.
+		// An integration-sourced type has no workspace field definitions, so the
+		// condition field is free text.
 		render(
 			<TriggerForm
 				{...defaultProps}
 				isCreated
 				initialValues={buildTriggerResponse({
 					type: 'event',
-					config: { entity_type: 'insight', action: 'created' },
+					config: { entity_type: 'github.pull_request', action: 'created' },
 				})}
 			/>,
 			{ wrapper: TestWrapper },
@@ -525,6 +646,63 @@ describe('TriggerForm', () => {
 
 		await user.type(field, 'action')
 		expect(field).toHaveValue('action')
+	})
+
+	describe('driver condition', () => {
+		const driverField = () => screen.getByRole('combobox', { name: 'Condition field' })
+
+		it('offers Driver in Add condition and picks the driver by name', async () => {
+			const user = userEvent.setup()
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={buildTriggerResponse({
+						type: 'event',
+						config: { entity_type: 'insight', action: 'created' },
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			await user.click(screen.getByRole('button', { name: /add condition/i }))
+			expect(driverField()).toHaveTextContent('Driver')
+
+			await user.click(screen.getByRole('combobox', { name: 'Pick a person or agent' }))
+			await user.click(await screen.findByRole('option', { name: /Scout/ }))
+
+			await waitFor(() => {
+				const { buildPayload } = useAutoSave.mock.calls.at(-1)?.[0] as {
+					buildPayload: () => { config: { conditions?: unknown[] } } | null
+				}
+				expect(buildPayload()?.config.conditions).toEqual([
+					expect.objectContaining({ field: 'driver', operator: 'equals', value: 'agent-1' }),
+				])
+			})
+		})
+
+		it('reopens a saved driver condition in the actor picker', () => {
+			render(
+				<TriggerForm
+					{...defaultProps}
+					isCreated
+					initialValues={buildTriggerResponse({
+						type: 'event',
+						config: {
+							entity_type: 'insight',
+							action: 'created',
+							conditions: [{ field: 'driver', operator: 'not_equals', value: 'human-1' }],
+						},
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(driverField()).toHaveTextContent('Driver')
+			expect(screen.getByText('does not equal')).toBeInTheDocument()
+			expect(screen.getAllByText('Magnus').length).toBeGreaterThan(0)
+			expect(screen.queryByRole('textbox', { name: 'Condition field' })).not.toBeInTheDocument()
+		})
 	})
 
 	it("keeps the suggestion chips when the only event is the trigger's own creation", () => {

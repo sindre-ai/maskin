@@ -1,41 +1,54 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { readEventStatusTransition } from '@/components/triggers/trigger-form'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Switch } from '@/components/ui/switch'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateTrigger } from '@/hooks/use-triggers'
 import type { ActorListItem, LoopSummary, TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { statusLabel, typeLabel } from '@/lib/constants'
+import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { ArrowRight } from 'lucide-react'
+import { Fragment, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
-function chipClasses(active: boolean) {
-	return cn(
-		'inline-flex h-[30px] max-w-full items-center gap-[7px] rounded-full border px-[13px] text-[12.5px] font-semibold transition-colors',
-		active
-			? 'border-primary bg-primary text-primary-foreground'
-			: 'border-border bg-background text-foreground hover:border-border-strong',
-	)
-}
-
-/** One agent's step in the pipeline: the agent and the triggers that set it off. */
-interface PipelineStep {
-	agentId: string
-	agent: ActorListItem | undefined
+/** Triggers that fire when an item reaches one status, in the order the flow names them. */
+interface StatusColumn {
+	status: string
 	triggers: TriggerResponse[]
 }
 
+/** One row of status boxes for an item type, in the order the workspace schema lists them. */
+interface StatusRow {
+	entityType: string
+	columns: StatusColumn[]
+}
+
+/** A trigger the status rows cannot place, with the status it names when that status is unknown. */
+interface StripEntry {
+	trigger: TriggerResponse
+	rawStatus?: string
+}
+
+interface TriggerPlacement {
+	rows: StatusRow[]
+	/** Schedules and reminders. */
+	scheduled: StripEntry[]
+	/** Event triggers that fire on any status, on create or update, or on a status the schema lacks. */
+	anyChange: StripEntry[]
+}
+
 /**
- * Steps in the order the flow names its triggers (`LoopSummary.triggerIds` is
- * the ordered spine); an agent sits where its first trigger does. Without a
- * spine the steps fall back to A to Z by agent name.
+ * Places each trigger under the status it fires on. Order follows the flow's own trigger order
+ * (`LoopSummary.triggerIds`), else A to Z by name. A row exists for each item type that has at
+ * least one placed trigger; status order and names come from the workspace schema, not from here.
  */
-function buildSteps(
+function placeTriggers(
 	triggers: TriggerResponse[],
-	actorsById: Map<string, ActorListItem>,
+	statusesByType: Record<string, string[]>,
 	spine: readonly string[] | undefined,
-	agentIds: readonly string[] = [],
-): PipelineStep[] {
+): TriggerPlacement {
 	const rank = (t: TriggerResponse) => {
 		const at = spine?.indexOf(t.id) ?? -1
 		return at === -1 ? Number.MAX_SAFE_INTEGER : at
@@ -43,33 +56,54 @@ function buildSteps(
 	const ordered = [...triggers].sort(
 		(a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
 	)
-	const byAgent = new Map<string, TriggerResponse[]>()
-	for (const t of ordered)
-		byAgent.set(t.targetActorId, [...(byAgent.get(t.targetActorId) ?? []), t])
-	const steps = [...byAgent].map(([agentId, list]) => ({
-		agentId,
-		agent: actorsById.get(agentId),
-		triggers: list,
-	}))
-	// An agent the flow names but no trigger sets off is still a step, with none.
-	for (const agentId of agentIds) {
-		if (!byAgent.has(agentId)) steps.push({ agentId, agent: actorsById.get(agentId), triggers: [] })
+	const rows = new Map<string, Map<string, TriggerResponse[]>>()
+	const scheduled: StripEntry[] = []
+	const anyChange: StripEntry[] = []
+	for (const trigger of ordered) {
+		if (trigger.type !== 'event') {
+			scheduled.push({ trigger })
+			continue
+		}
+		const config = trigger.config ?? {}
+		const entityType = typeof config.entity_type === 'string' ? config.entity_type : ''
+		const { toStatus } = readEventStatusTransition(config)
+		if (config.action !== 'status_changed' || toStatus === '__any__') {
+			anyChange.push({ trigger })
+			continue
+		}
+		if (!statusesByType[entityType]?.includes(toStatus)) {
+			anyChange.push({ trigger, rawStatus: toStatus })
+			continue
+		}
+		const row = rows.get(entityType) ?? new Map<string, TriggerResponse[]>()
+		row.set(toStatus, [...(row.get(toStatus) ?? []), trigger])
+		rows.set(entityType, row)
 	}
-	if (spine && spine.length > 0) return steps
-	return steps.sort((a, b) =>
-		(a.agent?.name ?? '').localeCompare(b.agent?.name ?? '', undefined, {
-			sensitivity: 'base',
-			numeric: true,
-		}),
-	)
+	return {
+		rows: [...rows].map(([entityType, byStatus]) => ({
+			entityType,
+			columns: statusesByType[entityType].map((status) => ({
+				status,
+				triggers: byStatus.get(status) ?? [],
+			})),
+		})),
+		scheduled,
+		anyChange,
+	}
 }
 
 function TriggerCard({
 	workspaceId,
 	trigger,
+	agent,
+	note,
 }: {
 	workspaceId: string
 	trigger: TriggerResponse
+	/** The agent the trigger wakes. */
+	agent: ActorListItem | undefined
+	/** Extra line on the card, for example the status it fires from. */
+	note?: string
 }) {
 	const canWrite = useCanWrite()
 	const update = useUpdateTrigger(workspaceId)
@@ -106,6 +140,23 @@ function TriggerCard({
 						{detail}
 					</span>
 				)}
+				{note && (
+					<span className="min-w-0 break-words text-[12px] leading-[1.35] text-muted-foreground">
+						{note}
+					</span>
+				)}
+				<span className="mt-0.5 flex items-center gap-1.5">
+					<ActorAvatar
+						id={trigger.targetActorId}
+						name={agent?.name ?? 'Unknown agent'}
+						type={agent?.type ?? 'agent'}
+						size="sm"
+						className="shrink-0"
+					/>
+					<span className="min-w-0 truncate text-[12px] text-muted-foreground">
+						{agent?.name ?? 'Unknown agent'}
+					</span>
+				</span>
 			</Link>
 			<Switch
 				checked={trigger.enabled}
@@ -140,20 +191,32 @@ export function LoopFlow({
 	/** A trigger is being added; the control waits so a double click adds one. */
 	addingTrigger?: boolean
 }) {
-	const [agentFilter, setAgentFilter] = useState<string | null>(null)
+	const { workspace } = useWorkspace()
+	const statusesByType =
+		((workspace.settings as Record<string, unknown> | null)?.statuses as
+			| Record<string, string[]>
+			| undefined) ?? {}
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
-	const steps = buildSteps(triggers, actorsById, loop?.triggerIds, loop?.agentIds)
-	const shown = agentFilter ? steps.filter((s) => s.agentId === agentFilter) : steps
+	const { rows, scheduled, anyChange } = placeTriggers(triggers, statusesByType, loop?.triggerIds)
+	const card = (t: TriggerResponse, note?: string) => (
+		<TriggerCard
+			key={t.id}
+			workspaceId={workspaceId}
+			trigger={t}
+			agent={actorsById.get(t.targetActorId)}
+			note={note}
+		/>
+	)
 
 	return (
 		<section
 			id="loop-flow"
 			data-loop-flow-root
-			aria-label="Pipeline"
+			aria-label="How it runs"
 			className="flex flex-col gap-3.5"
 		>
 			<div className="flex items-baseline gap-3 px-1">
-				<h2 className="flex-1 text-[13px] font-semibold text-muted-foreground">Pipeline</h2>
+				<h2 className="flex-1 text-[13px] font-semibold text-muted-foreground">How it runs</h2>
 				{onAddTrigger && (
 					<button
 						type="button"
@@ -166,70 +229,64 @@ export function LoopFlow({
 				)}
 			</div>
 
-			{steps.length > 1 && triggers.length > 0 && (
-				<div className="flex flex-wrap gap-1.5 px-1">
-					<button
-						type="button"
-						onClick={() => setAgentFilter(null)}
-						className={chipClasses(agentFilter === null)}
-					>
-						All steps
-						<span className="opacity-55">{triggers.length}</span>
-					</button>
-					{steps.map((step) => (
-						<button
-							key={step.agentId}
-							type="button"
-							onClick={() => setAgentFilter(agentFilter === step.agentId ? null : step.agentId)}
-							className={chipClasses(agentFilter === step.agentId)}
-						>
-							<span className="min-w-0 truncate">{step.agent?.name ?? 'Unknown agent'}</span>
-							<span className="opacity-55">{step.triggers.length}</span>
-						</button>
-					))}
-				</div>
-			)}
-
-			{shown.length > 0 && (
+			{triggers.length > 0 && (
 				<div
 					data-testid="loop-pipeline"
-					className="flex overflow-x-auto rounded-2xl border border-border bg-background shadow-xs"
+					className="flex flex-col divide-y divide-border rounded-2xl border border-border bg-background shadow-xs"
 				>
-					{shown.map((step, index) => (
+					{rows.map((row) => (
 						<div
-							key={step.agentId}
-							className={cn(
-								'flex min-w-48 shrink-0 flex-1 flex-col gap-3.5 px-4 pb-4 pt-[18px]',
-								index > 0 && 'border-l border-border',
-							)}
+							key={row.entityType}
+							data-testid={`loop-status-row-${row.entityType}`}
+							className="flex flex-col gap-3 px-4 pb-4 pt-[18px]"
 						>
-							<Link
-								to="/$workspaceId/agents/$agentId"
-								params={{ workspaceId, agentId: step.agentId }}
-								className="flex items-center gap-[9px] hover:underline"
-							>
-								<ActorAvatar
-									id={step.agentId}
-									name={step.agent?.name ?? 'Unknown agent'}
-									type={step.agent?.type ?? 'agent'}
-									size="md"
-									className="shrink-0"
-								/>
-								<span className="min-w-0 break-words text-[13px] leading-[1.3] text-foreground">
-									{step.agent?.name ?? 'Unknown agent'}
-								</span>
-							</Link>
-							<div className="flex flex-col gap-2">
-								{step.triggers.length === 0 ? (
-									<span className="text-[12.5px] text-muted-foreground">No trigger</span>
-								) : (
-									step.triggers.map((t) => (
-										<TriggerCard key={t.id} workspaceId={workspaceId} trigger={t} />
-									))
-								)}
+							{rows.length > 1 && (
+								<h3 className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+									{typeLabel(row.entityType)}
+								</h3>
+							)}
+							<div className="flex items-start gap-1 overflow-x-auto">
+								{row.columns.map((column, index) => (
+									<Fragment key={column.status}>
+										{index > 0 && (
+											<ArrowRight
+												aria-hidden
+												className="mt-[7px] size-4 shrink-0 text-muted-foreground"
+											/>
+										)}
+										<div
+											data-testid={`loop-status-${row.entityType}-${column.status}`}
+											className="flex w-52 shrink-0 flex-col gap-2"
+										>
+											<span className="rounded-lg border border-border px-3 py-1 text-[12.5px] font-semibold first-letter:uppercase text-foreground">
+												{statusLabel(column.status)}
+											</span>
+											{column.triggers.map((t) => {
+												const { fromStatus } = readEventStatusTransition(t.config)
+												return card(t, fromStatus === '__any__' ? undefined : `from ${fromStatus}`)
+											})}
+										</div>
+									</Fragment>
+								))}
 							</div>
 						</div>
 					))}
+					{(anyChange.length > 0 || scheduled.length > 0) && (
+						<div className="flex flex-col gap-3.5 px-4 pb-4 pt-[18px]">
+							{anyChange.length > 0 && (
+								<TriggerStrip label="Any change">
+									{anyChange.map(({ trigger, rawStatus }) =>
+										card(trigger, rawStatus ? `fires on ${rawStatus}` : undefined),
+									)}
+								</TriggerStrip>
+							)}
+							{scheduled.length > 0 && (
+								<TriggerStrip label="Runs on a schedule">
+									{scheduled.map(({ trigger }) => card(trigger))}
+								</TriggerStrip>
+							)}
+						</div>
+					)}
 				</div>
 			)}
 
@@ -237,5 +294,17 @@ export function LoopFlow({
 				<p className="px-1 text-sm text-muted-foreground">This flow runs when you ask.</p>
 			)}
 		</section>
+	)
+}
+
+/** A labelled group of trigger cards that have no status to sit under. */
+function TriggerStrip({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<div className="flex flex-col gap-2">
+			<h3 className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+				{label}
+			</h3>
+			<div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">{children}</div>
+		</div>
 	)
 }

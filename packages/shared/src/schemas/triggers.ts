@@ -70,9 +70,19 @@ const triggerReaderFields = {
 	skill: z.string().optional(),
 }
 
+// Start whoever drives the item the event is about, instead of a fixed agent.
+// Stored in the event config (jsonb), so it needs no migration; `target_actor_id`
+// is still a required column, so a trigger with this target keeps the actor who
+// saved it there as an inert placeholder that the runner never reads.
+export const ITEM_DRIVER_TARGET = 'item_driver'
+
+// Object events: the ones whose entity is an item that can have a driver.
+const ITEM_DRIVER_ACTIONS = ['created', 'updated', 'status_changed', 'commented']
+
 export const eventConfigSchema = z.object({
 	entity_type: z.string(),
 	action: z.string(),
+	target: z.literal(ITEM_DRIVER_TARGET).optional(),
 	filter: z.record(z.string(), safeJsonValue).optional(),
 	conditions: z.array(triggerConditionSchema).optional(),
 	from_status: z.string().optional(),
@@ -82,6 +92,10 @@ export const eventConfigSchema = z.object({
 
 export const reminderConfigSchema = z.object({
 	scheduled_at: z.string().datetime(),
+	// Pin the wake-up to an object. The session starts on it and its prompt names it.
+	object_id: z.string().uuid().optional(),
+	// A step-pinned reminder does nothing when it fires more than an hour late.
+	step_id: z.string().uuid().optional(),
 })
 
 export const triggerConfigSchema = z.union([
@@ -98,6 +112,29 @@ const baseTriggerFields = {
 	enabled: z.boolean().default(true),
 }
 
+/** True when an event config starts the driver of the item instead of a fixed agent. */
+export function usesItemDriverTarget(config: unknown): boolean {
+	return (
+		typeof config === 'object' &&
+		config !== null &&
+		(config as { target?: unknown }).target === ITEM_DRIVER_TARGET
+	)
+}
+
+/**
+ * Why a trigger cannot start the item's driver, or null when it can (or does not
+ * ask to). Only event triggers on object events have an item to read a driver from.
+ */
+export function itemDriverTargetError(type: string, config: unknown): string | null {
+	if (!usesItemDriverTarget(config)) return null
+	if (type !== 'event') return "Only event triggers can start the item's driver"
+	const action = (config as { action?: unknown }).action
+	if (typeof action !== 'string' || !ITEM_DRIVER_ACTIONS.includes(action)) {
+		return `The item's driver is only available for ${ITEM_DRIVER_ACTIONS.join(', ')} events`
+	}
+	return null
+}
+
 export const createTriggerSchema = z.discriminatedUnion('type', [
 	z.object({
 		...baseTriggerFields,
@@ -106,6 +143,9 @@ export const createTriggerSchema = z.discriminatedUnion('type', [
 	}),
 	z.object({
 		...baseTriggerFields,
+		// Optional only because config.target 'item_driver' replaces it; the route
+		// rejects an event trigger that has neither.
+		target_actor_id: z.string().uuid().optional(),
 		type: z.literal('event'),
 		config: eventConfigSchema,
 	}),

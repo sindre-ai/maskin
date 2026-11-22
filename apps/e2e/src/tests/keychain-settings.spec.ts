@@ -156,4 +156,39 @@ test.describe('Keychain settings', () => {
 			page.getByRole('heading', { name: 'One place for every credential your agents need' }),
 		).toBeVisible()
 	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`focus moves on after a key is removed @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const stamp = Date.now()
+			const names = [`Alpha ${stamp}`, `Bravo ${stamp}`]
+			for (const displayName of names) {
+				const res = await page.request.post('/api/integrations/byo-apikey', {
+					headers: {
+						Authorization: `Bearer ${account.apiKey}`,
+						'x-workspace-id': account.workspaceId,
+					},
+					data: { displayName, rawSecret: FAKE_SECRET },
+				})
+				expect(res.status()).toBe(201)
+			}
+
+			await page.goto(`/${account.workspaceId}/settings/keychain`)
+			const removeKey = async (name: string) => {
+				await page.getByRole('button', { name: `Remove ${name}` }).click()
+				await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click()
+				await expect(page.getByText(name, { exact: true })).toHaveCount(0, { timeout: 15_000 })
+			}
+
+			// The first card goes: focus lands on the next card's first button.
+			await expect(page.getByText(names[0], { exact: true })).toBeVisible({ timeout: 15_000 })
+			await removeKey(names[0])
+			await expect(page.getByRole('button', { name: `Edit ${names[1]}` })).toBeFocused()
+
+			// The last card goes: focus lands on the empty state's add button.
+			await removeKey(names[1])
+			await expect(page.getByRole('link', { name: 'Add your first credential' })).toBeFocused()
+		})
+	}
 })

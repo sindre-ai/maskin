@@ -1,6 +1,9 @@
 import type { Database } from '@maskin/db'
 import {
+	type ChatSearchIsValue,
+	DIRECT_MESSAGE_ROW_TYPE,
 	SEARCH_SOURCE_GROUPS,
+	START_CHAT_ROW_TYPE,
 	STATUS_GROUP_KEYS,
 	type SearchQuery,
 	type SearchResponse,
@@ -11,8 +14,17 @@ import {
 } from '@maskin/shared'
 import { type SQL, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
-import { TITLE_COVERAGE_SCALE, TITLE_HIT_WEIGHT, tokenIlikePattern } from '../lib/search-rank'
+import {
+	NAME_WHOLE_WORD_BONUS,
+	NAME_WORD_PREFIX_BONUS,
+	TITLE_COVERAGE_SCALE,
+	TITLE_HIT_WEIGHT,
+	TITLE_PHRASE_PREFIX_BONUS,
+	tokenIlikePattern,
+	tokenRegexEscape,
+} from '../lib/search-rank'
 import { canHaveTypo, titleTypoDistance } from '../lib/search-typo'
+import { directPairKey } from './direct-chat'
 
 /** A source that takes longer than this is reported as partial instead of failing the request. */
 const SOURCE_TIMEOUT_MS = 5000
@@ -32,9 +44,111 @@ const TYPO_PASS_BELOW = 5
 /** Most rows a source loads for the typo pass. A source with more is reported as partial. */
 const TYPO_CANDIDATE_CAP = 5000
 
+/**
+ * The filters of the chat list's search, already read out of the typed text (see
+ * parseChatSearch). Values are lower-case. `needsIds` and `workingIds` are the chats the caller
+ * must be in for is:needs and is:working, worked out before the search because those states are
+ * read from messages and sessions, not from a column.
+ */
+export interface ChatSearchFilter {
+	agent: string[]
+	from: string[]
+	with: string[]
+	team: string[]
+	is: ChatSearchIsValue[]
+	phrases: string[]
+	exclude: string[]
+	needsIds: string[]
+	workingIds: string[]
+}
+
 export interface SearchContext {
 	workspaceId: string
 	callerId: string
+	/** Only the chats source reads it: the other sources are left out when it is set. */
+	chatFilter?: ChatSearchFilter
+}
+
+/** A chat in the candidate query (`c`) holds a participant whose name matches (and has a type, if given). */
+function participantNamed(pattern: string, callerId: string, type?: 'agent'): SQL {
+	return sql`EXISTS (
+		SELECT 1 FROM conversation_participants fp
+		INNER JOIN actors fa ON fa.id = fp.actor_id
+		WHERE fp.conversation_id = c.id AND fp.left_at IS NULL
+			AND fa.id <> ${callerId}${type ? sql` AND fa.type = ${type}` : sql``}
+			AND fa.name ILIKE ${pattern}
+	)`
+}
+
+/** A chat in the candidate query (`c`) holds a message written by who `from:` names. */
+function writtenBy(value: string, callerId: string): SQL {
+	if (value === 'me') {
+		return sql`EXISTS (SELECT 1 FROM messages fm WHERE fm.conversation_id = c.id AND fm.actor_id = ${callerId} AND fm.deleted_at IS NULL)`
+	}
+	const actorTest =
+		value === 'agent' || value === 'human'
+			? sql`fa.type = ${value}`
+			: sql`fa.name ILIKE ${tokenIlikePattern(value)}`
+	return sql`EXISTS (
+		SELECT 1 FROM messages fm
+		INNER JOIN actors fa ON fa.id = fm.actor_id
+		WHERE fm.conversation_id = c.id AND fm.deleted_at IS NULL AND ${actorTest}
+	)`
+}
+
+/** The title or any message of the chat in the candidate query (`c`) holds the text. */
+function chatHolds(text: string): SQL {
+	const pattern = tokenIlikePattern(text)
+	return sql`(c.title ILIKE ${pattern} OR EXISTS (
+		SELECT 1 FROM messages pm WHERE pm.conversation_id = c.id AND pm.content ILIKE ${pattern}
+	))`
+}
+
+function chatIdIn(ids: string[]): SQL {
+	if (ids.length === 0) return sql`false`
+	return sql`c.id IN (${sql.join(
+		ids.map((id) => sql`${id}::uuid`),
+		sql`, `,
+	)})`
+}
+
+/**
+ * The chat list's search filters as extra conditions on the candidate chats (`c`, the caller's own
+ * participant row `cp`). Every condition is on the caller's own rows and chats, so another person's
+ * Done or Later is never read. Nothing is added when no filter is set.
+ */
+function chatFilterClause(callerId: string, filter: ChatSearchFilter | undefined): SQL {
+	if (!filter) return sql``
+	const parts: SQL[] = []
+	for (const v of filter.agent)
+		parts.push(participantNamed(tokenIlikePattern(v), callerId, 'agent'))
+	for (const v of filter.with) parts.push(participantNamed(tokenIlikePattern(v), callerId))
+	for (const v of filter.from) parts.push(writtenBy(v, callerId))
+	for (const v of filter.team) {
+		parts.push(sql`(CASE WHEN jsonb_typeof(c.tags) = 'array' THEN EXISTS (
+			SELECT 1 FROM jsonb_array_elements_text(c.tags) tg(tag) WHERE tg.tag ILIKE ${tokenIlikePattern(v)}
+		) ELSE false END)`)
+	}
+	for (const v of filter.is) {
+		if (v === 'unread') {
+			parts.push(sql`EXISTS (
+				SELECT 1 FROM messages um
+				WHERE um.conversation_id = c.id AND um.actor_id <> ${callerId}
+					AND um.id > COALESCE(cp.last_read_message_id, 0)
+			)`)
+		} else if (v === 'archived') {
+			parts.push(sql`cp.archived`)
+		} else if (v === 'later') {
+			parts.push(sql`(cp.later_at IS NOT NULL AND cp.later_at >= c.last_message_at)`)
+		} else if (v === 'needs') {
+			parts.push(chatIdIn(filter.needsIds))
+		} else {
+			parts.push(chatIdIn(filter.workingIds))
+		}
+	}
+	for (const v of filter.phrases) parts.push(chatHolds(v))
+	for (const v of filter.exclude) parts.push(sql`NOT ${chatHolds(v)}`)
+	return parts.length === 0 ? sql`` : sql` AND ${sql.join(parts, sql` AND `)}`
 }
 
 /**
@@ -101,6 +215,13 @@ export interface SearchSource {
 	 * (the people list and last message of every chat). Without it the flag reads `candidates`.
 	 */
 	overScanCap?: (ctx: SearchContext) => SQL
+	/**
+	 * Optional. The `sub` line is a list of names (the chat participants), so a word that hits one
+	 * earns the title weight, plus a bonus for a whole-word or word-start name match.
+	 */
+	rankSub?: boolean
+	/** Optional. Under relevance sort, rows with status 'unread' come before read ones of equal score. */
+	unreadFirst?: boolean
 }
 
 /** The objects source rows (loops have their own source), optionally cut to the rows holding every word. */
@@ -119,10 +240,12 @@ export const SEARCH_SOURCES: SearchSource[] = [
 	{
 		key: 'chats',
 		fixedTypes: ['chat'],
+		rankSub: true,
+		unreadFirst: true,
 		statusPairs: () => sql`
 			SELECT 'chat'::text AS type, v.status AS status
 			FROM (VALUES ('archived'), ('unread'), ('read')) AS v(status)`,
-		candidates: ({ workspaceId, callerId }) => sql`
+		candidates: ({ workspaceId, callerId, chatFilter }) => sql`
 			SELECT c.id AS id,
 				'chat'::text AS type,
 				c.title AS title,
@@ -146,7 +269,7 @@ export const SEARCH_SOURCES: SearchSource[] = [
 				ORDER BY m.id DESC
 				LIMIT 1
 			) lm ON true
-			WHERE c.workspace_id = ${workspaceId}`,
+			WHERE c.workspace_id = ${workspaceId}${chatFilterClause(callerId, chatFilter)}`,
 		// The unread flag looks into the messages of the chat, so it is worked out for the matched
 		// chats only (the candidates carry what it reads).
 		lateStatus: ({ callerId }) => sql`CASE
@@ -297,9 +420,62 @@ function matchCondition(tokens: string[], source: SearchSource, hasDeep: boolean
 }
 
 /**
- * Same per-word formula as /api/objects/search: title hit plus coverage, body hit worth 1. It
- * reads the candidate row `s` and runs for the matched rows only, so the second look at the
- * title and body costs next to nothing.
+ * What a word earns for hitting the names in the sub line of the candidate row `s`: the title
+ * weight, plus a bonus when it is a whole word of a name or the start of one. Names are split
+ * by ', ' in the list and by anything that is not a letter or digit inside a name.
+ */
+function nameScore(token: string, pattern: string): SQL {
+	const escaped = tokenRegexEscape(token)
+	const wordStart = `(^|[^[:alnum:]])${escaped}`
+	return sql`(case
+		when s.sub ~* ${`${wordStart}($|[^[:alnum:]])`} then ${TITLE_HIT_WEIGHT}::int + ${NAME_WHOLE_WORD_BONUS}::int
+		when s.sub ~* ${wordStart} then ${TITLE_HIT_WEIGHT}::int + ${NAME_WORD_PREFIX_BONUS}::int
+		when s.sub ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int
+		else 0 end)`
+}
+
+/** Match tiers, best first. The same idea as TeamLayout.searchTier on iOS, so the Chats list and search agree. */
+const TIER_WHOLE_WORD = 0
+const TIER_WORD_START = 1
+const TIER_CONTAINS = 2
+const TIER_BODY_ONLY = 3
+
+/** A teammate's name must match at the start of a word (tier 0 or 1) to put their direct message first. */
+const TEAMMATE_MAX_TIER = TIER_WORD_START
+const YOU_PREFIX = 'You: '
+/** The most a snippet may hold (the row schema cuts it at 160). */
+const SNIPPET_MAX_LENGTH = 160
+
+/** Regexes for a token at the start of a word, and for a whole word, in a title or a list of names. */
+function wordPatterns(token: string) {
+	const start = `(^|[^[:alnum:]])${tokenRegexEscape(token)}`
+	return { start, whole: `${start}($|[^[:alnum:]])` }
+}
+
+/**
+ * The match tier of the candidate row `s`: for each word, 0 a whole word of the title (or of a name in
+ * the sub line of a source that ranks it), 1 the start of a word, 2 the letters inside a word, 3 a hit
+ * only in the body (or the deep text). The row takes its worst word, so every word counts.
+ */
+function tierExpression(tokens: string[], source: SearchSource): SQL {
+	if (tokens.length === 0) return sql`0`
+	const perToken = tokens.map((token) => {
+		const pattern = tokenIlikePattern(token)
+		const { start, whole } = wordPatterns(token)
+		const sub = (condition: SQL) => (source.rankSub ? sql` or ${condition}` : sql``)
+		return sql`(case
+			when s.title ~* ${whole}${sub(sql`s.sub ~* ${whole}`)} then ${TIER_WHOLE_WORD}::int
+			when s.title ~* ${start}${sub(sql`s.sub ~* ${start}`)} then ${TIER_WORD_START}::int
+			when s.title ilike ${pattern}${sub(sql`s.sub ilike ${pattern}`)} then ${TIER_CONTAINS}::int
+			else ${TIER_BODY_ONLY}::int end)`
+	})
+	return sql`greatest(${sql.join(perToken, sql`, `)})`
+}
+
+/**
+ * Same per-word formula as /api/objects/search: title hit plus coverage, body hit worth 1, and a
+ * bonus when the word starts a word of the title. It reads the candidate row `s` and runs for the
+ * matched rows only, so the second look at the title and body costs next to nothing.
  */
 function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolean): SQL {
 	if (tokens.length === 0) return sql`0`
@@ -308,7 +484,9 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
 		const body = hasDeep
 			? sql`(s.body ilike ${pattern} or ${deepHitExpr(source, pattern)})`
 			: sql`(s.body ilike ${pattern})`
-		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) else 0 end) + (case when ${body} then 1 else 0 end))`
+		const name = source.rankSub ? nameScore(token, pattern) : sql`0`
+		const wordStart = wordPatterns(token).start
+		return sql`((case when s.title ilike ${pattern} then ${TITLE_HIT_WEIGHT}::int + floor(${TITLE_COVERAGE_SCALE}::int * ${token.length}::int / greatest(length(s.title), 1)) + (case when s.title ~* ${wordStart} then ${TITLE_PHRASE_PREFIX_BONUS}::int else 0 end) else 0 end) + ${name} + (case when ${body} then 1 else 0 end))`
 	})
 	return sql.join(perToken, sql` + `)
 }
@@ -319,10 +497,43 @@ function scoreExpression(tokens: string[], source: SearchSource, hasDeep: boolea
  */
 const SNIPPET = sql`substr(s.body, 1, 160)`
 
-function orderBy(sort: SearchQuery['sort']): SQL {
+/**
+ * Tie-break between rows of the same match tier and score: what needs you first, then what is in
+ * progress or new, then done, then archived (shown only when filtered in).
+ */
+const STATUS_GROUP_RANK: Record<StatusGroupKey, number> = {
+	needs_you: 0,
+	in_progress: 1,
+	new: 1,
+	done: 2,
+	archived: 3,
+}
+
+/** The tie-break rank of `m.status`, worked out from the (type, status) pairs the source holds. */
+function statusRankExpression(pairs: PairRow[]): SQL {
+	const byRank = new Map<number, PairRow[]>()
+	for (const pair of pairs) {
+		const rank = STATUS_GROUP_RANK[getStatusGroup(pair.type, pair.status)]
+		byRank.set(rank, [...(byRank.get(rank) ?? []), pair])
+	}
+	if (byRank.size <= 1) return sql`0::int`
+	const branches = [...byRank].map(([rank, group]) => {
+		const list = sql.join(
+			group.map(({ type, status }) => sql`(${type}::text, ${status}::text)`),
+			sql`, `,
+		)
+		return sql`when (m.type, m.status) in (${list}) then ${rank}::int`
+	})
+	return sql`(case ${sql.join(branches, sql` `)} else 0 end)`
+}
+
+function orderBy(sort: SearchQuery['sort'], source: SearchSource, statusRank: SQL): SQL {
 	if (sort === 'recent') return sql`m.updated_at desc nulls last, m.id`
 	if (sort === 'az') return sql`lower(m.title) asc, m.id`
-	return sql`m.score desc, m.updated_at desc nulls last, m.id`
+	if (source.unreadFirst) {
+		return sql`m.tier, m.score desc, ${statusRank}, (m.status = 'unread') desc, m.updated_at desc nulls last, m.id`
+	}
+	return sql`m.tier, m.score desc, ${statusRank}, m.updated_at desc nulls last, m.id`
 }
 
 interface PairRow {
@@ -347,6 +558,8 @@ interface RawRow {
 	snippet: string | null
 	status: string
 	updated_iso: string | null
+	tier: number
+	score: number
 }
 
 /** A title-only candidate row of the typo pass. */
@@ -370,6 +583,8 @@ interface TypoDetail {
 
 interface SourceResult {
 	rows: SearchResultRow[]
+	/** The match tier and score of each row, in the same order as `rows`. */
+	ranks: Array<{ tier: number; score: number }>
 	/** Matches after every filter, before the cap. */
 	total: number
 	/** The source skipped some of its deep text because it was over its scan cap. */
@@ -502,7 +717,7 @@ async function runSource(
 		passingPairs.length === 0
 			? sql`false`
 			: sql`(m.type, m.status) IN (${pairList}) AND m.in_window AND m.p_ok`
-	const ordering = orderBy(query.sort)
+	const ordering = orderBy(query.sort, source, statusRankExpression(passingPairs))
 	// The snippet of a returned row is the deep text that hit, when the row had its
 	// deep text checked; otherwise the body.
 	const pickedSnippet =
@@ -525,6 +740,7 @@ async function runSource(
 					s.updated_at, (${participantsOk}) AS p_ok,
 					${hasDeep ? sql`s.deep,` : sql``}
 					${scoreExpression(tokens, source, hasDeep)} AS score,
+					${tierExpression(tokens, source)} AS tier,
 					${inWindow} AS in_window
 				FROM (${candidates}) s
 				WHERE ${match}
@@ -536,6 +752,7 @@ async function runSource(
 			picked AS (
 				SELECT m.id, m.type, m.title, m.sub, ${pickedSnippet} AS snippet, m.status,
 					to_char(m.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso,
+					m.tier, m.score,
 					row_number() OVER (ORDER BY ${ordering}) AS rn
 				FROM m
 				WHERE ${topFilter}
@@ -549,6 +766,7 @@ async function runSource(
 
 	const result: SourceResult = {
 		rows: [],
+		ranks: [],
 		total: 0,
 		truncated: raw?.truncated === true,
 		typeCounts: new Map(),
@@ -561,7 +779,9 @@ async function runSource(
 
 	for (const row of jsonRows<AggregateRow>(raw?.aggregate)) tally(result, rules, row)
 
-	result.rows = jsonRows<RawRow>(raw?.top_rows).map((row) => ({
+	const topRows = jsonRows<RawRow>(raw?.top_rows)
+	result.ranks = topRows.map(({ tier, score }) => ({ tier, score }))
+	result.rows = topRows.map((row) => ({
 		id: row.id,
 		group: source.key,
 		type: row.type,
@@ -763,6 +983,11 @@ async function runTypoPass(
 	return truncated
 }
 
+/** A CRM contact: an object of type contact. */
+function isContact(row: SearchResultRow): boolean {
+	return row.group === 'objects' && row.type === 'contact'
+}
+
 function compareRows(sort: 'recent' | 'az') {
 	return (a: SearchResultRow, b: SearchResultRow): number => {
 		if (sort === 'az') {
@@ -824,6 +1049,124 @@ async function addTypoHits(
 	return true
 }
 
+interface DirectChatRow {
+	id: string
+	pair_key: string
+	last_content: string | null
+	last_actor_id: string | null
+	updated_iso: string | null
+}
+
+interface RankedRow {
+	row: SearchResultRow
+	rank: { tier: number; score: number }
+}
+
+/**
+ * The launcher puts a teammate's direct message (DM) first when the words match their name.
+ * `ranked` is the answer so far, best first. Returns the rows to lead with, and the ids of the
+ * rows they replace (the person row of a teammate, and the chat itself when it was already listed),
+ * so nobody shows twice. A teammate with no DM yet leads as a person row of type START_CHAT.
+ * A failed lookup leaves the answer as it was.
+ */
+async function teammateLeadRows(
+	db: Database,
+	ctx: SearchContext,
+	ranked: RankedRow[],
+): Promise<{ lead: SearchResultRow[]; replaced: Set<string> }> {
+	const teammates = ranked.filter(
+		({ row, rank }) =>
+			row.group === 'people' && rank.tier <= TEAMMATE_MAX_TIER && row.id !== ctx.callerId,
+	)
+	const none = { lead: [], replaced: new Set<string>() }
+	if (teammates.length === 0) return none
+
+	let chats: DirectChatRow[]
+	try {
+		// The DM is the stored one per pair (direct_pair_key), never a topical chat with the same two
+		// people, and only while both are still in it and nobody else is.
+		const keys = sql.join(
+			teammates.map(({ row }) => sql`${directPairKey(ctx.callerId, row.id)}`),
+			sql`, `,
+		)
+		chats = await rowsOf<DirectChatRow>(
+			db,
+			sql`SELECT c.id AS id, c.direct_pair_key AS pair_key, lm.content AS last_content,
+					lm.actor_id AS last_actor_id,
+					to_char(c.last_message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_iso
+				FROM conversations c
+				INNER JOIN conversation_participants me
+					ON me.conversation_id = c.id AND me.actor_id = ${ctx.callerId} AND me.left_at IS NULL
+				LEFT JOIN LATERAL (
+					SELECT m.content, m.actor_id FROM messages m
+					WHERE m.conversation_id = c.id
+					ORDER BY m.id DESC
+					LIMIT 1
+				) lm ON true
+				WHERE c.workspace_id = ${ctx.workspaceId}
+					AND c.direct_pair_key IN (${keys})
+					AND (
+						SELECT count(*) FROM conversation_participants p
+						WHERE p.conversation_id = c.id AND p.left_at IS NULL
+					) = 2`,
+		)
+	} catch (error) {
+		logger.warn('Search direct message lookup failed', {
+			workspaceId: ctx.workspaceId,
+			error: error instanceof Error ? error.message : String(error),
+		})
+		return none
+	}
+
+	const byKey = new Map(chats.map((chat) => [chat.pair_key, chat]))
+	const lead: SearchResultRow[] = []
+	const replaced = new Set<string>()
+	for (const { row } of teammates) {
+		replaced.add(row.id)
+		const chat = byKey.get(directPairKey(ctx.callerId, row.id))
+		if (!chat) {
+			lead.push({ ...row, type: START_CHAT_ROW_TYPE })
+			continue
+		}
+		replaced.add(chat.id)
+		const sent = chat.last_actor_id === ctx.callerId ? YOU_PREFIX : ''
+		const text = chat.last_content
+			? `${sent}${chat.last_content}`.slice(0, SNIPPET_MAX_LENGTH)
+			: null
+		lead.push({
+			id: chat.id,
+			group: 'chats',
+			type: DIRECT_MESSAGE_ROW_TYPE,
+			title: row.title,
+			sub: null,
+			snippet: text,
+			status: 'read',
+			statusGroup: getStatusGroup('chat', 'read'),
+			updatedAt: chat.updated_iso,
+		})
+	}
+	return { lead, replaced }
+}
+
+/**
+ * Keeps at most `perGroup` rows of each source group, then fills the free room (up to `limit`)
+ * with the rows that were left out. `rows` come in their final order and keep it.
+ */
+function capPerGroup(rows: SearchResultRow[], perGroup: number, limit: number): SearchResultRow[] {
+	const seen = new Map<SearchSourceGroup, number>()
+	const keep = new Set<SearchResultRow>()
+	for (const row of rows) {
+		const n = seen.get(row.group) ?? 0
+		seen.set(row.group, n + 1)
+		if (n < perGroup) keep.add(row)
+	}
+	for (const row of rows) {
+		if (keep.size >= limit) break
+		keep.add(row)
+	}
+	return rows.filter((row) => keep.has(row))
+}
+
 /**
  * Runs the six sources in parallel and folds them into one response. A source
  * that throws or times out is left out of every count and listed in `partial`. A
@@ -878,7 +1221,9 @@ export async function runSearch(
 
 	let results: SearchResultRow[]
 	if (query.sort === 'rel') {
-		// Groups in a fixed order, then each source's own relevance order, until the cap.
+		// Best match tier first across every group, then score, then open before done before archived.
+		// Ties keep the fixed group order and each source's own order (newest first): the sort is
+		// stable over rows listed group by group.
 		const order = (key: SearchSourceGroup) => SEARCH_SOURCE_GROUPS.indexOf(key)
 		const byGroup = ok.slice().sort((a, b) => order(a.source.key) - order(b.source.key))
 		// Typo hits come after every exact hit, closest spelling first.
@@ -886,7 +1231,39 @@ export async function runSearch(
 			.flatMap(({ result }) => result.typoRows)
 			.sort((a, b) => a.distance - b.distance)
 			.map(({ row }) => row)
-		results = [...byGroup.flatMap(({ result }) => result.rows), ...typoRows].slice(0, query.limit)
+		const exactRanked = byGroup
+			.flatMap(({ result }) =>
+				result.rows.map((row, i) => ({
+					row,
+					rank: result.ranks[i] as { tier: number; score: number },
+				})),
+			)
+			.sort(
+				(a, b) =>
+					a.rank.tier - b.rank.tier ||
+					b.rank.score - a.rank.score ||
+					STATUS_GROUP_RANK[a.row.statusGroup] - STATUS_GROUP_RANK[b.row.statusGroup],
+			)
+		// The launcher (per_group) with plain words: a teammate's name leads with their direct
+		// message, kept out of the per-group cap, and CRM contacts go last.
+		const launcherWords =
+			query.per_group !== undefined &&
+			tokens.length > 0 &&
+			!query.types?.length &&
+			!query.statuses?.length &&
+			!query.participants?.length &&
+			!query.updated_after
+		const { lead, replaced } = launcherWords
+			? await teammateLeadRows(db, ctx, exactRanked)
+			: { lead: [], replaced: new Set<string>() }
+		const exactRows = exactRanked.map(({ row }) => row).filter((row) => !replaced.has(row.id))
+		const ordered = launcherWords
+			? [...exactRows.filter((row) => !isContact(row)), ...exactRows.filter(isContact)]
+			: exactRows
+		const shown = query.per_group
+			? capPerGroup(ordered, query.per_group, Math.max(query.limit - lead.length, 0))
+			: ordered
+		results = [...lead, ...shown, ...typoRows].slice(0, query.limit)
 	} else {
 		// The top N of a union is inside the union of each source's top N.
 		const sort = query.sort

@@ -58,6 +58,51 @@ public final class ConversationsStore {
 		}
 	}
 
+	// MARK: Chat list (attention markers, pills, groups)
+
+	/// The new chat list reads the attention fields with each page (flag chat-list-v2).
+	public var readsAttention = false
+	/// The pill above the list. All is the default.
+	public var listFilter: ChatListFilter = .all
+	/// The Group by menu's choice.
+	public var listGroupBy: ChatListGroupBy = .date
+	/// Chats whose Retry was just tapped, with when. Their red marker stays off until the server
+	/// shows the chat without one (the retry started) or the wait runs out, so a list refresh that
+	/// was computed before the retry cannot put the dot back. A retry that fails again comes back
+	/// through the next refresh with its new reason.
+	@ObservationIgnored private var retrying: [String: Date] = [:]
+	@ObservationIgnored static let retryGrace: TimeInterval = 20
+
+	/// The caller's Later chats. The default list leaves them out; the Later pill shows these.
+	public private(set) var laterConversations: [ConversationSummary] = []
+
+	/// The list as the chat list draws it: the pill's chats in the Group by groups.
+	public func chatListGroups(currentActorID: String?, now: Date = Date()) -> [ChatListGroup] {
+		let source = listFilter == .later ? laterConversations : conversations
+		return ChatListLayout.groups(
+			ConversationGrouping.filter(source, agentID: agentFilterID), filter: listFilter,
+			groupBy: listGroupBy, currentActorID: currentActorID, now: now)
+	}
+
+	/// The counts on the pills (every pill but All).
+	public var chatListCounts: [ChatListFilter: Int] {
+		var counts = ChatListLayout.counts(ConversationGrouping.filter(conversations, agentID: agentFilterID))
+		counts[.later] = ConversationGrouping.filter(laterConversations, agentID: agentFilterID).count
+		return counts
+	}
+
+	/// Reload the Later chats (first page). A failure keeps what is shown.
+	public func refreshLater() async {
+		guard scope == .active, readsAttention else { return }
+		if let page = try? await api.listLater(limit: pageSize, offset: 0) {
+			laterConversations = page.conversations.filter { !locallyDeleted.contains($0.id) }.map {
+				var row = $0
+				row.later = true
+				return row
+			}
+		}
+	}
+
 	// MARK: Team display state (spec 7 §6)
 
 	/// The Display menu's choices, persisted per user.
@@ -92,17 +137,38 @@ public final class ConversationsStore {
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
+	/// Spaces the refetches that chat events cause (chat list and threads list).
+	@ObservationIgnored private let chatRefetch: RefreshDebouncer
+	/// Spaces the refetches that session and actor events cause (actors list and flow rooms).
+	@ObservationIgnored private let peopleRefetch: RefreshDebouncer
 	@ObservationIgnored private var loadingArchived = false
 	@ObservationIgnored private var generation = 0
 	/// Rows deleted here while the API has no delete: hidden from every later page.
 	@ObservationIgnored private var locallyDeleted: Set<String> = []
 
-	public init(
+	/// Events refetch each group of lists at most this often.
+	static let refetchInterval: Duration = .seconds(5)
+
+	public convenience init(
 		api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil,
 		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil
 	) {
+		self.init(
+			api: api, events: events, cache: cache, flowRooms: flowRooms, preferences: preferences,
+			chatRefetch: RefreshDebouncer(minInterval: Self.refetchInterval),
+			peopleRefetch: RefreshDebouncer(minInterval: Self.refetchInterval))
+	}
+
+	/// Test seam: the waits between a live event and the refetch it causes.
+	init(
+		api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil,
+		flowRooms: (any FlowRoomsSource)? = nil, preferences: TeamPreferences? = nil,
+		chatRefetch: RefreshDebouncer, peopleRefetch: RefreshDebouncer
+	) {
 		self.api = api
 		self.events = events
+		self.chatRefetch = chatRefetch
+		self.peopleRefetch = peopleRefetch
 		self.cache = cache
 		self.flowSource = flowRooms
 		self.preferences = preferences
@@ -238,6 +304,7 @@ public final class ConversationsStore {
 
 	public func conversation(id: String) -> ConversationSummary? {
 		conversations.first { $0.id == id } ?? archivedConversations.first { $0.id == id }
+			?? laterConversations.first { $0.id == id }
 	}
 
 	// MARK: - Loading
@@ -252,16 +319,22 @@ public final class ConversationsStore {
 					guard let self else { return }
 					switch signal {
 					case .reconnected:
-						await self.refresh()
-						await self.refreshArchived()
-						await self.refreshThreads()
+						// A list refetched in the last few seconds is current: skip it.
+						await self.chatRefetch.runIfStale {
+							await self.refresh()
+							await self.refreshLater()
+							await self.refreshArchived()
+							await self.refreshThreads()
+						}
+						await self.peopleRefetch.runIfStale {
+							await self.refreshActors()
+							await self.refreshFlowRooms()
+						}
 					case .event(let event) where event.entityType == .conversation:
-						await self.refresh()
-						await self.refreshThreads()
+						self.scheduleChatRefetch()
 					case .event(let event) where event.entityType == .session || event.entityType == .actor:
 						// Working state on rows and avatars follows the agents' runs.
-						await self.refreshActors()
-						await self.refreshFlowRooms()
+						self.schedulePeopleRefetch()
 					case .event:
 						break
 					}
@@ -270,15 +343,46 @@ public final class ConversationsStore {
 		}
 		async let main: Void = refresh()
 		async let archived: Void = refreshArchived()
+		async let later: Void = refreshLater()
 		async let flows: Void = refreshFlowRooms()
 		async let people: Void = refreshActors()
 		async let threadRows: Void = refreshThreads()
-		_ = await (main, archived, flows, people, threadRows)
+		_ = await (main, archived, later, flows, people, threadRows)
 	}
 
 	public func stop() {
 		listener?.cancel()
 		listener = nil
+		chatRefetch.cancel()
+		peopleRefetch.cancel()
+	}
+
+	/// A burst of chat events becomes one reload of the chat list and the threads list, at most
+	/// once per `refetchInterval`.
+	private func scheduleChatRefetch() {
+		guard !skipsInBackground() else { return }
+		chatRefetch.schedule { [weak self] in
+			await self?.refresh()
+			await self?.refreshLater()
+			await self?.refreshThreads()
+		}
+	}
+
+	/// The same for session and actor events: one reload of the actors list and the flow rooms.
+	private func schedulePeopleRefetch() {
+		guard !skipsInBackground() else { return }
+		peopleRefetch.schedule { [weak self] in
+			await self?.refreshActors()
+			await self?.refreshFlowRooms()
+		}
+	}
+
+	/// No refetch for an event while the app is in the background; the hub asks every store to
+	/// reload once when it returns.
+	private func skipsInBackground() -> Bool {
+		guard let events, !events.isForeground else { return false }
+		events.noteSkippedInBackground()
+		return true
 	}
 
 	/// Reload the first page. Overlapping calls coalesce into one trailing reload so a burst of
@@ -292,19 +396,21 @@ public final class ConversationsStore {
 		defer { refreshing = false }
 		repeat {
 			refreshQueued = false
+			chatRefetch.noteRan()
 			generation += 1
 			let mine = generation
 			if conversations.isEmpty { phase = .loading }
 			do {
 				let limit = ServerLimits.refreshLimit(minimum: pageSize, loaded: conversations.count)
-				let page = try await api.list(
+				let page = try await fetchPage(
 					archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
-					limit: limit, offset: 0)
+					hideQuiet: hidesQuiet, limit: limit, offset: 0)
 				guard mine == generation else { continue }
 				// Re-read what's on screen (capped by the server) so paged-in rows survive an event.
 				let keptTail = conversations.count > limit
 				conversations = ServerLimits.mergeHead(head: page.conversations, previous: conversations)
 					.filter { !locallyDeleted.contains($0.id) }
+					.map(applyingRetry)
 				hasMore = keptTail ? hasMore || page.hasMore : page.hasMore
 				phase = .loaded
 				reconcileAgentFilter()
@@ -318,14 +424,32 @@ public final class ConversationsStore {
 		} while refreshQueued
 	}
 
+	/// One page of the list, with the attention fields when the new chat list is on.
+	private func fetchPage(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		if readsAttention {
+			return try await api.listWithAttention(
+				archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+				limit: limit, offset: offset)
+		}
+		return try await api.list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+			limit: limit, offset: offset)
+	}
+
+	/// Only the default list leaves out empty agent DMs, retired agents and quiet topic chats; the
+	/// Unread, Pinned and Archived lists show what they filter on.
+	private var hidesQuiet: Bool { scope == .active && filter == .all }
+
 	public func loadMore() async {
 		guard hasMore, !isLoadingMore, phase == .loaded else { return }
 		isLoadingMore = true
 		defer { isLoadingMore = false }
 		do {
-			let page = try await api.list(
+			let page = try await fetchPage(
 				archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
-				limit: pageSize, offset: conversations.count)
+				hideQuiet: hidesQuiet, limit: pageSize, offset: conversations.count)
 			let known = Set(conversations.map(\.id))
 			conversations += page.conversations.filter { !known.contains($0.id) && !locallyDeleted.contains($0.id) }
 			hasMore = page.hasMore
@@ -348,6 +472,7 @@ public final class ConversationsStore {
 	}
 
 	public func refreshActors() async {
+		peopleRefetch.noteRan()
 		if let fresh = try? await api.actors() { actors = fresh }
 	}
 
@@ -397,9 +522,9 @@ public final class ConversationsStore {
 	) async throws -> ConversationSummary {
 		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 		let message = firstMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
-		let hasMessage = !(message?.isEmpty ?? true)
+		let hasMessage = !(message?.isEmpty ?? true) || firstMessageMetadata?.attachments != nil
 		let created = try await api.create(
-			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? message : nil,
+			title: trimmed, participantIDs: participantIDs, initialMessage: hasMessage ? (message ?? "") : nil,
 			initialMetadata: hasMessage ? firstMessageMetadata : nil, idempotencyKey: IdempotencyKey.make())
 		if scope == .active, !conversations.contains(where: { $0.id == created.id }) {
 			conversations.insert(created, at: 0)
@@ -421,6 +546,74 @@ public final class ConversationsStore {
 	}
 
 	// MARK: - Per-user state (optimistic, rolled back on failure)
+
+	/// Done: the existing archive, reversible from Archived (or Undo in the toast).
+	@discardableResult
+	public func markDone(_ id: String) async -> Bool { await setArchived(id, true) }
+
+	/// Later hides the chat from All until a new message arrives; the server clears it then, and the
+	/// next refresh brings the chat back. The row moves between the default list and the Later list,
+	/// and back if the server refuses.
+	@discardableResult
+	public func setLater(_ id: String, _ later: Bool) async -> Bool {
+		let beforeActive = conversations
+		let beforeLater = laterConversations
+		if later, let index = conversations.firstIndex(where: { $0.id == id }) {
+			var row = conversations.remove(at: index)
+			row.later = true
+			laterConversations.insert(row, at: 0)
+		} else if !later, let index = laterConversations.firstIndex(where: { $0.id == id }) {
+			var row = laterConversations.remove(at: index)
+			row.later = false
+			conversations.insert(row, at: 0)
+		} else {
+			return false
+		}
+		do {
+			try await api.setLater(conversationID: id, later: later)
+			return true
+		} catch {
+			conversations = beforeActive
+			laterConversations = beforeLater
+			notice = Self.message(error)
+			return false
+		}
+	}
+
+	/// Retry on a stopped chat: the same retry as in the thread. The marker clears at once; if the
+	/// retry cannot be asked for, the marker comes back with a notice.
+	@discardableResult
+	public func retryStopped(_ id: String, now: Date = Date()) async -> Bool {
+		guard let before = conversation(id: id), before.canRetry, let messageID = before.retryMessageID
+		else { return false }
+		retrying[id] = now
+		update(id) { $0.stopReason = nil }
+		do {
+			try await api.retry(conversationID: id, messageID: messageID, agentID: nil)
+			return true
+		} catch {
+			retrying[id] = nil
+			update(id) { $0 = before }
+			notice = Self.message(error)
+			return false
+		}
+	}
+
+	/// Keeps a just-retried chat's old red marker off while the list catches up.
+	private func applyingRetry(_ row: ConversationSummary) -> ConversationSummary {
+		guard let since = retrying[row.id] else { return row }
+		guard row.stopReason != nil else {
+			retrying[row.id] = nil
+			return row
+		}
+		guard Date().timeIntervalSince(since) < Self.retryGrace else {
+			retrying[row.id] = nil
+			return row
+		}
+		var row = row
+		row.stopReason = nil
+		return row
+	}
 
 	@discardableResult
 	public func setPinned(_ id: String, _ pinned: Bool) async -> Bool {
@@ -624,6 +817,8 @@ public final class ConversationsStore {
 			change(&conversations[index])
 		} else if let index = archivedConversations.firstIndex(where: { $0.id == id }) {
 			change(&archivedConversations[index])
+		} else if let index = laterConversations.firstIndex(where: { $0.id == id }) {
+			change(&laterConversations[index])
 		}
 	}
 

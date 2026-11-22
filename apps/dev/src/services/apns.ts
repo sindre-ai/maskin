@@ -229,6 +229,7 @@ export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 		},
 		deep_link: deepLinkFor(msg),
 		notification_id: msg.notificationId,
+		...(msg.notificationType ? { notification_type: msg.notificationType } : {}),
 		workspace_id: msg.workspaceId,
 		...(imageUrl ? { image_url: imageUrl } : {}),
 		...(withDecision && decision ? { decision } : {}),

@@ -30,6 +30,8 @@ interface ProviderCardProps {
 	 *  access `chip`, and a chevron that opens the actions and footer. */
 	logo?: ReactNode
 	chip?: string
+	/** Start with the chevron section open, e.g. when focus is being returned to a button inside it. */
+	defaultOpen?: boolean
 }
 
 /**
@@ -51,8 +53,9 @@ export function ProviderCard({
 	footer,
 	logo,
 	chip,
+	defaultOpen = false,
 }: ProviderCardProps) {
-	const [open, setOpen] = useState(false)
+	const [open, setOpen] = useState(defaultOpen)
 	if (logo) {
 		const expandable = tone !== 'available'
 		const dot = tone === 'warning' ? 'bg-warning' : tone === 'connected' ? 'bg-success' : undefined

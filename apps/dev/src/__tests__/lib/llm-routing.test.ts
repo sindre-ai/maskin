@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/logger', () => ({
-	logger: { info: vi.fn(), warn: vi.fn() },
+	logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }))
 
 // crypto = identity so encrypted claude_oauth blobs round-trip as their
@@ -18,7 +18,9 @@ vi.mock('../../lib/crypto', () => ({
 import { API_KEY_CREDIT_MARK_WINDOW_MS, fingerprintStoredKey } from '../../lib/api-key-credit-mark'
 import {
 	PRO_HARD_CAP_DEFAULT_USD_CENTS,
+	STARTER_HARD_CAP_DEFAULT_USD_CENTS,
 	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
+	ULTRA_HARD_CAP_DEFAULT_USD_CENTS,
 } from '../../lib/billing-defaults'
 import { type PinnedModel, preflightLlmCredentials } from '../../lib/llm-routing'
 import {
@@ -32,6 +34,7 @@ import {
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
+	TrialNotStartedError,
 	ceilCents,
 	checkPlanCap,
 	getWorkspacePlanUsdCentsUsage,
@@ -238,7 +241,23 @@ describe('resolveLlmRoute priority order', () => {
 			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+		// A DeepSeek V4 model has a 1M window; the [1m] marker tells the CLI so.
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash[1m]')
+		// The recorded model name stays the plain id.
+		expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
+	})
+
+	it('3. custom_llm leaves a model with no known window as it is', async () => {
+		const settings = emptySettings()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://llm.example.com',
+			api_key: 'k',
+			model: 'some-local-model',
+		}
+		const result = await resolveLlmRoute({ ...baseParams, wsSettings: settings, agent: {} })
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('some-local-model')
 	})
 
 	it('skips custom_llm when enabled but missing fields', async () => {
@@ -388,7 +407,7 @@ describe('resolveLlmRoute priority order', () => {
 			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
 		})
 
-		it.each(['pro', 'team', 'trial'] as const)(
+		it.each(['starter', 'pro', 'team', 'ultra', 'trial'] as const)(
 			'%s plan routes through Maskin OR + Deepseek v4 Flash',
 			async (plan) => {
 				const settings = emptySettings()
@@ -407,7 +426,7 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
 					ANTHROPIC_AUTH_TOKEN: 'sk-or-maskin',
 					ANTHROPIC_API_KEY: '',
-					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
+					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash[1m]',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
 				// Thinking is off (MAX_THINKING_TOKENS=0) because DeepSeek maps low
@@ -718,8 +737,8 @@ describe('checkPlanCap', () => {
 	})
 
 	it('treats missing billing as trial — enforces cap when over limit', async () => {
-		// Trial default is $10.00 (1,000 cents); $10.01 of reported cost is over.
-		const db = dbWithSessionUsage([{ totalCostUsd: '10.01', inputTokens: 0, outputTokens: 0 }])
+		// Trial default is 20 kr, 286 cents at the fixed rate; $2.87 of reported cost is over.
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.87', inputTokens: 0, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -728,7 +747,41 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(1_000)
+		expect(err.cap).toBe(286)
+	})
+
+	it('refuses a trial workspace that is waiting for its card, before reading any usage', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial', trial_state: 'awaiting_card' }
+		const db = dbWithSessionUsage([])
+		const err = await checkPlanCap({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(TrialNotStartedError)
+		// A plan cap error too, so everything that already treats those quietly does the same.
+		expect(err).toBeInstanceOf(PlanCapExceededError)
+		expect(err.message).toBe('Your trial has not started. Add a card to begin your 7 days.')
+	})
+
+	it('lets a trial workspace run once its trial has started', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'trial', trial_state: 'started', period_start: 0 }
+		const db = dbWithSessionUsage([])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).resolves.toBeUndefined()
+	})
+
+	it('does not hold a paid plan back for a stale awaiting_card marker', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'pro', trial_state: 'awaiting_card', period_start: 0 }
+		const db = dbWithSessionUsage([])
+		await expect(
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
+		).resolves.toBeUndefined()
 	})
 
 	it('is a no-op for enterprise — explicit opt-out', async () => {
@@ -746,8 +799,10 @@ describe('checkPlanCap', () => {
 	// bound on Maskin's OpenRouter account. The cap now falls back to the
 	// plan's published default instead of to infinity.
 	it.each([
+		['starter', STARTER_HARD_CAP_DEFAULT_USD_CENTS],
 		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
 		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+		['ultra', ULTRA_HARD_CAP_DEFAULT_USD_CENTS],
 	] as const)(
 		'falls back to the %s default cap when Stripe has not written hard_cap_usd_cents',
 		async (plan, capCents) => {
@@ -763,8 +818,10 @@ describe('checkPlanCap', () => {
 	)
 
 	it.each([
+		['starter', STARTER_HARD_CAP_DEFAULT_USD_CENTS],
 		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
 		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+		['ultra', ULTRA_HARD_CAP_DEFAULT_USD_CENTS],
 	] as const)(
 		'stays under the %s default cap when usage has not reached it',
 		async (plan, capCents) => {
@@ -1426,19 +1483,18 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 		).toBeNull()
 	})
 
-	it('does not fall back for an enterprise billing owner', () => {
+	it('still falls back for an ops-allowlisted billing owner without the workspace flag', () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = '11111111-1111-4111-8111-111111111111'
-		expect(
-			resolveChatCredentials({
-				wsSettings: {},
-				workspace: {
-					enterprise: false,
-					billingOwnerId: '11111111-1111-4111-8111-111111111111',
-				},
-				agent: { provider: null, apiKey: null, model: null },
-			}),
-		).toBeNull()
+		const creds = resolveChatCredentials({
+			wsSettings: {},
+			workspace: {
+				enterpriseGranted: false,
+				billingOwnerId: '11111111-1111-4111-8111-111111111111',
+			},
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
 	})
 
 	it('still uses the enterprise workspace own credentials when configured', () => {
@@ -1715,7 +1771,7 @@ describe('resolveLlmRoute model choice', () => {
 			const result = await resolveLlmRoute(fundedParams({}))
 			expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
 			expect(result?.envVars).toMatchObject({
-				ANTHROPIC_MODEL: 'deepseek/deepseek-v4.1-flash',
+				ANTHROPIC_MODEL: 'deepseek/deepseek-v4.1-flash[1m]',
 				ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4.1-flash',
 				MASKIN_CLAUDE_EFFORT: 'low',
 				MAX_THINKING_TOKENS: '0',
@@ -1729,7 +1785,7 @@ describe('resolveLlmRoute model choice', () => {
 		it('says tier, not agent, when the agent names a model this route cannot run', async () => {
 			// A Claude subscription model is not served by Maskin's OpenRouter account.
 			const result = await resolveLlmRoute(fundedParams({ model: 'claude-sonnet-5-5' }))
-			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4.1-flash')
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4.1-flash[1m]')
 			expect(result).toMatchObject({ modelSource: 'tier' })
 		})
 
@@ -1746,12 +1802,12 @@ describe('resolveLlmRoute model choice', () => {
 			const result = await resolveLlmRoute(
 				fundedParams({}, { model: 'deepseek/deepseek-v4-flash-0731', source: 'tier' }),
 			)
-			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731')
+			expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731[1m]')
 			// A pin the route can no longer run is dropped, not obeyed.
 			const dropped = await resolveLlmRoute(
 				fundedParams({}, { model: 'claude-opus-5-5', source: 'agent' }),
 			)
-			expect(dropped?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731')
+			expect(dropped?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash-0731[1m]')
 		})
 
 		it('keeps the provider allow list for the default model only', async () => {

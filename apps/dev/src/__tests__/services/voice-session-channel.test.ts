@@ -1357,12 +1357,15 @@ describe('voice channel — ask_workspace', () => {
 
 	it('holds a non-read-only tool that is not an ordinary write when the text model picks it', async () => {
 		const { ask, invoke, results } = askSetup([
-			{ text: null, toolCalls: [{ id: 't1', name: 'run_agent', arguments: { actor_id: 'a' } }] },
+			{
+				text: null,
+				toolCalls: [{ id: 't1', name: 'create_sub_chat', arguments: { actor_id: 'a' } }],
+			},
 		])
 		ALL_TOOLS.push({
 			type: 'function',
-			name: 'run_agent',
-			description: 'run_agent',
+			name: 'create_sub_chat',
+			description: 'create_sub_chat',
 			parameters: { type: 'object', properties: {} },
 		})
 		await ask({ request: 'start the agent' })

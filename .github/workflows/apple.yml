@@ -13,6 +13,18 @@ name: Apple
 # and bet work is based on a bet branch, not main. Without this they were never compiled
 # until the whole stack or bet reached main.
 #
+# Draft pull requests do not start Mac runs: both jobs skip while the PR is a draft, and
+# `ready_for_review` starts them when it is marked ready. Every push to an iPhone PR used to
+# start a Mac run of 35-90 minutes, and the Mac queue jammed (2 running, 9 waiting). Open
+# experiment PRs as drafts and mark them ready only when the Mac result is needed. A skipped
+# job counts as passing, so a draft shows green without having compiled anything. Pushes to
+# main are unaffected.
+#
+# Mac jobs are capped at 5 at once and nothing on our plan raises it. A push to main used to
+# start swift test plus four platform builds, which took all 5 slots and queued every open PR.
+# Now a push to main runs swift test and the iOS build only (2 Mac jobs), and a nightly run on
+# main builds the other three platforms. See the schedule trigger below.
+#
 # The drift checks (design tokens, OpenAPI snapshot, generated Swift client) are NOT here
 # and are not enforced in CI. Refresh them by hand when the backend spec or tokens change.
 #
@@ -21,11 +33,14 @@ name: Apple
 #   2. Platform builds — iOS, macOS, watchOS, tvOS each compile the app shells
 #                        against MaskinKit. A change that is fine on iOS but uses
 #                        an unavailable API on watchOS/tvOS only shows up here.
-#                        Pull requests build iOS only; pushes to main build all four,
-#                        so a watchOS, tvOS or macOS break is caught right after the
-#                        merge, on main, instead of before it.
+#                        Pull requests and pushes to main build iOS only. macOS, watchOS
+#                        and tvOS are built by the nightly run on main (03:00 UTC) and by
+#                        workflow_dispatch, so a break on one of those three shows up
+#                        within a day of the merge. A red nightly run is listed under
+#                        Actions > Apple (filter: event schedule) and GitHub emails the
+#                        person who last edited the cron line; the CTO opens a fix task.
 #
-# Two jobs, because one job was too long: `swift test` runs in `apple`, and the four platform
+# Two jobs, because one job was too long: `swift test` runs in `apple`, and the platform
 # builds run in parallel in `apple-build`. Run in one job, the steps added up to 35-47 minutes
 # against the 45 minute job limit (swift test 6-22 min, setup 7-20 min, builds 19-30 min
 # depending on the runner), and the job was cancelled while the last platform was still
@@ -44,6 +59,12 @@ name: Apple
 # simulator destinations, so no simulator runtimes need to be installed.
 
 on:
+  # Nightly build of the platforms that pushes and pull requests skip. Schedules run on the
+  # default branch (main) and ignore the paths filter. 03:00 UTC.
+  schedule:
+    - cron: '0 3 * * *'
+  # Same three platforms, started by hand from the Actions tab.
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -51,18 +72,24 @@ on:
       - '.github/workflows/apple.yml'
   pull_request:
     branches: [main, 'feat/**', 'bet/**']
+    # The three defaults plus ready_for_review, which starts the runs a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/apple/**'
       - '.github/workflows/apple.yml'
 
 # Superseded runs are cancelled on pull requests only. On main, back-to-back merges
 # used to cancel each other (runs 540-545 and 547), leaving main with no finished run.
+# The event name is in the group so a queued push run cannot replace the queued nightly run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   apple:
+    # Pushes, and pull requests that are not drafts. Not the nightly or manual run: those only
+    # build the three platforms that pushes skip.
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && !github.event.pull_request.draft)
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -83,7 +110,7 @@ jobs:
 
       # --- Package tests ---
       - name: Cache SwiftPM and the generated-client build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             apps/apple/.build
@@ -145,17 +172,20 @@ jobs:
   # --- Platform builds, one runner per platform ---
   apple-build:
     name: apple-build (${{ matrix.platform }})
+    # Not a draft pull request (pushes have no pull_request context, so they always run).
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-26
     timeout-minutes: 50
     strategy:
       # Let the other platforms finish: one failing platform should not hide a second one.
       fail-fast: false
-      # Pull requests build iOS only; pushes to main build all four platforms. Each platform is a
-      # separate Mac runner, and the Mac queue was the slow part of a pull request (56 min wait on
-      # one run). iOS is the platform most changes can break; watchOS, tvOS and macOS-only API
-      # misuse is caught on main right after the merge instead of before it.
+      # Pull requests and pushes to main build iOS only; the nightly and manual runs build macOS,
+      # watchOS and tvOS. Each platform is a separate Mac runner, and the Mac queue was the slow
+      # part of a pull request (56 min wait on one run). iOS is the platform most changes can
+      # break; watchOS, tvOS and macOS-only API misuse is caught by the nightly run, up to a day
+      # after the merge.
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"}]' || '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"},{"platform":"macOS","scheme":"Maskin","destination":"generic/platform=macOS"},{"platform":"watchOS","scheme":"MaskinWatch","destination":"generic/platform=watchOS Simulator"},{"platform":"tvOS","scheme":"MaskinTV","destination":"generic/platform=tvOS Simulator"}]') }}
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"platform":"macOS","scheme":"Maskin","destination":"generic/platform=macOS"},{"platform":"watchOS","scheme":"MaskinWatch","destination":"generic/platform=watchOS Simulator"},{"platform":"tvOS","scheme":"MaskinTV","destination":"generic/platform=tvOS Simulator"}]' || '[{"platform":"iOS","scheme":"Maskin","destination":"generic/platform=iOS Simulator"}]') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -178,6 +208,18 @@ jobs:
       - name: Generate Xcode project
         working-directory: apps/apple
         run: xcodegen generate
+
+      # Package downloads (SourcePackages) and compiled packages (Build) live under the derived
+      # data path below. Keyed on Package.resolved, so a dependency such as Sentry or PostHog
+      # compiles once per version, not on every push. One cache per platform: each compiles for
+      # its own SDK. No restore-keys: a cache from another Package.resolved would only mislead.
+      - name: Cache Swift packages and compiled packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/dd/SourcePackages
+            ${{ runner.temp }}/dd/Build
+          key: swiftpm-build-${{ runner.os }}-${{ matrix.platform }}-${{ hashFiles('apps/apple/Package.resolved') }}
 
       - name: xcodebuild (${{ matrix.platform }})
         working-directory: apps/apple

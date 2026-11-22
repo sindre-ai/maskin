@@ -198,4 +198,84 @@ describe('Objects facets and group filtering', () => {
 		const body = await res.json()
 		expect(body.updated).toEqual({ today: 1, yesterday: 1, week: 0, older: 1 })
 	})
+
+	it('folds the Updated buckets and fresh into one scan with the per-query numbers', async () => {
+		const rows = await seed('bet', 'active', 7)
+		const stamps = [
+			'2026-05-10T00:00:00Z', // exactly day start: today (lower bound inclusive)
+			'2026-05-09T23:59:59Z', // just before: yesterday
+			'2026-05-09T00:00:00Z', // yesterday lower bound inclusive
+			'2026-05-08T23:59:59Z', // week
+			'2026-05-04T00:00:00Z', // week lower bound inclusive (dayStart - 6d)
+			'2026-05-03T23:59:59Z', // older
+			'2020-01-01T00:00:00Z', // older
+		]
+		for (const [i, row] of rows.entries()) {
+			await db.execute(sql`UPDATE objects SET updated_at = ${stamps[i]} WHERE id = ${row.id}`)
+		}
+		// One fresh row (now) on top of the seeded ones.
+		const [recent] = await seed('bet', 'active', 1)
+		await db.execute(sql`UPDATE objects SET updated_at = now() WHERE id = ${recent?.id}`)
+
+		const dayStart = '2026-05-10T00:00:00Z'
+		const app = createApp()
+		const body = await (
+			await app.request(jsonGet(`/api/objects/facets?day_start=${dayStart}`, headers()))
+		).json()
+
+		// The old implementation: one count query per bucket, same conditions.
+		const day = 86_400_000
+		const start = new Date(dayStart).getTime()
+		const bounds: Record<string, [number | null, number | null]> = {
+			today: [start, null],
+			yesterday: [start - day, start],
+			week: [start - 6 * day, start - day],
+			older: [null, start - 6 * day],
+		}
+		const expected: Record<string, number> = {}
+		for (const [bucket, [from, to]] of Object.entries(bounds)) {
+			const conds = [sql`workspace_id = ${workspaceId}`]
+			if (from !== null) conds.push(sql`updated_at >= ${new Date(from).toISOString()}`)
+			if (to !== null) conds.push(sql`updated_at < ${new Date(to).toISOString()}`)
+			const [r] = await db.execute<{ n: string }>(
+				sql`SELECT count(*)::text AS n FROM objects WHERE ${sql.join(conds, sql` AND `)}`,
+			)
+			expected[bucket] = Number(r?.n)
+		}
+		expect(body.updated).toEqual(expected)
+		expect(body.updated).toEqual({ today: 2, yesterday: 2, week: 2, older: 2 })
+		expect(body.fresh).toBe(1)
+		expect(body.total).toBe(8)
+	})
+
+	it('ignores the recency filter for Updated and fresh but keeps every other filter', async () => {
+		const [a, b] = await seed('bet', 'active', 2)
+		await seed('task', 'todo', 1)
+		await db.execute(sql`UPDATE objects SET updated_at = now() WHERE id = ${a?.id}`)
+		await db.execute(
+			sql`UPDATE objects SET updated_at = '2020-01-01T00:00:00Z' WHERE id = ${b?.id}`,
+		)
+
+		const body = await (
+			await createApp().request(
+				jsonGet(
+					'/api/objects/facets?type=bet&updated_after=2030-01-01T00:00:00Z&day_start=2026-05-10T00:00:00Z',
+					headers(),
+				),
+			)
+		).json()
+		expect(body.total).toBe(0)
+		// Only the type filter applies to the recency counts: 2 bets, one fresh, one older.
+		expect(body.fresh).toBe(1)
+		expect(body.updated.older).toBe(1)
+		expect(body.updated.today).toBe(1)
+	})
+
+	it('returns fresh and no Updated buckets when day_start is absent', async () => {
+		const [a] = await seed('bet', 'active', 2)
+		await db.execute(sql`UPDATE objects SET updated_at = now() WHERE id = ${a?.id}`)
+		const body = await (await createApp().request(jsonGet('/api/objects/facets', headers()))).json()
+		expect(body.updated).toEqual({})
+		expect(body.fresh).toBe(2)
+	})
 })

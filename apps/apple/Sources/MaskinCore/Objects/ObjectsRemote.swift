@@ -22,6 +22,9 @@ public protocol ObjectsRemote: Sendable {
 		objectId: String, content: String, mentions: [String], refs: [String],
 		attachmentFileIds: [String], parentEventId: Int?, idempotencyKey: String
 	) async throws -> ObjectEvent
+	/// `PATCH /api/events/{id}`: new words for a comment the caller wrote. The server keeps who was
+	/// tagged and wakes no one.
+	func editComment(eventId: Int, content: String) async throws
 	/// `POST /api/relationships`: links `sourceId` → `targetId` with `type` (`informs`, `blocks`…).
 	/// Returns the new edge as seen from the source. `idempotencyKey` stays the same across retries.
 	func createRelationship(
@@ -37,6 +40,10 @@ public protocol ObjectsRemote: Sendable {
 }
 
 extension ObjectsRemote {
+	public func editComment(eventId: Int, content: String) async throws {
+		throw ObjectsError("Editing a comment isn't available.")
+	}
+
 	public func board(_ query: ObjectsBoardQuery) async throws -> [ObjectsBoardColumn] {
 		throw ObjectsError("The board isn't available.")
 	}
@@ -95,9 +102,22 @@ public protocol ObjectDraftsRemote: Sendable {
 	/// to the object's subject field. Nil leaves that part alone. A remote that cannot edit keeps
 	/// the default, which refuses.
 	func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws
+	/// `PATCH /api/objects/{id}` for a card that edits an object's text or status (the patch carries
+	/// the chat context when the card sits in a chat). A remote that cannot edit keeps the default, which refuses.
+	func update(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject
+	/// The status order each object type has in this workspace's own settings, by type. Empty when it
+	/// cannot be read, and never the app's built-in defaults: a card offers a next status only from
+	/// what the workspace itself lists.
+	func workspaceStatuses(workspaceId: String) async -> [String: [String]]
 }
 
 extension ObjectDraftsRemote {
+	public func update(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject {
+		throw ObjectsError("Editing isn't available here.")
+	}
+
+	public func workspaceStatuses(workspaceId: String) async -> [String: [String]] { [:] }
+
 	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {
 		throw ObjectsError("Editing isn't available here.")
 	}

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
+import { ACTORS_STALE_MS } from '../lib/actors-stale'
 import {
 	type ActorListItem,
 	type CreateActorInput,
@@ -9,6 +10,7 @@ import {
 	api,
 } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
+import { syncStoredActor } from '../lib/refresh-stored-actor'
 import { sortByName } from '../lib/sort'
 import { useWorkspace } from '../lib/workspace-context'
 
@@ -19,6 +21,7 @@ export function useActors(workspaceId?: string, options?: { enabled?: boolean })
 		queryKey: queryKeys.actors.all(workspaceId),
 		queryFn: () => api.actors.list(workspaceId),
 		enabled: options?.enabled,
+		staleTime: ACTORS_STALE_MS,
 		// Every picker and list that reads actors gets them A→Z by name.
 		select: sortActors,
 	})
@@ -81,7 +84,9 @@ export function useUpdateActor(workspaceId?: string) {
 	return useMutation({
 		mutationFn: ({ id, data }: { id: string; data: UpdateActorInput }) =>
 			api.actors.update(id, data, workspaceId),
-		onSuccess: (_result, { id, data }) => {
+		onSuccess: (result, { id, data }) => {
+			// The greeting reads the name saved in the browser, so a rename of the signed-in person lands there too.
+			syncStoredActor(result)
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 			// The default workspace is read back from the workspaces list (`isDefault`).

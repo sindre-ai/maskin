@@ -296,7 +296,7 @@ describe('group chat wake rule', () => {
 
 		it('records agent_cap and wakes nobody', async () => {
 			const { a, b, sessionManager, conversationId } = await scripted()
-			for (let i = 0; i < 5; i++) await post(conversationId, a.id, `agent turn ${i}`)
+			for (let i = 0; i < 20; i++) await post(conversationId, a.id, `agent turn ${i}`)
 			const messageId = await post(conversationId, b.id, 'tagging A', { mentions: [a.id] })
 
 			const e = await respond(sessionManager, conversationId, messageId)

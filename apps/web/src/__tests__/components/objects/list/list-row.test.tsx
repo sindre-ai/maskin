@@ -169,7 +169,8 @@ describe('ListRow pending ask', () => {
 		// No visible "Ask" tag; the "<agent> asks" wording is screen-reader only.
 		expect(screen.queryByText('Ask')).toBeNull()
 		expect(screen.getByText('Scout asks').className).toContain('sr-only')
-		expect(question.parentElement?.textContent).toBe('Scout asksShip on Friday or Monday?')
+		// The agent's avatar sits in the line and carries its initials (SC).
+		expect(question.parentElement?.textContent).toBe('SCScout asksShip on Friday or Monday?')
 	})
 
 	it('truncates ask text at ~90 chars with a trailing ellipsis', () => {

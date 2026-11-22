@@ -7,7 +7,9 @@
  * enforcement.
  *
  * Extension tools are registered as `${ext.id}_${tool.name}` at runtime. They are
- * dynamic, have no entry here, and are not annotated.
+ * dynamic and have no row here, on purpose: a row would make assertNotHeldByPilot
+ * (server.ts) treat them as classified. They get the title and annotations from
+ * extensionToolTitle and EXTENSION_TOOL_ANNOTATIONS at the end of this file instead.
  *
  * This table is deliberately separate from READ_TOOL_NAMES (read-error.ts) and
  * MUTATION_TOOL_KINDS (telemetry.ts). READ_TOOL_NAMES also decides whether a
@@ -26,9 +28,8 @@ export interface ToolAnnotationEntry {
 }
 
 /**
- * Tools that only read. Not READ_TOOL_NAMES: get_started is in that set but its
- * confirm path installs a loop, so it is not read-only here; and the four tools at
- * the end read without being in that set (they keep re-throwing on error).
+ * Tools that only read. Not READ_TOOL_NAMES: the tools at the end read without being
+ * in that set (they keep re-throwing on error).
  */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'get_objects',
@@ -56,6 +57,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_marketplace',
 	'get_session_logs',
 	'traverse_graph',
 	'get_conversation',
@@ -67,6 +69,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_for_you',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'desktop_settings',
 	'list_file_tags',
 ])
 
@@ -91,7 +94,7 @@ function row(
 
 // destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
 // idempotent: update_*, delete_*, pause_session, mark_read.
-// openWorld: create_session, its alias run_agent, create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
+// openWorld: create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, resend_send_email, approve_object_draft, approve_draft_from_chat).
 const ROWS: Record<string, Row> = {
 	// Objects + relationships
@@ -99,6 +102,12 @@ const ROWS: Record<string, Row> = {
 	get_objects: row('Get objects'),
 	update_objects: row('Update objects', { idempotent: true }),
 	delete_object: row('Delete object', { destructive: true, idempotent: true }),
+	set_next_step: row('Set next step'),
+	schedule_next_step: row('Schedule next step'),
+	update_next_step: row('Update next step', { idempotent: true }),
+	record_go_ahead: row('Record go-ahead'),
+	take_back_go_ahead: row('Take back go-ahead'),
+	skip_done_when: row('Skip done-when list'),
 	list_objects: row('List objects'),
 	search_objects: row('Search objects'),
 	create_relationship: row('Create relationship'),
@@ -132,6 +141,9 @@ const ROWS: Record<string, Row> = {
 	rename_file_tag: row('Rename file tag'),
 	merge_file_tags: row('Merge file tags'),
 	get_file: row('Get file'),
+	// Not openWorld: that set is pinned (surface-pin.test.ts) to tools that start an agent, reach an
+	// integration or send mail. This one spends plan usage on Maskin's own speech provider.
+	transcribe_file: row('Transcribe file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),
 	delete_file: row('Delete file', { destructive: true, idempotent: true }),
@@ -159,6 +171,7 @@ const ROWS: Record<string, Row> = {
 	update_loop: row('Update loop', { idempotent: true }),
 	list_loops: row('List loops'),
 	get_loop: row('Get loop'),
+	fork_loop: row('Fork loop'),
 	set_loop_view: row('Set loop view', { idempotent: true }),
 	query_data: row('Query data'),
 	delete_loop: row('Delete loop', { destructive: true, idempotent: true }),
@@ -166,9 +179,7 @@ const ROWS: Record<string, Row> = {
 	mark_read: row('Mark read', { idempotent: true }),
 	list_unread: row('List unread'),
 	// Sessions
-	create_session: row('Create session', { openWorld: true }),
 	create_sub_chat: row('Create sub-chat', { openWorld: true }),
-	run_agent: row('Run agent (deprecated alias of create_session)', { openWorld: true }),
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),
@@ -219,13 +230,18 @@ const ROWS: Record<string, Row> = {
 	desktop_scroll: row('Desktop scroll'),
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
+	desktop_attach_file: row('Desktop attach file'),
 	desktop_run: row('Desktop run command', { destructive: true }),
 	desktop_put_file: row('Desktop put file'),
+	desktop_apply_settings: row('Desktop apply settings'),
+	desktop_settings: row('Desktop settings'),
+	desktop_save_file: row('Desktop save file'),
 	desktop_expose_port: row('Desktop expose port'),
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),
 	// Setup
-	get_started: row('Get started'),
+	list_marketplace: row('List marketplace'),
+	install_loop: row('Install loop'),
 }
 
 export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotationEntry>> = Object.freeze(
@@ -242,3 +258,27 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotationEntry>> = O
 		]),
 	),
 )
+
+/**
+ * Plain title for an extension tool, from its own name: "create_contact" is "Create contact".
+ * The extension id prefix is left off, the same way the platform rows above read.
+ */
+export function extensionToolTitle(toolName: string): string {
+	const [first, ...rest] = toolName.split(/[_\-\s]+/).filter(Boolean)
+	if (first === undefined) return toolName
+	return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(' ')
+}
+
+/**
+ * Annotations every extension tool carries. Unmarked means write everywhere else in our code, so
+ * the default is the changes-data label: not read-only, and destructiveHint true, which is the hint
+ * Claude's directory asks for on a tool that modifies data. Nothing an extension says about itself
+ * lowers it.
+ */
+export const EXTENSION_TOOL_ANNOTATIONS: Readonly<Omit<ToolAnnotationEntry, 'title'>> =
+	Object.freeze({
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: false,
+	})

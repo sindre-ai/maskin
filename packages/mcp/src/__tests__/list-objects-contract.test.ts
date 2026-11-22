@@ -302,7 +302,7 @@ describe('list_objects, the one query tool', () => {
 			})
 			expect(rowsOf(full)[0]).toHaveProperty('content')
 			expect(rowsOf(full)).toEqual(rowsOf(explicit))
-			expect(JSON.parse(full.text)).toEqual(rowsOf(full))
+			expect(JSON.parse(full.text).objects).toEqual(rowsOf(full))
 		})
 
 		it('concise keeps id, type, title, status, driver, updatedAt and url, and no content', async () => {
@@ -313,11 +313,20 @@ describe('list_objects, the one query tool', () => {
 			})
 			for (const row of rowsOf(raw)) {
 				expect(Object.keys(row).sort()).toEqual(
-					['driver', 'id', 'status', 'title', 'type', 'updatedAt', 'url'].sort(),
+					[
+						'driver',
+						'id',
+						'status',
+						'title',
+						'type',
+						'updatedAt',
+						'updatedAt_copenhagen',
+						'url',
+					].sort(),
 				)
 				expect(row).not.toHaveProperty('content')
 			}
-			expect(JSON.parse(raw.text)).toEqual(rowsOf(raw))
+			expect(JSON.parse(raw.text).objects).toEqual(rowsOf(raw))
 		})
 	})
 
@@ -326,6 +335,13 @@ describe('list_objects, the one query tool', () => {
 			const raw = await callRaw(harness, 'list_objects', { workspace_id: WS, limit: 25 })
 			expect(pageOf(raw)).toMatchObject({ limit: 25, returned: 25, has_more: true, total: 60 })
 			expect(raw.structured.next_cursor).toEqual(pageOf(raw).next_cursor)
+		})
+
+		it('puts the cursor in the text too, for a client that reads only the text', async () => {
+			const raw = await callRaw(harness, 'list_objects', { workspace_id: WS, limit: 25 })
+			const text = JSON.parse(raw.text)
+			expect(text.next_cursor).toEqual(raw.structured.next_cursor)
+			expect(text.page).toMatchObject({ returned: 25, has_more: true, total: 60 })
 		})
 
 		it('says has_more false and carries no cursor on the last page', async () => {
@@ -391,12 +407,16 @@ describe('list_objects, the one query tool', () => {
 					const first = await callRaw(bigHarness, 'list_objects', {
 						workspace_id: WS,
 						limit: 100,
+						// Concise rows, so a whole page of 100 fits under the response size cap.
+						detail: 'concise',
 						...extra,
 					})
 					expect(pageOf(first)).toMatchObject({ returned: 100, has_more: true })
 					const second = await callRaw(bigHarness, 'list_objects', {
 						workspace_id: WS,
 						limit: 100,
+						// Concise rows, so a whole page of 100 fits under the response size cap.
+						detail: 'concise',
 						cursor: first.structured.next_cursor,
 						...extra,
 					})

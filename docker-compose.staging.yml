@@ -30,6 +30,7 @@ services:
   # no /var/run/docker.sock mount (so no agent sessions here), no agent-base build,
   # no GitHub App, no Resend, no prod PostHog. Do not add them back.
   app:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
@@ -67,7 +68,7 @@ services:
       # Tester flag vars (see .claude/rules/feature-flags.md). Unregistered flag ids
       # resolve to false. Leave actor ids empty until a staging user exists.
       FF_TESTER_ACTOR_IDS: ${FF_TESTER_ACTOR_IDS:-}
-      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-mcp-oauth-consent}
+      FF_TESTER_FEATURES: ${FF_TESTER_FEATURES:-}
     depends_on:
       postgres:
         condition: service_healthy

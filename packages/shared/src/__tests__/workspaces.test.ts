@@ -15,7 +15,7 @@ describe('workspaceSettingsSchema', () => {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
-			loop: 'Loop',
+			loop: 'Flow',
 		})
 		expect(result.statuses.insight).toEqual([
 			'new',
@@ -214,5 +214,28 @@ describe('workspaceParamsSchema', () => {
 
 	it('rejects non-uuid', () => {
 		expect(() => workspaceParamsSchema.parse({ id: 'abc' })).toThrow()
+	})
+})
+
+describe('list_views setting', () => {
+	const row = { name: 'Pipeline', file_id: uuid }
+
+	it('keeps one list of { name, file_id } rows per object type', () => {
+		const parsed = updateWorkspaceSchema.parse({
+			settings: { list_views: { contact: [row], all: [row] } },
+		})
+		expect(parsed.settings?.list_views).toEqual({ contact: [row], all: [row] })
+	})
+
+	it('is absent unless written, so existing settings read back unchanged', () => {
+		expect(workspaceSettingsSchema.parse({}).list_views).toBeUndefined()
+	})
+
+	it('rejects a row with a bad file id or a name that is empty or too long', () => {
+		const write = (r: unknown) =>
+			updateWorkspaceSchema.safeParse({ settings: { list_views: { contact: [r] } } })
+		expect(write({ name: 'x', file_id: 'not-a-uuid' }).success).toBe(false)
+		expect(write({ name: '  ', file_id: uuid }).success).toBe(false)
+		expect(write({ name: 'x'.repeat(31), file_id: uuid }).success).toBe(false)
 	})
 })

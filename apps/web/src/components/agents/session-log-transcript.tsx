@@ -100,6 +100,8 @@ export interface ActivityStep {
 	id: string
 	kind: 'text' | 'tool_use' | 'thinking' | 'user' | 'error'
 	text: string
+	/** The raw tool name, set on `tool_use` steps. `text` is its display form. */
+	tool?: string
 }
 
 export interface MessageActivitySegment {
@@ -202,7 +204,12 @@ export function segmentActivityByMessage(logs: SessionLogResponse[]): {
 			if (event.kind === 'tool_use' && summary === CONVERSATION_REPLY_LABEL && cursor.current) {
 				cursor.current.containsReply = true
 			}
-			bucket.push({ id: `${log.id}-${index}`, kind: event.kind, text: summary })
+			bucket.push({
+				id: `${log.id}-${index}`,
+				kind: event.kind,
+				text: summary,
+				tool: event.kind === 'tool_use' ? event.name : undefined,
+			})
 		})
 	}
 	return { segments, unassigned }

@@ -1,3 +1,4 @@
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
 import { PageHeader } from '@/components/layout/page-header'
 import {
 	type FailedAgent,
@@ -9,9 +10,9 @@ import { isLiveLoopPill } from '@/components/loops/loop-pill'
 import { LoopRow } from '@/components/loops/loop-row'
 import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
-import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { PageSearchInput } from '@/components/shared/page-search-input'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -26,6 +27,7 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useLoops } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { usePlanUsage } from '@/hooks/use-plan-usage'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useUpdateTrigger } from '@/hooks/use-triggers'
@@ -36,7 +38,7 @@ import {
 import { getActiveAgentSessions } from '@/lib/agent-status'
 import type { DisplaySettingsBody, LoopSummary } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronRight, LayoutList, RefreshCw, Rows3 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -69,6 +71,7 @@ type LoopTab = 'all' | 'to-decide' | 'running'
 
 const NO_AREA = '__none'
 const NO_AREA_LABEL = 'No team'
+const areaLabel = (key: string) => (key === NO_AREA ? NO_AREA_LABEL : key)
 const TAB_LABEL: Record<Exclude<LoopTab, 'all'>, string> = {
 	'to-decide': 'Needs you',
 	running: 'Running',
@@ -95,7 +98,14 @@ function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 	component: LoopsRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
+	errorComponent: ({ error, reset }) => (
+		<RouteError
+			error={error}
+			reset={reset}
+			title="This page could not load"
+			message="Something went wrong on our side. Try again, or reload the page."
+		/>
+	),
 })
 
 function LoopsRoute() {
@@ -115,7 +125,6 @@ function LoopsRoute() {
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
-	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
 	// Collapsed by default: the automations are background plumbing, not what the page is for.
 	const [automationsOpen, setAutomationsOpen] = useState(false)
 	const [tab, setTab] = useState<LoopTab>('all')
@@ -134,8 +143,14 @@ function LoopsRoute() {
 	}, [])
 
 	const { data: billingUsage } = useBillingUsage(workspaceId)
-	const showNoCreditsPill =
-		typeof billingUsage?.credit_balance_cents === 'number'
+	// Top-up is closed: the pill says Upgrade and opens Billing to pick a plan. With
+	// the percent display on it follows the 100% rule.
+	const planPercentOn = usePlanPercentEnabled()
+	const { state: planUsage } = usePlanUsage(workspaceId)
+	const navigate = useNavigate()
+	const showNoCreditsPill = planPercentOn
+		? planUsage?.paused === true
+		: typeof billingUsage?.credit_balance_cents === 'number'
 			? billingUsage.credit_balance_cents <= 0
 			: false
 
@@ -210,19 +225,37 @@ function LoopsRoute() {
 		[sortedLoops, tab, areaFilter, words],
 	)
 
-	// The Display menu's Show and Area rows. Counts come off the unfiltered list
-	// so a row's number stays put while it is the active filter.
-	const filterSections = useMemo<DisplayFilterSectionModel[]>(() => {
-		const areaCounts = new Map<string, number>()
+	// Per-tag flow counts and the tag order (A to Z, untagged last), shared by the
+	// Display menu's Area rows and the pill row above the list. Counts come off the
+	// unfiltered list so a number stays put while it is the active filter.
+	const { areaCounts, areas } = useMemo(() => {
+		const counts = new Map<string, number>()
 		for (const loop of sortedLoops) {
 			const key = loop.tags[0] ?? NO_AREA
-			areaCounts.set(key, (areaCounts.get(key) ?? 0) + 1)
+			counts.set(key, (counts.get(key) ?? 0) + 1)
 		}
-		const areas = [...areaCounts.keys()].sort((a, b) => {
+		const ordered = [...counts.keys()].sort((a, b) => {
 			if (a === NO_AREA || b === NO_AREA) return a === NO_AREA ? 1 : -1
 			return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
 		})
-		const areaLabel = (key: string) => (key === NO_AREA ? NO_AREA_LABEL : key)
+		return { areaCounts: counts, areas: ordered }
+	}, [sortedLoops])
+	// Areas only exist once some flow carries a tag.
+	const hasAreas = areas.some((key) => key !== NO_AREA)
+	const areaTabs = useMemo(
+		() => [
+			{ label: 'All', value: undefined as string | undefined, count: sortedLoops.length },
+			...areas.map((key) => ({
+				label: areaLabel(key),
+				value: key as string | undefined,
+				count: areaCounts.get(key),
+			})),
+		],
+		[areas, areaCounts, sortedLoops.length],
+	)
+
+	// The Display menu's Show and Area rows.
+	const filterSections = useMemo<DisplayFilterSectionModel[]>(() => {
 		const sections: DisplayFilterSectionModel[] = [
 			{
 				id: 'show',
@@ -238,8 +271,7 @@ function LoopsRoute() {
 				})),
 			},
 		]
-		// Areas only exist once some flow carries a tag.
-		if (areas.some((key) => key !== NO_AREA)) {
+		if (hasAreas) {
 			sections.push({
 				id: 'area',
 				label: 'Area',
@@ -255,7 +287,7 @@ function LoopsRoute() {
 			})
 		}
 		return sections
-	}, [sortedLoops, tab, areaFilter])
+	}, [sortedLoops, tab, areaFilter, areas, areaCounts, hasAreas])
 	const activeFilterCount = (tab !== 'all' ? 1 : 0) + (areaFilter !== undefined ? 1 : 0)
 	// Sections follow the loops' first free-form tag (`metadata.tags`: team,
 	// business unit, ...), A to Z, untagged last. With no tags anywhere the list
@@ -321,6 +353,20 @@ function LoopsRoute() {
 					<strong className="font-bold text-foreground">{brief.lead}</strong>
 				</p>
 			)}
+			{hasAreas && !loopsLoading && (
+				// Same chips as the team row on Agents. Scrolls sideways on touch widths
+				// rather than wrapping.
+				<div className="mb-6 flex min-h-8 flex-nowrap items-center gap-2 overflow-x-auto md:flex-wrap md:overflow-visible">
+					<FilterTabs
+						variant="chip-outline"
+						aria-label="Filter flows by tag"
+						className="shrink-0 md:shrink md:flex-wrap md:overflow-visible"
+						tabs={areaTabs}
+						value={areaFilter}
+						onChange={(area) => setAreaFilter(area === areaFilter ? undefined : area)}
+					/>
+				</div>
+			)}
 			{loopsLoading ? (
 				<ListSkeleton />
 			) : isLoopsError && !loops ? (
@@ -370,7 +416,12 @@ function LoopsRoute() {
 													loop.agentIds.filter((id) => workingAgentIds.has(id)).length
 												}
 												showNoCreditsPill={showNoCreditsPill}
-												onNoCreditsClick={() => setBuyCreditsOpen(true)}
+												onNoCreditsClick={() =>
+													navigate({
+														to: '/$workspaceId/settings/billing',
+														params: { workspaceId },
+													})
+												}
 											/>
 										))
 									)}
@@ -459,13 +510,6 @@ function LoopsRoute() {
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
-			{billingUsage?.credit_topup_available && (
-				<BuyCreditsDialog
-					open={buyCreditsOpen}
-					onOpenChange={setBuyCreditsOpen}
-					workspaceId={workspaceId}
-				/>
-			)}
 		</div>
 	)
 }

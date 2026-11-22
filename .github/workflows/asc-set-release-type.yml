@@ -1,0 +1,75 @@
+name: App Store release type
+
+# Manual only. Sets how one App Store version of the iPhone app is released, then reads it back:
+#   AFTER_APPROVAL  goes live as soon as Apple approves it
+#   MANUAL          waits until someone presses Release
+# It never submits or releases anything, and it refuses a version Apple has already approved
+# (.github/scripts/asc-set-release-type.mjs). To undo a change, run it again with the other value.
+#
+# Uses the same App Store Connect secrets as ios-testflight.yml (ASC_KEY_ID, ASC_ISSUER_ID,
+# ASC_KEY_P8). A Linux job: it only talks to the App Store Connect API.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App Store version to change, for example 1.1'
+        type: string
+        required: true
+      release_type:
+        description: 'Release type to set (undo = the other value)'
+        type: choice
+        options:
+          - AFTER_APPROVAL
+          - MANUAL
+        default: AFTER_APPROVAL
+
+# Not the ios-testflight group on purpose: this must not queue behind a macOS upload.
+concurrency:
+  group: asc-set-release-type
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  set-release-type:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - name: Check secrets
+        run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8" ]; then
+            echo "::error::App Store Connect secrets (ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8) are not set."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Write the App Store Connect key
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Set the release type
+        env:
+          SUBMIT_VERSION: ${{ inputs.version }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            node .github/scripts/asc-set-release-type.mjs
+
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

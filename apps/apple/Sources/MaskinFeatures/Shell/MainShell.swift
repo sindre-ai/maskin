@@ -24,6 +24,10 @@ public struct MainShell: View {
 	/// Settings > Advanced > Preview > Show offline banner: draws the banner without losing the connection.
 	@AppStorage(StatePreview.offlineKey) private var previewOffline = false
 	@Environment(\.scenePhase) private var scenePhase
+	@Environment(\.openURL) private var openURL
+	/// The workspace signed up through the card step and has no card yet (billing says so). The
+	/// card form is on the web: the banner sends the person there.
+	@State private var awaitingCard = false
 
 	public init(environment: AppEnvironment, runtime: AppRuntime) {
 		self.environment = environment
@@ -77,10 +81,24 @@ public struct MainShell: View {
 			await badges.start(environment: environment)
 		}
 		// Profile pictures: loaded per workspace and again on return to the app, so one set on the web shows.
-		.environment(\.actorPictures, ActorPictures { [pictures] in pictures.url(for: $0) })
+		.environment(
+			\.actorPictures,
+			ActorPictures(
+				url: { [pictures] in pictures.url(for: $0) },
+				initials: { [pictures] in pictures.initials(for: $0) }))
 		.task(id: environment.workspaceId) { await pictures.load(environment: environment) }
 		.onChange(of: scenePhase) { _, phase in
 			if phase == .active { Task { await pictures.load(environment: environment) } }
+		}
+		// The trial's card: checked per workspace and again on return to the app, so adding the
+		// card on the web clears the banner. Straight after sign-up the card step opens once.
+		.task(id: environment.workspaceId) {
+			let fresh = environment.auth.takeJustSignedUp()
+			await refreshAwaitingCard()
+			if fresh, awaitingCard { openCardStep() }
+		}
+		.onChange(of: scenePhase) { _, phase in
+			if phase == .active { Task { await refreshAwaitingCard() } }
 		}
 		.onAppear {
 			// A call keeps running wherever you are; this returns you to its thread.
@@ -108,22 +126,30 @@ public struct MainShell: View {
 			actions: { Button("OK", role: .cancel) {} }, message: { Text(liveCalls.problem ?? "") })
 		.focusedSceneValue(\.appRuntime, runtime)
 		.sheet(isPresented: $showQueue) { OutboxQueueSheet(queue: queue) }
-		.safeAreaInset(edge: .top, spacing: 0) {
-			OfflineBanner(
-				isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
-				actionTitle: queuedCount > 0 ? "View" : "Retry"
-			) {
-				if queuedCount > 0 {
-					showQueue = true
-				} else {
-					Task {
-						runtime.syncCoordinator?.requestRefresh(reason: "retry")
-						await runtime.forYou.store.refresh()
+		.topBanner(isVisible: awaitingCard || !runtime.isOnline || previewOffline) {
+			VStack(spacing: 0) {
+				OfflineBanner(
+					isVisible: !runtime.isOnline || previewOffline, message: offlineMessage, symbol: "icloud.slash",
+					actionTitle: queuedCount > 0 ? "View" : "Retry"
+				) {
+					if queuedCount > 0 {
+						showQueue = true
+					} else {
+						Task {
+							runtime.syncCoordinator?.requestRefresh(reason: "retry")
+							await runtime.forYou.store.refresh()
+						}
 					}
 				}
-			}
 				.padding(.horizontal, MaskinSpace.s8)
 				.animation(MaskinMotion.standard, value: runtime.isOnline || previewOffline)
+				OfflineBanner(
+					isVisible: awaitingCard, message: TrialCardStep.notStartedMessage, symbol: "creditcard",
+					actionTitle: TrialCardStep.actionTitle
+				) { openCardStep() }
+					.padding(.horizontal, MaskinSpace.s8)
+					.animation(MaskinMotion.standard, value: awaitingCard)
+			}
 		}
 		// A decision is on screen: the moment to explain notifications (never at first launch).
 		.onChange(of: runtime.forYou.store.needsCount, initial: true) { _, count in
@@ -165,7 +191,10 @@ public struct MainShell: View {
 			default: break
 			}
 		}
-		.sheet(item: $runtime.presentation, onDismiss: { runtime.deviceCode = nil }) { presentation in
+		.sheet(item: $runtime.presentation, onDismiss: {
+			runtime.deviceCode = nil
+			runtime.settingsRoute = nil
+		}) { presentation in
 			PresentationContent(
 				presentation: presentation, environment: environment, runtime: runtime)
 		}
@@ -177,6 +206,23 @@ public struct MainShell: View {
 
 	private var queue: OutboxQueue {
 		OutboxQueue(outboxes: [runtime.forYou.outbox, ChatsRuntime.shared(environment: environment).outbox])
+	}
+
+	private func refreshAwaitingCard() async {
+		guard let workspaceId = environment.workspaceId else {
+			awaitingCard = false
+			return
+		}
+		let store = BillingStore(api: APISettingsSource(client: environment.client, workspaceID: workspaceId))
+		await store.load()
+		// A failed read keeps what was last known: no figure is not the same as no banner.
+		if let usage = store.usage { awaitingCard = usage.awaitingCard }
+	}
+
+	private func openCardStep() {
+		if let workspaceId = environment.workspaceId, let url = TrialCardStep.url(workspaceId: workspaceId) {
+			openURL(url)
+		}
 	}
 
 	/// Writes (decisions, messages) still waiting for the connection, across For you and Chats.
@@ -204,6 +250,43 @@ private struct AdaptiveTabs: View {
 	@State private var showWorkspaces = false
 
 	var body: some View {
+		shell
+			.sheet(isPresented: $showWorkspaces) {
+				WorkspaceSwitcher(environment: environment)
+					.presentationDetents([.medium, .large])
+					.environment(\.shellShowsAvatar, false)
+			}
+	}
+
+	@ViewBuilder private var shell: some View {
+		#if os(iOS)
+			if ShellIdiom.hasRail {
+				// The iPad: the rail picks the tab; the tab view only holds each tab's state, with its own bar hidden.
+				HStack(spacing: 0) {
+					ShellRail(
+						environment: environment, runtime: runtime, badges: badges, switchWorkspace: { showWorkspaces = true })
+					tabs
+						.tabViewStyle(.tabBarOnly)
+						.toolbarVisibility(.hidden, for: .tabBar)
+				}
+			} else {
+				standardTabs
+			}
+		#else
+			standardTabs
+		#endif
+	}
+
+	private var standardTabs: some View {
+		tabs
+			.modifier(ShellTabStyle(environment: environment, runtime: runtime, showWorkspaces: $showWorkspaces))
+			.modifier(TeamFoldingTabBar(runtime: runtime))
+			#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
+				.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
+			#endif
+	}
+
+	private var tabs: some View {
 		TabView(selection: $runtime.selectedTab) {
 			ForEach(ShellTab.primary) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
@@ -212,35 +295,71 @@ private struct AdaptiveTabs: View {
 				.badge(tab.badge(runtime: runtime, badges: badges).label.map { Text($0) })
 			}
 			// The detached round button on iOS 26 (a plain trailing tab before that, a sidebar entry
-			// on iPad and the Mac). It rides the system search role for the detached look, but it is a
+			// on the Mac). It rides the system search role for the detached look, but it is a
 			// button: picking it starts a chat with the Chief of Staff (see `AppRuntime.selectedTab`)
-			// and the tab you were on stays. Search lives in the profile sheet.
-			Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
-				Color.clear
+			// and the tab you were on stays. Search lives in the profile sheet. Not on the iPad: its
+			// "+" is on each screen (For you starts the same chat).
+			if !ShellIdiom.isPad {
+				Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
+					Color.clear
+				}
 			}
 		}
-		.tabViewStyle(.sidebarAdaptable)
-		// The sidebar opens with the workspace and a Switch button (4-iPad.md).
-		.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
-		// The profile lives at the foot of the sidebar too (4-iPad.md).
-		.tabViewSidebarFooter {
-			SidebarProfileRow(
-				name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
-			) { runtime.showProfile = true }
-		}
-		.sheet(isPresented: $showWorkspaces) {
-			WorkspaceSwitcher(environment: environment)
-				.presentationDetents([.medium, .large])
-				.environment(\.shellShowsAvatar, false)
-		}
-		.modifier(TeamFoldingTabBar(runtime: runtime))
-		#if canImport(UIKit) && !os(watchOS) && !os(tvOS)
-			.background { TabBarBadgeStyler().frame(width: 0, height: 0) }
-		#endif
 	}
 }
 
-/// The top of the iPad sidebar: the logo tile, the workspace name, and Switch.
+/// A notice at the top of the app. iPhone and Mac inset it above the content. The iPad's bar (the rail,
+/// or the top tab bar on iOS 17) reaches the top of the screen, so an inset would cover it: there the
+/// notice sits across the full width above the app and pushes it down, with a little room below it.
+private struct TopBanner<Banner: View>: ViewModifier {
+	let isVisible: Bool
+	let banner: Banner
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		if ShellIdiom.isPad {
+			VStack(spacing: 0) {
+				banner.padding(.bottom, isVisible ? MaskinSpace.s3 : 0)
+				// With no notice the content keeps running under the status bar, as before.
+				content.ignoresSafeArea(.container, edges: isVisible ? [] : .top)
+			}
+		} else {
+			content.safeAreaInset(edge: .top, spacing: 0) { banner }
+		}
+	}
+}
+
+extension View {
+	fileprivate func topBanner<Banner: View>(
+		isVisible: Bool, @ViewBuilder _ banner: () -> Banner
+	) -> some View {
+		modifier(TopBanner(isVisible: isVisible, banner: banner()))
+	}
+}
+
+/// The tab view's style: a bottom bar on the iPhone, a sidebar on the Mac. (The iPad has the rail
+/// and never gets here.)
+@available(iOS 18, macOS 15, *)
+private struct ShellTabStyle: ViewModifier {
+	let environment: AppEnvironment
+	let runtime: AppRuntime
+	@Binding var showWorkspaces: Bool
+
+	func body(content: Content) -> some View {
+		content
+			.tabViewStyle(.sidebarAdaptable)
+			// The sidebar opens with the workspace and a Switch button (4-iPad.md).
+			.tabViewSidebarHeader { SidebarWorkspaceHeader(name: environment.workspaces.selected?.name) { showWorkspaces = true } }
+			// The profile lives at the foot of the sidebar too (4-iPad.md).
+			.tabViewSidebarFooter {
+				SidebarProfileRow(
+					name: environment.auth.session?.name, actorID: environment.auth.session?.actorId
+				) { runtime.showProfile = true }
+			}
+	}
+}
+
+/// The top of the Mac sidebar: the logo tile, the workspace name, and Switch.
 private struct SidebarWorkspaceHeader: View {
 	let name: String?
 	let switchWorkspace: () -> Void
@@ -262,7 +381,7 @@ private struct SidebarWorkspaceHeader: View {
 	}
 }
 
-/// The signed-in person at the foot of the iPad sidebar; opens the profile.
+/// The signed-in person at the foot of the Mac sidebar; opens the profile.
 private struct SidebarProfileRow: View {
 	let name: String?
 	let actorID: String?
@@ -309,6 +428,15 @@ private struct PresentationContent: View {
 			if let workspaceID = environment.workspaceId {
 				TriggersSheet(environment: environment, workspaceID: workspaceID, initialSelection: id)
 			}
+		case .session(let id):
+			if let workspaceID = environment.workspaceId {
+				DetailSheet {
+					SessionLogsView(
+						sessionID: id,
+						api: APISessionLogsSource(client: environment.client, workspaceID: workspaceID),
+						session: AgentSession(id: id, actorID: "", status: ""))
+				}
+			}
 		case .profile:
 			ProfileSheet(environment: environment, runtime: runtime)
 		case .files:
@@ -322,10 +450,10 @@ private struct PresentationContent: View {
 				if let code = runtime.deviceCode {
 					SettingsScreen(environment: environment, deviceCode: code)
 				} else {
-					SettingsScreen(environment: environment)
+					SettingsScreen(environment: environment, initialRoute: runtime.settingsRoute)
 				}
 			}
-			.id(runtime.deviceCode)
+			.id("\(runtime.deviceCode ?? "")|\(runtime.settingsRoute.map { "\($0)" } ?? "")")
 			.environment(runtime)
 		}
 	}
@@ -359,7 +487,7 @@ extension ShellTab {
 	/// The badge on the tab: open decisions on For you (a dot when only updates are unread), unread
 	/// conversations on Team. Nothing when there is nothing.
 	@MainActor
-	fileprivate func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
+	func badge(runtime: AppRuntime, badges: ShellBadges) -> TabBadge {
 		switch self {
 		case .forYou:
 			let store = runtime.forYou.store

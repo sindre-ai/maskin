@@ -103,6 +103,7 @@
 	--color-border-hover: var(--border-hover);
 	--color-border-subtle: var(--border-subtle);
 	--color-input: var(--input);
+	--color-control: var(--control-border);
 	--color-ring: var(--ring);
 	--color-brand: var(--brand);
 	--color-brand-foreground: var(--brand-foreground);
@@ -274,6 +275,21 @@
 @utility duration-slide {
 	transition-duration: var(--duration-slide);
 }
+/* Grows a small icon button's tap area to 44px at 1024px and below without
+   changing how it looks. The element must be positioned (add `relative`). */
+@utility touch-hit {
+	@media (max-width: 1024px) {
+		&::after {
+			content: "";
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			width: max(100%, 44px);
+			height: max(100%, 44px);
+			transform: translate(-50%, -50%);
+		}
+	}
+}
 
 /* ------------------------------------------------------------------------- */
 /* v2 tokens                                                                 */
@@ -325,6 +341,10 @@
 	   and --border, nearer the surface. */
 	--border-subtle: #eef0f4;
 	--input: #e5e8ec;
+	/* Edge of a field, select or outline button. 3.52:1 on --background and --card
+	   (WCAG 1.4.11 asks 3:1 for a control boundary); --input stays the quiet
+	   fill for decoration such as the switch track. */
+	--control-border: #7e89a0;
 	--ring: #7e89a0;
 
 	/* Brand — the indigo used for links and primary actions on light surfaces */
@@ -486,6 +506,8 @@
 	   than one step down from --background. */
 	--border-subtle: #1a1d23;
 	--input: #23272e;
+	/* 3.26:1 on --background, 3.11:1 on --card. */
+	--control-border: #5b6577;
 	--ring: #5b6577;
 
 	/* Brand stays indigo but shifts one stop lighter so it reads on dark. */

@@ -7,6 +7,7 @@ import {
 	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
+	OwnAppDialog,
 	SkjaldConnectDialog,
 } from '@/components/integrations/provider-dialogs'
 import { ProviderLogo } from '@/components/integrations/provider-logo'
@@ -22,6 +23,7 @@ import {
 	useConnectIntegration,
 	useDisconnectIntegration,
 	useLinkableGithubInstallations,
+	useOAuthApp,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -33,7 +35,7 @@ import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Check, ChevronDown, Link2, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
@@ -56,6 +58,7 @@ const PROVIDER_TAGLINES: Record<string, string> = {
 	'google-drive': 'Files',
 	'linkedin-unipile': 'Posting and outreach',
 	linear: 'Issues',
+	microsoft: 'Teams transcripts',
 	posthog: 'Product analytics',
 	resend: 'Email sending',
 	slack: 'Channels and triggers',
@@ -69,6 +72,8 @@ export function ProviderRow({
 	onRequestSkjaldConnect,
 	onRequestResendConnect,
 	onRequestDeepdotsConnect,
+	onRequestOwnApp,
+	ownAppSaved = false,
 	linkableCount,
 	onRequestLink,
 	returnTo,
@@ -89,6 +94,10 @@ export function ProviderRow({
 	onRequestResendConnect?: () => void
 	/** Deepdots signs in with an email and password, so Connect opens a two-field form. */
 	onRequestDeepdotsConnect?: () => void
+	/** The tool signs in with the workspace's own app (customerApp). Opens the paste form. */
+	onRequestOwnApp?: () => void
+	/** The workspace already saved that app, so Connect goes straight to the sign-in. */
+	ownAppSaved?: boolean
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -133,8 +142,27 @@ export function ProviderRow({
 			onRequestDeepdotsConnect()
 			return
 		}
+		if (onRequestOwnApp && !ownAppSaved) {
+			onRequestOwnApp()
+			return
+		}
 		connect.mutate({ provider: provider.name, returnTo })
 	}
+	// Changing the saved app is a Settings job; the chat card only connects. It sits under the name,
+	// not beside Connect, so a narrow screen keeps the whole tool name.
+	const changeAppLink =
+		onRequestOwnApp && ownAppSaved && variant === 'settings' ? (
+			<ViewerTooltip>
+				<button
+					type="button"
+					className="w-fit text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+					onClick={onRequestOwnApp}
+					disabled={!canWrite}
+				>
+					Change app
+				</button>
+			</ViewerTooltip>
+		) : null
 
 	// An install whose token predates a scope the provider now requires still
 	// works for everything it was granted, so it stays "connected" — but say
@@ -156,6 +184,13 @@ export function ProviderRow({
 		workspaceId,
 		provider.name,
 	)
+
+	// A line a provider keeps on its own row (Microsoft: what it covers, or that the company's
+	// IT admin has not switched transcripts on). Written by the server, shown as is.
+	const statusNote =
+		isConnected && typeof integration.config?.status_note === 'string'
+			? integration.config.status_note
+			: null
 
 	const connectedLabel = isConnected
 		? needsReconnect
@@ -223,6 +258,8 @@ export function ProviderRow({
 			}
 			notes={
 				<>
+					{statusNote && <p className="text-xs text-muted-foreground">{statusNote}</p>}
+					{changeAppLink}
 					{isDrive && (
 						<>
 							<p className="text-xs text-muted-foreground">{DRIVE_COPY.providerCard.description}</p>
@@ -683,6 +720,61 @@ function ConnectedButton() {
 }
 
 /**
+ * Draws a provider's row, and for a tool that wants the workspace's own sign-in app, the paste form
+ * and what the row needs to open it. Any other tool is drawn untouched and never asks the server.
+ */
+function RowWithOwnApp({
+	enabled,
+	provider,
+	workspaceId,
+	returnTo,
+	connected,
+	renderRow,
+}: {
+	enabled: boolean
+	provider: ProviderInfo
+	workspaceId: string
+	returnTo?: string
+	connected: boolean
+	renderRow: (ownApp: { onRequestOwnApp?: () => void; ownAppSaved?: boolean }) => ReactNode
+}) {
+	if (!enabled) return <>{renderRow({})}</>
+	return (
+		<OwnAppRow
+			provider={provider}
+			workspaceId={workspaceId}
+			returnTo={returnTo}
+			connected={connected}
+			renderRow={renderRow}
+		/>
+	)
+}
+
+function OwnAppRow({
+	provider,
+	workspaceId,
+	returnTo,
+	connected,
+	renderRow,
+}: Omit<Parameters<typeof RowWithOwnApp>[0], 'enabled'>) {
+	const [open, setOpen] = useState(false)
+	const { data: app } = useOAuthApp(workspaceId, provider.name)
+	return (
+		<>
+			{renderRow({ onRequestOwnApp: () => setOpen(true), ownAppSaved: app?.configured === true })}
+			<OwnAppDialog
+				workspaceId={workspaceId}
+				provider={provider}
+				open={open}
+				onClose={() => setOpen(false)}
+				returnTo={returnTo}
+				connected={connected}
+			/>
+		</>
+	)
+}
+
+/**
  * One provider's whole connect experience — the row plus every dialog its flow
  * can open (API key, Skjald how-to, GitHub "add existing", Resend wizard).
  *
@@ -741,27 +833,39 @@ export function ProviderConnectRow({
 					variant={variant}
 				/>
 			) : (
-				<ProviderRow
+				// A tool whose vendor wants the customer's own sign-in app: Connect asks for it first.
+				// Its own component, so the saved-app lookup only runs for those tools.
+				<RowWithOwnApp
+					enabled={provider.customerApp === true}
 					provider={provider}
-					integration={installations[0]}
 					workspaceId={workspaceId}
-					onRequestApiKey={() => {
-						setApiKey('')
-						setApiKeyOpen(true)
-					}}
-					onRequestSkjaldConnect={openSkjald}
-					onRequestResendConnect={
-						provider.name === 'resend' ? () => setResendOpen(true) : undefined
-					}
-					onRequestDeepdotsConnect={
-						provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
-					}
-					linkableCount={linkableCount}
-					onRequestLink={() => setLinkGithubOpen(true)}
 					returnTo={returnTo}
-					variant={variant}
-					reconnect={reconnect}
-					introState={introState}
+					connected={installations.length > 0}
+					renderRow={(ownApp) => (
+						<ProviderRow
+							provider={provider}
+							integration={installations[0]}
+							workspaceId={workspaceId}
+							onRequestApiKey={() => {
+								setApiKey('')
+								setApiKeyOpen(true)
+							}}
+							onRequestSkjaldConnect={openSkjald}
+							onRequestResendConnect={
+								provider.name === 'resend' ? () => setResendOpen(true) : undefined
+							}
+							onRequestDeepdotsConnect={
+								provider.name === 'deepdots' ? () => setDeepdotsOpen(true) : undefined
+							}
+							{...ownApp}
+							linkableCount={linkableCount}
+							onRequestLink={() => setLinkGithubOpen(true)}
+							returnTo={returnTo}
+							variant={variant}
+							reconnect={reconnect}
+							introState={introState}
+						/>
+					)}
 				/>
 			)}
 			{provider.authType === 'api_key' && (

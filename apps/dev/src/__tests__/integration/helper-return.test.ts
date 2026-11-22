@@ -168,7 +168,7 @@ describe('Helper return (integration)', () => {
 		expect((row.data as { content: string }).content).toContain('Helper ran out of time')
 	})
 
-	it('a completed create_session helper returns, with attention 1 and no retry advice', async () => {
+	it('a completed create_sub_chat helper returns, with attention 1 and no retry advice', async () => {
 		const s = await senderSession()
 		const h = await helperSession(s, { status: 'completed', result: { exit_code: 0 } })
 		await returnToSender(db, h.id)
@@ -317,6 +317,70 @@ describe('Helper return (integration)', () => {
 			expect(msgs[0].content).toContain('Helper stopped with an error')
 			// The server-written marker is not stripped (only client input is).
 			expect(msgs[0].metadata).toMatchObject({ helper_return: h.id })
+			// A sender that worked in the main chat is told in the main chat.
+			expect(msgs[0].threadRootId).toBeNull()
+		})
+
+		describe('a sender that worked in a thread', () => {
+			const threadedChat = async () => {
+				const [conv] = await db
+					.insert(conversations)
+					.values({ workspaceId, createdBy: human, title: 'chat' })
+					.returning()
+				const say = (threadRootId: number | null) =>
+					insertConversationMessage(db, {
+						conversationId: conv.id,
+						workspaceId,
+						actorId: human,
+						content: 'hello',
+						metadata: null,
+						sessionId: null,
+						threadRootId,
+					})
+				const root = await say(null)
+				const reply = await say(root?.id as number)
+				return { conv, rootId: root?.id as number, replyId: reply?.id as number }
+			}
+			const returned = async (conversationId: string, helperId: string) => {
+				const rows = await db
+					.select()
+					.from(messages)
+					.where(eq(messages.conversationId, conversationId))
+				return rows.filter(
+					(m) => (m.metadata as { helper_return?: string } | null)?.helper_return === helperId,
+				)
+			}
+
+			it('returns into the sender’s own thread when it is a thread session', async () => {
+				const { conv, rootId } = await threadedChat()
+				const s = await senderSession({
+					initiatedFromObjectId: null,
+					conversationId: conv.id,
+					threadRootId: rootId,
+				})
+				const h = await helperSession(s, { initiatedFromObjectId: null })
+
+				expect(await returnToSender(db, h.id)).toEqual({
+					returned: true,
+					destination: 'conversation',
+				})
+				const [msg] = await returned(conv.id, h.id)
+				expect(msg.threadRootId).toBe(rootId)
+			})
+
+			it('returns into the thread of the message that started the sender’s last turn', async () => {
+				const { conv, rootId, replyId } = await threadedChat()
+				const s = await senderSession({ initiatedFromObjectId: null, conversationId: conv.id })
+				await insertSessionLog(db, s.id, {
+					stream: 'stdout',
+					content: JSON.stringify({ type: 'user', maskin_message_id: replyId }),
+				})
+				const h = await helperSession(s, { initiatedFromObjectId: null })
+
+				await returnToSender(db, h.id)
+				const [msg] = await returned(conv.id, h.id)
+				expect(msg.threadRootId).toBe(rootId)
+			})
 		})
 
 		it('with no destination it posts nothing and records no_destination', async () => {
@@ -569,7 +633,7 @@ describe('Helper return (integration)', () => {
 			expect(await commentsOn(objectId)).toHaveLength(0)
 		})
 
-		it('five agent messages in a row drop the turn, and that is recorded as its own skip reason', async () => {
+		it('many agent messages in a row do not drop the return: the sender is still woken', async () => {
 			const conv = await newChat()
 			const s = await senderSession({
 				status: 'running',
@@ -577,7 +641,7 @@ describe('Helper return (integration)', () => {
 				conversationId: conv.id,
 				initiatedFromObjectId: null,
 			})
-			for (let i = 0; i < 4; i++) {
+			for (let i = 0; i < 25; i++) {
 				await insertConversationMessage(db, {
 					conversationId: conv.id,
 					workspaceId,
@@ -591,13 +655,11 @@ describe('Helper return (integration)', () => {
 			const { manager, writeInput } = fakeManager(s)
 
 			expect(await returnToSender(db, h.id, { sessionManager: manager })).toEqual({
-				returned: false,
-				reason: 'agent_message_cap',
+				returned: true,
+				destination: 'conversation',
 			})
-			expect(writeInput).not.toHaveBeenCalled()
-			expect((await skippedEvents(h.id)).map((e) => e.data)).toEqual([
-				{ reason: 'agent_message_cap' },
-			])
+			expect(writeInput).toHaveBeenCalledTimes(1)
+			expect(await skippedEvents(h.id)).toEqual([])
 		})
 	})
 

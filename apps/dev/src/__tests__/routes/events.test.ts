@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { clearSessionFrameCaches } from '../../lib/session-frame-cache'
 import type { SessionManager } from '../../services/session-manager'
 import { buildEvent, buildSession } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -140,11 +141,15 @@ describe('Events Routes', () => {
 		const participantId = randomUUID()
 		const outsiderId = randomUUID()
 
+		// The session and participant lookups are cached across connections; each test queues its own.
+		beforeEach(() => clearSessionFrameCaches())
+
 		type SseTestEnv = {
 			Variables: {
 				db: Database
 				actorId: string
 				actorType: string
+				workspaceRole?: string
 				notifyBridge: PgNotifyBridge
 				sessionManager: SessionManager
 			}
@@ -155,15 +160,21 @@ describe('Events Routes', () => {
 		// finished and the stream errors out before its frames can be read. This
 		// local app injects a no-op bridge so the replay path runs to completion
 		// (writeFrame -> loadSessionStateChangeFrame) and the stream stays open.
-		function createSseTestApp(actorId: string) {
+		//
+		// The role is set the way authMiddleware does, so the session read gate does
+		// not spend a queued DB result looking it up. `bridgeOn` lets a test fire the
+		// live handler the route registers.
+		function createSseTestApp(actorId: string, workspaceRole = 'member') {
 			const app = new OpenAPIHono<SseTestEnv>()
 			const { db, mockResults } = createTestContext()
+			const bridgeOn = vi.fn()
 			app.use('*', async (c, next) => {
 				c.set('db', db)
 				c.set('actorId', actorId)
 				c.set('actorType', 'human')
+				c.set('workspaceRole', workspaceRole)
 				c.set('notifyBridge', {
-					on: vi.fn(),
+					on: bridgeOn,
 					off: vi.fn(),
 					emit: vi.fn(),
 				} as unknown as PgNotifyBridge)
@@ -171,7 +182,7 @@ describe('Events Routes', () => {
 				await next()
 			})
 			app.route('/api/events', eventsRoutes)
-			return { app, mockResults }
+			return { app, mockResults, bridgeOn }
 		}
 
 		// The SSE route holds the connection open with a 15s heartbeat, so
@@ -231,8 +242,12 @@ describe('Events Routes', () => {
 			const { app, mockResults } = createSseTestApp(participantId)
 			mockResults.selectQueue = [
 				[buildSessionEvent()], // replay loop: events since Last-Event-ID
+				[buildSubSessionRow()], // read gate: sessions row
+				[{ type: 'human' }], // read gate: a person started it
+				[{ conversationId }], // read gate: anchor message's conversation
+				[{ conversationId }], // read gate: caller is in that conversation
 				[buildSubSessionRow()], // loadSessionStateChangeFrame: sessions row
-				[{ conversationId }], // isConversationParticipant: participant row
+				[{ actorId: participantId }], // conversation participants
 			]
 
 			const res = await app.request(
@@ -246,11 +261,14 @@ describe('Events Routes', () => {
 			expect(text).toContain(sessionId)
 		})
 
-		it('emits no session.state_changed frame for a non-participant', async () => {
-			const { app, mockResults } = createSseTestApp(outsiderId)
+		it('emits no session.state_changed frame for a reader who is not a participant', async () => {
+			// An admin passes the read gate, so the generic frame lands, but the
+			// delegation-strip frame is still limited to the conversation's participants.
+			const { app, mockResults } = createSseTestApp(outsiderId, 'admin')
 			mockResults.selectQueue = [
 				[buildSessionEvent()],
-				[buildSubSessionRow()],
+				[buildSubSessionRow()], // read gate: sessions row
+				[buildSubSessionRow()], // loadSessionStateChangeFrame: sessions row
 				[], // isConversationParticipant: no row -> not entitled
 			]
 
@@ -265,6 +283,123 @@ describe('Events Routes', () => {
 			expect(text).toContain('event: updated')
 			expect(text).toContain(sessionId)
 			expect(text).not.toContain('session.state_changed')
+		})
+
+		// A session a person started, in a chat the caller is not part of.
+		function buildPrivateSessionRow() {
+			return buildSession({
+				id: sessionId,
+				workspaceId: wsId,
+				createdBy: participantId,
+				triggerId: null,
+				conversationId: null,
+				spawnedByMessageId: null,
+			})
+		}
+
+		function buildSharedSessionRow() {
+			return buildSession({
+				id: sessionId,
+				workspaceId: wsId,
+				triggerId: randomUUID(),
+				conversationId: null,
+				spawnedByMessageId: null,
+			})
+		}
+
+		async function fireLive(bridgeOn: ReturnType<typeof vi.fn>, entityType: string, id: string) {
+			// The route registers its live handler once the stream has started.
+			await vi.waitFor(() => expect(bridgeOn).toHaveBeenCalled())
+			const handler = bridgeOn.mock.calls[0][1] as (event: unknown) => void
+			handler({
+				workspace_id: wsId,
+				actor_id: randomUUID(),
+				action: 'session_updated',
+				entity_type: entityType,
+				entity_id: id,
+				event_id: '9',
+			})
+		}
+
+		it('replays no frame for a session the caller cannot read', async () => {
+			const { app, mockResults } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [
+				[buildSessionEvent()],
+				[buildPrivateSessionRow()], // read gate: sessions row
+				[{ type: 'human' }], // read gate: a person started it, no chat to join
+			]
+
+			const res = await app.request(
+				jsonGet('/api/events', { 'X-Workspace-Id': wsId, 'Last-Event-ID': '4' }),
+			)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(res.status).toBe(200)
+			expect(text).not.toContain('event: updated')
+			expect(text).not.toContain(sessionId)
+		})
+
+		it('replays the frame for a session the caller can read', async () => {
+			const { app, mockResults } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [
+				[buildSessionEvent()],
+				[buildSharedSessionRow()], // read gate: started by a trigger, open to every member
+				[buildSharedSessionRow()], // loadSessionStateChangeFrame: not a sub-session, no strip
+			]
+
+			const res = await app.request(
+				jsonGet('/api/events', { 'X-Workspace-Id': wsId, 'Last-Event-ID': '4' }),
+			)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(text).toContain('event: updated')
+			expect(text).toContain(sessionId)
+		})
+
+		it('sends no live frame for a session the caller cannot read', async () => {
+			const { app, mockResults, bridgeOn } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [[buildPrivateSessionRow()], [{ type: 'human' }]]
+
+			const res = await app.request(jsonGet('/api/events', { 'X-Workspace-Id': wsId }))
+			await fireLive(bridgeOn, 'session', sessionId)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(text).not.toContain('session_updated')
+			expect(text).not.toContain(sessionId)
+		})
+
+		it('sends the live frame for a session the caller can read', async () => {
+			const { app, mockResults, bridgeOn } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [[buildSharedSessionRow()], [buildSharedSessionRow()]]
+
+			const res = await app.request(jsonGet('/api/events', { 'X-Workspace-Id': wsId }))
+			await fireLive(bridgeOn, 'session', sessionId)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(text).toContain('event: session_updated')
+			expect(text).toContain(sessionId)
+		})
+
+		it('sends no frame for a session in another workspace', async () => {
+			const { app, mockResults, bridgeOn } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [[{ ...buildSharedSessionRow(), workspaceId: randomUUID() }]]
+
+			const res = await app.request(jsonGet('/api/events', { 'X-Workspace-Id': wsId }))
+			await fireLive(bridgeOn, 'session', sessionId)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(text).not.toContain(sessionId)
+		})
+
+		it('still sends live frames for events that are not about a session', async () => {
+			const { app, bridgeOn } = createSseTestApp(outsiderId)
+			const objectId = randomUUID()
+
+			const res = await app.request(jsonGet('/api/events', { 'X-Workspace-Id': wsId }))
+			await fireLive(bridgeOn, 'object', objectId)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(text).toContain(objectId)
 		})
 	})
 
@@ -959,6 +1094,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object,
 					// so the thread-reply spawn is unaffected.
@@ -986,6 +1122,7 @@ describe('Events Routes', () => {
 					],
 					[], // thread-reply fan-out: object lookup
 					[{ agentState: 'idle', metadata: null }], // thread-reply fan-out: the agent is not paused by a person
+					[], // the wake-up looks for a person's answer on a held-call card: this is not one
 					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
@@ -1056,6 +1193,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup — the object has a driver, and they are a thread
 					// participant, so the fallback ladder (case 2) will handle them.
@@ -1129,6 +1267,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
@@ -1151,6 +1290,7 @@ describe('Events Routes', () => {
 					[{ id: agentAId, type: 'agent' }],
 					[], // thread-reply fan-out: object lookup
 					[{ agentState: 'idle', metadata: null }], // thread-reply fan-out: the agent is not paused by a person
+					[], // the wake-up looks for a person's answer on a held-call card: this is not one
 					[{ id: agentAId }], // startSession: the agent is a workspace member
 				]
 				mockResults.insert = [newComment]
@@ -1216,6 +1356,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					[{ driver: null }], // driver lookup for the fallback exclusion
 					[
@@ -1259,6 +1400,88 @@ describe('Events Routes', () => {
 				expect(sessionManager.createSession).not.toHaveBeenCalled()
 			})
 
+			it('does NOT spawn thread-reply sessions for an agent reply that mentions someone else', async () => {
+				const objectId = randomUUID()
+				const commenterAgentId = '00000000-0000-0000-0000-000000000bbc'
+				const earlierAgentId = randomUUID()
+				const mentionedAgentId = randomUUID()
+				const rootCommentId = 730300
+				const newCommentId = 730400
+
+				const newComment = buildEvent({
+					id: newCommentId,
+					workspaceId: wsId,
+					actorId: commenterAgentId,
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: {
+						content: 'Noted, no ask for you.',
+						mentions: [mentionedAgentId],
+						parentEventId: rootCommentId,
+					},
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					eventsRoutes,
+					'/api/events',
+					commenterAgentId,
+					'agent',
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				// Full spawn-path data is queued on purpose: without the guard the earlier
+				// agent poster below would be woken, so a missing guard fails this test.
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // object lookup
+					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // the card lookup for a person's reply: no decision, nothing stamped
+					[], // the same card read again for a status button tap: nothing stamped
+					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
+					[], // mirroring the comment into the object's chat: the object has no chat
+					[{ id: mentionedAgentId }], // the mentioned agents
+					[{ driver: null }], // driver lookup for the fallback exclusion
+					[
+						{
+							id: newCommentId,
+							actorId: commenterAgentId,
+							actorType: 'agent',
+							data: { content: 'Noted, no ask for you.', parentEventId: rootCommentId },
+						},
+						{
+							id: 730301,
+							actorId: earlierAgentId,
+							actorType: 'agent',
+							data: { content: 'earlier agent reply', parentEventId: rootCommentId },
+						},
+						{
+							id: rootCommentId,
+							actorId: randomUUID(),
+							actorType: 'human',
+							data: { content: 'Root' },
+						},
+					],
+				]
+				mockResults.insert = [newComment]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'Noted, no ask for you.',
+							mentions: [mentionedAgentId],
+							parent_event_id: rootCommentId,
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
 			it('does NOT spawn a thread-reply session for the agent who authored the new comment', async () => {
 				const objectId = randomUUID()
 				const agentAId = '00000000-0000-0000-0000-000000000aaa'
@@ -1288,6 +1511,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Driver lookup for the fallback exclusion — no driver on this object.
 					[{ driver: null }],
@@ -1367,6 +1591,7 @@ describe('Events Routes', () => {
 					[], // the card lookup for a person's reply: no decision, nothing stamped
 					[], // the same card read again for a status button tap: nothing stamped
 					[], // the same card read again for a delete_agent tap: nothing stamped
+					[], // the same card read again for a done-when tap: nothing stamped
 					[], // mirroring the comment into the object's chat: the object has no chat
 					// Mention resolution inside postComment
 					[{ id: agentAId }],

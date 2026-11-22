@@ -141,7 +141,10 @@ public struct APIObjectsRemote: ObjectsRemote {
 						body: .json(
 							.init(
 								title: patch.title, content: patch.content, status: patch.status,
-								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver))))
+								metadata: try Self.metadataPatch(patch.metadata), driver: patch.driver,
+								chat: patch.chat.map {
+									.init(conversation_id: $0.conversationID, agent_id: $0.agentID)
+								}))))
 			}
 			switch output {
 			case .ok(let ok): return try Self.convert(ok.body.json, as: ObjectDTO.self).model
@@ -255,6 +258,47 @@ public struct APIObjectsRemote: ObjectsRemote {
 		}
 	}
 
+	public func editComment(eventId: Int, content: String) async throws {
+		guard let raw else { throw ObjectsError("Editing a comment isn't available here.") }
+		let request = await makeEditCommentRequest(eventId: eventId, content: content, transport: raw)
+		let data: Data
+		let response: URLResponse
+		do {
+			(data, response) = try await raw.session.data(for: request)
+		} catch {
+			throw Self.wrap(error)
+		}
+		try Self.editCommentResult(status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+	}
+
+	/// Built apart from sending so a test can read the path, headers and body.
+	func makeEditCommentRequest(eventId: Int, content: String, transport: RawTransport) async -> URLRequest {
+		var request = URLRequest(url: transport.baseURL.appendingPathComponent("api/events/\(eventId)"))
+		request.httpMethod = "PATCH"
+		request.timeoutInterval = 30
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue(transport.clientSource, forHTTPHeaderField: "X-Client-Source")
+		if let credentials = await credentials() {
+			request.setValue("Bearer \(credentials.apiKey)", forHTTPHeaderField: "Authorization")
+			if let workspaceId = credentials.workspaceId {
+				request.setValue(workspaceId, forHTTPHeaderField: "X-Workspace-Id")
+			}
+		}
+		request.httpBody = try? JSONEncoder().encode(["content": content])
+		return request
+	}
+
+	/// What a response to a comment edit means: nothing to read on success, a plain reason if not.
+	static func editCommentResult(status: Int) throws {
+		switch status {
+		case 200..<300: return
+		case 403: throw ObjectsError("Only the person who wrote a comment can edit it.")
+		case 404: throw ObjectsError("That comment is gone.")
+		default: throw ObjectsError("The server couldn't save the edit.")
+		}
+	}
+
 	// MARK: Directory
 
 	public func actors() async throws -> [ActorRef] {
@@ -289,13 +333,19 @@ public struct APIObjectsRemote: ObjectsRemote {
 		}
 	}
 
-	static func schema(from settings: JSONValue) -> ObjectsSchema {
+	/// The status order per type the workspace's settings list; empty when it lists none.
+	static func statuses(from settings: JSONValue) -> [String: [String]] {
 		var statuses: [String: [String]] = [:]
 		if case .object(let raw)? = settings["statuses"] {
 			for (type, value) in raw {
 				if case .array(let items) = value { statuses[type] = items.compactMap(\.stringValue) }
 			}
 		}
+		return statuses
+	}
+
+	static func schema(from settings: JSONValue) -> ObjectsSchema {
+		let statuses = statuses(from: settings)
 		var names: [String: String] = [:]
 		if case .object(let raw)? = settings["display_names"] {
 			for (type, value) in raw { if let s = value.stringValue { names[type] = s } }
@@ -323,6 +373,7 @@ public struct APIObjectsRemote: ObjectsRemote {
 
 	static func wrap(_ error: Error) -> ObjectsError {
 		if let error = error as? ObjectsError { return error }
+		ErrorReporter.shared.reportThrown(error)
 		var current: Error? = error
 		while let e = current {
 			if let url = e as? URLError {
@@ -424,6 +475,8 @@ private struct RelationshipDTO: Decodable {
 	var targetId: String
 	var targetTitle: String?
 	var type: String
+	var createdBy: String?
+	var createdAt: String?
 }
 
 private struct EventDTO: Decodable {
@@ -462,7 +515,14 @@ private struct GraphDTO: Decodable {
 				otherTitle: (title?.isEmpty == false ? title : nil) ?? "Untitled",
 				otherStatus: known?.status, otherDriver: known?.driver)
 		}
-		return ObjectGraph(object: object.model, links: links, events: (events ?? []).map(\.model))
+		let edges = (relationships ?? []).map {
+			OriginEdge(
+				type: $0.type, sourceType: $0.sourceType, sourceId: $0.sourceId, targetType: $0.targetType,
+				targetId: $0.targetId, createdBy: $0.createdBy, createdAt: $0.createdAt.flatMap(ISODate.parse))
+		}
+		return ObjectGraph(
+			object: object.model, links: links, events: (events ?? []).map(\.model),
+			origin: ObjectOrigin.resolve(objectId: me, edges: edges))
 	}
 }
 
@@ -501,6 +561,14 @@ extension APIObjectsRemote: ObjectDraftsRemote {
 		} catch {
 			throw Self.wrap(error)
 		}
+	}
+
+	public func workspaceStatuses(workspaceId: String) async -> [String: [String]] {
+		guard let output = try? await client.get_sol_api_sol_workspaces(), case .ok(let ok) = output,
+			let workspaces = try? Self.convert(ok.body.json, as: [WorkspaceDTO].self),
+			let settings = workspaces.first(where: { $0.id == workspaceId })?.settings
+		else { return [:] }
+		return Self.statuses(from: settings)
 	}
 
 	public func save(objectId: String, content: String?, subject: String?, idempotencyKey: String) async throws {
@@ -587,6 +655,7 @@ struct FeedPreviewDTO: Decodable {
 	var recipients: [Recipient]?
 	var subject: String?
 	var details: [Detail]?
+	var context: String?
 	var body: String
 	var missing: [String]?
 	var warnings: [String]?
@@ -598,7 +667,7 @@ struct FeedPreviewDTO: Decodable {
 			kind: kind, label: label,
 			recipients: (recipients ?? []).map { .init(role: $0.role, name: $0.name, address: $0.address) },
 			subject: subject, details: (details ?? []).map { .init(label: $0.label, value: $0.value) },
-			body: body, missing: missing ?? [], warnings: warnings ?? [], contentHash: content_hash,
+			context: context, body: body, missing: missing ?? [], warnings: warnings ?? [], contentHash: content_hash,
 			delivery: delivery.flatMap { ObjectPreview.Delivery(rawValue: $0.state) })
 	}
 }

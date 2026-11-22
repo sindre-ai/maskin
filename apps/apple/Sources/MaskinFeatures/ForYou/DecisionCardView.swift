@@ -282,14 +282,19 @@ struct DecisionCardView: View {
 		}
 	}
 
-	/// The one chip: why it is here. Blocking and due are the signal colour, a plain wait is neutral.
+	/// The urgency the card shows: a due date is left off, the card carries no deadline.
+	fileprivate var shownUrgency: ForYouUrgency? {
+		entry.urgency.flatMap { $0.kind == .due ? nil : $0 }
+	}
+
+	/// The one chip: why it is here. Blocking is the signal colour, a plain wait is neutral.
 	@ViewBuilder private var statusChips: some View {
-		if isWaiting || entry.urgency != nil || entry.backFromLater {
+		if isWaiting || shownUrgency != nil || entry.backFromLater {
 			HStack(spacing: MaskinSpace.s3) {
 				if entry.backFromLater { chip("Back again", hot: false, dot: false) }
 				if isWaiting {
 					chip("Waiting for \(agent?.name ?? sender ?? "an agent")", hot: false, dot: true)
-				} else if let urgency = entry.urgency {
+				} else if let urgency = shownUrgency {
 					chip(urgency.text, hot: urgency.isHot, dot: true)
 				}
 			}
@@ -381,24 +386,18 @@ struct DecisionCardView: View {
 	/// own reasoning for its suggestion in a quiet line.
 	private func ask(_ decision: DecisionPrompt, showsQuestion: Bool = true) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			if showsQuestion, !decision.ask.isEmpty {
-				Text(decision.ask)
+			if showsQuestion, let question = decision.question {
+				Text(question)
 					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .bold))
 					.tracking(-0.15)
 					.foregroundStyle(MaskinColor.ink)
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			// v6: the recommended option is a full-width ink button; the rest share one row beneath.
-			ForEach(primaryOptions(of: decision)) { option in
-				optionButton(option)
-				if style == .row, let consequence = option.consequences.first {
-					Text(consequence)
-						.font(MaskinTypeface.sans(MaskinFontSize.t13))
-						.foregroundStyle(MaskinColor.ink4)
-						.frame(maxWidth: .infinity, alignment: .leading)
-				}
+			let others = DecisionCardActions.alternateOptions(of: decision)
+			ForEach(DecisionCardActions.primaryOptions(of: decision)) { option in
+				optionButton(option, tagged: !others.isEmpty)
 			}
-			let others = alternateOptions(of: decision)
 			if !others.isEmpty {
 				if others.count <= 3 {
 					HStack(spacing: MaskinSpace.s4) {
@@ -410,16 +409,19 @@ struct DecisionCardView: View {
 					}
 				}
 			}
+			if let line = decision.silenceLine {
+				Text(line)
+					.font(MaskinTypeface.sans(MaskinFontSize.t13))
+					.foregroundStyle(MaskinColor.ink4)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			}
 			if let note = unsentEditNote {
 				Text(note)
 					.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .semibold))
 					.foregroundStyle(ForYouPalette.waitingForeground)
 					.frame(maxWidth: .infinity, alignment: .leading)
 					.fixedSize(horizontal: false, vertical: true)
-			}
-			if isExpanded, style == .card, let line = Self.suggestedLine(for: decision) {
-				Text(line).font(MaskinTypeface.sans(MaskinFontSize.t13)).foregroundStyle(MaskinColor.ink5)
-					.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			// A keyboard is attached and this card has focus: Return takes the suggested option.
 			if acceptsReturnKey, cardFocused, let option = decision.recommended {
@@ -436,26 +438,16 @@ struct DecisionCardView: View {
 		}
 	}
 
-	private func primaryOptions(of decision: DecisionPrompt) -> [DecisionOption] {
-		decision.options.filter(\.recommended)
-	}
-
-	private func alternateOptions(of decision: DecisionPrompt) -> [DecisionOption] {
-		// For you has no Hold or Later: an agent-written one is not drawn as a pill.
-		decision.options.filter { !$0.recommended && !HoldReason.isHold($0.label) && !HoldReason.isLater($0.label) }
-	}
-
-	private func optionButton(_ option: DecisionOption) -> some View {
+	private func optionButton(_ option: DecisionOption, tagged: Bool = false) -> some View {
 		Button {
-			if option.destructive {
-				pendingDestructive = option
-			} else {
-				actions.choose(option)
+			switch DecisionCardActions.tap(option) {
+			case .confirmFirst: pendingDestructive = option
+			case .choose: actions.choose(option)
 			}
 		} label: {
 			OptionPill(
 				label: pendingDestructive == option ? option.label + "\u{2026}" : option.label,
-				recommended: option.recommended, destructive: option.destructive)
+				recommended: option.recommended, tagged: tagged, destructive: option.destructive)
 		}
 		.buttonStyle(.maskinPressed(.shrink))
 		.maskinHover(.fill, cornerRadius: MaskinRadius.card2xl)
@@ -467,17 +459,7 @@ struct DecisionCardView: View {
 
 	/// The option would send the saved text while the reader's edit has not gone out.
 	private func isHeldBack(_ option: DecisionOption) -> Bool {
-		unsentEditNote != nil && ReviewDraft.sendsMessage(option)
-	}
-
-	/// "Suggested: 7-day window. Ships with cycle 1 tomorrow. Adds 18 support tickets."
-	static func suggestedLine(for decision: DecisionPrompt) -> String? {
-		guard let option = decision.recommended else { return nil }
-		let reasons = option.consequences.prefix(2).map { line -> String in
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			return trimmed.hasSuffix(".") ? trimmed : trimmed + "."
-		}
-		return (["Suggested: \(option.label)."] + reasons).joined(separator: " ")
+		DecisionCardActions.isHeldBack(option, unsentEditNote: unsentEditNote)
 	}
 
 	// MARK: Footer
@@ -762,7 +744,7 @@ extension DecisionCardView {
 	fileprivate var rowStatus: (text: String, hot: Bool)? {
 		if entry.backFromLater { return ("Back again", true) }
 		switch entry.bucket {
-		case .needs: return entry.urgency.map { ($0.text, $0.isHot) }
+		case .needs: return shownUrgency.map { ($0.text, $0.isHot) }
 		case .fyi: return ("Update", false)
 		case .waiting: return ("Waiting for \(agent?.name ?? sender ?? "an agent")", false)
 		case .done: return nil
@@ -862,6 +844,8 @@ extension DecisionCardView {
 private struct OptionPill: View {
 	let label: String
 	let recommended: Bool
+	/// The "Suggested" tag only means something next to other options.
+	var tagged = false
 	var destructive = false
 	@Environment(\.isEnabled) private var isEnabled
 
@@ -873,9 +857,11 @@ private struct OptionPill: View {
 					.multilineTextAlignment(.leading)
 					.font(MaskinTypeface.sans(MaskinFontSize.t16, weight: .bold))
 				Spacer(minLength: 0)
-				Text("Suggested")
-					.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .semibold))
-					.opacity(0.7)
+				if tagged {
+					Text("Suggested")
+						.font(MaskinTypeface.sans(MaskinFontSize.t12, weight: .semibold))
+						.opacity(0.7)
+				}
 			}
 			.foregroundStyle(MaskinPatina.decisionInkText)
 			.padding(.horizontal, MaskinSpace.s10)

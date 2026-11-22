@@ -235,6 +235,34 @@ describe('CreatePicker', () => {
 		expect(input).toHaveValue('')
 	})
 
+	it('closes only the / type list on Escape, then the dialog on a second Escape', async () => {
+		const user = userEvent.setup()
+		const onOpenChange = vi.fn()
+		renderWithWorkspace(<CreatePicker open onOpenChange={onOpenChange} />)
+		const input = screen.getByLabelText(/title/i)
+		await user.type(input, '/bet')
+		expect(screen.getByRole('listbox', { name: /pick a type/i })).toBeInTheDocument()
+
+		await user.keyboard('{Escape}')
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+		expect(input).toHaveValue('/bet')
+		expect(onOpenChange).not.toHaveBeenCalled()
+
+		await user.keyboard('{Escape}')
+		expect(onOpenChange).toHaveBeenCalledWith(false)
+	})
+
+	it('brings the / type list back when typing after Escape', async () => {
+		const user = userEvent.setup()
+		renderWithWorkspace(<CreatePicker open onOpenChange={() => {}} />)
+		await user.type(screen.getByLabelText(/title/i), '/be')
+		await user.keyboard('{Escape}')
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+		await user.keyboard('t')
+		expect(screen.getByRole('listbox', { name: /pick a type/i })).toBeInTheDocument()
+	})
+
 	it('offers loop, agent and trigger in the / menu rather than the chip row', async () => {
 		const user = userEvent.setup()
 		renderWithWorkspace(<CreatePicker open onOpenChange={() => {}} />)

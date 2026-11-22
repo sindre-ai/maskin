@@ -4,6 +4,7 @@ import {
 	createObjectSchema,
 	createRelationshipSchema,
 	createTriggerSchema,
+	itemDriverTargetError,
 	llmConfigSchema,
 	mcpServerSchema,
 	runtimeConfigSchema,
@@ -362,6 +363,39 @@ describe('Trigger validation', () => {
 			target_actor_id: '550e8400-e29b-41d4-a716-446655440000',
 		})
 		expect(result.success).toBe(true)
+	})
+
+	it("accepts an event trigger on the item's driver without a target agent", () => {
+		const result = createTriggerSchema.safeParse({
+			name: 'Start the driver',
+			type: 'event',
+			config: { entity_type: 'task', action: 'status_changed', target: 'item_driver' },
+			action_prompt: 'Drive the task',
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('still requires a target agent on a schedule', () => {
+		const result = createTriggerSchema.safeParse({
+			name: 'Daily',
+			type: 'cron',
+			config: { expression: '*/30 * * * *' },
+			action_prompt: 'Do it',
+		})
+		expect(result.success).toBe(false)
+	})
+
+	it.each([
+		['event', { entity_type: 'task', action: 'created', target: 'item_driver' }, null],
+		['event', { entity_type: 'object', action: 'commented', target: 'item_driver' }, null],
+		['event', { entity_type: 'task', action: 'created' }, null],
+		['cron', { expression: '* * * * *', target: 'item_driver' }, 'Only event triggers'],
+		['reminder', { scheduled_at: '2026-12-01T09:00:00Z', target: 'item_driver' }, 'Only event'],
+		['event', { entity_type: 'task', action: 'deleted', target: 'item_driver' }, 'only available'],
+	])('itemDriverTargetError for %s %j', (type, config, expected) => {
+		const error = itemDriverTargetError(type, config)
+		if (expected === null) expect(error).toBeNull()
+		else expect(error).toContain(expected)
 	})
 
 	it('rejects invalid trigger type', () => {

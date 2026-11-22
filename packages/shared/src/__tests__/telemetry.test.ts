@@ -224,20 +224,20 @@ describe('recordMcpTelemetrySchema — alias_use', () => {
 	it('accepts a tool-name alias with dropped key names', () => {
 		const parsed = recordMcpAliasUseSchema.parse(
 			aliasEvent({
-				tool_name: 'run_agent',
+				tool_name: 'search_objects',
 				renames: [],
-				tool_alias: { old: 'run_agent', new: 'create_session' },
+				tool_alias: { old: 'search_objects', new: 'list_objects' },
 				dropped_keys: ['config', 'poll_interval_seconds'],
 			}),
 		)
-		expect(parsed.tool_alias).toEqual({ old: 'run_agent', new: 'create_session' })
+		expect(parsed.tool_alias).toEqual({ old: 'search_objects', new: 'list_objects' })
 		expect(parsed.dropped_keys).toEqual(['config', 'poll_interval_seconds'])
 	})
 
 	it('defaults renames to empty and both_sent to false', () => {
 		const parsed = recordMcpAliasUseSchema.parse({
 			event_type: 'alias_use',
-			tool_name: 'run_agent',
+			tool_name: 'search_objects',
 		})
 		expect(parsed.renames).toEqual([])
 		expect(parsed.both_sent).toBe(false)

@@ -43,6 +43,11 @@ import {
 } from '../lib/mcp-rate-limit'
 import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
 import { buildMcpChallenge } from '../lib/oauth-server/discovery'
+import {
+	DEFAULT_AGENT_TIMEZONE,
+	resolvePersonTimezone,
+	resolveSessionTimezone,
+} from '../lib/person-timezone'
 import { extractClientIp } from '../lib/trusted-proxy'
 
 // Only `db` is set on the /mcp path — the auth middleware runs under /api/*.
@@ -217,9 +222,10 @@ app.post('/', async (c) => {
 				? session.source
 				: ('process' as const),
 		triggeringEventId,
+		personTimezone: lazyPersonTimezone(db, lookup, session),
 		telemetryEra: era?.era,
 		telemetryProtocolVersion: era?.version,
-		// Forward the caller's session id so create_session can link
+		// Forward the caller's session id so create_sub_chat can link
 		// the helper to its sender. Only a uuid-shaped header counts, and it is
 		// still just a claim: POST /api/sessions checks it belongs to the caller.
 		maskinSessionId: session.source === 'maskin-session' ? session.id : undefined,
@@ -976,6 +982,34 @@ function extractToolName(
 		errorMessage.match(/invalid\s+arguments\s+for\s+tool\s+([A-Za-z0-9_.-]+)/i) ??
 		errorMessage.match(/unknown\s+tool:?\s+([A-Za-z0-9_.-]+)/i)
 	return match?.[1] ?? null
+}
+
+/**
+ * The zone tool results show times in: the person calling, or the person in the calling agent's
+ * chat, else the default. Looked up on first use (most tool calls never need it) and then kept
+ * for the request. A failed lookup costs the zone, never the tool call.
+ */
+function lazyPersonTimezone(
+	db: Database | undefined,
+	lookup: ActorLookup,
+	session: McpSessionIdentity,
+): () => Promise<string> {
+	let pending: Promise<string> | undefined
+	return () => {
+		pending ??= (async () => {
+			if (!db || lookup.status !== 'resolved') return DEFAULT_AGENT_TIMEZONE
+			try {
+				const { actorId, actorType } = lookup.actor
+				if (actorType === 'human') return await resolvePersonTimezone(db, actorId)
+				if (session.source !== 'maskin-session') return DEFAULT_AGENT_TIMEZONE
+				return await resolveSessionTimezone(db, { sessionId: session.id, callerActorId: actorId })
+			} catch (err) {
+				logger.warn('mcp person timezone lookup failed', { error: String(err) })
+				return DEFAULT_AGENT_TIMEZONE
+			}
+		})()
+		return pending
+	}
 }
 
 /**

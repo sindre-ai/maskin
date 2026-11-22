@@ -52,13 +52,16 @@ struct SearchContentView: View {
 	/// The Create rows under the results; nil hides that row.
 	var onCreate: (SearchCreate, String) -> Void = { _, _ in }
 	var createKinds: [SearchCreate] = [.flow, .chat]
+	/// The long-press menu of a result; empty for a kind with no menu.
+	var rowMenu: (SearchResult) -> AnyView = { _ in AnyView(EmptyView()) }
 	let onSelect: (SearchResult) -> Void
 
 	var body: some View {
 		ScrollView {
 			SearchContentBody(
 				store: store, onSelect: onSelect, showsChips: true, needsYou: needsYou,
-				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate, createKinds: createKinds)
+				onOpenNeedsYou: onOpenNeedsYou, onAskChiefOfStaff: onAskChiefOfStaff, onCreate: onCreate, createKinds: createKinds,
+				rowMenu: rowMenu)
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.vertical, MaskinSpace.s5)
 				.frame(maxWidth: 760)
@@ -81,6 +84,7 @@ struct SearchContentBody: View {
 	var onCreate: ((SearchCreate, String) -> Void)?
 	/// The Create rows to offer; New item only when the shell can start one.
 	var createKinds: [SearchCreate] = [.flow, .chat]
+	var rowMenu: (SearchResult) -> AnyView = { _ in AnyView(EmptyView()) }
 
 	private var typed: String { store.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -300,6 +304,7 @@ struct SearchContentBody: View {
 							}
 							.buttonStyle(.maskinPressed)
 							.maskinHover()
+							.contextMenu { rowMenu(result) }
 						}
 					}
 				}

@@ -127,6 +127,11 @@ vi.mock('../../lib/integrations/providers/github/auth', () => ({
 	fetchInstallationOwnerLogin: mockFetchInstallationOwnerLogin,
 }))
 
+vi.mock('../../services/chat-drives', () => ({
+	buildChatDrivesBlock: vi.fn().mockResolvedValue(''),
+	saveChatDrives: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../services/workspace-briefing', () => ({
 	buildWorkspaceStartupBlock: vi.fn().mockReturnValue(''),
 	loadSenderLine: vi.fn().mockResolvedValue(''),
@@ -136,8 +141,12 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 	mockClassifyCreditExhaustion: vi.fn(),
 }))
 
-vi.mock('../../lib/credit-classifier', () => ({
+vi.mock('../../lib/credit-classifier', async (importOriginal) => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
+	// Pure and unmocked: a non-zero exit nothing recognised gets this reason. Its own
+	// rule is covered in lib/credit-classifier.test.ts.
+	classifyUnclassifiedExit: (await importOriginal<typeof import('../../lib/credit-classifier')>())
+		.classifyUnclassifiedExit,
 	// Helper close-out only; covered in integration/helper-limit-retry.test.ts.
 	classifyClaudeAuthFailureText: () => null,
 	// Same call the real helper makes for an exit with no final result message,
@@ -151,6 +160,15 @@ vi.mock('../../lib/credit-classifier', () => ({
 	isClaudeAuthDeathText: () => false,
 }))
 
+const { mockTrackStartedWithPrompt } = vi.hoisted(() => ({
+	mockTrackStartedWithPrompt: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../lib/analytics/agent-session-events', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/analytics/agent-session-events')>()),
+	trackAgentSessionStartedWithPrompt: mockTrackStartedWithPrompt,
+}))
+
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
@@ -162,6 +180,7 @@ import {
 } from '../../lib/llm-routing'
 import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { buildChatDrivesBlock, saveChatDrives } from '../../services/chat-drives'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildWorkspaceStartupBlock } from '../../services/workspace-briefing'
@@ -611,6 +630,109 @@ describe('SessionManager', () => {
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
 			// actionPrompt is '' here — no seed turn should be sent once attached.
 			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+
+		describe('what the agent drives', () => {
+			const DRIVES = '## What you drive\n\nYou own these outcomes.\n\n'
+
+			async function launchChat(overrides: Record<string, unknown>) {
+				const session = buildSession({
+					status: 'pending',
+					interactive: true,
+					actionPrompt: '',
+					containerId: null,
+					...overrides,
+				})
+				const agent = {
+					id: session.actorId,
+					type: 'agent',
+					systemPrompt: 'You are Workspace Coach.',
+					llmProvider: null,
+					llmConfig: null,
+					apiKey: 'ank_test_agent_key',
+					tools: null,
+				}
+				const workspace = {
+					id: session.workspaceId,
+					enterpriseGranted: true,
+					settings: LAUNCHABLE_WS_SETTINGS,
+				}
+				vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+					pulled: 0,
+					skipped: 0,
+					failures: [],
+				})
+				mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+				vi.mocked(buildWorkspaceStartupBlock).mockReturnValueOnce('STARTUP-BLOCK\n\n')
+				await manager.startSession(session.id)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				return { session, systemPrompt: createArgs.env.SYSTEM_PROMPT }
+			}
+
+			it('puts the block between the startup text and the agent prompt, and saves it on the session', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(saveChatDrives).mockClear()
+				vi.mocked(buildChatDrivesBlock).mockResolvedValueOnce(DRIVES)
+
+				const { session, systemPrompt } = await launchChat({ conversationId: 'conv-1' })
+
+				expect(systemPrompt).toMatch(/^STARTUP-BLOCK\n\n## What you drive/)
+				expect(systemPrompt.indexOf('## What you drive')).toBeLessThan(
+					systemPrompt.indexOf('You are Workspace Coach.'),
+				)
+				expect(buildChatDrivesBlock).toHaveBeenCalledWith(
+					expect.anything(),
+					{ workspaceId: session.workspaceId, actorId: session.actorId, conversationId: 'conv-1' },
+					expect.any(String),
+				)
+				expect(saveChatDrives).toHaveBeenCalledWith(expect.anything(), session.id, DRIVES)
+			})
+
+			it('adds nothing and saves nothing for an agent that drives nothing', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(saveChatDrives).mockClear()
+				vi.mocked(buildChatDrivesBlock).mockResolvedValueOnce('')
+
+				const { systemPrompt } = await launchChat({ conversationId: 'conv-1' })
+
+				expect(systemPrompt).not.toContain('What you drive')
+				expect(saveChatDrives).not.toHaveBeenCalled()
+			})
+
+			it('skips an interactive session that is not a chat', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+
+				const { systemPrompt } = await launchChat({ conversationId: null })
+
+				expect(buildChatDrivesBlock).not.toHaveBeenCalled()
+				expect(systemPrompt).not.toContain('What you drive')
+			})
+
+			it('reuses the saved block on resume instead of rebuilding or overwriting it', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(saveChatDrives).mockClear()
+
+				const { systemPrompt } = await launchChat({
+					conversationId: 'conv-1',
+					config: { chat_drives: '## What you drive\n\nSaved earlier.\n\n' },
+				})
+
+				expect(systemPrompt).toContain('Saved earlier.')
+				expect(buildChatDrivesBlock).not.toHaveBeenCalled()
+				expect(saveChatDrives).not.toHaveBeenCalled()
+			})
+
+			it('launches without the block when building it fails', async () => {
+				vi.mocked(buildChatDrivesBlock).mockClear()
+				vi.mocked(buildChatDrivesBlock).mockRejectedValueOnce(new Error('db down'))
+
+				const { systemPrompt } = await launchChat({ conversationId: 'conv-1' })
+
+				expect(systemPrompt).toContain('You are Workspace Coach.')
+				expect(systemPrompt).not.toContain('What you drive')
+			})
 		})
 
 		it('inserts a session_started event once the session reaches running — without this, live-activity surfaces like the chat typing indicator never learn the session left pending', async () => {
@@ -1076,6 +1198,45 @@ describe('SessionManager', () => {
 			)
 			expect(identityAt).toBe(0)
 			expect(conversationAt).toBeGreaterThan(identityAt)
+		})
+
+		it('tells a chat agent to post no progress notes, only its reply', async () => {
+			const session = buildSession({
+				status: 'pending',
+				containerId: null,
+				config: { conversation: true },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			expect(systemPrompt).toContain('Do not post progress notes while you work')
+			expect(systemPrompt).not.toContain('heads-up')
 		})
 	})
 
@@ -1609,12 +1770,160 @@ describe('SessionManager', () => {
 				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
 			)
 
-			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash[1m]')
 			for (const u of calls.updates) {
 				if (typeof u === 'object' && u !== null && 'modelName' in u) {
 					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
 				}
 			}
+		})
+	})
+
+	describe('session-start event — first-call size, once per launch', () => {
+		type Internals = {
+			holdLaunchStartEvent(sessionId: string, props: Record<string, unknown>): void
+			observeFirstCallSize(sessionId: string, chunk: string): void
+			clearActiveSession(sessionId: string): Promise<void>
+			loadSessionRouteAndModel(
+				sessionId: string,
+			): Promise<{ route: string; modelName: string | null }>
+		}
+
+		const launchedAt = new Date('2026-11-19T10:00:00Z')
+		const props = {
+			workspaceId: 'ws-1',
+			sessionId: 'sess-first-call',
+			agentId: 'agent-1',
+			agentName: 'Developer',
+			systemPrompt: 'prompt',
+			launchedAt,
+		}
+		const initLine = `${JSON.stringify({ type: 'system', subtype: 'init', tools: ['a', 'b', 'c'] })}\n`
+		const assistantLine = `${JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm1',
+				usage: {
+					input_tokens: 4,
+					cache_creation_input_tokens: 1_000,
+					cache_read_input_tokens: 58_000,
+				},
+			},
+		})}\n`
+		const resultLine = (cost: number) =>
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				result: 'ok',
+				total_cost_usd: cost,
+				usage: { input_tokens: 4, output_tokens: 9 },
+			})}\n`
+
+		let internals: Internals
+
+		beforeEach(() => {
+			internals = manager as unknown as Internals
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'claude_oauth',
+				modelName: null,
+			})
+		})
+
+		it('sends one event at the first result, with the first-call size and the launch time', async () => {
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine)
+			expect(mockTrackStartedWithPrompt).not.toHaveBeenCalled()
+
+			internals.observeFirstCallSize('sess-first-call', resultLine(0.14))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({
+				...props,
+				firstCall: {
+					toolCount: 3,
+					firstCallInputTokens: 59_004,
+					firstTurnCostUsd: 0.14,
+					cacheHit: true,
+				},
+				startPrompt: null,
+			})
+
+			// Later turns and the teardown add nothing.
+			internals.observeFirstCallSize('sess-first-call', resultLine(0.3))
+			await internals.clearActiveSession('sess-first-call')
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+		})
+
+		it('passes the start prompt size line from the launch output into the event', async () => {
+			const sizeLine =
+				'[system] start prompt size: persona_bytes=900 total_bytes=25000 learnings_bytes=20291 learnings_capped=true\n'
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize(
+				'sess-first-call',
+				sizeLine + initLine + assistantLine + resultLine(0.14),
+			)
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					startPrompt: {
+						personaBytes: 900,
+						totalBytes: 25_000,
+						learningsBytes: 20_291,
+						learningsCapped: true,
+					},
+				}),
+			)
+		})
+
+		it('leaves the first-turn cost empty on maskin_plan with no priced model, never the CLI figure', async () => {
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'maskin_plan',
+				modelName: null,
+			})
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine + resultLine(0.14))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({
+				...props,
+				firstCall: {
+					toolCount: 3,
+					firstCallInputTokens: 59_004,
+					firstTurnCostUsd: null,
+					cacheHit: true,
+				},
+				startPrompt: null,
+			})
+		})
+
+		it('leaves the first-turn cost empty on a custom endpoint with no recorded model', async () => {
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'workspace_custom',
+				modelName: null,
+			})
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine + resultLine(1.91))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(
+				expect.objectContaining({ firstCall: expect.objectContaining({ firstTurnCostUsd: null }) }),
+			)
+		})
+
+		it('sends the event once at teardown, without first-call fields, when no turn ran', async () => {
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine)
+
+			await internals.clearActiveSession('sess-first-call')
+			await internals.clearActiveSession('sess-first-call')
+
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({ ...props, startPrompt: null })
+		})
+
+		it('sends a launch that was never torn down before it holds the next one', () => {
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.holdLaunchStartEvent('sess-first-call', { ...props, launchedAt: new Date() })
+
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({ ...props, startPrompt: null })
 		})
 	})
 
@@ -1965,6 +2274,7 @@ describe('SessionManager', () => {
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					})
 					expect(servers['github-vaerksted-ai']).toEqual({
@@ -1977,6 +2287,7 @@ describe('SessionManager', () => {
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					})
 					// The agent's own key stays out of the session's MCP config.
@@ -4835,6 +5146,119 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('Keychain values in stored session logs', () => {
+		// Fake values only. None of these is, or was ever, a real secret.
+		const ENV_NAME = 'KEYCHAIN_BYO_APIKEY_FAKE'
+		const FAKE_KEY = 'fake-key-0123456789-abcdefghij'
+		const FAKE_PEM = [
+			'-----BEGIN PRIVATE KEY-----',
+			'FAKEFAKEFAKEfakefakefakeAAAA1111BBBB2222',
+			'cccc3333DDDD4444eeee5555FFFF6666gggg7777',
+			'-----END PRIVATE KEY-----',
+		].join('\n')
+
+		function storedContent(): string[] {
+			return calls.inserts
+				.filter((row): row is { content: string } => typeof row === 'object' && row !== null)
+				.map((row) => String((row as { content?: unknown }).content ?? ''))
+		}
+
+		function printed(value: string): string[] {
+			const toolResult = JSON.stringify({
+				type: 'user',
+				message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_x', content: value }] },
+			})
+			return [`raw: ${value}`, `${toolResult}\n`]
+		}
+
+		async function viaStream(sessionId: string, containerId: string, data: string[]) {
+			;(
+				manager as unknown as { activeSessions: Map<string, { tempDir: string }> }
+			).activeSessions.set(sessionId, { tempDir: '/tmp/test' })
+			mockContainerManager.logs.mockImplementationOnce(() => ({
+				async *[Symbol.asyncIterator]() {
+					for (const chunk of data) yield { stream: 'stdout' as const, data: chunk }
+				},
+			}))
+			;(
+				manager as unknown as { streamContainerLogs(sessionId: string, containerId: string): void }
+			).streamContainerLogs(sessionId, containerId)
+			await (
+				manager as unknown as {
+					activeSessions: Map<string, { logsDrained?: Promise<void> }>
+				}
+			).activeSessions.get(sessionId)?.logsDrained
+		}
+
+		const redactor = () =>
+			import('../../lib/session-log-redactor').then((m) => m.sessionLogRedactor)
+
+		it('stores neither the raw key nor its JSON-escaped form on the remote path', async () => {
+			const sessionId = randomUUID()
+			;(await redactor()).register(sessionId, { [ENV_NAME]: FAKE_KEY })
+			try {
+				await manager.appendRemoteSessionLogs(
+					sessionId,
+					printed(FAKE_KEY).map((content) => ({ stream: 'stdout' as const, content })),
+				)
+				const stored = storedContent().join('\n')
+				expect(stored).not.toContain(FAKE_KEY)
+				expect(stored).toContain(`[REDACTED · ${ENV_NAME}]`)
+			} finally {
+				;(await redactor()).forget(sessionId)
+			}
+		})
+
+		it('stores neither the raw key nor its JSON-escaped form on the local Docker path', async () => {
+			const sessionId = randomUUID()
+			;(await redactor()).register(sessionId, { [ENV_NAME]: FAKE_KEY })
+			try {
+				await viaStream(sessionId, 'container-keychain-key', printed(FAKE_KEY))
+				const stored = storedContent().join('\n')
+				expect(stored).not.toContain(FAKE_KEY)
+				expect(stored).toContain(`[REDACTED · ${ENV_NAME}]`)
+			} finally {
+				;(await redactor()).forget(sessionId)
+			}
+		})
+
+		it('stores no body line of a multi-line key printed in full, on both paths', async () => {
+			const sessionId = randomUUID()
+			;(await redactor()).register(sessionId, { [ENV_NAME]: FAKE_PEM })
+			try {
+				await manager.appendRemoteSessionLogs(
+					sessionId,
+					[...printed(FAKE_PEM), ...FAKE_PEM.split('\n')].map((content) => ({
+						stream: 'stdout' as const,
+						content,
+					})),
+				)
+				await viaStream(sessionId, 'container-keychain-pem', [
+					...printed(FAKE_PEM),
+					...FAKE_PEM.split('\n'),
+				])
+				const stored = storedContent().join('\n')
+				expect(stored).not.toContain('FAKEFAKEFAKE')
+				expect(stored).not.toContain('cccc3333')
+				expect(stored).not.toContain('BEGIN PRIVATE KEY')
+			} finally {
+				;(await redactor()).forget(sessionId)
+			}
+		})
+
+		it('stores the lines of a session that was given no key unchanged, on both paths', async () => {
+			const sessionId = randomUUID()
+			const lines = [`raw: ${FAKE_KEY}`, '{"usage":{"input_tokens":12}}\n']
+			await manager.appendRemoteSessionLogs(
+				sessionId,
+				lines.map((content) => ({ stream: 'stdout' as const, content })),
+			)
+			await viaStream(sessionId, 'container-keychain-none', lines)
+			const stored = storedContent().filter((c) => lines.includes(c))
+			expect(stored).toEqual([...lines, ...lines])
+		})
+	})
+
 	describe('streamContainerLogs() — reconnect on transient stream drop', () => {
 		it('falls back to tail:0 when no chunk was ever ingested, writes a drop marker, and does not surface the "interrupted" sentinel', async () => {
 			// Regression guard for the false-positive auto-pause bug: when
@@ -5764,7 +6188,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
 			;(manager as unknown as { budgetStopped: Map<string, string> }).budgetStopped.set(
 				session.id,
-				'usage exceeded the plan cap and no usage credits are available',
+				'your plan is used up',
 			)
 
 			// 3rd entry: settleSession's own SELECT of the row; the CAS update then flips it.
@@ -5782,8 +6206,7 @@ describe('SessionManager', () => {
 			const expectedReason = {
 				provider: 'maskin',
 				reason_code: 'plan_cap_exceeded',
-				human_message:
-					'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+				human_message: 'Session stopped — your plan is used up.',
 				http_status: null,
 				reset_at: null,
 				verbatim_output: null,
@@ -5844,8 +6267,12 @@ describe('SessionManager', () => {
 					'status' in (u as Record<string, unknown>) &&
 					'result' in (u as Record<string, unknown>),
 			)
-			expect(sessionUpdate).toMatchObject({ status: 'failed', result: { exit_code: 1 } })
-			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+			// Nothing recognised the exit, so it is saved with the explicit unclassified reason
+			// (never bare), not with a budget or credit reason.
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { exit_code: 1, failure_reason: { reason_code: 'unclassified' } },
+			})
 		})
 	})
 
@@ -5910,7 +6337,7 @@ describe('SessionManager', () => {
 			const internals = arm(session)
 			// A budget stop goes through stopSession too, so it is in stopRequested.
 			internals.stopRequested.add(session.id)
-			internals.budgetStopped.set(session.id, 'usage exceeded the plan cap')
+			internals.budgetStopped.set(session.id, 'your plan is used up')
 
 			await internals.handleCompletion(session.id, 'container-abc', 143)
 

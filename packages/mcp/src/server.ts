@@ -16,11 +16,16 @@ import {
 	type McpEra,
 	type McpProtocolVersionLabel,
 	type ObjectPreview,
+	PILOT_REFUSAL,
 	type WebAppTarget,
 	applyLoopView,
 	buildWebAppHref,
+	formatCopenhagenStamp,
+	isPilotHeldMaskinTool,
+	loopStatusTurnsTriggersOff,
 	normalizeLoopViewName,
 	readLoopViews,
+	resolveToolKind,
 	resolveWebAppBaseUrl,
 	slimForYouItems,
 	stripTrailingSlash,
@@ -36,7 +41,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
-import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
+import {
+	EXTENSION_TOOL_ANNOTATIONS,
+	READ_ONLY_TOOLS,
+	TOOL_ANNOTATIONS,
+	extensionToolTitle,
+} from './annotations.js'
+import { addCopenhagenTimesToResponse } from './copenhagen-times.js'
 import {
 	CURSOR_MAX_OFFSET,
 	type CursorState,
@@ -45,6 +56,7 @@ import {
 	paginateClientSide,
 	toSnapshotAt,
 } from './cursor.js'
+import { explainIgnoredUpdateKeys } from './explain-ignored-keys.js'
 import {
 	type IntegrationRow,
 	integrationSortKey,
@@ -59,7 +71,8 @@ import {
 	statusFilterParam,
 } from './list-contract.js'
 import { inSnapshot, matchesText, normalizeStatusFilter } from './list-filters.js'
-import { buildListPayload, listText } from './list-response.js'
+import { buildListPayload, listPageText, listText } from './list-response.js'
+import { DEFAULT_TIMEZONE, withLocalTimes } from './local-time.js'
 import {
 	READ_TOOL_NAMES,
 	buildReadErrorBody,
@@ -92,14 +105,9 @@ import {
 	recordToolCall,
 	recordToolCallResponseSize,
 } from './telemetry.js'
-import {
-	RUN_AGENT_DROPPED_KEYS,
-	TOOL_ALIAS_ARG_RENAMES,
-	TOOL_NAME_ALIASES,
-	type ToolNameAlias,
-} from './tool-aliases.js'
+import { TOOL_ALIAS_ARG_RENAMES, TOOL_NAME_ALIASES, type ToolNameAlias } from './tool-aliases.js'
 import { legacyListTools, parseListActorsInclude, tools } from './tools.js'
-import { compactTrigger } from './trigger-rows.js'
+import { compactTrigger, triggerSchedule } from './trigger-rows.js'
 import { type OtherTrigger, type WarningChecks, detectTriggerWarnings } from './trigger-warnings.js'
 
 export interface McpConfig {
@@ -163,6 +171,12 @@ export interface McpConfig {
 	 * on stdio and on external callers.
 	 */
 	triggeringEventId?: number
+	/**
+	 * The IANA zone to show times in for this caller: the person calling, or the person in the
+	 * calling agent's chat. Set by `routes/mcp.ts` on HTTP and looked up only when a tool asks.
+	 * Unset (stdio) reads as Europe/Copenhagen, the zone the agent containers run in.
+	 */
+	personTimezone?: () => Promise<string>
 	/**
 	 * The caller's own session id, as sent in X-Maskin-Session-Id by the agent
 	 * container. Over HTTP the MCP server runs inside apps/dev, so
@@ -612,6 +626,24 @@ async function apiFetch(
 	return response
 }
 
+/** The zone times are shown in for this caller; the default when none is known or the lookup fails. */
+async function callerTimezone(config: McpConfig): Promise<string> {
+	try {
+		return (await config.personTimezone?.()) ?? DEFAULT_TIMEZONE
+	} catch {
+		return DEFAULT_TIMEZONE
+	}
+}
+
+/** A next step with its due time also in the caller's zone. */
+function withLocalDue(step: unknown, timezone: string): unknown {
+	return isPlainObject(step) ? withLocalTimes(step, ['due_at'], timezone) : step
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 async function apiCall(
 	config: McpConfig,
 	method: string,
@@ -656,8 +688,7 @@ function countNonMaskinMcpServers(tools: unknown): number {
 }
 
 /**
- * The stored status of every loop in the workspace, keyed by loop id. `/api/loops` reports a
- * folded status (stored pilot, live and archived all come back as draft), so a status filter
+ * The stored status of every loop in the workspace, keyed by loop id. A status filter
  * reads the objects route, which returns the status as stored. Walks the route's own keyset to
  * the end, archived loops included.
  */
@@ -924,7 +955,7 @@ interface LoopStepInput {
 /**
  * Map an inline loop step to a `POST /api/triggers` request body. `enabled`
  * defaults to true; callers creating steps on a loop whose effective status
- * is `paused` pass `false` so a newly-authored step doesn't start firing on
+ * is `draft` or `paused` pass `false` so a newly-authored step doesn't start firing on
  * a loop that isn't supposed to be running anything yet.
  */
 function buildStepTriggerBody(step: LoopStepInput, enabled = true): Record<string, unknown> {
@@ -1396,6 +1427,11 @@ async function waitUntilSessionRunning(
 // (waiting for input, paused) or when the status checks keep failing. Sessions have
 // their own timeout, so none runs forever.
 const WAIT_POLL_MS = 5_000
+// How long a call waits for a session before it hands back "not finished yet". The server
+// ends a running session at 2 hours (a wall timeout), but nothing ends one that is still
+// queued or whose status never changes, so without this a wait could hold the call open for
+// good. Matches that 2 hour ceiling.
+const SESSION_WAIT_MAX_MS = 2 * 60 * 60 * 1000
 
 // Short helpers finish quickly, so the first checks stay at WAIT_POLL_MS; a wait that is
 // still going backs off so a long one is not ~130 requests against the API.
@@ -1514,16 +1550,11 @@ async function waitForObjectStatus(
  * What the caller reads when a handover did not start. A chat agent that only sees a
  * bare API error tends to tell the person it handed the work over anyway.
  */
-function sessionNotStartedResult(
-	config: McpConfig,
-	toolName: 'create_session' | 'create_sub_chat',
-	workspaceId: string | undefined,
-	err: unknown,
-) {
+function sessionNotStartedResult(config: McpConfig, workspaceId: string | undefined, err: unknown) {
 	const reason = err instanceof Error ? err.message : String(err)
-	console.error(`${toolName}: could not start the session`, err)
+	console.error('create_sub_chat: could not start the session', err)
 	return {
-		_meta: meta(toolName, config, workspaceId),
+		_meta: meta('create_sub_chat', config, workspaceId),
 		isError: true,
 		content: [
 			{
@@ -1547,72 +1578,73 @@ function handoffNote(session: { id: string; status?: string }, url?: unknown) {
 }
 
 /**
- * The `wait: true` path of `create_session`: start the session, then wait for it to
- * reach a terminal state and return `{ session, logs }`.
+ * Starts the sub-chat and returns straight away with its details. It never waits: the
+ * result is always sent back to the caller as a new turn when the sub-chat finishes, with
+ * no opt-out, so the caller can carry on meanwhile.
  */
-async function createSessionAndWait(
+async function createSubChat(
 	config: McpConfig,
-	args: z.infer<typeof tools.create_session.inputSchema>,
-	toolName: 'create_session' | 'create_sub_chat' = 'create_session',
+	args: z.infer<typeof tools.create_sub_chat.inputSchema>,
 ) {
-	// `notify_on_complete` is no longer a parameter; a caller that still sends it is
-	// ignored, and it is never true on this create call (registered below instead).
+	// A caller that still sends `wait` or `notify_on_complete` is ignored: neither is a
+	// parameter, and the result is always sent back whatever the caller sent.
 	const {
 		workspace_id,
 		wait: _wait,
 		notify_on_complete: _ignored,
 		...createBody
-	} = args as typeof args & { notify_on_complete?: unknown }
-	const wsOpts = { workspaceId: workspace_id }
+	} = args as typeof args & { wait?: unknown; notify_on_complete?: unknown }
 
-	// 1. Create session. notify_on_complete is sent as false here: this call
-	// returns the result inline, so it is only registered (below) if the wait runs
-	// out. False, not omitted, because an omitted value defaults on for a helper
-	// started from a chat, and the waiting caller would get the result twice.
-	let session: { id: string; status: string }
+	let result: SessionRow
 	try {
-		session = (await apiCall(
+		result = (await apiCall(
 			config,
 			'POST',
 			'/api/sessions',
-			{ ...createBody, notify_on_complete: false },
-			wsOpts,
-		)) as { id: string; status: string }
+			{ ...createBody, notify_on_complete: true },
+			{ workspaceId: workspace_id },
+		)) as SessionRow
 	} catch (err) {
-		return sessionNotStartedResult(config, toolName, workspace_id, err)
+		return sessionNotStartedResult(config, workspace_id, err)
 	}
-
-	return waitForSessionResult(config, {
-		toolName,
-		workspaceId: workspace_id,
-		session,
-		registerReturn: true,
-	})
+	const wsId = workspace_id ?? config.defaultWorkspaceId
+	const enriched = await enrichSessionActorName(config, wsId, result)
+	const withUrl = wsId
+		? addUrl(enriched as Record<string, unknown>, config, wsId, {
+				kind: 'session',
+				id: enriched.id,
+				actorId: (enriched as { actorId?: string }).actorId,
+			})
+		: enriched
+	return {
+		_meta: meta('create_sub_chat', config, workspace_id),
+		content: [
+			{
+				type: 'text' as const,
+				text: JSON.stringify({
+					...withUrl,
+					handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
+				}),
+			},
+		],
+	}
 }
 
 /**
  * Polls a session until it ends (or stops moving) and returns `{ session, logs, settled }`.
- * Shared by every tool that takes `wait`. `registerReturn` is for the one caller that
- * started the session itself: when the wait stops with the session still going, it asks
- * for the session's result to be sent back to that caller later.
+ * Shared by every tool that takes `wait`.
  */
 async function waitForSessionResult(
 	config: McpConfig,
 	opts: {
-		toolName:
-			| 'create_session'
-			| 'create_sub_chat'
-			| 'get_session'
-			| 'resume_session'
-			| 'send_session_message'
+		toolName: 'get_session' | 'resume_session' | 'send_session_message'
 		workspaceId: string | undefined
 		session: { id: string; status: string }
-		registerReturn?: boolean
 		/** The session was just read, so judge that reading before the first sleep. */
 		judgeFirst?: boolean
 	},
 ) {
-	const { toolName, workspaceId: workspace_id, session, registerReturn = false } = opts
+	const { toolName, workspaceId: workspace_id, session } = opts
 	const wsOpts = { workspaceId: workspace_id }
 	let sessionId = session.id
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'user_stopped']
@@ -1628,11 +1660,12 @@ async function waitForSessionResult(
 	// 2. Poll until terminal, following retried_session_id redirects
 	let current = session as typeof session & { retriedSessionId?: string | null }
 	let settled = false
-	let stoppedBecause: 'waiting_for_input' | 'paused' | undefined
+	let stoppedBecause: 'waiting_for_input' | 'paused' | 'wait_limit' | undefined
 	let pollFailures = 0
 	let pollError: string | undefined
 	let pollAttempt = 0
 	let judgeNow = opts.judgeFirst ?? false
+	const waitDeadline = Date.now() + SESSION_WAIT_MAX_MS
 	while (true) {
 		if (!judgeNow) {
 			await new Promise((resolve) => setTimeout(resolve, waitPollDelayMs(pollAttempt++)))
@@ -1668,47 +1701,16 @@ async function waitForSessionResult(
 			break
 		}
 		// A session parked on waiting_for_input, or paused, will not progress until
-		// someone acts on it, and with no time limit polling on would never end. Stop
+		// someone acts on it, so polling on would never end. Stop
 		// early but leave settled false: the session is not finished.
 		if (current.status === 'waiting_for_input' || current.status === 'paused') {
 			stoppedBecause = current.status
 			break
 		}
-	}
-
-	// The wait ended with the helper still going (it stopped on waiting_for_input or
-	// paused, or the status checks kept failing): ask for its result to be sent back
-	// later. Never on the settled path, where the caller gets it inline, and only for
-	// the caller that started the session.
-	// If the helper ended in the gap, the PATCH sends the return itself.
-	// The server says what became of it: 'registered' (still running, it will
-	// be sent), 'delivered' (already ended, sent now), 'skipped' (already ended,
-	// could not be sent, with the reason) or 'failed' (not registered at all).
-	let notifyOnComplete:
-		| { state: 'registered' | 'delivered' | 'skipped' | 'failed'; reason?: string }
-		| undefined
-	if (!settled && registerReturn) {
-		try {
-			const patched = (await apiCall(
-				config,
-				'PATCH',
-				`/api/sessions/${sessionId}`,
-				{ notify_on_complete: true },
-				wsOpts,
-			)) as {
-				notify_on_complete?: 'registered' | 'delivered' | 'skipped'
-				notify_skip_reason?: string
-			}
-			notifyOnComplete = {
-				state: patched.notify_on_complete ?? 'registered',
-				...(patched.notify_skip_reason ? { reason: patched.notify_skip_reason } : {}),
-			}
-		} catch (err) {
-			console.error(`${toolName}: could not register notify_on_complete`, err)
-			notifyOnComplete = {
-				state: 'failed',
-				reason: err instanceof Error ? err.message : String(err),
-			}
+		// Still going after the longest wait: stop holding the call. Not finished.
+		if (Date.now() >= waitDeadline) {
+			stoppedBecause = 'wait_limit'
+			break
 		}
 	}
 
@@ -1729,10 +1731,12 @@ async function waitForSessionResult(
 
 	const stopMessage =
 		stoppedBecause === 'waiting_for_input'
-			? `The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.${notifyOnComplete?.state === 'registered' ? ' Its result will come back to you when it finishes.' : ''}`
+			? 'The session is waiting for input and is not finished. It cannot be answered from the MCP surface yet. Answer it in the web app or @mention the agent. Check it with get_session, read the latest output with get_session_logs (newest first, the question is usually at the end), or stop it with stop_session. The logs field in this response is the first 500 lines, oldest first, so it will likely not contain the question.'
 			: stoppedBecause === 'paused'
 				? 'The session is paused and is not finished: it will not progress until it is resumed. Carry on with it using resume_session.'
-				: undefined
+				: stoppedBecause === 'wait_limit'
+					? 'The session has not finished after waiting 2 hours, so this call stopped waiting. That does not mean it failed. Check its latest status with get_session, and what it has done so far with get_session_logs (newest first) or get_chat_activity, before you decide what to do next. Stop it with stop_session if it should not go on.'
+					: undefined
 
 	const wsId = workspace_id ?? config.defaultWorkspaceId
 	const currentWithUrl = wsId
@@ -1765,14 +1769,6 @@ async function waitForSessionResult(
 					...(stoppedBecause ? { stopped_because: stoppedBecause, message: stopMessage } : {}),
 					...(pollError ? { poll_error: pollError } : {}),
 					...(logsError ? { logs_error: logsError } : {}),
-					...(notifyOnComplete
-						? {
-								notify_on_complete: notifyOnComplete.state,
-								...(notifyOnComplete.reason
-									? { notify_on_complete_reason: notifyOnComplete.reason }
-									: {}),
-							}
-						: {}),
 				}),
 			},
 		],
@@ -2255,7 +2251,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 }
 
 const UPDATE_ENTRY_FIELDS =
-	'title, content, status, metadata, driver, attach_file_ids, detach_file_ids'
+	'title, content, append, replace, status, metadata, driver, attach_file_ids, detach_file_ids'
 
 /**
  * True when an update_objects entry asks for at least one write: a field change,
@@ -2315,6 +2311,46 @@ function assertWriteStaysInSessionWorkspace(
 	throw new Error(
 		`${toolName} was called with workspace_id ${requested}, but this session runs in workspace ${sessionWorkspaceId}. Agents can only write to the workspace they run in. Omit workspace_id or pass ${sessionWorkspaceId}.`,
 	)
+}
+
+/**
+ * Pilot flows hold the Maskin tools that leave the company or cannot be undone (delete_object,
+ * delete_file, delete_loop, delete_trigger, create_notification) and any tool nobody classified,
+ * such as an extension's. For those, with a session, the API is asked first: a session under a
+ * flow in pilot is refused and a card goes to a person; after they approve that exact call, the
+ * repeated call goes through once. A call with no session (a person's own chat) is not asked.
+ * If the question cannot be asked the call is held: not being able to ask never lets it through.
+ */
+async function assertNotHeldByPilot(
+	config: McpConfig,
+	toolName: string,
+	args: unknown,
+	/** An extension tool whose name says it only reads: classified, so not held. */
+	extensionRead: boolean,
+): Promise<void> {
+	if (!isPilotHeldMaskinTool(toolName, toolName in TOOL_ANNOTATIONS || extensionRead)) return
+	const sessionId =
+		config.transport === 'http'
+			? config.maskinSessionId
+			: (config.maskinSessionId ?? process.env.SESSION_ID)
+	if (!sessionId) return
+	let held: { held?: boolean; message?: string }
+	try {
+		const response = await apiFetch(
+			config,
+			'POST',
+			'/api/pilot-gate/check',
+			{ tool: toolName, arguments: args },
+			// The answer changes with every call (a card, then an approval), so it is never replayed.
+			{ idempotencyKey: randomUUID() },
+		)
+		held = (await response.json()) as { held?: boolean; message?: string }
+	} catch {
+		throw new Error(
+			`${PILOT_REFUSAL}. This flow could not be checked just now, so ${toolName} was held. Nothing was done. Try again shortly.`,
+		)
+	}
+	if (held.held) throw new Error(held.message ?? `${PILOT_REFUSAL}. Nothing was done.`)
 }
 
 /**
@@ -3042,7 +3078,7 @@ function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<strin
 	const at = new Date(runAt)
 	if (at.getTime() <= Date.now()) {
 		throw new Error(
-			`run_at ${runAt} is not in the future. Pick a later time, or use run_agent to start the agent now.`,
+			`run_at ${runAt} is not in the future. Pick a later time, or use create_sub_chat to start the agent now.`,
 		)
 	}
 	return { ...fields, type: 'reminder', config: { scheduled_at: at.toISOString() } }
@@ -3054,6 +3090,9 @@ function oneTimeOrScheduledBody<T extends { type?: string; config?: Record<strin
  * enabled triggers are read after the save; if that read fails the similar
  * check is skipped and the rest still ships.
  */
+/** The compact trigger fields that hold a UTC time; each gets a local twin. */
+const TRIGGER_TIME_KEYS = ['next_run', 'last_run'] as const
+
 async function triggerWriteResult(
 	config: McpConfig,
 	workspaceId: string | undefined,
@@ -3080,7 +3119,11 @@ async function triggerWriteResult(
 	}
 	const warnings = detectTriggerWarnings({ id: saved.id, trigger: saved, others, checks })
 	const wsId = saved.workspaceId ?? workspaceId ?? config.defaultWorkspaceId
-	const row: Record<string, unknown> = { ...compactTrigger(saved, triggerAgent(saved, actors)) }
+	const row: Record<string, unknown> = withLocalTimes(
+		compactTrigger(saved, triggerAgent(saved, actors)),
+		TRIGGER_TIME_KEYS,
+		await callerTimezone(config),
+	)
 	return {
 		trigger: wsId ? addUrl(row, config, wsId, { kind: 'trigger', id: saved.id }) : row,
 		warnings,
@@ -3112,9 +3155,8 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 		case 'cron': {
 			const expression = typeof config.expression === 'string' ? config.expression : null
 			if (!expression) return `cron · ${enabledLabel}`
-			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts).
-			// Workspaces don't carry a timezone yet, so we surface UTC inline to keep the
-			// label honest against the runtime; drop the suffix once timezone is plumbed through.
+			// Cron triggers fire in UTC (see `scheduleCron` in apps/dev/src/services/trigger-runner.ts)
+			// and are shown to people in Copenhagen time.
 			let nextLabel: string | null = null
 			if (trigger.enabled) {
 				try {
@@ -3125,7 +3167,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 					// Invalid expression — skip next-run, keep the schedule line.
 				}
 			}
-			const schedule = `${expression} (UTC)`
+			const schedule = triggerSchedule(trigger, new Date(nowMs))
 			return nextLabel
 				? `${enabledLabel} · ${schedule} · ${nextLabel}`
 				: `${enabledLabel} · ${schedule}`
@@ -3135,7 +3177,7 @@ function buildTriggerContextLine(trigger: RawTrigger, nowMs = Date.now()): strin
 			if (!scheduledAt) return `reminder · ${enabledLabel}`
 			const targetMs = Date.parse(scheduledAt)
 			if (!Number.isFinite(targetMs)) return `reminder · ${enabledLabel}`
-			return `${enabledLabel} · at ${scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
+			return `${enabledLabel} · at ${formatCopenhagenStamp(scheduledAt) ?? scheduledAt} · ${formatRelativeFuture(targetMs, nowMs)}`
 		}
 		case 'event': {
 			const action = typeof config.action === 'string' ? config.action : null
@@ -3516,7 +3558,13 @@ async function listObjectsPage(
 		content: [
 			{
 				type: 'text' as const,
-				text: buildListContentText(rows),
+				text: listPageText({
+					key: 'objects',
+					rows,
+					limit: pagination.limit,
+					nextCursor,
+					total,
+				}),
 			},
 		],
 		structuredContent: {
@@ -3555,9 +3603,51 @@ async function listObjectsPage(
 }
 
 // Tools whose schema rejects a top-level argument name it does not know instead
-// of stripping it. Only tools where a dropped list reads as a finished write;
-// other tools keep stripping, since agents often send harmless extra keys.
-const REJECT_UNKNOWN_KEYS_TOOLS = new Set(['update_objects'])
+// of stripping it, each with the closing sentence of the refusal (empty for reads, which
+// write nothing). Tools where a dropped list reads as a finished write, and the
+// relationship, graph and file reads, where a dropped filter returns unrelated
+// rows or a plausible but wrong total that look like an answer. Rolled out one tool at
+// a time, each after its extra-key counts in PostHog (mcp_tool_call arg_keys) were read.
+// Other tools keep stripping, since agents often send harmless extra keys.
+const REJECT_UNKNOWN_KEYS_TOOLS = new Map([
+	['update_objects', 'Nothing was written.'],
+	[
+		'query_data',
+		'It takes no SQL. Example: query_data({ type: "task", filters: { status: "done" }, group_by: "created_at.day" }).',
+	],
+	['list_relationships', ''],
+	['traverse_graph', ''],
+	['get_objects', ''],
+	['list_files', ''],
+	['get_file', ''],
+])
+
+// Misspellings agents really send (PostHog, 14 days to 12 Nov 2026), shown in the
+// error beside the unknown name.
+const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
+	list_relationships: { entity_id: 'object_id', offset: 'cursor' },
+	traverse_graph: {
+		start_id: 'object_id',
+		id: 'object_id',
+		depth: 'max_depth',
+		relationship_types: 'edge_type_allow_list',
+		types: 'edge_type_allow_list',
+	},
+	get_objects: {
+		include_content: 'include: ["content"]',
+		include_body: 'include: ["content"]',
+		include_metadata: 'include: ["metadata"]',
+		include_relationships: 'include: ["relationships"]',
+	},
+	list_files: { query: 'q', search: 'q' },
+	get_file: { file_id: 'id' },
+}
+
+// A list_relationships call with none of these would list every relationship in
+// the workspace, newest first, and look like an answer.
+const REQUIRE_ONE_OF: Record<string, readonly string[]> = {
+	list_relationships: ['object_id', 'source_id', 'target_id', 'type'],
+}
 
 export function createMcpServer(config: McpConfig) {
 	const server = new McpServer({
@@ -3570,6 +3660,10 @@ export function createMcpServer(config: McpConfig) {
 	// Attached to the server via `serverHandlers` so `getServerHandlers`
 	// (and `createInvokeTool` in ./invoke.ts) can dispatch tools directly.
 	const handlers = new Map<string, McpToolHandler>()
+
+	// Extension tools whose names say they only read. Every other tool without a row in
+	// annotations.ts counts as outbound in a pilot flow.
+	const extensionReadTools = new Set<string>()
 
 	// The rollback switch for the list contract: off registers the pre-contract list_objects and
 	// search_objects (definition and handler). Read once at server creation, from the process
@@ -3607,7 +3701,8 @@ export function createMcpServer(config: McpConfig) {
 		// SDK validates arguments before our handler runs. A tool with no alias
 		// rows passes through untouched, so its tools/list entry is unchanged.
 		const definition =
-			baseDefinition?.inputSchema && (needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name))
+			baseDefinition?.inputSchema &&
+			(needsNormalise(name) || REJECT_UNKNOWN_KEYS_TOOLS.has(name) || name in REQUIRE_ONE_OF)
 				? {
 						...baseDefinition,
 						inputSchema: wrapInputSchema(
@@ -3646,7 +3741,13 @@ export function createMcpServer(config: McpConfig) {
 								}
 								return normalised.args
 							},
-							{ rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name) },
+							{
+								rejectUnknownKeys: REJECT_UNKNOWN_KEYS_TOOLS.has(name),
+								unknownKeysSuffix: REJECT_UNKNOWN_KEYS_TOOLS.get(name),
+								explain: name === 'update_objects' ? explainIgnoredUpdateKeys : undefined,
+								hints: UNKNOWN_KEY_HINTS[name],
+								requireOneOf: REQUIRE_ONE_OF[name],
+							},
 						),
 					}
 				: baseDefinition
@@ -3659,6 +3760,7 @@ export function createMcpServer(config: McpConfig) {
 			let response: unknown
 			try {
 				assertWriteStaysInSessionWorkspace(config, name, args)
+				await assertNotHeldByPilot(config, name, args, extensionReadTools.has(name))
 				response = await handler(args, extra)
 			} catch (err) {
 				recordToolCall(telemetrySink, telemetryTarget, {
@@ -3725,8 +3827,9 @@ export function createMcpServer(config: McpConfig) {
 
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
 			// telemetry event measures the shipped payload — the size event and
-			// the wire response see the same, capped shape.
-			const capped = applyResponseTokenCap(name, response)
+			// the wire response see the same, capped shape. The Copenhagen times go on
+			// first, so they count toward the cap like any other field.
+			const capped = applyResponseTokenCap(name, addCopenhagenTimesToResponse(response))
 			const finalResponse = capped.response
 
 			// Response-size baseline for response-size telemetry. Measures the
@@ -3776,8 +3879,9 @@ export function createMcpServer(config: McpConfig) {
 		handlers.set(name, wrappedHandler)
 
 		// Title and annotations come from the table in annotations.ts, so every
-		// tool gets them here and nowhere else. Extension tools have no row and
-		// pass through unannotated.
+		// platform tool gets them here. Extension tools have no row: they carry
+		// their own title and annotations from the loop that registers them, and
+		// pass through here untouched.
 		const annotation = TOOL_ANNOTATIONS[name]
 		const annotatedDefinition = annotation
 			? {
@@ -4167,7 +4271,7 @@ export function createMcpServer(config: McpConfig) {
 						idleIds.length > 0
 							? `no entry in updates (${idleIds.join(', ')}) has a field to change`
 							: 'it received no updates and no edges'
-					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Send real arrays, not JSON strings, and name the list updates (not objects). Nothing was written.`,
+					}. Expected updates as an array of {id, ...fields to change} (allowed fields: ${UPDATE_ENTRY_FIELDS}; empty attach_file_ids and detach_file_ids lists count as nothing) and/or edges as an array of {source_id, target_id, type}. Nothing was written.`,
 				)
 			}
 
@@ -4448,6 +4552,150 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'set_next_step',
+		{
+			description: tools.set_next_step.description,
+			inputSchema: tools.set_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/next-step`, body, {
+				workspaceId: workspace_id,
+			})
+			const timezone = await callerTimezone(config)
+			return {
+				_meta: meta('set_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(withLocalDue(result, timezone)) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'schedule_next_step',
+		{
+			description: tools.schedule_next_step.description,
+			inputSchema: tools.schedule_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/objects/${object_id}/schedule-next-step`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			const timezone = await callerTimezone(config)
+			const scheduled = isPlainObject(result)
+				? {
+						...result,
+						next_step: withLocalDue(result.next_step, timezone),
+						wake_up: isPlainObject(result.wake_up)
+							? withLocalTimes(result.wake_up, ['at'], timezone)
+							: result.wake_up,
+					}
+				: result
+			return {
+				_meta: meta('schedule_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(scheduled) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_next_step',
+		{
+			description: tools.update_next_step.description,
+			inputSchema: tools.update_next_step.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'PATCH', `/api/objects/${object_id}/next-step`, body, {
+				workspaceId: workspace_id,
+			})
+			const timezone = await callerTimezone(config)
+			return {
+				_meta: meta('update_next_step', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(withLocalDue(result, timezone)) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'record_go_ahead',
+		{
+			description: tools.record_go_ahead.description,
+			inputSchema: tools.record_go_ahead.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(config, 'POST', `/api/objects/${object_id}/go-ahead`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('record_go_ahead', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'take_back_go_ahead',
+		{
+			description: tools.take_back_go_ahead.description,
+			inputSchema: tools.take_back_go_ahead.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id } = args
+			const result = await apiCall(
+				config,
+				'DELETE',
+				`/api/objects/${object_id}/go-ahead`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('take_back_go_ahead', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'skip_done_when',
+		{
+			description: tools.skip_done_when.description,
+			inputSchema: tools.skip_done_when.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, object_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/objects/${object_id}/done-when/skip`,
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('skip_done_when', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4832,7 +5080,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'relationships',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6151,6 +6405,8 @@ export function createMcpServer(config: McpConfig) {
 					mime_type: args.mime_type,
 					content: args.content,
 					...(args.encoding !== undefined ? { encoding: args.encoding } : {}),
+					...(args.conversation_id !== undefined ? { conversation_id: args.conversation_id } : {}),
+					...(args.object_id !== undefined ? { object_id: args.object_id } : {}),
 				},
 				{ workspaceId: wsId },
 			)
@@ -6171,6 +6427,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
+			if (args.conversation_id) {
+				const chatParams = new URLSearchParams()
+				if (args.type) chatParams.set('type', args.type)
+				if (args.uploaded_by) chatParams.set('uploaded_by', args.uploaded_by)
+				const chatQs = chatParams.toString()
+				const chatFiles = (await apiCall(
+					config,
+					'GET',
+					`/api/conversations/${args.conversation_id}/files${chatQs ? `?${chatQs}` : ''}`,
+					undefined,
+					{ workspaceId: wsId },
+				)) as { files: unknown[]; total: number; omitted: number }
+				return {
+					_meta: meta('list_files', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: buildListContentText(chatFiles) }],
+					structuredContent: chatFiles,
+				}
+			}
 			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor })
 			const params = new URLSearchParams()
 			if (args.q) params.set('q', args.q)
@@ -6201,7 +6475,13 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result),
+						text: listPageText({
+							key: 'files',
+							rows: result,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
 					},
 				],
 				structuredContent: {
@@ -6328,6 +6608,30 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'transcribe_file',
+		{
+			description: tools.transcribe_file.description,
+			inputSchema: tools.transcribe_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const wsId = resolveWorkspaceId(args.workspace_id)
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/transcriptions/files/${args.id}`,
+				args.language !== undefined ? { language: args.language } : {},
+				{ workspaceId: wsId },
+			)
+			return {
+				_meta: meta('transcribe_file', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'update_file',
 		{
 			description: tools.update_file.description,
@@ -6428,7 +6732,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'events',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					events: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6463,7 +6778,18 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'comments',
+							rows: pagedRows,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					comments: pagedRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -6666,7 +6992,18 @@ export function createMcpServer(config: McpConfig) {
 					: null
 			return {
 				_meta: meta('list_chats', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(chats) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'chats',
+							rows: chats,
+							limit: pagination.limit,
+							nextCursor,
+							total: null,
+						}),
+					},
+				],
 				structuredContent: {
 					chats,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
@@ -7115,7 +7452,7 @@ export function createMcpServer(config: McpConfig) {
 
 	// The upstream signature accepts a raw shape; list_triggers passes its strict
 	// schema object so the SDK rejects unknown parameters, so the narrow type is
-	// spelled out here. Same cast as registerWrappedSchemaTool below.
+	// spelled out here.
 	const registerStrictSchemaTool = registerAppTool as unknown as (
 		s: typeof server,
 		name: string,
@@ -7193,9 +7530,14 @@ export function createMcpServer(config: McpConfig) {
 			const actors = await resolveActors(config, ownerIds, args.workspace_id)
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const now = new Date()
+			const timezone = await callerTimezone(config)
 			const shapeRow = (t: RawTrigger): Record<string, unknown> => {
 				const row: Record<string, unknown> = compact
-					? { ...compactTrigger(t, triggerAgent(t, actors), now) }
+					? withLocalTimes(
+							compactTrigger(t, triggerAgent(t, actors), now),
+							TRIGGER_TIME_KEYS,
+							timezone,
+						)
 					: { ...t }
 				return wsId
 					? addUrl(row, config, t.workspaceId ?? wsId, { kind: 'trigger', id: t.id })
@@ -7299,7 +7641,11 @@ export function createMcpServer(config: McpConfig) {
 				trigger.targetActorId ? [trigger.targetActorId] : [],
 				workspace_id,
 			)
-			const summary = compactTrigger(trigger, triggerAgent(trigger, actors))
+			const summary = withLocalTimes(
+				compactTrigger(trigger, triggerAgent(trigger, actors)),
+				TRIGGER_TIME_KEYS,
+				await callerTimezone(config),
+			)
 			// The short fields lead, then the full prompt and config, so a cut text still
 			// carries what the trigger is and when it runs.
 			const full = {
@@ -7407,8 +7753,8 @@ export function createMcpServer(config: McpConfig) {
 			const existingTriggerIds = args.trigger_ids ?? []
 			const memberObjectIds = args.object_ids ?? []
 			// `status` always has a value here — the schema defaults it to
-			// 'draft'. Only `paused` starts a loop's triggers disabled.
-			const startEnabled = status !== 'paused'
+			// 'draft'. Draft, paused and archived start a loop's triggers disabled.
+			const startEnabled = !loopStatusTurnsTriggersOff(status)
 
 			// Validate everything up-front so nothing is created on a bad request.
 			await Promise.all([
@@ -7497,8 +7843,8 @@ export function createMcpServer(config: McpConfig) {
 			const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
 
 			// Pre-existing triggers attached via `trigger_ids` were created by an
-			// earlier call and default to enabled — if this loop starts paused,
-			// disable them too so "paused" is true of every step, not just the
+			// earlier call and default to enabled — if this loop starts as draft or
+			// paused, disable them too so "off" is true of every step, not just the
 			// ones authored inline in this call. Best-effort: a failure here
 			// surfaces as a warning rather than rolling back an already-created,
 			// otherwise-successful loop.
@@ -7524,7 +7870,7 @@ export function createMcpServer(config: McpConfig) {
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 			if (disableFailures.length > 0) {
-				responseBody.trigger_pause_warnings = `Loop created as paused, but these pre-existing triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+				responseBody.trigger_pause_warnings = `Loop created with its triggers off (draft, paused or archived), but these pre-existing triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 			}
 
 			// Same setup block update_loop/get_loop return. graphResult.edges.length
@@ -7598,14 +7944,14 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// The loop's status after this call — its own PATCH if `status` was
-				// passed, else whatever it already was. Only `paused` means new
+				// passed, else whatever it already was. Draft, paused and archived mean new
 				// steps should start disabled; an explicit status transition
-				// to/from `paused` is handled centrally by the PATCH /api/objects/:id
+				// into or out of those is handled centrally by the PATCH /api/objects/:id
 				// hook (apps/dev/src/routes/objects.ts), which also covers the
 				// frontend's pause/resume button — this only needs to handle steps
-				// being *added* to an already-paused loop in the same or a later call.
+				// being *added* to an already-off loop in the same or a later call.
 				const effectiveStatus = status ?? (existing.status as string | undefined)
-				const stepsStartEnabled = effectiveStatus !== 'paused'
+				const stepsStartEnabled = !loopStatusTurnsTriggersOff(effectiveStatus)
 
 				await Promise.all([
 					driver_id !== undefined ? assertLoopDriver(config, driver_id, workspace_id) : undefined,
@@ -7699,8 +8045,8 @@ export function createMcpServer(config: McpConfig) {
 				}
 
 				// Pre-existing triggers attached via `add_trigger_ids` default to
-				// enabled — if the loop's effective status is `paused`, disable them
-				// too so pausing stays true of every step, not just ones just
+				// enabled — if the loop's effective status is `draft` or `paused`,
+				// disable them too so it stays true of every step, not just ones just
 				// authored inline. Best-effort: a failure surfaces as a warning
 				// rather than undoing an otherwise-successful update.
 				const disableFailures =
@@ -7794,7 +8140,7 @@ export function createMcpServer(config: McpConfig) {
 				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
 				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
 				if (disableFailures.length > 0) {
-					responseBody.trigger_pause_warnings = `Loop is paused, but these newly-attached triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+					responseBody.trigger_pause_warnings = `Loop has its triggers off (draft, paused or archived), but these newly-attached triggers could not be disabled — switch them off manually: ${disableFailures.join(', ')}`
 				}
 
 				responseBody.setup = await buildLoopSetupBlockFromApi(
@@ -8002,6 +8348,84 @@ export function createMcpServer(config: McpConfig) {
 						},
 					],
 				}
+			})
+		},
+	)
+
+	registerAppTool(
+		server,
+		'fork_loop',
+		{
+			description: tools.fork_loop.description,
+			inputSchema: tools.fork_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const wsId = workspace_id ?? config.defaultWorkspaceId
+			if (!wsId) {
+				throw new Error('fork_loop needs a workspace. Pass workspace_id or configure a default.')
+			}
+			const reply = (body: Record<string, unknown>) => ({
+				_meta: meta('fork_loop', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }],
+			})
+
+			const { installs } = (await apiCall(
+				config,
+				'GET',
+				`/api/installed-loops?workspaceId=${encodeURIComponent(wsId)}`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as {
+				installs: Array<{
+					id: string
+					objectId: string | null
+					isLocked: boolean
+					forkedAt: string | null
+					loopName: string
+				}>
+			}
+			const install = installs.find((i) => i.objectId === id || i.id === id)
+			if (!install) {
+				return reply({
+					forked: false,
+					reason:
+						'This loop was not installed from the marketplace, so it is already owned by the workspace and there is nothing to fork. Edit its agents, triggers and skills directly. Use list_loops to find loop ids.',
+				})
+			}
+			if (!install.isLocked) {
+				return reply({
+					forked: false,
+					already_forked: true,
+					forked_at: install.forkedAt,
+					loop: install.loopName,
+					reason: 'This loop is already forked, so the workspace owns it. Nothing changed.',
+				})
+			}
+
+			const result = (await apiCall(
+				config,
+				'POST',
+				`/api/installed-loops/${install.id}/fork`,
+				undefined,
+				{ workspaceId: wsId },
+			)) as {
+				id: string
+				objectId: string | null
+				installedVersion: string
+				forkedAt: string | null
+				detached: { actors: number; triggers: number; skills: number; integrations: number }
+			}
+
+			return reply({
+				forked: true,
+				loop: install.loopName,
+				loop_object_id: result.objectId,
+				installed_loop_id: result.id,
+				forked_from_version: result.installedVersion,
+				forked_at: result.forkedAt,
+				detached: result.detached,
 			})
 		},
 	)
@@ -8378,121 +8802,17 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Sessions ─────────────────────────────────────────────
-	// create_sub_chat is the new name for create_session: one handler, two names, so
-	// prompts that still say create_session keep working.
-	for (const toolName of ['create_sub_chat', 'create_session'] as const) {
-		registerAppTool(
-			server,
-			toolName,
-			{
-				description: tools[toolName].description,
-				inputSchema: tools[toolName].inputSchema.shape,
-				_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
-			},
-			async (args) => {
-				if (args.wait) return createSessionAndWait(config, args, toolName)
-
-				// `wait` never goes to the create route. The result is always sent back to
-				// the caller, with no opt-out: not waiting means not holding the call open,
-				// not never finding out how it went.
-				const { workspace_id, wait, ...rest } = args
-				const createBody = { ...rest, notify_on_complete: true }
-
-				let result: SessionRow
-				try {
-					result = (await apiCall(config, 'POST', '/api/sessions', createBody, {
-						workspaceId: workspace_id,
-					})) as SessionRow
-				} catch (err) {
-					return sessionNotStartedResult(config, toolName, workspace_id, err)
-				}
-				const wsId = workspace_id ?? config.defaultWorkspaceId
-				const enriched = await enrichSessionActorName(config, wsId, result)
-				const withUrl = wsId
-					? addUrl(enriched as Record<string, unknown>, config, wsId, {
-							kind: 'session',
-							id: enriched.id,
-							actorId: (enriched as { actorId?: string }).actorId,
-						})
-					: enriched
-				return {
-					_meta: meta(toolName, config, (args as { workspace_id?: string }).workspace_id),
-					content: [
-						{
-							type: 'text' as const,
-							text: JSON.stringify({
-								...withUrl,
-								handoff: handoffNote(enriched, (withUrl as { url?: unknown }).url),
-							}),
-						},
-					],
-				}
-			},
-		)
-	}
-
-	// Listed alias of create_session with wait on (see tool-aliases.ts). Registered
-	// through the same wrapper as a real tool, so it gets the same tool_call row,
-	// size event, token cap and mutation event. The handler calls the wait path of
-	// create_session directly rather than the registered create_session handler,
-	// which would record a second tool_call row for one call.
-	//
-	// Argument mapping, derived from run_agent as it was before PR 1986:
-	//   actor_id, action_prompt, spawned_by_message_id  carried over one to one
-	//   workspace_id                                    filled from the default when absent
-	//   notify_on_complete                              accepted and ignored: create_session no longer
-	//                                                   takes it and registers the same fallback itself
-	//                                                   when the wait times out
-	//   config, poll_interval_seconds, timeout_seconds,
-	//   depends_on_session_ids                          no equivalent, dropped, names recorded
-	// The upstream signature accepts a raw shape; this tool passes a schema object
-	// (the alias layer's preprocess wrapper), so the narrow type is spelled out
-	// here. It is still registered through the same wrapper as every other tool.
-	const registerWrappedSchemaTool = registerAppTool as unknown as (
-		s: typeof server,
-		name: string,
-		definition: {
-			description: string
-			inputSchema: z.ZodTypeAny
-			_meta: Record<string, unknown>
-		},
-		handler: (args: z.infer<typeof tools.run_agent.inputSchema>) => Promise<unknown>,
-	) => unknown
-	registerWrappedSchemaTool(
+	// create_sub_chat returns straight away; the result comes back to the caller as a new
+	// turn when the agent finishes (always on, see createSubChat).
+	registerAppTool(
 		server,
-		'run_agent',
+		'create_sub_chat',
 		{
-			description: tools.run_agent.description,
-			// The dropped key names are read in this preprocess step, before the
-			// schema strips them, and before validation, so a call that then fails
-			// validation is still counted. Same wrapper the alias rows use; this
-			// tool has no alias rows, so registerAppTool leaves the schema as given.
-			inputSchema: wrapInputSchema(tools.run_agent.inputSchema.shape, (raw) => {
-				const sent =
-					typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-						? (raw as Record<string, unknown>)
-						: {}
-				recordAliasUse(telemetrySink, telemetryTarget, {
-					tool_name: 'run_agent',
-					workspace_id: extractWorkspaceId(raw),
-					dropped_keys: RUN_AGENT_DROPPED_KEYS.filter((key) => key in sent),
-					tool_alias: { old: 'run_agent', new: TOOL_NAME_ALIASES.run_agent },
-					transport: config.transport,
-				})
-				return raw
-			}),
+			description: tools.create_sub_chat.description,
+			inputSchema: tools.create_sub_chat.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
 		},
-		async (args) => {
-			const { workspace_id, actor_id, action_prompt, spawned_by_message_id } = args
-			return createSessionAndWait(config, {
-				workspace_id: workspace_id ?? config.defaultWorkspaceId,
-				actor_id,
-				action_prompt,
-				spawned_by_message_id,
-				wait: true,
-			})
-		},
+		async (args) => createSubChat(config, args),
 	)
 
 	registerAppTool(
@@ -9656,7 +9976,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done. Then call desktop_screenshot to see what changed before you carry on.',
+						text: 'A card with your computer is now in the chat. The user opens it, does what you asked and presses Done. End your turn now without a closing message; they will send you a message when they are done, with a screenshot of your computer taken at that moment. Look at it before you carry on; if the message says no screenshot could be taken, call desktop_screenshot yourself.',
 					},
 				],
 			}
@@ -10356,107 +10676,142 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Get Started (Onboarding) ────────────────────────────
+	// ─── Marketplace (list + install) ────────────────────────
+	type MarketplaceWorkspaceResolution =
+		| { done: true; text: string }
+		| {
+				done: false
+				workspace: { id: string; name: string }
+				workspaces: Array<{ id: string; name: string }>
+				explicitWorkspace: boolean
+		  }
+
+	// Resolve the workspace for list_marketplace / install_loop. Only the API call sits in the
+	// try: a bad id thrown below must reach the caller as an error, not be mistaken for a
+	// connection problem.
+	async function resolveMarketplaceWorkspace(
+		toolName: string,
+		workspaceId: string | undefined,
+	): Promise<MarketplaceWorkspaceResolution> {
+		let workspaces: Array<{ id: string; name: string }>
+		try {
+			workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				skipWorkspace: true,
+			})) as Array<{ id: string; name: string }>
+		} catch {
+			const setupSteps =
+				config.transport === 'http'
+					? `  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with \`claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'\`\n  4. Run /reload-plugins, then call ${toolName} again`
+					: `  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call ${toolName} again`
+			return {
+				done: true,
+				text: `👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+			}
+		}
+
+		const effectiveWsId = workspaceId ?? config.defaultWorkspaceId
+		const workspace = effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]
+		if (effectiveWsId && !workspace) {
+			throw new Error(
+				`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
+			)
+		}
+		if (!workspace) {
+			return {
+				done: true,
+				text: `👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run ${toolName} again.`,
+			}
+		}
+		return { done: false, workspace, workspaces, explicitWorkspace: Boolean(effectiveWsId) }
+	}
+
 	registerAppTool(
 		server,
-		'get_started',
+		'list_marketplace',
 		{
-			description: tools.get_started.description,
-			inputSchema: tools.get_started.inputSchema.shape,
+			description: tools.list_marketplace.description,
+			inputSchema: tools.list_marketplace.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
 			const textResponse = (text: string) => ({
-				_meta: meta('get_started', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta('list_marketplace', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text }],
 			})
 
-			// Resolve workspace. Only the API call sits in the try: a bad id thrown below
-			// must reach the caller as an error, not be mistaken for a connection problem.
-			let workspaces: Array<{ id: string; name: string }>
+			const resolved = await resolveMarketplaceWorkspace('list_marketplace', args.workspace_id)
+			if (resolved.done) return textResponse(resolved.text)
+			const { workspace } = resolved
+
+			let loops: Array<{
+				id: string
+				name: string
+				description: string
+				use_case: string | null
+				item_types: string[]
+			}> = []
 			try {
-				workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+				const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
 					skipWorkspace: true,
-				})) as Array<{ id: string; name: string }>
-			} catch {
-				const setupSteps =
-					config.transport === 'http'
-						? "  1. Sign in at https://maskin.io and create a workspace\n  2. Copy your Maskin API key from Settings → API keys and your Workspace ID from Settings → Workspace\n  3. Reconnect Claude with `claude mcp add maskin --transport http --url https://maskin.io/mcp --header 'Authorization: Bearer <YOUR_MASKIN_API_KEY>' --header 'X-Workspace-Id: <YOUR_WORKSPACE_ID>'`\n  4. Run /reload-plugins, then call get_started again"
-						: '  1. Call create_actor to get an API key\n  2. Restart with API_KEY set\n  3. Call get_started again'
+				})) as {
+					loops: Array<{
+						id: string
+						name: string
+						description: string
+						use_case: string | null
+						item_types: string[]
+					}>
+				}
+				loops = result.loops ?? []
+			} catch (err) {
+				return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
+			}
+
+			if (loops.length === 0) {
 				return textResponse(
-					`👋 Welcome to Maskin!\n\nI can't reach your workspace yet. To finish setup:\n${setupSteps}\n\nOr pass a workspace_id directly if you have one.`,
+					`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
 				)
 			}
 
-			const effectiveWsId = args.workspace_id ?? config.defaultWorkspaceId
-			const workspace = effectiveWsId
-				? workspaces.find((w) => w.id === effectiveWsId)
-				: workspaces[0]
-			if (effectiveWsId && !workspace) {
-				throw new Error(
-					`Workspace ${effectiveWsId} not found. Call list_workspaces to see the workspaces this key can access.`,
-				)
-			}
+			const loopLines = loops.map((l) => {
+				const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
+				const useCase = l.use_case ? ` · ${l.use_case}` : ''
+				return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
+			})
 
-			if (!workspace) {
-				return textResponse(
-					'👋 Welcome to Maskin!\n\nNo workspace found on this account. Call create_workspace first with a name, then run get_started again.',
-				)
-			}
+			return textResponse(
+				`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call install_loop with:\n  loop_id: "<id from above>"\n  workspace_name: "<name if they want to rename>"`,
+			)
+		},
+	)
 
-			// INSTALL with no workspace chosen on a multi-workspace account: the install
-			// writes to a workspace, so do not guess. The preview below only reads.
-			if (args.loop_id && args.confirm && !effectiveWsId && workspaces.length > 1) {
+	registerAppTool(
+		server,
+		'install_loop',
+		{
+			description: tools.install_loop.description,
+			inputSchema: tools.install_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const textResponse = (text: string) => ({
+				_meta: meta('install_loop', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text }],
+			})
+
+			const resolved = await resolveMarketplaceWorkspace('install_loop', args.workspace_id)
+			if (resolved.done) return textResponse(resolved.text)
+			const { workspace, workspaces, explicitWorkspace } = resolved
+
+			// The install writes to a workspace, so on a multi-workspace account do not guess.
+			if (!explicitWorkspace && workspaces.length > 1) {
 				const workspaceLines = workspaces.map((w) => `  • ${w.name} (id: ${w.id})`)
 				return textResponse(
 					`This account has more than one workspace, so nothing was installed.\n\n${workspaceLines.join('\n')}\n\nPass workspace_id to choose where to install.`,
 				)
 			}
 
-			// PREVIEW: list marketplace loops so the user can pick one.
-			if (!args.loop_id || !args.confirm) {
-				let loops: Array<{
-					id: string
-					name: string
-					description: string
-					use_case: string | null
-					item_types: string[]
-				}> = []
-				try {
-					const result = (await apiCall(config, 'GET', '/api/marketplace/loops', undefined, {
-						skipWorkspace: true,
-					})) as {
-						loops: Array<{
-							id: string
-							name: string
-							description: string
-							use_case: string | null
-							item_types: string[]
-						}>
-					}
-					loops = result.loops ?? []
-				} catch (err) {
-					return textResponse(`❌ Failed to fetch marketplace loops: ${String(err)}`)
-				}
-
-				if (loops.length === 0) {
-					return textResponse(
-						`👋 Welcome to Maskin!\n\nThe marketplace has no loops yet. Once loops are published you'll be able to install them here.\n\nIn the meantime, use the marketplace UI in the app to browse and install loops as they become available.`,
-					)
-				}
-
-				const loopLines = loops.map((l) => {
-					const types = l.item_types.length > 0 ? ` [${l.item_types.join(', ')}]` : ''
-					const useCase = l.use_case ? ` · ${l.use_case}` : ''
-					return `  • ${l.name}${useCase}${types}\n    ${l.description}\n    id: ${l.id}`
-				})
-
-				return textResponse(
-					`👋 Welcome to Maskin! Let's set up "${workspace.name}".\n\nAvailable loops:\n\n${loopLines.join('\n\n')}\n\nAsk the user:\n  1. Which loop would they like to install?\n  2. What should the workspace be named? (currently "${workspace.name}")\n\nThen call get_started again with:\n  loop_id: "<id from above>"\n  confirm: true\n  workspace_name: "<name if they want to rename>"`,
-				)
-			}
-
-			// INSTALL: rename workspace (if requested), then install the loop.
+			// Rename the workspace (if requested), then install the loop.
 			if (args.workspace_name && args.workspace_name.trim() !== workspace.name) {
 				try {
 					await apiCall(
@@ -10495,10 +10850,10 @@ export function createMcpServer(config: McpConfig) {
 						p.triggers > 0 ? `${p.triggers} trigger${p.triggers === 1 ? '' : 's'}` : '',
 						p.skills > 0 ? `${p.skills} skill${p.skills === 1 ? '' : 's'}` : '',
 					].filter(Boolean)
-					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Loop installed.'
+					installSummary = parts.length > 0 ? `Installed: ${parts.join(', ')}.` : 'Flow installed.'
 				}
 			} catch (err) {
-				return textResponse(`❌ Failed to install loop: ${String(err)}`)
+				return textResponse(`❌ Failed to install flow: ${String(err)}`)
 			}
 
 			// Build magic login link (only safe on localhost).
@@ -10561,11 +10916,11 @@ INSTRUCTIONS FOR THE "Connect your Claude subscription" SECTION — render this 
 Then on a NEW line, ask: "Let me know once that's done and I'll kick things off." Do NOT proceed to next steps until the user confirms credentials are imported (or explicitly says to skip). If they skip, flag that agent sessions will fail until credentials are added.`
 
 			const loopLine = loopObjectId
-				? `\n🔁 It's now running as a Loop: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
+				? `\n🔁 It's now running as a Flow: ${frontendUrl}/${workspace.id}/loops/${loopObjectId}${magicSuffix}`
 				: ''
 
 			return textResponse(
-				`✅ Loop installed in workspace "${workspace.name}". ${installSummary}
+				`✅ Flow installed in workspace "${workspace.name}". ${installSummary}
 ${loopLine}
 🌐 Open the workspace: ${workspaceUrl}
 ${claudeCredsBlock}`,
@@ -10583,13 +10938,18 @@ ${claudeCredsBlock}`,
 	// Register extension MCP tools (namespaced with extensionId prefix)
 	for (const ext of getAllModules()) {
 		for (const tool of ext.mcpTools ?? []) {
+			if (resolveToolKind({ name: tool.name }) === 'read') {
+				extensionReadTools.add(`${ext.id}_${tool.name}`)
+			}
 			try {
 				registerAppTool(
 					server,
 					`${ext.id}_${tool.name}`,
 					{
+						title: extensionToolTitle(tool.name),
 						description: `[${ext.name}] ${tool.description}`,
 						inputSchema: tool.inputSchema.shape,
+						annotations: { ...EXTENSION_TOOL_ANNOTATIONS },
 						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 					},
 					async (args) => {
@@ -10733,6 +11093,100 @@ ${claudeCredsBlock}`,
 			)
 			return {
 				_meta: meta('desktop_put_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_attach_file',
+		{
+			description: tools.desktop_attach_file.description,
+			inputSchema: tools.desktop_attach_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...input } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/input', agent_id),
+				{ action: 'attach_file', ...input },
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_attach_file', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_apply_settings',
+		{
+			description: tools.desktop_apply_settings.description,
+			inputSchema: tools.desktop_apply_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/apply-settings', args.agent_id),
+				{},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_apply_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_settings',
+		{
+			description: tools.desktop_settings.description,
+			inputSchema: tools.desktop_settings.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				desktopPath('/api/desktop/settings', args.agent_id),
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('desktop_settings', config, args.workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'desktop_save_file',
+		{
+			description: tools.desktop_save_file.description,
+			inputSchema: tools.desktop_save_file.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, agent_id, ...body } = args
+			const result = await apiCall(
+				config,
+				'POST',
+				desktopPath('/api/desktop/save-file', agent_id),
+				body,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('desktop_save_file', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},

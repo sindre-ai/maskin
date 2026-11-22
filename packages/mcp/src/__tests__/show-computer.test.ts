@@ -79,7 +79,11 @@ describe('show_computer', () => {
 		expect(JSON.parse(String(init.body))).toEqual({ task: 'Approve the 2FA prompt on e-conomic.' })
 		const text = result.content[0]?.text ?? ''
 		expect(text).toContain('End your turn')
-		expect(text).toContain('desktop_screenshot')
+		expect(text).toContain('with a screenshot of your computer taken at that moment')
+		// The screenshot comes with the Done message; the tool only points at the fallback.
+		expect(text).toContain(
+			'if the message says no screenshot could be taken, call desktop_screenshot',
+		)
 		expect(result.isError).toBeUndefined()
 	})
 

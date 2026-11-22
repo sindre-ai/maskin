@@ -177,6 +177,12 @@ struct MessageRow: View {
 	/// A person approved a draft shown as a card in this message: its title and the text approved.
 	/// The thread tells the agent.
 	var onApprovedDraft: (_ title: String?, _ body: String) -> Void = { _, _ in }
+	/// A person already skipped the draft in this message (read from the chat), so its card says so
+	/// after a reload.
+	var draftSkipped = false
+	/// A person skipped a draft shown as a card in this message. The thread tells the agent. Nil
+	/// where the screen cannot send it, so the Skip button is not drawn.
+	var onSkippedDraft: (() -> Void)?
 	/// For each target the conversation links to, the message that links it first
 	/// (`LinkedConversationItems.firstMentions`): an object is a card there and a link in later
 	/// messages. Empty where the conversation is not known (previews, a thread of replies).
@@ -245,6 +251,12 @@ struct MessageRow: View {
 		return LinkedMessageLayout.lookupTargets(isOwn ? found.filter { $0.kind == .object } : found)
 	}
 
+	/// The chat and agent behind this message, so an edit made on a card tells that agent; nil for a
+	/// person's own words.
+	private var agentChat: ObjectPatchChat? {
+		message.author == .agent ? ObjectPatchChat(conversationID: message.conversationID, agentID: message.actorID) : nil
+	}
+
 	/// What to draw for the text, or nil when no link in it is a card (the text then renders as it
 	/// always did, folding included). At most three cards, across every kind; an object that is a
 	/// card in an earlier message of the conversation stays a link here.
@@ -300,7 +312,7 @@ struct MessageRow: View {
 		}
 	}
 
-	private func linkedBody(_ parts: [LinkedMessagePart]) -> some View {
+	private func linkedBody(_ parts: [LinkedMessagePart], askNote: DraftQuestionNote? = nil) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			ForEach(parts.enumerated().map { (id: $1.stableID(at: $0), part: $1) }, id: \.id) { entry in
 				switch entry.part {
@@ -309,9 +321,10 @@ struct MessageRow: View {
 						mentions.isEmpty ? text : MentionText.markdown(text, mentions: mentions), style: .chat,
 						hardBreaks: message.author == .human
 					)
-					.textSelection(.enabled)
 				case .card(let target):
-					LinkedTargetCard(target: target, onApproved: onApprovedDraft)
+					LinkedTargetCard(
+						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, skipped: draftSkipped,
+						askNote: askNote, editable: true, chat: agentChat)
 				}
 			}
 		}
@@ -379,7 +392,7 @@ struct MessageRow: View {
 				if !attachmentsOnly {
 					Group {
 						if let soleCard {
-							LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft)
+							LinkedTargetCard(target: soleCard, onApproved: onApprovedDraft, editable: true, chat: agentChat)
 						} else if hasOwnSurface(placingCards: placingCards) {
 							VStack(alignment: .trailing, spacing: MaskinSpace.s1) {
 								if message.isEmojiOnly {
@@ -400,7 +413,6 @@ struct MessageRow: View {
 									} else {
 										HStack(alignment: .lastTextBaseline, spacing: MaskinSpace.s3) {
 											MarkdownContent(markdownText, style: .chat, hardBreaks: true)
-												.textSelection(.enabled)
 											if message.editedAt != nil { EditedMark() }
 										}
 									}
@@ -419,11 +431,15 @@ struct MessageRow: View {
 				}
 			}
 			.frame(maxWidth: .infinity, alignment: .trailing)
+			.messageActionSheet(actions: actions)
 			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: true, actions: actions)
 			if let appended = layout?.appended, !appended.isEmpty {
+				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
 				VStack(alignment: .trailing, spacing: MaskinSpace.s3) {
-					ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+					ForEach(appended) { target in
+						LinkedTargetCard(
+							target: target, onApproved: onApprovedDraft, editable: target == textCard, chat: agentChat)
+					}
 				}
 				.frame(maxWidth: rowWidth > 0 ? rowWidth * BubbleShape.myMaxWidthFraction : nil, alignment: .trailing)
 			}
@@ -454,6 +470,8 @@ struct MessageRow: View {
 		// Read once per evaluation: finding the links costs a scan of the text.
 		let targets = linkedTargets
 		let layout = linkedLayout(for: targets)
+		// A question posted with an approvable draft is asked inside the draft's card, not a second one.
+		let askNote = draftCarriesTheYes(targets) ? DraftQuestionNote(questions: message.questions) : nil
 		// The same gap `StreamingReplyBubble` stacks its name and words with, from one constant.
 		return VStack(alignment: .leading, spacing: AgentNameLabel.gap) {
 			// v3: an agent's words are plain text; its name is shown only where more than one agent can
@@ -477,10 +495,9 @@ struct MessageRow: View {
 						if let quote { QuoteBlock(author: quote.author, text: quote.text, onTap: onQuoteTap) }
 						if !bodyText.isEmpty {
 							if let layout {
-								linkedBody(layout.parts)
+								linkedBody(layout.parts, askNote: askNote)
 							} else {
 								MarkdownContent(markdownText, style: .chat, hardBreaks: message.author == .human)
-									.textSelection(.enabled)
 							}
 						}
 						if message.editedAt != nil { EditedMark().foregroundStyle(MaskinColor.ink2) }
@@ -500,14 +517,19 @@ struct MessageRow: View {
 					}
 				}
 			}
+			.messageActionSheet(actions: menuActions)
 			.swipeToReply(onReply)
-			.messageContextMenu(message, isOwn: false, actions: menuActions)
 			if let appended = layout?.appended {
-				ForEach(appended) { LinkedTargetCard(target: $0, onApproved: onApprovedDraft) }
+				let textCard = layout.flatMap { LinkedMessageLayout.textCardTarget(parts: $0.parts, appended: $0.appended) }
+				ForEach(appended) { target in
+					LinkedTargetCard(
+						target: target, onApproved: onApprovedDraft, onSkipped: onSkippedDraft, skipped: draftSkipped,
+						askNote: askNote, editable: target == textCard, chat: agentChat)
+				}
 			}
 			ReactionChips(reactions: message.reactions, onToggle: onToggleReaction)
 			if let threadSummary { ThreadPill(summary: threadSummary, onOpen: onOpenThread) }
-			if !message.questions.isEmpty {
+			if !message.questions.isEmpty && askNote == nil {
 				QuestionOptionsView(
 					questions: message.questions, answers: questionAnswers, onSubmit: onAnswer,
 					// Not on a helper's question: iOS has no session-input path, so a chat message
@@ -570,6 +592,14 @@ struct MessageRow: View {
 			guard let linked, !targets.isEmpty else { return }
 			await linked.resolveWithRetries(targets)
 		}
+	}
+
+	/// One decision, one card: an open question posted with a draft that can still be approved asks
+	/// the same yes as the draft's Approve, so the draft card is the only one drawn. A helper's
+	/// question is always drawn: it is answered by a pick and nothing else.
+	private func draftCarriesTheYes(_ targets: [LinkedTarget]) -> Bool {
+		guard questionAnswers == nil, !message.isHelperQuestion, let linked else { return false }
+		return linked.hasApprovableDraft(in: targets)
 	}
 
 	/// The chat's agents, with the one that asked always among them.

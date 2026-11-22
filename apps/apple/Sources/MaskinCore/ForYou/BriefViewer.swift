@@ -79,6 +79,9 @@ public struct BriefPlayback: Equatable, Sendable {
 	/// How many cards the current slide holds when it is a deck. A tap forward steps through them
 	/// before moving to the next slide, like tapping through one story in Instagram.
 	public private(set) var steps = 1
+	/// Back from the first card of a deck lands on the previous slide. Its card count is only known
+	/// once its page has loaded, so the move to its last card waits for `setSteps`.
+	private var landsOnLastCard = false
 	public static let secondsPerStep: TimeInterval = 7
 
 	public init(durations: [TimeInterval], startIndex: Int = 0, autoAdvances: Bool = true) {
@@ -99,7 +102,12 @@ public struct BriefPlayback: Equatable, Sendable {
 	}
 
 	/// The current slide turned out to be a deck of `count` cards. Called once its page has loaded.
-	public mutating func setSteps(_ count: Int) { steps = max(count, 1) }
+	/// When the reader came back into it from the next slide, it opens on its last card.
+	public mutating func setSteps(_ count: Int) {
+		steps = max(count, 1)
+		if landsOnLastCard, steps > 1 { progress = Double(steps - 1) / Double(steps) }
+		landsOnLastCard = false
+	}
 	public var isPlaying: Bool { autoAdvances && !isHeld && !isWaiting && !isFinished && count > 0 }
 
 	/// 0...1 for segment `segment`: full before the current slide, empty after it. With no
@@ -119,6 +127,7 @@ public struct BriefPlayback: Equatable, Sendable {
 	/// Next card of a deck, then the next slide; past the last one the viewer is finished.
 	public mutating func next() {
 		guard count > 0 else { return }
+		landsOnLastCard = false
 		if step < steps - 1 {
 			progress = Double(step + 1) / Double(steps)
 			return
@@ -133,7 +142,8 @@ public struct BriefPlayback: Equatable, Sendable {
 		}
 	}
 
-	/// Previous card of a deck, then the previous slide; on the first one it restarts that slide.
+	/// Previous card of a deck, then the last card of the previous slide; on the first one it
+	/// restarts that slide.
 	public mutating func previous() {
 		guard count > 0 else { return }
 		isFinished = false
@@ -141,7 +151,10 @@ public struct BriefPlayback: Equatable, Sendable {
 			progress = Double(step - 1) / Double(steps)
 			return
 		}
-		if index > 0 { steps = 1 }
+		if index > 0 {
+			steps = 1
+			landsOnLastCard = true
+		}
 		index = max(index - 1, 0)
 		progress = 0
 	}

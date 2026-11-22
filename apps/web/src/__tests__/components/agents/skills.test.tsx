@@ -137,6 +137,94 @@ describe('Skills', () => {
 		expect(screen.getByRole('button', { name: /Add Skill/ })).toBeInTheDocument()
 	})
 
+	describe('standard keys', () => {
+		it('Esc dismisses the delete confirm and returns focus to the trash button', async () => {
+			const user = userEvent.setup()
+			mockUseSkills.mockReturnValue({
+				data: [buildSkillListItem({ name: 'deploy' })],
+				isLoading: false,
+			})
+			render(<Skills actorId="agent-1" />)
+
+			await user.click(screen.getByRole('button', { name: 'Delete skill' }))
+			expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+			await user.keyboard('{Escape}')
+
+			expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+			expect(mockDeleteMutate).not.toHaveBeenCalled()
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: 'Delete skill' })).toHaveFocus(),
+			)
+		})
+
+		it('Esc closes the add form and returns focus to Add Skill', async () => {
+			const user = userEvent.setup()
+			render(<Skills actorId="agent-1" />)
+			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
+
+			await user.click(screen.getByPlaceholderText('e.g. deploy, review-pr'))
+			await user.keyboard('{Escape}')
+
+			expect(screen.queryByText('Instructions')).not.toBeInTheDocument()
+			await waitFor(() => expect(screen.getByRole('button', { name: /Add Skill/ })).toHaveFocus())
+			expect(mockMutate).not.toHaveBeenCalled()
+		})
+
+		it('Esc closes the edit form and returns focus to the edit button', async () => {
+			const user = userEvent.setup()
+			mockUseSkills.mockReturnValue({
+				data: [buildSkillListItem({ name: 'deploy' })],
+				isLoading: false,
+			})
+			render(<Skills actorId="agent-1" />)
+			await user.click(screen.getByRole('button', { name: 'Edit skill' }))
+
+			await user.click(screen.getByPlaceholderText('What this skill does and when to use it'))
+			await user.keyboard('{Escape}')
+
+			expect(screen.queryByText('Instructions')).not.toBeInTheDocument()
+			await waitFor(() => expect(screen.getByRole('button', { name: 'Edit skill' })).toHaveFocus())
+		})
+
+		it('Enter in Name or Description saves when valid', async () => {
+			const user = userEvent.setup()
+			render(<Skills actorId="agent-1" />)
+			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
+
+			await user.type(screen.getByPlaceholderText('e.g. deploy, review-pr'), 'deploy{Enter}')
+			expect(mockMutate).not.toHaveBeenCalled()
+
+			await user.type(
+				screen.getByPlaceholderText('What this skill does and when to use it'),
+				'Deploy to prod{Enter}',
+			)
+			expect(mockMutate).toHaveBeenCalledTimes(1)
+			expect(mockMutate).toHaveBeenCalledWith(
+				expect.objectContaining({ skillName: 'deploy' }),
+				expect.any(Object),
+			)
+		})
+
+		it('Enter in the instructions box adds a line and does not save', async () => {
+			const user = userEvent.setup()
+			render(<Skills actorId="agent-1" />)
+			await user.click(screen.getByRole('button', { name: /Add Skill/ }))
+			await user.type(screen.getByPlaceholderText('e.g. deploy, review-pr'), 'deploy')
+			await user.type(
+				screen.getByPlaceholderText('What this skill does and when to use it'),
+				'Deploy',
+			)
+
+			await user.type(
+				screen.getByPlaceholderText('Markdown instructions for the agent...'),
+				'a{Enter}b',
+			)
+
+			expect(mockMutate).not.toHaveBeenCalled()
+		})
+	})
+
 	describe('SkillForm', () => {
 		it('Save button disabled when name empty', async () => {
 			const user = userEvent.setup()

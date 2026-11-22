@@ -76,6 +76,36 @@ describe('LoopUtteranceInput', () => {
 		})
 	})
 
+	it('opens the chat with the driver and the typed text when an agent is given', async () => {
+		const user = userEvent.setup()
+		render(
+			<LoopUtteranceInput
+				loop={buildLoopSummary({ id: 'loop-1', name: 'Product Discovery' })}
+				agent={{ id: 'agent-1', name: 'Product Discovery Lead' }}
+				placeholder="Message Product Discovery Lead, who drives Product Discovery"
+			/>,
+		)
+
+		await user.type(
+			screen.getByPlaceholderText('Message Product Discovery Lead, who drives Product Discovery'),
+			'Tighten the close timeline',
+		)
+		await user.click(screen.getByRole('button', { name: 'Send' }))
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId: 'ws-1' },
+			search: {
+				objectId: 'loop-1',
+				objectTitle: 'Product Discovery',
+				objectType: 'loop',
+				agentId: 'agent-1',
+				agentName: 'Product Discovery Lead',
+				text: 'Tighten the close timeline',
+			},
+		})
+	})
+
 	it('keeps the utterance in place when the page consumes it (proposed edit)', async () => {
 		const user = userEvent.setup()
 		const onUtterance = vi.fn(() => true)
@@ -93,13 +123,9 @@ describe('LoopUtteranceInput', () => {
 		expect(navigateMock).not.toHaveBeenCalled()
 	})
 
-	it('offers suggestion chips only when there is no change history yet', () => {
-		const { rerender } = render(
-			<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} showSuggestions />,
-		)
-		expect(screen.getByRole('button', { name: 'Close cycles faster' })).toBeInTheDocument()
-
-		rerender(<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} />)
+	it('shows no quick messages above the composer', () => {
+		render(<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} />)
 		expect(screen.queryByRole('button', { name: 'Close cycles faster' })).not.toBeInTheDocument()
+		expect(screen.queryByLabelText('Suggested changes')).not.toBeInTheDocument()
 	})
 })

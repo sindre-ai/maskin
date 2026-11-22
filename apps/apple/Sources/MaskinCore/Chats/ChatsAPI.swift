@@ -6,6 +6,13 @@ public protocol ConversationsAPI: Sendable {
 	/// a boolean query (even "false") as true.
 	func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int)
 		async throws -> ConversationPage
+	/// The default list. With `hideQuiet` the server leaves out empty direct messages with agents,
+	/// chats with retired agents and topic chats quiet for about 14 days, unless pinned or unread.
+	/// Nothing is archived: they stay in search and return when a new message arrives. Sent only
+	/// when true, like the other flags.
+	func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage
 	/// `POST /api/conversations`. Returns the created conversation.
 	func create(
 		title: String, participantIDs: [String], initialMessage: String?, idempotencyKey: String
@@ -30,6 +37,18 @@ public protocol ConversationsAPI: Sendable {
 	func latestMessageID(conversationID: String) async throws -> Int?
 	/// Threads you started or replied in, across conversations, most recently active first.
 	func threads(limit: Int) async throws -> [ThreadListItem]
+	/// Put a chat on Later for the caller (true) or take it back (false). The server also clears it
+	/// when a new message arrives in the chat.
+	func setLater(conversationID: String, later: Bool) async throws
+	/// The caller's Later chats. The default list leaves them out, so the Later pill asks for them.
+	func listLater(limit: Int, offset: Int) async throws -> ConversationPage
+	/// The list with the attention fields (`needs_you`, `working`, `later`, `error`) filled in. A
+	/// source that cannot read them returns the plain list, so every chat reads as quiet.
+	func listWithAttention(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage
+	/// Ask the agent to answer `messageID` again: the same route as Retry inside the thread.
+	func retry(conversationID: String, messageID: Int, agentID: String?) async throws
 }
 
 extension ConversationsAPI {
@@ -52,6 +71,30 @@ extension ConversationsAPI {
 
 	public func latestMessageID(conversationID: String) async throws -> Int? { nil }
 	public func threads(limit: Int) async throws -> [ThreadListItem] { [] }
+	public func setLater(conversationID: String, later: Bool) async throws {
+		throw ChatsError("Later isn't available here.")
+	}
+	public func listLater(limit: Int, offset: Int) async throws -> ConversationPage {
+		ConversationPage(conversations: [], hasMore: false)
+	}
+	public func listWithAttention(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, hideQuiet: hideQuiet,
+			limit: limit, offset: offset)
+	}
+	public func retry(conversationID: String, messageID: Int, agentID: String?) async throws {
+		throw ChatsError("Retry isn't available here.")
+	}
+
+	/// Sources that cannot filter on the server (test doubles) return the whole list.
+	public func list(
+		archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, hideQuiet: Bool, limit: Int, offset: Int
+	) async throws -> ConversationPage {
+		try await list(
+			archived: archived, pinnedOnly: pinnedOnly, unreadOnly: unreadOnly, limit: limit, offset: offset)
+	}
 
 	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
 		try await list(archived: archived, pinnedOnly: false, unreadOnly: false, limit: limit, offset: offset)
@@ -148,7 +191,22 @@ public struct ChatsHTTPError: Error, Equatable, Sendable {
 	}
 }
 
-/// Uploads one file to the workspace (`POST /api/files`, base64 JSON, 10 MB cap).
+/// Uploads one file to the workspace. Bytes in memory go as base64 JSON (`POST /api/files`, 10 MB cap,
+/// 50 MB for video); a file on disk of any size up to 5 GB can also go straight to storage in parts.
 public protocol ChatFileUploading: Sendable {
 	func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef
+	/// A file on disk. Conformers that can stream it override this; the default reads it whole.
+	func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws -> ChatAttachmentRef
+}
+
+extension ChatFileUploading {
+	public func upload(name: String, mimeType: String, fileURL: URL, sizeBytes: Int) async throws
+		-> ChatAttachmentRef
+	{
+		guard !FileUploadLimits.needsDirectUpload(sizeBytes: sizeBytes, mimeType: mimeType) else {
+			throw ChatsError("Large files can't be attached here.")
+		}
+		return try await upload(
+			name: name, mimeType: mimeType, data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+	}
 }

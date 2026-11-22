@@ -46,7 +46,7 @@ describe('capturePosthogEvent', () => {
 
 	it('does nothing when POSTHOG_API_KEY is unset', async () => {
 		vi.stubEnv('POSTHOG_API_KEY', '')
-		await capturePosthogEvent('test.event', 'ws-1', { foo: 'bar' })
+		await expect(capturePosthogEvent('test.event', 'ws-1', { foo: 'bar' })).resolves.toBe('skipped')
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
@@ -78,6 +78,8 @@ describe('capturePosthogEvent', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'integrations',
 			$process_person_profile: false,
 		})
@@ -92,16 +94,21 @@ describe('capturePosthogEvent', () => {
 		expect(url).toBe('https://custom.posthog.test/i/v0/e/')
 	})
 
-	it('swallows fetch errors so the caller is never affected', async () => {
+	it('swallows fetch errors so the caller is never affected, and reports failed', async () => {
 		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
 		fetchMock.mockRejectedValueOnce(new Error('network down'))
-		await expect(capturePosthogEvent('test.event', 'distinct-1', {})).resolves.toBeUndefined()
+		await expect(capturePosthogEvent('test.event', 'distinct-1', {})).resolves.toBe('failed')
 	})
 
-	it('swallows non-2xx responses so the caller is never affected', async () => {
+	it('swallows non-2xx responses so the caller is never affected, and reports failed', async () => {
 		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
 		fetchMock.mockResolvedValueOnce({ ok: false, status: 500 } as Response)
-		await expect(capturePosthogEvent('test.event', 'distinct-1', {})).resolves.toBeUndefined()
+		await expect(capturePosthogEvent('test.event', 'distinct-1', {})).resolves.toBe('failed')
+	})
+
+	it('reports sent when PostHog accepts the event', async () => {
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		await expect(capturePosthogEvent('test.event', 'distinct-1', {})).resolves.toBe('sent')
 	})
 
 	// PostHog drops events with an empty distinct id but still answers 2xx, so
@@ -148,7 +155,9 @@ describe('capturePosthogEvent workspace privacy', () => {
 
 	it('sends nothing when the workspace has share-usage off', async () => {
 		configurePosthogPrivacy(fakeDb({ privacy: { share_usage: false } }).db)
-		await capturePosthogEvent('agent_session_started', 'actor-1', props)
+		await expect(capturePosthogEvent('agent_session_started', 'actor-1', props)).resolves.toBe(
+			'skipped',
+		)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
@@ -162,6 +171,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'agents',
 			$process_person_profile: false,
 		})
@@ -183,6 +194,8 @@ describe('capturePosthogEvent workspace privacy', () => {
 			surface: 'backend',
 			actor_type: 'system',
 			is_team: false,
+			internal: false,
+			paying: false,
 			feature_area: 'agents',
 			$process_person_profile: false,
 		})
@@ -190,9 +203,9 @@ describe('capturePosthogEvent workspace privacy', () => {
 
 	it('sends nothing when the setting cannot be read (fails closed)', async () => {
 		configurePosthogPrivacy(fakeDb(new Error('db down')).db)
-		await expect(
-			capturePosthogEvent('agent_session_started', 'actor-1', props),
-		).resolves.toBeUndefined()
+		await expect(capturePosthogEvent('agent_session_started', 'actor-1', props)).resolves.toBe(
+			'failed',
+		)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
@@ -545,5 +558,91 @@ describe('warnIfPosthogKeyUnset', () => {
 		vi.stubEnv('POSTHOG_API_KEY', '')
 		warnIfPosthogKeyUnset()
 		expect(warn).not.toHaveBeenCalled()
+	})
+})
+
+describe('capturePosthogEvent internal and paying', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+	const TEAM_WORKSPACE = '33333333-3333-4333-8333-333333333333'
+	const OUTSIDE_WORKSPACE = '44444444-4444-4444-8444-444444444444'
+	const LISTED_WORKSPACE = '55555555-5555-4555-8555-555555555555'
+	const PAID = {
+		billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_123' },
+	}
+
+	// The privacy read and the paid-plan read come from the same workspace row.
+	async function send(settings: unknown, props: Record<string, unknown>) {
+		configurePosthogPrivacy(fakeDb(settings).db)
+		await capturePosthogEvent('workspace_member_joined', 'ws-key', props as never)
+		const call = fetchMock.mock.calls.at(-1) as [string, RequestInit]
+		return JSON.parse(call[1].body as string).properties as Record<string, unknown>
+	}
+
+	beforeEach(() => {
+		__resetPosthogEventBudgetForTesting()
+		fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 } as Response)
+		vi.stubGlobal('fetch', fetchMock)
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', TEAM_WORKSPACE)
+	})
+
+	afterEach(() => {
+		__resetPosthogPrivacyForTesting()
+		vi.unstubAllGlobals()
+		vi.unstubAllEnvs()
+	})
+
+	it('marks our own free workspace internal and not paying', async () => {
+		expect(await send({}, { workspace_id: TEAM_WORKSPACE })).toMatchObject({
+			internal: true,
+			paying: false,
+		})
+	})
+
+	it('marks an outside paying workspace paying and not internal', async () => {
+		expect(await send(PAID, { workspace_id: OUTSIDE_WORKSPACE })).toMatchObject({
+			internal: false,
+			paying: true,
+		})
+	})
+
+	it('marks our own paying workspace both internal and paying', async () => {
+		expect(await send(PAID, { workspace_id: TEAM_WORKSPACE })).toMatchObject({
+			internal: true,
+			paying: true,
+		})
+	})
+
+	it('marks a paying workspace on the internal list internal, and an unlisted one not', async () => {
+		vi.stubEnv('POSTHOG_INTERNAL_WORKSPACE_IDS', `not-a-uuid, ${LISTED_WORKSPACE.toUpperCase()} ,`)
+		expect(await send(PAID, { workspace_id: LISTED_WORKSPACE })).toMatchObject({
+			internal: true,
+			paying: true,
+		})
+		expect(await send(PAID, { workspace_id: OUTSIDE_WORKSPACE })).toMatchObject({
+			internal: false,
+			paying: true,
+		})
+	})
+
+	it('still reads the team workspace when the list is set', async () => {
+		vi.stubEnv('POSTHOG_INTERNAL_WORKSPACE_IDS', LISTED_WORKSPACE)
+		expect(await send({}, { workspace_id: TEAM_WORKSPACE })).toMatchObject({ internal: true })
+	})
+
+	it('sends both false for an event with no workspace', async () => {
+		expect(await send(PAID, {})).toMatchObject({ internal: false, paying: false })
+	})
+
+	it('sends both false when the team workspace setting is unset', async () => {
+		vi.stubEnv('POSTHOG_TEAM_WORKSPACE_ID', '')
+		expect(await send({}, { workspace_id: TEAM_WORKSPACE })).toMatchObject({ internal: false })
+	})
+
+	it('sends no names, emails or text with the two flags', async () => {
+		const props = await send(PAID, { workspace_id: OUTSIDE_WORKSPACE })
+		expect(typeof props.internal).toBe('boolean')
+		expect(typeof props.paying).toBe('boolean')
+		expect(JSON.stringify(props)).not.toContain('sub_123')
 	})
 })

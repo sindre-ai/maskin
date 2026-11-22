@@ -11,7 +11,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
@@ -61,8 +61,7 @@ test.describe('Loop detail page', () => {
 			await expect(stats.getByText('Median cycle time')).toBeVisible()
 			await expect(stats.getByText('Asks waiting')).toBeVisible()
 			await expect(stats.getByText('Next fire')).toBeVisible()
-			await page.getByRole('tab', { name: 'Overview' }).click()
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible()
 			// AC5 — the utterance input is present on loop detail.
 			await expect(
 				page.getByPlaceholder(
@@ -71,11 +70,10 @@ test.describe('Loop detail page', () => {
 			).toBeVisible()
 			// Step rows show the trigger's title, not its action prompt (#2777).
 			await expect(page.getByText('Triage feedback', { exact: true })).toBeVisible()
-			// The pipeline is one card with a column per agent; the trigger sits under
-			// its agent and has its own on/off switch. The card scrolls inside itself,
-			// never the page.
+			// The pipeline is one card; an event with no status to place sits in the Any change
+			// strip, names the agent it wakes and has its own on/off switch.
 			const pipeline = page.getByTestId('loop-pipeline')
-			await expect(pipeline.getByRole('link', { name: 'Relay' })).toBeVisible()
+			await expect(pipeline.getByText('Relay', { exact: true })).toBeVisible()
 			await expect(pipeline.getByText('Event', { exact: true })).toBeVisible()
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toHaveCount(0)
 			const triggerSwitch = pipeline.getByRole('switch', { name: /Triage feedback/ })
@@ -119,7 +117,9 @@ test.describe('Loop detail page', () => {
 			expect(composerFollowsActivity).toBe(true)
 
 			// A step row is the only route into a loop-owned trigger now that
-			// /triggers redirects.
+			// /triggers redirects. The steps live on Setup, and the checks above
+			// left the page on Overview.
+			await page.getByRole('tab', { name: 'Setup' }).click()
 			await page.getByRole('link', { name: /Triage feedback/ }).click()
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
 				timeout: 10000,
@@ -137,7 +137,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Brand new loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',
@@ -171,7 +171,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Renewals loop',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every renewal is reviewed before it lapses',
 			})
 
@@ -215,7 +215,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -244,11 +244,11 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Billing reliability loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Pilot', { timeout: 10000 })
 
 		// Exact — the v2 header's split New button adds a "More ways to start"
 		// control, which a substring match would also pick up.
@@ -267,7 +267,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn early-warning loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)
@@ -286,7 +286,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Retire this loop',
-				status: 'learning',
+				status: 'pilot',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)

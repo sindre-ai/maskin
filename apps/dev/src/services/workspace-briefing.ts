@@ -19,15 +19,19 @@ const EXCERPT_MAX = 180
  */
 const EVERY_SESSION_GUIDANCE = `Do the work, don't describe it. If your next step is something your tools can do, do it in this turn. Don't end with "I'll..." or "next I would...".
 
-Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_session with wait: true if you need the answer now. Ask a person only for the cases below.
+Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_sub_chat if you need the answer now. Ask a person only for the cases below.
 
-Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.
+Before you contact anyone, person or agent, read their description (list_actors shows it, get_actor shows more) and pick the one whose description covers the topic. Read it fresh each time, because descriptions change. If more than one fits, contact each once. If none fits, say what is missing instead of guessing.
+
+Before you ask a person to upload something again, check the chat's file list ("Files in this chat" in your starting prompt, or list_files with conversation_id). Link what you create to what you worked from.
+
+Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now. Only when you can neither do it nor schedule it, say that it's still open and what is stopping you.
 
 Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.
 
 Anything you can easily put back, and that your own instructions don't already cover, do now and report with how to undo it. That includes handing work to another agent, re-running a session, editing statuses and drafts, pausing or enabling a trigger, and archiving something that can be restored. Don't ask permission for those: "Want me to...?" about something you could just do blocks the work. Do them, then end with the next step you would suggest and your recommendation, so a person can say go or redirect.
 
-Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a loop live or make another status change reserved for people, or change who has access or which credentials exist. If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted. Your own instructions always win over this: if they say to ask first, or reserve a step for someone else, do that.`
+Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a flow live or make another status change reserved for people, or change who has access or which credentials exist. If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted. Your own instructions always win over this: if they say to ask first, or reserve a step for someone else, do that.`
 
 /**
  * Wording for runs nobody is watching (triggers, loops, background). Approved
@@ -56,12 +60,13 @@ export function buildWorkspaceStartupBlock(args: {
 	const triggerUrl = buildWebAppHref(base, args.workspaceId, { kind: 'trigger', id: '<id>' })
 	const fileUrl = buildWebAppHref(base, args.workspaceId, { kind: 'file', id: '<id>' })
 	const settingsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings' })
+	const skillsUrl = buildWebAppHref(base, args.workspaceId, { kind: 'settings', section: 'skills' })
 	return `## This workspace
 
 This workspace works through bets — shaped, time-boxed outcomes.
 
 - Active bets are where in-flight work lives; closed bets carry verdicts that teach the next cycle.
-- Dig deeper with \`get_objects\`, \`search_objects\`, \`list_relationships\`.
+- Dig deeper with \`get_objects\`, \`list_objects\` (pass \`q\` to search), \`list_relationships\`.
 - Status updates and \`metadata.verdict\` are how bets stay legible to future sessions.
 
 Whenever you mention something in Maskin, link it inline as a markdown link. The title or name is usually the best link text, but short wording that reads naturally, like \`[here]\`, is fine too. This goes for anything a person might want to open: an object, an agent, a trigger, a file, a settings page. It applies in chat replies, comments, notifications and descriptions alike. Use these URL formats (the link text is up to you) — do not guess the host, drop the workspace segment, or paste bare ids:
@@ -71,6 +76,7 @@ Whenever you mention something in Maskin, link it inline as a markdown link. The
 - Trigger: \`[name](${triggerUrl})\`
 - File: \`[name](${fileUrl})\`
 - Settings: \`[Settings](${settingsUrl})\`
+- Skill (it has no page of its own): link the Skills section of settings, \`[Skills](${skillsUrl})\`, and say the skill's name in the words around the link, because the link shows the section name, not the link text
 
 ${EVERY_SESSION_GUIDANCE}
 
@@ -425,7 +431,7 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 		}
 		out.push('')
 		out.push(
-			`_Use \`get_objects\` with \`type: '${insightLabel.toLowerCase()}'\` for the full list._`,
+			`_Use \`list_objects\` with \`type: '${insightLabel.toLowerCase()}'\` for the full list._`,
 		)
 	}
 	out.push('')
@@ -433,9 +439,10 @@ export function formatAgentBriefing(facts: BriefingFacts): string {
 	out.push('## Digging deeper')
 	out.push('')
 	out.push('This briefing is a summary. Use the Maskin MCP tools to explore further:')
-	out.push('- `get_objects` — list objects by type/status/owner')
-	out.push('- `search_objects` — full-text search over titles and content')
-	out.push('- `get_object` — fetch an object by id with its relationships')
+	out.push(
+		'- `list_objects` — list objects by type/status/owner; pass `q` for a ranked text search',
+	)
+	out.push('- `get_objects` — fetch objects by id; `include` adds content, relationships and files')
 	out.push('- `list_relationships` — graph edges between objects')
 	out.push(
 		`- \`update_objects\` — update status, content, metadata (set \`metadata.verdict\` when closing a ${betLabel.toLowerCase()})`,

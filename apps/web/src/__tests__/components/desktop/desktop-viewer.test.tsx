@@ -35,14 +35,12 @@ const { instances, FakeRfb } = vi.hoisted(() => {
 })
 
 vi.mock('@novnc/novnc/lib/rfb', () => ({ default: FakeRfb }))
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: vi.fn(() => false) }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/lib/api', () => ({
 	api: { desktop: { connect: vi.fn(), remove: vi.fn() } },
 }))
 
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { api } from '@/lib/api'
 import { KEYBOARD_SENTINEL } from '@/lib/desktop-keyboard'
 import { createWorkspaceWrapper } from '../../setup'
@@ -59,7 +57,6 @@ function renderViewer() {
 describe('DesktopViewer', () => {
 	beforeEach(() => {
 		instances.length = 0
-		vi.mocked(useFeatureFlag).mockReturnValue(false)
 		vi.mocked(api.desktop.connect).mockReset()
 		vi.mocked(api.desktop.connect).mockResolvedValue({
 			ticket: 'tkt',
@@ -122,6 +119,63 @@ describe('DesktopViewer', () => {
 		expect(rfb.viewOnly).toBe(true)
 	})
 
+	describe('analytics flow', () => {
+		function renderWithFlow() {
+			const flow = {
+				opened: vi.fn(),
+				firstFrame: vi.fn(),
+				connectionLost: vi.fn(),
+				takeOver: vi.fn(),
+				closed: vi.fn(),
+			}
+			render(<DesktopViewer workspaceId={WS} agentId={VIEWED} flow={flow} />, {
+				wrapper: createWorkspaceWrapper(),
+			})
+			return flow
+		}
+
+		it('reports the time to first frame once the picture is live, and take-over starts and ends', async () => {
+			const user = userEvent.setup()
+			const flow = renderWithFlow()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+
+			act(() => rfb.emit('connect'))
+			await screen.findByText('Live')
+			expect(flow.firstFrame).toHaveBeenCalledTimes(1)
+			expect(flow.firstFrame).toHaveBeenCalledWith(expect.any(Number))
+
+			await user.click(screen.getByRole('button', { name: /take over/i }))
+			expect(flow.takeOver).toHaveBeenLastCalledWith(true)
+			await user.click(screen.getByRole('button', { name: /stop controlling/i }))
+			expect(flow.takeOver).toHaveBeenLastCalledWith(false)
+		})
+
+		it('reports a lost connection with whether a picture had been shown', async () => {
+			const flow = renderWithFlow()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+
+			act(() => rfb.emit('connect'))
+			await screen.findByText('Live')
+			act(() => rfb.emit('disconnect'))
+
+			expect(flow.connectionLost).toHaveBeenCalledTimes(1)
+			expect(flow.connectionLost).toHaveBeenCalledWith(true)
+		})
+
+		it('reports a stream that closed before any picture as lost without a first frame', async () => {
+			const flow = renderWithFlow()
+			await waitFor(() => expect(instances).toHaveLength(1))
+			const rfb = instances[0] as InstanceType<typeof FakeRfb>
+
+			act(() => rfb.emit('disconnect'))
+
+			expect(flow.firstFrame).not.toHaveBeenCalled()
+			expect(flow.connectionLost).toHaveBeenCalledWith(false)
+		})
+	})
+
 	describe('clipboard buttons', () => {
 		async function takeOver(user: ReturnType<typeof userEvent.setup>) {
 			renderViewer()
@@ -133,15 +187,7 @@ describe('DesktopViewer', () => {
 			return rfb
 		}
 
-		it('are off without the flag', async () => {
-			const user = userEvent.setup()
-			await takeOver(user)
-
-			expect(screen.queryByRole('button', { name: /paste from your clipboard/i })).toBeNull()
-		})
-
 		it('are not shown without a touch screen: the keys do the work', async () => {
-			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			const user = userEvent.setup()
 			renderViewer()
 			await waitFor(() => expect(instances).toHaveLength(1))
@@ -160,7 +206,6 @@ describe('DesktopViewer', () => {
 		})
 
 		it('bring in Copy only after the browser refused the write', async () => {
-			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			const user = userEvent.setup()
 			const rfb = await takeOver(user)
 			const refused = new DOMException('no', 'NotAllowedError')
@@ -312,7 +357,6 @@ describe('DesktopViewer', () => {
 		})
 
 		it('keeps both clipboard buttons, with Copy waiting for text from the computer', async () => {
-			vi.mocked(useFeatureFlag).mockReturnValue(true)
 			usePrimaryPointer(true)
 			const user = userEvent.setup()
 			const rfb = await takeControl()

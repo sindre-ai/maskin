@@ -41,6 +41,16 @@ extension InternalLinkDirectory {
 		case .trigger(_, let id):
 			// A trigger that is not in the loaded list stays the kind word alone.
 			return namedInfo(.trigger, id: id, symbol: "bolt", kindLabel: "Trigger")
+		case .session:
+			return MarkdownLinkInfo(symbol: "terminal", kindLabel: "Session")
+		case .settings:
+			return MarkdownLinkInfo(symbol: "gearshape", kindLabel: "Settings")
+		case .list(_, let kind):
+			switch kind {
+			case .triggers: return MarkdownLinkInfo(symbol: "bolt", kindLabel: "Triggers")
+			case .loops: return MarkdownLinkInfo(symbol: LinkedKindSymbol.loop, kindLabel: "Flows")
+			case .chats: return MarkdownLinkInfo(symbol: "bubble.left", kindLabel: "Chats")
+			}
 		}
 	}
 

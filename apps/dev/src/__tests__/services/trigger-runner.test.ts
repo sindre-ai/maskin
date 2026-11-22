@@ -41,6 +41,7 @@ describe('TriggerRunner', () => {
 	let bridge: EventEmitter & PgNotifyBridge
 	let sessionManager: ReturnType<typeof createMockSessionManager>
 	let mockResults: Record<string, unknown>
+	let calls: { inserts: unknown[]; updates: unknown[] }
 
 	beforeEach(() => {
 		vi.useFakeTimers()
@@ -48,6 +49,7 @@ describe('TriggerRunner', () => {
 		sessionManager = createMockSessionManager()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		calls = ctx.calls
 		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		runner = new TriggerRunner(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -329,6 +331,311 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(0)
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		describe('driver condition', () => {
+			const driverCondition = [{ field: 'driver', operator: 'equals', value: 'actor-abc' }]
+			const driverTrigger = (action: string) =>
+				buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					config: { entity_type: 'task', action, conditions: driverCondition },
+				})
+
+			it('fires on created when the new item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: 'actor-abc' } }],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on created when the driver differs', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: 'actor-xyz' } }],
+				]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires on updated when the item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('updated')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-abc' },
+								updated: { status: 'todo', driver: 'actor-abc' },
+							},
+						},
+					],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'updated' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on updated when the driver differs', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('updated')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-xyz' },
+								updated: { status: 'todo', driver: 'actor-xyz' },
+							},
+						},
+					],
+				]
+
+				bridge.emit('event', { ...baseEvent, action: 'updated' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires on status_changed when the item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('status_changed')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-abc' },
+								updated: { status: 'in_progress', driver: 'actor-abc' },
+							},
+						},
+					],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on status_changed when the driver differs', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('status_changed')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: 'actor-xyz' },
+								updated: { status: 'in_progress', driver: 'actor-xyz' },
+							},
+						},
+					],
+				]
+
+				bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
+			it('fires on commented when the commented item has that driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('commented')],
+					[{ data: { content: 'hi' } }], // fetchEventData
+					[{ id: baseEvent.entity_id, type: 'task', driver: 'actor-abc' }], // target object row
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'commented' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			})
+
+			it('does not fire on commented when the commented item has another driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('commented')],
+					[{ data: { content: 'hi' } }],
+					[{ id: baseEvent.entity_id, type: 'task', driver: 'actor-xyz' }],
+				]
+
+				bridge.emit('event', { ...baseEvent, action: 'commented' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+		})
+
+		describe("item's driver target", () => {
+			const driverA = 'a1111111-1111-4111-8111-111111111111'
+			const driverB = 'b2222222-2222-4222-8222-222222222222'
+			const placeholder = 'c3333333-3333-4333-8333-333333333333'
+			const agentRow = [{ type: 'agent' }]
+			const driverTrigger = (action: string) =>
+				buildTrigger({
+					workspaceId: 'ws-1',
+					type: 'event',
+					targetActorId: placeholder,
+					config: { entity_type: 'task', action, target: 'item_driver' },
+				})
+			const startedActorIds = () =>
+				(sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls.map(
+					([, params]) => params.actorId,
+				)
+			const skippedEvents = () =>
+				(calls.inserts as { action?: string }[]).filter((row) => row.action === 'trigger_skipped')
+
+			it('starts the driver of the new item on created', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: driverA } }],
+					agentRow,
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(startedActorIds()).toEqual([driverA])
+			})
+
+			it('starts the driver of the item on updated', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('updated')],
+					[
+						{
+							data: {
+								previous: { status: 'todo', driver: driverB },
+								updated: { status: 'todo', driver: driverA },
+							},
+						},
+					],
+					agentRow,
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'updated' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(startedActorIds()).toEqual([driverA])
+			})
+
+			it('starts the driver of the item on status_changed', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('status_changed')],
+					[
+						{
+							data: {
+								previous: { status: 'backlog', driver: driverA },
+								updated: { status: 'todo', driver: driverA },
+							},
+						},
+					],
+					agentRow,
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(startedActorIds()).toEqual([driverA])
+			})
+
+			it('starts the driver of the commented item on commented', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('commented')],
+					[{ data: { content: 'hi' } }], // fetchEventData
+					[{ id: baseEvent.entity_id, type: 'task', driver: driverA }], // target object row
+					agentRow,
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', { ...baseEvent, action: 'commented' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(startedActorIds()).toEqual([driverA])
+			})
+
+			it('starts nobody, and skips with a reason, when the item has no driver', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: null } }],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+				expect(skippedEvents()).toEqual([
+					expect.objectContaining({
+						action: 'trigger_skipped',
+						data: expect.objectContaining({ reason: 'item_has_no_driver' }),
+					}),
+				])
+			})
+
+			it('starts nobody when a person drives the item', async () => {
+				mockResults.selectQueue = [
+					[driverTrigger('created')],
+					[{ data: { status: 'todo', driver: driverA } }],
+					[{ type: 'human' }],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+				expect(skippedEvents()).toEqual([
+					expect.objectContaining({
+						data: expect.objectContaining({ reason: 'item_driver_not_agent' }),
+					}),
+				])
+			})
+
+			it('follows a driver change between two events', async () => {
+				const trigger = driverTrigger('updated')
+				const snapshot = (driver: string) => ({
+					data: { previous: { driver }, updated: { status: 'todo', driver } },
+				})
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				mockResults.selectQueue = [[trigger], [snapshot(driverA)], agentRow]
+				bridge.emit('event', { ...baseEvent, action: 'updated', event_id: 'evt-1' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				mockResults.selectQueue = [[trigger], [snapshot(driverB)], agentRow]
+				bridge.emit('event', { ...baseEvent, action: 'updated', event_id: 'evt-2' })
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(startedActorIds()).toEqual([driverA, driverB])
+			})
+
+			it('leaves a trigger with a fixed agent on that agent', async () => {
+				mockResults.selectQueue = [
+					[
+						buildTrigger({
+							workspaceId: 'ws-1',
+							targetActorId: placeholder,
+							config: { entity_type: 'task', action: 'created' },
+						}),
+					],
+				]
+				mockResults.insert = [{ triggerId: 't1' }]
+
+				bridge.emit('event', baseEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect(startedActorIds()).toEqual([placeholder])
+			})
 		})
 
 		it('does not fire or throw when filter uses dotted path and intermediate is null', async () => {
@@ -718,6 +1025,9 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[], // cron triggers
 				[trigger], // reminder triggers
+				[], // trigger_cooldowns on load
+				[], // workspace_suppressions on load
+				[trigger], // the row re-read at fire time
 			]
 			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
@@ -737,6 +1047,9 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[], // cron triggers
 				[trigger], // reminder triggers
+				[], // trigger_cooldowns on load
+				[], // workspace_suppressions on load
+				[trigger], // the row re-read at fire time
 			]
 			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()

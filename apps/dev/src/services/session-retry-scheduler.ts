@@ -24,11 +24,23 @@ import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
 import { logger } from '../lib/logger'
-import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
+import {
+	MAX_RETRY_ATTEMPTS,
+	RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY,
+} from '../lib/subscription-limit-reset'
+import { alertOwnersOncePerDay } from './run-death-alerts'
+import { BACKOFF_BASE_MS, SessionNotAdmittedError } from './self-start-limits'
 import { startSession } from './session-lifecycle'
 import { TaskSessionRestarter } from './task-session-restart'
 
 const TICK_MS = 30_000
+/** Reasons that mean the run died waiting on Claude's allowance. A lineage made only of these keeps the limit wording at the cap. */
+const CLAUDE_LIMIT_CODES: ReadonlySet<string> = new Set([
+	'session_limit',
+	'weekly_limit',
+	'opus_limit',
+	'max_plan_rate_limit',
+])
 export { MAX_RETRY_ATTEMPTS }
 export const KILLSWITCH_ENV_VAR = 'FEATURE_RETRY_SCHEDULER'
 
@@ -48,6 +60,9 @@ type RetryableSession = {
 	spawnedBySessionId: string | null
 	spawnedByMessageId: number | null
 }
+
+/** Longest lineage the walk follows; the cap is 5 starts, so this is a bound, not a limit anyone meets. */
+const MAX_LINEAGE_WALK = MAX_RETRY_ATTEMPTS + 2
 
 export class SessionRetryScheduler {
 	private timer: NodeJS.Timeout | null = null
@@ -162,7 +177,7 @@ export class SessionRetryScheduler {
 		// is not passed through — it isn't a top-level sessions column (it's
 		// folded into config.source_comment_event_id at start time), and the
 		// original session's config already carries that key, so the retry
-		// inherits it via config: row.config below.
+		// inherits it via config: this.retryConfig(row) below.
 		let newSessionId: string
 		try {
 			const handle = await startSession({
@@ -170,7 +185,7 @@ export class SessionRetryScheduler {
 				actorId: row.actorId,
 				callerKind: 'internal',
 				actionPrompt: row.actionPrompt,
-				config: row.config ?? undefined,
+				config: this.retryConfig(row),
 				conversationId: row.conversationId ?? undefined,
 				triggerId: row.triggerId ?? undefined,
 				// The retry keeps the originating object so its terminal telemetry and
@@ -187,15 +202,48 @@ export class SessionRetryScheduler {
 			})
 			newSessionId = handle.sessionId
 		} catch (err) {
-			logger.error('SessionRetryScheduler failed to start retry session', {
-				sessionId: row.id,
-				attemptNumber: row.attemptNumber + 1,
-				error: String(err),
-			})
+			// A refusal by the self-start gate is expected, and already logged and written as a
+			// session_admission event. It is not an error, and trying again in 30 s would be refused
+			// again: DEV-4A logged 697 errors in under 3 hours that way. Wait until the gate says it
+			// would admit the run, or an hour when it gives no time (a person has been asked).
+			const notAdmitted = err instanceof SessionNotAdmittedError
+			if (notAdmitted) {
+				logger.info('SessionRetryScheduler: retry not admitted, will look again later', {
+					sessionId: row.id,
+					attemptNumber: row.attemptNumber + 1,
+					refusal: err.refusal,
+				})
+			} else {
+				logger.error('SessionRetryScheduler failed to start retry session', {
+					sessionId: row.id,
+					attemptNumber: row.attemptNumber + 1,
+					error: String(err),
+				})
+			}
+			// The claim above cleared retry_at, which drops the row from the partial index. A start
+			// that throws (the wake hold does this by design) must not lose the retry: put the time
+			// back so the next tick finds it. The attempt number is untouched, so a start that never
+			// happened does not spend one. retried_session_id is still null here, so a competing
+			// scheduler cannot have linked a retry in the meantime.
+			const putBackAt = notAdmitted
+				? (err.retryAt ?? new Date(Date.now() + BACKOFF_BASE_MS))
+				: row.retryAt
+			await this.db
+				.update(sessions)
+				.set({ retryAt: putBackAt })
+				.where(
+					and(eq(sessions.id, row.id), isNull(sessions.retriedSessionId), isNull(sessions.retryAt)),
+				)
+				.catch((restoreErr) =>
+					logger.error('SessionRetryScheduler failed to restore retry_at after a failed start', {
+						sessionId: row.id,
+						error: String(restoreErr),
+					}),
+				)
 			return
 		}
 
-		// Link the original to the retry so MCP create_session's wait:true polling loop and
+		// Link the original to the retry so the MCP create_sub_chat wait loop and
 		// get_session responses can follow the chain (§17.6).
 		try {
 			await this.db
@@ -220,6 +268,17 @@ export class SessionRetryScheduler {
 		})
 	}
 
+	/**
+	 * A run that died on a Claude limit is retried on a subscription login or not at all. The
+	 * flag is read at launch (resolveLlmRoute's subscriptionOnly); a run that died of anything
+	 * else keeps the full route ladder.
+	 */
+	private retryConfig(row: RetryableSession): Record<string, unknown> | undefined {
+		const code = row.result?.failure_reason?.reason_code
+		if (!code || !CLAUDE_LIMIT_CODES.has(code)) return row.config ?? undefined
+		return { ...(row.config ?? {}), [RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY]: true }
+	}
+
 	private async clearRetryAtForCap(row: RetryableSession): Promise<void> {
 		try {
 			await this.db.update(sessions).set({ retryAt: null }).where(eq(sessions.id, row.id))
@@ -233,6 +292,63 @@ export class SessionRetryScheduler {
 			attemptNumber: row.attemptNumber,
 			cap: MAX_RETRY_ATTEMPTS,
 		})
+		await this.alertOwnersOnCap(row)
+	}
+
+	/**
+	 * A run that used up its retries must reach the workspace owner, not only the audit log.
+	 * When every try in the lineage ended on a Claude limit the card says so; a mix of causes
+	 * gets the neutral wording.
+	 */
+	private async alertOwnersOnCap(row: RetryableSession): Promise<void> {
+		try {
+			const codes = await this.lineageReasonCodes(row)
+			const allLimits =
+				codes.length > 0 && codes.every((c) => c !== null && CLAUDE_LIMIT_CODES.has(c))
+			const starts = row.attemptNumber
+			await alertOwnersOncePerDay(this.db, {
+				workspaceId: row.workspaceId,
+				causeKey: `retry_cap:${row.actorId}`,
+				headline: allLimits
+					? `Gave up waiting on Claude's limit after ${starts} starts`
+					: `Gave up retrying after ${starts} starts`,
+				rationale: allLimits
+					? 'Every try ended on the Claude limit, so the work did not run. It will not start again by itself.'
+					: 'The tries ended in different ways and the work did not run. It will not start again by itself.',
+				sessionId: row.id,
+			})
+		} catch (err) {
+			logger.warn('SessionRetryScheduler failed to alert owners on retry cap', {
+				sessionId: row.id,
+				error: String(err),
+			})
+		}
+	}
+
+	/** The failure reason code of the capped run and each run it was a retry of, newest first. */
+	private async lineageReasonCodes(row: RetryableSession): Promise<Array<string | null>> {
+		const codes: Array<string | null> = [row.result?.failure_reason?.reason_code ?? null]
+		let parentId = await this.retryOfId(row.id)
+		for (let i = 0; parentId && i < MAX_LINEAGE_WALK; i++) {
+			const [parent] = await this.db
+				.select({ result: sessions.result, retryOf: sessions.retryOf })
+				.from(sessions)
+				.where(eq(sessions.id, parentId))
+				.limit(1)
+			if (!parent) break
+			codes.push((parent.result as SessionResult | null)?.failure_reason?.reason_code ?? null)
+			parentId = parent.retryOf
+		}
+		return codes
+	}
+
+	private async retryOfId(sessionId: string): Promise<string | null> {
+		const [r] = await this.db
+			.select({ retryOf: sessions.retryOf })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		return r?.retryOf ?? null
 	}
 
 	private async emitRetryEvent(

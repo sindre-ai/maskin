@@ -5,11 +5,26 @@ import SwiftUI
 /// reaches the same pages through `ProfileMenuItem`.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case profile, notifications, permissions, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 	case members, integrations, files, keys, triggers, billing
 	case deviceSignIn, appLock, workspaces, advanced, nativeSurfaces
 	/// `maskin://connect?code=`: Sign in a device with the code already typed.
 	case deviceCode(String)
+}
+
+extension SettingsRoute {
+	/// The page a `maskin://<ws>/settings/<page>` link opens.
+	init(_ page: DeepLink.SettingsPage) {
+		switch page {
+		case .members: self = .members
+		case .integrations: self = .integrations
+		case .keys: self = .keys
+		case .skills: self = .skills
+		case .billing: self = .billing
+		case .notifications: self = .notifications
+		case .objects: self = .objectTypes
+		}
+	}
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -51,12 +66,6 @@ struct SettingsServices {
 		return apiBaseURL
 	}
 
-	/// The web app's workspace settings page, where Privacy & data lives. Nil without a workspace.
-	var webSettingsURL: URL? {
-		guard let workspaceId else { return nil }
-		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
-	}
-
 	func webURL(_ path: String) -> URL? {
 		guard let workspaceId else { return nil }
 		return webBaseURL.appendingPathComponent(workspaceId).appendingPathComponent("settings")
@@ -96,6 +105,16 @@ struct SettingsServices {
 			canManage: role.canManage)
 	}
 
+	func connectWithKeyStore(providerID: String, providerName: String) -> ConnectWithKeyStore {
+		ConnectWithKeyStore(
+			providerID: providerID, providerName: providerName, api: APIIntegrationKeySource(http: http))
+	}
+
+	/// Folder watches on the Drive connection. Writable for everyone but viewers, like the web.
+	func driveWatchesStore() -> DriveWatchesStore {
+		DriveWatchesStore(api: APIDriveWatchesSource(http: http), canWrite: workspace?.role != "viewer")
+	}
+
 	func addToolServerStore() -> AddToolServerStore {
 		AddToolServerStore(api: APIToolServersSource(http: http))
 	}
@@ -115,6 +134,15 @@ struct SettingsServices {
 			api: source ?? NoSettingsSource(),
 			refreshWorkspaces: { await workspaces.refresh() },
 			selectWorkspace: { workspaces.select($0) })
+	}
+
+	/// The General switches. Nil without a workspace.
+	func generalSettingsStore() -> GeneralSettingsStore? {
+		guard let workspace else { return nil }
+		let workspaces = environment.workspaces
+		return GeneralSettingsStore(
+			api: APIGeneralSettingsSource(http: http), actorId: actorId, workspace: workspace,
+			canWritePrivacy: workspace.role != "viewer", refreshWorkspaces: { await workspaces.refresh() })
 	}
 
 	func membersStore() -> MembersStore {

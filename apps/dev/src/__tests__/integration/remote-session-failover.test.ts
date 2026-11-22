@@ -242,7 +242,7 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		})
 	})
 
-	it('leaves an ordinary remote failure untouched', async () => {
+	it('leaves an ordinary remote failure on the primary slot with the unclassified reason', async () => {
 		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
@@ -267,7 +267,12 @@ describe('Remote session completion — Claude subscription failover (Integratio
 
 		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id)).limit(1)
 		expect(row?.status).toBe('failed')
-		expect(row?.result).not.toHaveProperty('failure_reason')
+		expect(row?.result).toMatchObject({
+			failure_reason: {
+				reason_code: 'unclassified',
+				verbatim_output: 'TypeError: cannot read properties of undefined',
+			},
+		})
 
 		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 		const claudeOauth = (ws?.settings as { claude_oauth?: { failover?: { active_slot?: string } } })

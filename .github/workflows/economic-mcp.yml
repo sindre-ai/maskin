@@ -1,0 +1,37 @@
+name: economic-mcp
+
+# The e-conomic tool server in docker/economic-mcp is self-contained (own package file, no
+# link to the app's workspace), so it gets its own small check and does not wait on ci.yml.
+on:
+  push:
+    branches: [main]
+    paths: ['docker/economic-mcp/**', '.github/workflows/economic-mcp.yml']
+  pull_request:
+    branches: [main, 'bet/**']
+    paths: ['docker/economic-mcp/**', '.github/workflows/economic-mcp.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  economic-mcp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: docker/economic-mcp
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docker/economic-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Read-only and host-lock tests
+        run: npm test
+      - name: Image builds
+        run: docker build -t economic-mcp:ci .

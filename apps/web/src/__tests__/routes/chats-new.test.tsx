@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { UNDO_SEND_WINDOW_MS } from '@/hooks/use-undo-send'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockNavigate = vi.fn()
 const mockSearch = vi.fn(() => ({}) as Record<string, string | undefined>)
@@ -16,6 +17,12 @@ vi.mock('@tanstack/react-router', async () => {
 		useNavigate: () => mockNavigate,
 	}
 })
+
+const queryClientMock = vi.hoisted(() => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }))
+vi.mock('@tanstack/react-query', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/react-query')>()),
+	useQueryClient: () => queryClientMock,
+}))
 
 const mockCreateConversation = vi.fn()
 vi.mock('@/hooks/use-conversations', () => ({
@@ -38,6 +45,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	useObjects: () => ({ data: mockReferencedObjects() }),
 }))
 
+const flags = vi.hoisted(() => ({ undoSend: false }))
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id === 'chat-undo-send' && flags.undoSend,
+}))
+
 const toastCapture = vi.hoisted(() => ({ warning: vi.fn() }))
 vi.mock('sonner', () => ({ toast: { warning: toastCapture.warning } }))
 
@@ -47,6 +59,7 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'me-1', name: 'You', type: 'human' }),
+	getApiKey: () => null,
 }))
 
 const trackChatSessionStartedMock = vi.hoisted(() => vi.fn())
@@ -147,6 +160,7 @@ describe('New chat', () => {
 		mockMembers.mockReturnValue([])
 		mockReferencedObjects.mockReturnValue(undefined)
 		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
+		flags.undoSend = false
 	})
 
 	it('has a back link to Chats, a To field and the composer', () => {
@@ -168,6 +182,70 @@ describe('New chat', () => {
 		render(<NewChatPage />)
 		await screen.findByRole('button', { name: 'Remove Forge' })
 		expect(screen.queryByRole('button', { name: 'Remove Chief of Staff' })).not.toBeInTheDocument()
+	})
+
+	describe('opened from a Message button', () => {
+		const BENTE = { actorId: 'h-1', name: 'Bente', type: 'human', role: 'member' }
+
+		it('seeds the person as a chip that never reads as an agent, even before members load', async () => {
+			mockSearch.mockReturnValue({ agentId: 'h-1', agentName: 'Bente', from: 'person_message_row' })
+			mockMembers.mockReturnValue([])
+			render(<NewChatPage />)
+			await screen.findByRole('button', { name: 'Remove Bente' })
+			expect(screen.getByLabelText('First message')).toHaveValue('')
+		})
+
+		it.each(['person_message_row', 'person_message_page'] as const)(
+			'reports %s as the entry point for exactly that one person',
+			async (from) => {
+				const user = userEvent.setup()
+				mockSearch.mockReturnValue({ agentId: 'h-1', agentName: 'Bente', from })
+				mockMembers.mockReturnValue([BENTE])
+				render(<NewChatPage />)
+				await screen.findByRole('button', { name: 'Remove Bente' })
+				await user.type(screen.getByLabelText('First message'), 'Hi Bente')
+				await user.click(screen.getByRole('button', { name: 'Send' }))
+				await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+				expect(mockCreateConversation.mock.calls[0]?.[0].participant_actor_ids).toEqual(['h-1'])
+				expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+					expect.objectContaining({
+						entry_point: from,
+						entry_agent_role: null,
+						participant_count: 1,
+					}),
+				)
+			},
+		)
+
+		it('falls back to agent_one_shot once another recipient is added', async () => {
+			const user = userEvent.setup()
+			mockSearch.mockReturnValue({
+				agentId: 'h-1',
+				agentName: 'Bente',
+				from: 'person_message_row',
+			})
+			mockMembers.mockReturnValue([BENTE])
+			render(<NewChatPage />)
+			await screen.findByRole('button', { name: 'Remove Bente' })
+			await user.type(toField(), 'forge{Enter}')
+			await user.click(screen.getByRole('button', { name: 'Send' }))
+			await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+			expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ entry_point: 'agent_one_shot', participant_count: 2 }),
+			)
+		})
+
+		it('keeps agent_one_shot when the link carries no source', async () => {
+			const user = userEvent.setup()
+			mockSearch.mockReturnValue({ agentId: 'forge-1' })
+			render(<NewChatPage />)
+			await screen.findByRole('button', { name: 'Remove Forge' })
+			await user.click(screen.getByRole('button', { name: 'Send' }))
+			await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledTimes(1))
+			expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ entry_point: 'agent_one_shot', entry_agent_role: 'forge' }),
+			)
+		})
 	})
 
 	it('shows Suggested only while the To field is focused, A to Z, without the chips already added', async () => {
@@ -357,6 +435,172 @@ describe('New chat', () => {
 					"2 of 3 items couldn't be attached — they may have been deleted.",
 				),
 			)
+		})
+	})
+
+	describe('undo send (chat-undo-send on)', () => {
+		beforeEach(() => {
+			flags.undoSend = true
+			vi.useFakeTimers({ shouldAdvanceTime: true })
+		})
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		async function sendFirstMessage(user: ReturnType<typeof userEvent.setup>, text: string) {
+			await waitForDefaultPick()
+			await user.type(screen.getByLabelText('First message'), text)
+			await user.click(screen.getByRole('button', { name: 'Send' }))
+		}
+
+		it('holds the chat creation behind an Undo bar and creates it when the window ends', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			render(<NewChatPage />)
+			await sendFirstMessage(user, 'Plan the launch')
+
+			expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+			expect(mockCreateConversation).not.toHaveBeenCalled()
+			expect(mockNavigate).not.toHaveBeenCalled()
+
+			await act(() => vi.advanceTimersByTimeAsync(UNDO_SEND_WINDOW_MS))
+			expect(mockCreateConversation).toHaveBeenCalledTimes(1)
+			expect(mockCreateConversation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					participant_actor_ids: ['cos-1'],
+					initial_message: 'Plan the launch',
+				}),
+			)
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId: 'ws-1', conversationId: 'conv-1' },
+			})
+			expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+		})
+
+		it('Undo creates nothing and does not open a chat', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			render(<NewChatPage />)
+			await sendFirstMessage(user, 'Plan the launch')
+			await user.click(screen.getByRole('button', { name: 'Undo' }))
+			await act(() => vi.advanceTimersByTimeAsync(UNDO_SEND_WINDOW_MS * 2))
+
+			expect(mockCreateConversation).not.toHaveBeenCalled()
+			expect(mockNavigate).not.toHaveBeenCalled()
+			expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+		})
+
+		it('refuses a second send while the first is held, so only one chat is created', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			render(<NewChatPage />)
+			await sendFirstMessage(user, 'Plan the launch')
+
+			await user.click(screen.getByRole('button', { name: 'Send' }))
+			expect(screen.getByRole('alert')).toHaveTextContent(
+				'Undo your first message, or wait for it to send',
+			)
+			expect(mockCreateConversation).not.toHaveBeenCalled()
+
+			await act(() => vi.advanceTimersByTimeAsync(UNDO_SEND_WINDOW_MS))
+			expect(mockCreateConversation).toHaveBeenCalledTimes(1)
+		})
+
+		function stubCreateFetch() {
+			const fetchMock = vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ id: 'conv-2' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+			)
+			vi.stubGlobal('fetch', fetchMock)
+			return fetchMock
+		}
+
+		it('sends the held first message at once when the tab closes, and opens the new chat', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			const fetchMock = stubCreateFetch()
+			try {
+				render(<NewChatPage />)
+				await sendFirstMessage(user, 'Plan the launch')
+
+				await act(async () => {
+					window.dispatchEvent(new Event('pagehide'))
+				})
+
+				expect(fetchMock).toHaveBeenCalledTimes(1)
+				const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+				expect(url).toContain('/conversations')
+				expect(init.keepalive).toBe(true)
+				expect(JSON.parse(String(init.body))).toEqual(
+					expect.objectContaining({ initial_message: 'Plan the launch' }),
+				)
+				await waitFor(() =>
+					expect(mockNavigate).toHaveBeenCalledWith({
+						to: '/$workspaceId/chats/$conversationId',
+						params: { workspaceId: 'ws-1', conversationId: 'conv-2' },
+					}),
+				)
+				expect(queryClientMock.invalidateQueries).toHaveBeenCalled()
+
+				await act(() => vi.advanceTimersByTimeAsync(UNDO_SEND_WINDOW_MS * 2))
+				expect(fetchMock).toHaveBeenCalledTimes(1)
+				expect(mockCreateConversation).not.toHaveBeenCalled()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		})
+
+		it('opens the new chat when the tab is only hidden, not closed', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			stubCreateFetch()
+			const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+			try {
+				render(<NewChatPage />)
+				await sendFirstMessage(user, 'Plan the launch')
+
+				await act(async () => {
+					document.dispatchEvent(new Event('visibilitychange'))
+				})
+
+				await waitFor(() =>
+					expect(mockNavigate).toHaveBeenCalledWith({
+						to: '/$workspaceId/chats/$conversationId',
+						params: { workspaceId: 'ws-1', conversationId: 'conv-2' },
+					}),
+				)
+			} finally {
+				visibility.mockRestore()
+				vi.unstubAllGlobals()
+			}
+		})
+
+		it('does not navigate when the page is gone before the hide-time request is answered', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			const fetchMock = stubCreateFetch()
+			try {
+				const { unmount } = render(<NewChatPage />)
+				await sendFirstMessage(user, 'Plan the launch')
+				await act(async () => {
+					window.dispatchEvent(new Event('pagehide'))
+					unmount()
+				})
+				await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+				await act(() => vi.advanceTimersByTimeAsync(0))
+				expect(mockNavigate).not.toHaveBeenCalled()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		})
+
+		it('does not pull the person back to the new chat if they left before it was created', async () => {
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+			const { unmount } = render(<NewChatPage />)
+			await sendFirstMessage(user, 'Plan the launch')
+
+			unmount()
+			await act(() => vi.advanceTimersByTimeAsync(0))
+
+			expect(mockCreateConversation).toHaveBeenCalledTimes(1)
+			expect(mockNavigate).not.toHaveBeenCalled()
 		})
 	})
 })

@@ -174,7 +174,7 @@ function SessionsApp() {
 		)
 	}
 
-	// create_session (including wait: true), get_session, pause_session, resume_session,
+	// create_sub_chat, get_session, pause_session, resume_session,
 	// stop_session — all return either { session, logs? } or a raw session.
 	const parsed = parseSessionFromResult(toolResult.result)
 	if (parsed) return <SessionDetailView session={parsed.session} logs={parsed.logs} />

@@ -1,22 +1,24 @@
 import { outsideChatLinkedCards } from '@/components/chat/linked-object-preview'
-import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
+import type { TagInputHandle } from '@/components/chat/tag-input'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useCanWrite } from '@/hooks/use-can-write'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { ChevronDown, Reply } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ChevronDown, Pencil, Reply } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
 import { ViewerTooltip } from '../shared/viewer-tooltip'
 import { CommentDecisionBlock } from './comment-decision-block'
+import { CommentEditBox } from './comment-edit-box'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
 import { MentionSessionCard } from './mention-session-card'
@@ -74,7 +76,8 @@ interface CommentRowProps {
 	event: EventResponse
 	actors: ActorListItem[]
 	workspaceId: string
-	onReply?: (authorName: string) => void
+	objectId: string
+	onReply?: (authorName: string, trigger: HTMLElement) => void
 	isUnread?: boolean
 	isDecisionPoint?: boolean
 	variant?: CommentVariant
@@ -87,6 +90,7 @@ function CommentRow({
 	event,
 	actors,
 	workspaceId,
+	objectId,
 	onReply,
 	isUnread,
 	isDecisionPoint,
@@ -95,6 +99,8 @@ function CommentRow({
 }: CommentRowProps) {
 	const isBubble = variant === 'bubble'
 	const canWrite = useCanWrite()
+	const canEditComments = useFeatureFlag('comment-edit')
+	const [editing, setEditing] = useState(false)
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
@@ -105,8 +111,10 @@ function CommentRow({
 	const { data: attachedFiles, isPending: attachmentsPending } = useFiles(workspaceId, {
 		ids: attachmentFileIds,
 	})
-	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
+
+	const openPerson = (actorId: string) =>
+		navigate({ to: '/$workspaceId/people/$actorId', params: { workspaceId, actorId } })
 
 	const handleMentionClick = (mentioned: ActorListItem) => {
 		if (mentioned.type === 'agent') {
@@ -115,11 +123,19 @@ function CommentRow({
 				params: { workspaceId, agentId: mentioned.id },
 			})
 		} else {
-			setHumanDialogActorId(mentioned.id)
+			openPerson(mentioned.id)
 		}
 	}
 
 	const isAgent = actor?.type === 'agent'
+	// Only the author can change a comment's words, and a decision card's buttons are fixed.
+	const canEdit =
+		canEditComments &&
+		canWrite &&
+		!isDecisionPoint &&
+		!!content &&
+		event.actorId === getStoredActor()?.id
+	const wasEdited = typeof event.data?.editedAt === 'string'
 	const referencedObjectIds = readReferencedObjectIds(event)
 	const legacyChips = legacyChipsOf(event)
 	// Memoised on the stored list: a fresh array each render would rebuild the markdown
@@ -147,7 +163,7 @@ function CommentRow({
 				type={actor.type}
 				size="sm"
 				className={avatarClass}
-				onClick={() => setHumanDialogActorId(actor.id)}
+				onClick={() => openPerson(actor.id)}
 			/>
 		)
 	) : null
@@ -165,7 +181,7 @@ function CommentRow({
 	) : (
 		<button
 			type="button"
-			onClick={() => setHumanDialogActorId(actor.id)}
+			onClick={() => openPerson(actor.id)}
 			className={cn(
 				'text-sm font-medium text-foreground cursor-pointer hover:underline transition-colors',
 			)}
@@ -240,18 +256,31 @@ function CommentRow({
 							/>
 						</div>
 					)}
-					<AgentOutput
-						content={content}
-						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-						mentionActors={actors}
-						onMentionClick={handleMentionClick}
-						taggedActorIds={taggedActorIds}
-						selfActorId={getStoredActor()?.id}
-						size="sm"
-						className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
-						renderVisuals
-						linkedCards={outsideChatLinkedCards(workspaceId, 'full')}
-					/>
+					{editing ? (
+						<CommentEditBox
+							workspaceId={workspaceId}
+							objectId={objectId}
+							eventId={event.id}
+							initialContent={content}
+							onDone={() => setEditing(false)}
+						/>
+					) : (
+						<AgentOutput
+							content={content}
+							disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+							mentionActors={actors}
+							onMentionClick={handleMentionClick}
+							taggedActorIds={taggedActorIds}
+							selfActorId={getStoredActor()?.id}
+							size="sm"
+							className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
+							renderVisuals
+							linkedCards={outsideChatLinkedCards(workspaceId, 'full')}
+						/>
+					)}
+					{wasEdited && !editing && (
+						<span className="ml-1.5 text-[10.5px] text-muted-foreground">(edited)</span>
+					)}
 
 					{footer && <div>{footer}</div>}
 					{/* Objects the author attached from the composer, as real
@@ -304,11 +333,21 @@ function CommentRow({
 						</ul>
 					)}
 				</div>
+				{canEdit && !editing && (
+					<button
+						type="button"
+						onClick={() => setEditing(true)}
+						aria-label="Edit"
+						className="inline-flex self-end shrink-0 opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground p-1 -my-1"
+					>
+						<Pencil size={13} />
+					</button>
+				)}
 				{onReply && (
 					<ViewerTooltip className="inline-flex self-end shrink-0">
 						<button
 							type="button"
-							onClick={() => onReply(actor?.name ?? 'this message')}
+							onClick={(e) => onReply(actor?.name ?? 'this message', e.currentTarget)}
 							aria-label="Reply"
 							disabled={!canWrite}
 							/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
@@ -319,16 +358,6 @@ function CommentRow({
 					</ViewerTooltip>
 				)}
 			</div>
-			{humanDialogActorId && (
-				<HumanDetailDialog
-					actorId={humanDialogActorId}
-					workspaceId={workspaceId}
-					open={true}
-					onOpenChange={(open) => {
-						if (!open) setHumanDialogActorId(null)
-					}}
-				/>
-			)}
 		</>
 	)
 }
@@ -349,6 +378,9 @@ export function ActivityComment({
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
+	// The Reply button that opened the box, so closing it can hand focus back there.
+	const replyTriggerRef = useRef<HTMLElement | null>(null)
+	const replyInputRef = useRef<TagInputHandle>(null)
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
 	const isDecisionPoint = hasDecision(event)
@@ -362,12 +394,21 @@ export function ActivityComment({
 	const lastReplyAuthor = actorList.find((a) => a.id === lastReply?.actorId)?.name
 	const threadNote = lastReplyAuthor ? `last from ${lastReplyAuthor}` : null
 
-	const handleReply = (authorName: string) => {
+	const handleReply = (authorName: string, trigger?: HTMLElement) => {
 		if (onReplyTo) {
 			onReplyTo(event, authorName)
 			return
 		}
-		setShowReplyInput(true)
+		replyTriggerRef.current = trigger ?? null
+		// Already open: the box does not remount, so move the caret into it directly.
+		if (showReplyInput) replyInputRef.current?.focus()
+		else setShowReplyInput(true)
+	}
+
+	const closeReplyInput = () => {
+		setShowReplyInput(false)
+		const trigger = replyTriggerRef.current
+		if (trigger?.isConnected) trigger.focus()
 	}
 
 	const isBubble = variant === 'bubble'
@@ -428,6 +469,7 @@ export function ActivityComment({
 				event={event}
 				actors={actorList}
 				workspaceId={workspaceId}
+				objectId={objectId}
 				onReply={hasReplies && !onReplyTo ? undefined : handleReply}
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
@@ -454,8 +496,23 @@ export function ActivityComment({
 								event={reply}
 								actors={actorList}
 								workspaceId={workspaceId}
+								objectId={objectId}
 								onReply={idx === replies.length - 1 ? handleReply : undefined}
+								isDecisionPoint={hasDecision(reply)}
 								variant={variant}
+								footer={
+									// The server stores every reply against the thread root, so an
+									// answer to this ask is a later reply in the same thread. Replies
+									// before it cannot have answered it.
+									hasDecision(reply) ? (
+										<CommentDecisionBlock
+											event={reply}
+											workspaceId={workspaceId}
+											objectId={objectId}
+											replies={replies.slice(idx + 1)}
+										/>
+									) : undefined
+								}
 							/>
 						</div>
 					))}
@@ -464,7 +521,14 @@ export function ActivityComment({
 
 			{showReplyInput && (
 				<div className="ml-7 mt-2">
-					<CommentInput workspaceId={workspaceId} objectId={objectId} parentEventId={event.id} />
+					<CommentInput
+						workspaceId={workspaceId}
+						objectId={objectId}
+						parentEventId={event.id}
+						focusRef={replyInputRef}
+						autoFocus
+						onCancel={closeReplyInput}
+					/>
 				</div>
 			)}
 		</div>

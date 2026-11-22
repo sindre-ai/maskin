@@ -191,6 +191,24 @@ struct MaskinComposerSnapshotTests {
 		}
 	}
 
+	@Test("the formatting row sits above the field, only where the + menu is the chat one", arguments: [false, true])
+	func formattingRow(dark: Bool) async throws {
+		let typed = await model("make this word bold")
+		let open = MaskinComposer(model: typed, config: config(), onSend: {}).composerPreview(.init(formattingOpen: true))
+		#expect(open.isFormattingShown)
+		#expect(!MaskinComposer(model: typed, config: config(), onSend: {}).composerPreview(.init()).isFormattingShown, "hidden by default")
+		let hold = MaskinComposer(model: typed, config: config(.inline, attach: false, send: false), onSend: {})
+			.composerPreview(.init(formattingOpen: true))
+		#expect(!hold.isFormattingShown, "a Hold reason field has no formatting row")
+		let dictating = MaskinComposer(model: typed, config: config(), onSend: {}).composerPreview(.init(dictating: true, formattingOpen: true))
+		#expect(!dictating.isFormattingShown, "dictation replaces the bar's controls")
+		#expect(ComposerFormatBar.label(.bold) == "Bold")
+		#expect(Set(ComposerFormatting.formats.map(ComposerFormatBar.label)).count == ComposerFormatting.formats.count)
+		for width in Self.widths {
+			try render(open, width: width, dark: dark, name: "formatting-row")
+		}
+	}
+
 	@Test("the + menu with every row fits above the bar on the smallest supported iPhone")
 	func attachMenuFits() throws {
 		let renderer = ImageRenderer(content: ComposerAttachMenu(actions: ComposerAttachAction.allCases, onPick: { _ in }))

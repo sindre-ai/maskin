@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildEventResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-vi.mock('@/lib/analytics', () => ({ trackForyouCardAction: vi.fn() }))
+vi.mock('@/lib/analytics', () => ({ trackForyouCardAction: vi.fn(), secondsSince: () => null }))
 
 const createMutate = vi.fn()
 vi.mock('@/hooks/use-events', () => ({

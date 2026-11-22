@@ -2,7 +2,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
 import { useFile } from '@/hooks/use-files'
 import { api } from '@/lib/api'
-import { handleBridgeMessage, sourcesAffectedBy } from '@/lib/loop-view-bridge'
+import { type ProposedChange, handleBridgeMessage, sourcesAffectedBy } from '@/lib/loop-view-bridge'
 import {
 	dropCachedResult,
 	formatUpdatedAt,
@@ -11,11 +11,20 @@ import {
 } from '@/lib/loop-view-cache'
 import { ISOLATION_LOAD_MESSAGE, prepareIsolatedViewHtml, readViewSources } from '@/lib/mini-app'
 import { subscribeToSSE } from '@/lib/sse-invalidation'
-import type { ListSourceEntry } from '@/lib/view-lists'
+import { useTheme } from '@/lib/theme'
+import { type ExportPage, requestExportPages } from '@/lib/view-export'
+import {
+	type ListAnswer,
+	type ListSource,
+	type ListSourceEntry,
+	declaredProposableFields,
+	fetchListRows,
+} from '@/lib/view-lists'
+import { applyAppTheme } from '@/lib/view-theme'
 import type { DataQueryResult, DataQuerySpec } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 /** Quiet time after a relevant event before the sources are re-checked, so a burst of writes is one check. */
 const SETTLE_MS = 2_000
@@ -39,9 +48,28 @@ interface LoopCustomViewProps {
 	fileId: string
 	/** Called when the view cannot be shown (file missing, bad sources, escaped frame). The loop page then shows its default content. A failed query is not one: the view stays and says so. */
 	onFailure: (reason: string) => void
+	/** What a view's window.maskin.open(id) does. Without it the viewer goes to that object's page. */
+	onOpenItem?: (objectId: string) => void
+	/** What a view's window.maskin.propose(id, field, value) does. Without it a proposal is ignored. It must ask the person before anything is saved. */
+	onProposeChange?: (change: ProposedChange) => void
+	/** Raised after a proposed change was saved: the view reloads its lists so it shows the new value. */
+	reloadToken?: number
+	/** Told whenever a reload starts or ends, so the page can disable its Refresh item while one runs. */
+	onRefreshingChange?: (refreshing: boolean) => void
+	/** Filled with a function that asks the frame on screen for its pages, for Export. Only called on the person's click. */
+	exportRef?: MutableRefObject<(() => Promise<ExportPage[]>) | null>
 }
 
-export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomViewProps) {
+export function LoopCustomView({
+	workspaceId,
+	fileId,
+	onFailure,
+	onOpenItem,
+	onProposeChange,
+	reloadToken,
+	onRefreshingChange,
+	exportRef,
+}: LoopCustomViewProps) {
 	const { data: file, isLoading, isError } = useFile(workspaceId, fileId)
 	const html = file?.mimeType.toLowerCase().startsWith('text/html') ? file.content : null
 	const sources = useMemo(() => (html === null ? null : readViewSources(html)), [html])
@@ -66,6 +94,11 @@ export function LoopCustomView({ workspaceId, fileId, onFailure }: LoopCustomVie
 			lists={sources.lists}
 			workspaceId={workspaceId}
 			onFailure={onFailure}
+			onOpenItem={onOpenItem}
+			onProposeChange={onProposeChange}
+			reloadToken={reloadToken}
+			onRefreshingChange={onRefreshingChange}
+			exportRef={exportRef}
 		/>
 	)
 }
@@ -76,12 +109,22 @@ function ViewFrame({
 	lists,
 	workspaceId,
 	onFailure,
+	onOpenItem,
+	onProposeChange,
+	reloadToken,
+	onRefreshingChange,
+	exportRef,
 }: {
 	html: string
 	sources: ReadonlyMap<string, DataQuerySpec>
 	lists: ReadonlyMap<string, ListSourceEntry>
 	workspaceId: string
 	onFailure: (reason: string) => void
+	onOpenItem?: (objectId: string) => void
+	onProposeChange?: (change: ProposedChange) => void
+	reloadToken?: number
+	onRefreshingChange?: (refreshing: boolean) => void
+	exportRef?: MutableRefObject<(() => Promise<ExportPage[]>) | null>
 }) {
 	const iframeRef = useRef<HTMLIFrameElement>(null)
 	const navigate = useNavigate()
@@ -116,23 +159,42 @@ function ViewFrame({
 	const blockedRef = useRef(false)
 	// The last answer given to the frame per source (by its query), to tell whether a change matters.
 	const lastResultsRef = useRef(new Map<string, string>())
-	const srcDoc = useMemo(() => prepareIsolatedViewHtml(html), [html])
+	// The view's light and dark styles follow the app's theme, not the browser's.
+	const { resolvedTheme } = useTheme()
+	const srcDoc = useMemo(
+		() => prepareIsolatedViewHtml(applyAppTheme(html, resolvedTheme)),
+		[html, resolvedTheme],
+	)
 
 	// The handler is installed once per workspace; it reads the latest sources
 	// and failure callback through refs so a re-render never drops a message.
 	const sourcesRef = useRef(sources)
 	sourcesRef.current = sources
-	// List sources are only ever refused here: rows are for the file viewer (allowLists below).
 	const listsRef = useRef(lists)
 	listsRef.current = lists
+	// Rows of each declared list, by name, kept with the declaration they were fetched for. A
+	// list is fetched when the frame first asks (like a count) and again after Refresh; a frame
+	// swap that asks again is answered from here, so it costs no call.
+	const listRowsRef = useRef(
+		new Map<string, { declaration: string; answer: Promise<ListAnswer> }>(),
+	)
 	const onFailureRef = useRef(onFailure)
 	onFailureRef.current = onFailure
+	const onOpenItemRef = useRef(onOpenItem)
+	onOpenItemRef.current = onOpenItem
+	const onProposeRef = useRef(onProposeChange)
+	onProposeRef.current = onProposeChange
+	// Ids of the items this view was given in its lists. A proposal about any other id is ignored.
+	const givenIdsRef = useRef(new Set<string>())
 
 	// The view draws from the last saved answers when it has them, then the host asks the
 	// server again behind it. `updatedAt` is the age of the oldest answer on screen; `refreshing`
 	// is true while any query is in flight.
 	const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 	const [refreshing, setRefreshing] = useState(false)
+	useEffect(() => {
+		onRefreshingChange?.(refreshing)
+	}, [refreshing, onRefreshingChange])
 	const pendingRef = useRef(0)
 	// When each source's answer on screen was fetched, by query key.
 	const answeredAtRef = useRef(new Map<string, number>())
@@ -166,9 +228,43 @@ function ViewFrame({
 		[workspaceId, syncUpdatedAt],
 	)
 
+	/** Answers a list source with the viewer's own rows, fetching them on the first ask. */
+	const answerList = useCallback(
+		(name: string, source: ListSource): Promise<ListAnswer> => {
+			const declaration = JSON.stringify(source)
+			const held = listRowsRef.current.get(name)
+			if (held && held.declaration === declaration) return held.answer
+			setRefreshing(true)
+			pendingRef.current += 1
+			const answer = fetchListRows(workspaceId, source)
+				.then((rows) => {
+					for (const row of rows) givenIdsRef.current.add(row.id)
+					const fetchedAt = Date.now()
+					answeredAtRef.current.set(`list:${name}`, fetchedAt)
+					syncUpdatedAt()
+					return { rows, fetchedAt }
+				})
+				.catch((err) => {
+					// A failed fetch is not kept, so the next ask (or Refresh) tries again.
+					if (listRowsRef.current.get(name)?.answer === answer) listRowsRef.current.delete(name)
+					throw err
+				})
+				.finally(() => {
+					pendingRef.current -= 1
+					if (pendingRef.current === 0) setRefreshing(false)
+				})
+			listRowsRef.current.set(name, { declaration, answer })
+			return answer
+		},
+		[workspaceId, syncUpdatedAt],
+	)
+
 	/** The Refresh button: asks the server for every source again and redraws if anything differs from what the view has. */
 	const refreshAll = useCallback(async () => {
 		setRefreshFailed(false)
+		// Rows have no cheap "did it change" check, so a held list is dropped and the new frame fetches it again.
+		const hadLists = listRowsRef.current.size > 0
+		if (hadLists) listRowsRef.current.clear()
 		const specs = [...sourcesRef.current.values()]
 		const settled = await Promise.allSettled(specs.map((spec) => queryAndStore(spec)))
 		let changed = false
@@ -183,8 +279,33 @@ function ViewFrame({
 				changed = true
 			}
 		})
-		if (changed) setFrameKey((k) => k + 1)
+		if (changed || hadLists) setFrameKey((k) => k + 1)
 	}, [queryAndStore])
+
+	// A saved change from the page's confirm step: reload the lists so the view shows it.
+	const handledReloadRef = useRef(reloadToken ?? 0)
+	useEffect(() => {
+		if (reloadToken === undefined || reloadToken === handledReloadRef.current) return
+		handledReloadRef.current = reloadToken
+		void refreshAll()
+	}, [reloadToken, refreshAll])
+
+	// Export reads the frame on screen, and only when asked. The frame is the isolation frame's
+	// first child; a frame that navigated away (blocked) is not asked.
+	useEffect(() => {
+		if (!exportRef) return
+		const ask = () => {
+			const frame = () => iframeRef.current?.contentWindow?.frames[0] ?? null
+			if (blockedRef.current || !frame()) {
+				return Promise.reject(new Error('The view is not ready.'))
+			}
+			return requestExportPages(frame, (message) => frame()?.postMessage(message, '*'))
+		}
+		exportRef.current = ask
+		return () => {
+			if (exportRef.current === ask) exportRef.current = null
+		}
+	}, [exportRef])
 
 	useEffect(() => {
 		// The view runs one frame inside the iframe we render (see prepareIsolatedViewHtml), so
@@ -222,10 +343,24 @@ function ViewFrame({
 					frameWindow: viewWindow,
 					isBlocked: () => blockedRef.current,
 					sources: () => sourcesRef.current,
-					allowLists: false,
+					allowLists: true,
 					listSources: () => listsRef.current,
 					onOpen: (objectId) =>
-						navigate({ to: '/$workspaceId/objects/$objectId', params: { workspaceId, objectId } }),
+						onOpenItemRef.current
+							? onOpenItemRef.current(objectId)
+							: navigate({
+									to: '/$workspaceId/objects/$objectId',
+									params: { workspaceId, objectId },
+								}),
+					listAnswer: answerList,
+					// Not passed at all when the page has no confirm step, so a proposal is ignored.
+					...(onProposeRef.current
+						? {
+								onPropose: (change: ProposedChange) => onProposeRef.current?.(change),
+								proposableFields: () => declaredProposableFields(listsRef.current),
+								hasItem: (objectId: string) => givenIdsRef.current.has(objectId),
+							}
+						: {}),
 					run: async (spec) => {
 						const key = JSON.stringify(spec)
 						const given = (result: DataQueryResult) => {
@@ -283,7 +418,7 @@ function ViewFrame({
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
-	}, [workspaceId, queryAndStore, syncUpdatedAt, navigate])
+	}, [workspaceId, queryAndStore, syncUpdatedAt, answerList, navigate])
 
 	// Keeps the view live without it having to cooperate, and only while it is open (this
 	// component is mounted). A page cannot be told to re-render from outside, so when an

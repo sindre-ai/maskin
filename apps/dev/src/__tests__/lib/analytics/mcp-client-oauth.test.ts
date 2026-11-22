@@ -7,9 +7,15 @@ describe('oauthClientLabel', () => {
 		expect(oauthClientLabel('https://CLAUDE.AI/x')).toBe('claude_ai')
 	})
 
+	it('labels the allowlisted ChatGPT client by the host of its client_id', () => {
+		expect(oauthClientLabel('https://chatgpt.com/oauth/client.json')).toBe('chatgpt')
+		expect(oauthClientLabel('https://ChatGPT.com/x')).toBe('chatgpt')
+	})
+
 	it('labels any other host, and anything that is not a URL, as other', () => {
 		expect(oauthClientLabel('https://example.com/client')).toBe('other')
 		expect(oauthClientLabel('https://claude.ai.evil.example/client')).toBe('other')
+		expect(oauthClientLabel('https://chatgpt.com.evil.example/oauth/client.json')).toBe('other')
 		expect(oauthClientLabel('not a url')).toBe('other')
 		expect(oauthClientLabel('')).toBe('other')
 	})

@@ -42,14 +42,25 @@ function parseOAuthErrorField(body: string): string | undefined {
 	return undefined
 }
 
+/** A workspace's own sign-in app. When one is passed it wins over the server settings. */
+export interface OAuthClientApp {
+	clientId: string
+	clientSecret: string
+}
+
 export class OAuth2Handler {
 	private customParser?: (raw: unknown) => Partial<StoredCredentials>
 
 	constructor(
 		private config: OAuth2Config,
 		customParser?: (raw: unknown) => Partial<StoredCredentials>,
+		private app?: OAuthClientApp,
 	) {
 		this.customParser = customParser
+	}
+
+	private clientId(): string {
+		return this.app?.clientId ?? getEnvOrThrow(this.config.clientIdEnv)
 	}
 
 	/**
@@ -59,7 +70,7 @@ export class OAuth2Handler {
 	createAuthorizationUrl(state: string, redirectUri: string, codeVerifier?: string): string {
 		const url = new URL(this.config.authorizationUrl)
 		url.searchParams.set('response_type', 'code')
-		url.searchParams.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
+		url.searchParams.set('client_id', this.clientId())
 		url.searchParams.set('redirect_uri', redirectUri)
 		url.searchParams.set('state', state)
 
@@ -151,10 +162,10 @@ export class OAuth2Handler {
 		// sends its id only, and PKCE proves the exchange.
 		const method = this.config.tokenAuthMethod ?? 'client_secret_post'
 		if (method === 'client_secret_post') {
-			body.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
+			body.set('client_id', this.clientId())
 			body.set('client_secret', this.clientSecret())
 		} else if (method === 'none') {
-			body.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
+			body.set('client_id', this.clientId())
 		}
 
 		const tokenUrl = urlOverride ?? this.config.tokenUrl
@@ -181,6 +192,7 @@ export class OAuth2Handler {
 	}
 
 	private clientSecret(): string {
+		if (this.app) return this.app.clientSecret
 		if (!this.config.clientSecretEnv) {
 			throw new Error(
 				'OAuth config has no clientSecretEnv, but its token auth method needs a secret',
@@ -194,7 +206,7 @@ export class OAuth2Handler {
 		const method = this.config.tokenAuthMethod ?? 'client_secret_post'
 
 		if (method === 'client_secret_basic') {
-			const clientId = getEnvOrThrow(this.config.clientIdEnv)
+			const clientId = this.clientId()
 			const clientSecret = this.clientSecret()
 			const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
 			headers.set('Authorization', `Basic ${encoded}`)

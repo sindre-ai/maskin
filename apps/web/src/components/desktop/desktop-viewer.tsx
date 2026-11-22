@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
+import type { ComputerViewFlow } from '@/lib/computer-view-flow'
 import { attachClipboardShortcuts, createCopyArming, takeRemoteCopy } from '@/lib/desktop-clipboard'
 import { KEYBOARD_SENTINEL, SPECIAL_KEYS, diffTyped, keysymForChar } from '@/lib/desktop-keyboard'
 import type RfbClient from '@novnc/novnc/lib/rfb'
@@ -106,6 +106,7 @@ export function DesktopViewer({
 	variant = 'inline',
 	onOpen,
 	onOpenAgent,
+	flow,
 }: {
 	workspaceId: string
 	/** Whose computer this is: every agent has its own. */
@@ -121,6 +122,8 @@ export function DesktopViewer({
 	onOpen?: () => void
 	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
 	onOpenAgent?: (agentId: string) => void
+	/** The analytics flow of this view: it reports mode changes only (opened by the parent). */
+	flow?: ComputerViewFlow
 }) {
 	const targetRef = useRef<HTMLDivElement>(null)
 	const rfbRef = useRef<RfbHandle | null>(null)
@@ -134,7 +137,6 @@ export function DesktopViewer({
 	const [copyArming] = useState(() => createCopyArming())
 	// The browser refused to take what the computer copied (Safari): the Copy button steps in.
 	const [copyBlocked, setCopyBlocked] = useState(false)
-	const clipboardEnabled = useFeatureFlag('computer-clipboard')
 	const [keyboardUp, setKeyboardUp] = useState(false)
 	const keyboardRef = useRef<HTMLTextAreaElement>(null)
 	const lastTyped = useRef(KEYBOARD_SENTINEL)
@@ -150,6 +152,8 @@ export function DesktopViewer({
 		setError(null)
 		setControlling(false)
 		setRemoteText('')
+		const startedAt = performance.now()
+		let live = false
 
 		void (async () => {
 			try {
@@ -177,7 +181,10 @@ export function DesktopViewer({
 				rfb.qualityLevel = 9
 				rfb.viewOnly = true
 				rfb.addEventListener('connect', () => {
-					if (!cancelled) setPhase('connected')
+					if (cancelled) return
+					live = true
+					flow?.firstFrame(performance.now() - startedAt)
+					setPhase('connected')
 				})
 				rfb.addEventListener('clipboard', (event) => {
 					if (cancelled) return
@@ -191,6 +198,7 @@ export function DesktopViewer({
 				})
 				rfb.addEventListener('disconnect', () => {
 					if (cancelled) return
+					flow?.connectionLost(live)
 					rfbRef.current = null
 					setControlling(false)
 					setPhase((prev) => {
@@ -212,7 +220,12 @@ export function DesktopViewer({
 			rfbRef.current?.disconnect()
 			rfbRef.current = null
 		}
-	}, [workspaceId, agentId, attempt, connectDesktop, copyArming])
+	}, [workspaceId, agentId, attempt, connectDesktop, copyArming, flow])
+
+	// Take-over started and ended. The flow ends one still running when the view is closed.
+	useEffect(() => {
+		flow?.takeOver(controlling)
+	}, [controlling, flow])
 
 	useEffect(() => {
 		const rfb = rfbRef.current
@@ -228,7 +241,7 @@ export function DesktopViewer({
 	}, [controlling, copyArming])
 
 	// Ctrl/Cmd+V and Ctrl/Cmd+C on the picture, while the person is in control.
-	const shortcutsOn = controlling && clipboardEnabled && phase === 'connected'
+	const shortcutsOn = controlling && phase === 'connected'
 	useEffect(() => {
 		const target = targetRef.current
 		if (!shortcutsOn || !target) return
@@ -255,7 +268,7 @@ export function DesktopViewer({
 	const typing = touch && controlling && phase === 'connected'
 	// A phone has no Ctrl/Cmd keys, so it keeps both buttons. Elsewhere the keys do the job and
 	// Copy appears only when the browser refused to take what the computer copied.
-	const clipboardButtons = controlling && clipboardEnabled && (touch || copyBlocked)
+	const clipboardButtons = controlling && (touch || copyBlocked)
 
 	const typeIntoComputer = (e: React.FormEvent<HTMLTextAreaElement>) => {
 		const area = e.currentTarget

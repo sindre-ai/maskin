@@ -192,6 +192,41 @@ test.describe('rich markdown editor — floating toolbar & shortcuts', () => {
 		await expect(editor).toBeFocused()
 	})
 
+	test('the toolbar is one tab stop and the arrows stay on its own buttons', async ({
+		page,
+		account,
+	}) => {
+		const { editor } = await openEditor(page, account, 'https://example.com')
+		await editor.press('ControlOrMeta+a')
+		const toolbar = page.locator('[data-editor-toolbar="floating"]')
+		await expect(toolbar).toBeVisible()
+		const buttons = toolbar.locator('[data-toolbar-items] > button')
+
+		// Only the active button is tabbable.
+		await expect(buttons.first()).toHaveAttribute('tabindex', '0')
+		await expect(toolbar.locator('button[tabindex="0"]')).toHaveCount(1)
+
+		await page.keyboard.press('Alt+F10')
+		await page.keyboard.press('ArrowRight')
+		await expect(toolbar.getByRole('button', { name: 'Italic' })).toBeFocused()
+		// The tab stop follows focus.
+		await expect(toolbar.locator('button[tabindex="0"]')).toHaveCount(1)
+		await expect(toolbar.getByRole('button', { name: 'Italic' })).toHaveAttribute('tabindex', '0')
+
+		// With the link box open, the arrows stay on the toolbar's own button row.
+		await toolbar.getByRole('button', { name: 'Link' }).click()
+		await expect(page.getByRole('textbox', { name: 'Link URL' })).toBeVisible()
+		await toolbar.getByRole('button', { name: 'Link' }).focus()
+		await page.keyboard.press('ArrowRight')
+		await expect(toolbar.locator('[data-toolbar-items] > button:focus')).toHaveCount(1)
+
+		// The link box's own buttons are left alone.
+		const add = toolbar.getByRole('button', { name: 'Add', exact: true })
+		await add.focus()
+		await page.keyboard.press('ArrowRight')
+		await expect(add).toBeFocused()
+	})
+
 	const SHORTCUTS = [
 		{ keys: 'ControlOrMeta+b', selector: 'strong' },
 		{ keys: 'ControlOrMeta+i', selector: 'em' },

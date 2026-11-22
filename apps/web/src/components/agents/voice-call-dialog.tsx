@@ -254,11 +254,7 @@ function VoiceCallDialogBody({
 						<MicOff size={isDesktop ? 44 : 56} />
 					</div>
 				) : (
-					<AgentAvatar
-						agent={agent}
-						state={state}
-						sizeClass={isDesktop ? 'size-28 text-3xl' : 'size-36 text-4xl'}
-					/>
+					<AgentAvatar agent={agent} state={state} sizeClass={isDesktop ? 'size-28' : 'size-36'} />
 				)}
 
 				{/* aria-live=polite region — announces state transitions to screen
@@ -380,9 +376,8 @@ export function AgentAvatar({
 				name={agent.name}
 				type={agent.type}
 				size="xl"
-				tone="strong"
 				id={agent.id}
-				className={cn('rounded-full font-bold', sizeClass)}
+				className={sizeClass}
 			/>
 		</div>
 	)

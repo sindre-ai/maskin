@@ -38,10 +38,16 @@ describe('buildWorkspaceStartupBlock', () => {
 				'Do the work, don\'t describe it. If your next step is something your tools can do, do it in this turn. Don\'t end with "I\'ll..." or "next I would...".',
 			)
 			expect(block).toContain(
-				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_session with wait: true if you need the answer now. Ask a person only for the cases below.',
+				'Look before you ask. Read the object, its comments, the knowledge base and the code first. If another agent would know, ask that agent: @mention it on the object, or use create_sub_chat if you need the answer now. Ask a person only for the cases below.',
 			)
 			expect(block).toContain(
-				"Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now or say plainly that it's still open.",
+				'Before you contact anyone, person or agent, read their description (list_actors shows it, get_actor shows more) and pick the one whose description covers the topic. Read it fresh each time, because descriptions change. If more than one fits, contact each once. If none fits, say what is missing instead of guessing.',
+			)
+			expect(block).toContain(
+				'Before you ask a person to upload something again, check the chat\'s file list ("Files in this chat" in your starting prompt, or list_files with conversation_id). Link what you create to what you worked from.',
+			)
+			expect(block).toContain(
+				"Don't promise later work you haven't scheduled. If you say you'll check or do something later, set it up before you end: create a trigger for yourself, or @mention the agent who owns it. If you haven't, do it now. Only when you can neither do it nor schedule it, say that it's still open and what is stopping you.",
 			)
 			expect(block).toContain(
 				"Done means checked. Before you say done, compare the result with what was asked and say what you checked. If you're blocked, say what blocked you and what you tried. Never make up a result.",
@@ -53,7 +59,7 @@ describe('buildWorkspaceStartupBlock', () => {
 				'Don\'t ask permission for those: "Want me to...?" about something you could just do blocks the work. Do them, then end with the next step you would suggest and your recommendation, so a person can say go or redirect.',
 			)
 			expect(block).toContain(
-				"Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a loop live or make another status change reserved for people, or change who has access or which credentials exist.",
+				"Ask a person first, once, with your recommendation, before you do anything outside the company or in someone's name, spend money, permanently delete anything, take a flow live or make another status change reserved for people, or change who has access or which credentials exist.",
 			)
 			expect(block).toContain(
 				'If only a person can unblock you, finish everything else first, then ask once, naming the exact setting and who can change it, and set a follow-up so the job completes once it is granted.',
@@ -102,6 +108,15 @@ describe('buildWorkspaceStartupBlock', () => {
 			expect(block).toContain('[name](https://maskin.io/ws-abc/triggers/<id>)')
 			expect(block).toContain('[name](https://maskin.io/ws-abc/files/<id>)')
 			expect(block).toContain('[Settings](https://maskin.io/ws-abc/settings)')
+		}
+	})
+
+	it('tells every session to link a skill to the Skills section and name the skill in the words', () => {
+		for (const interactive of [false, true]) {
+			const block = buildWorkspaceStartupBlock({ ...args, interactive })
+			const line = block.split('\n').find((l) => l.startsWith('- Skill'))
+			expect(line).toContain('[Skills](https://maskin.io/ws-abc/settings/skills)')
+			expect(line).toContain("say the skill's name in the words around the link")
 		}
 	})
 

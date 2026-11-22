@@ -63,19 +63,19 @@ describe('recordMcpAliasUse', () => {
 
 		await recordMcpAliasUse(undefined, wsId, {
 			...event,
-			toolName: 'run_agent',
+			toolName: 'search_objects',
 			renames: [],
 			droppedKeys: ['config'],
-			toolAlias: { old: 'run_agent', new: 'create_session' },
+			toolAlias: { old: 'search_objects', new: 'list_objects' },
 		})
 
 		expect(capturePosthogEvent).toHaveBeenCalledWith(
 			'mcp_alias_use',
 			'actor-1',
 			expect.objectContaining({
-				tool_name: 'run_agent',
+				tool_name: 'search_objects',
 				dropped_keys: JSON.stringify(['config']),
-				tool_alias: JSON.stringify({ old: 'run_agent', new: 'create_session' }),
+				tool_alias: JSON.stringify({ old: 'search_objects', new: 'list_objects' }),
 			}),
 		)
 	})

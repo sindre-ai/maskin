@@ -1,11 +1,13 @@
 import { EditableTitle } from '@/components/shared/editable-title'
 import { Button } from '@/components/ui/button'
+import { useCreateViewWithAgent } from '@/hooks/use-create-view-with-agent'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor, getTypeColor, statusLabel, typeIcons, typeLabel } from '@/lib/constants'
+import { createViewRequest } from '@/lib/create-view-message'
 import { Link } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { DetailMetaStar } from './detail-meta-row'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -36,6 +38,7 @@ export function ObjectDetailBarActions({
 	propertiesOpen,
 }: ObjectDetailBarActionsProps) {
 	const [menuOpen, setMenuOpen] = useState(false)
+	const createView = useCreateViewWithAgent()
 
 	return (
 		// Mockup order (919–950): the overflow menu, then the drawer toggle. The
@@ -46,6 +49,7 @@ export function ObjectDetailBarActions({
 				object={object}
 				onDeleteRequest={onDeleteRequest}
 				onArchiveRequest={onArchiveRequest}
+				onCreateViewRequest={createViewRequest(createView.open, object)}
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
@@ -96,27 +100,26 @@ function StatusPill({ status }: { status: string }) {
 }
 
 /**
- * D6 — the amber `⏸ PAUSED · NO CREDITS` chip on the object-detail meta row.
+ * D6 — the amber `⏸ PAUSED · UPGRADE` chip on the object-detail meta row.
  * Rendered only when the workspace-scoped `useUsageState()` selector returns
- * `credits_state === 'empty'`. Click flows to the same billing anchor the
- * low-credits notice already uses (see `TrialExpiredBanner` and
- * `session-errors.ts`), so operators land on the surface that clears the
- * state. `role="status"` + polite live region reads the flip on first render;
- * SSE-driven billing invalidation (session lifecycle events) drives the
+ * `credits_state === 'empty'`. Top-up is closed, so the chip says Upgrade like
+ * the left-nav trial card and opens the same place (Billing), with the percent
+ * flag on or off. `role="status"` + polite live region reads the flip on first
+ * render; SSE-driven billing invalidation (session lifecycle events) drives the
  * subsequent re-renders without a page reload.
  */
 export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
 	return (
 		<Link
-			to="/$workspaceId/settings/keys"
+			to="/$workspaceId/settings/billing"
 			params={{ workspaceId }}
 			// biome-ignore lint/a11y/useSemanticElements: the chip is also a link,
 			// so it must remain an <a>; role=status carries the D6 accessibility
 			// contract without changing the element.
 			role="status"
 			aria-live="polite"
-			aria-label="Paused — no credits. Open billing to add credit."
-			title="No credits — new sessions are paused. Open billing to add credit."
+			aria-label="Paused. Upgrade your plan in Billing."
+			title="New sessions are paused. Upgrade your plan in Billing."
 			className={cn(
 				'inline-flex items-center gap-1 rounded-[7px] px-2 py-[3px] font-semibold',
 				// Amber chip, no border — matches the retired trial-expired banner
@@ -125,19 +128,17 @@ export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
 				'bg-warning/15 text-warning transition-colors hover:bg-warning/25',
 			)}
 		>
-			{/* Copy verbatim per D6 SPEC — the leading U+23F8 double-vertical-bar
-			    stays inline with the label so screen readers announce
-			    "PAUSED · NO CREDITS" via aria-label rather than the glyph. */}
+			{/* The leading U+23F8 double-vertical-bar stays inline with the label so
+			    screen readers announce the aria-label rather than the glyph. */}
 			<span aria-hidden="true">⏸</span>
-			<span>PAUSED · NO CREDITS</span>
+			<span>PAUSED · UPGRADE</span>
 		</Link>
 	)
 }
 
 /**
- * The status and owner pills (v16): the shared 34px dropdown pills. The page
- * draws them on their own row under the Origin line; other hosts keep them on
- * the identity's meta line.
+ * The status and owner pills: the shared dropdown pills on the identity's meta
+ * line. A host that draws them elsewhere turns them off with `showPills`.
  */
 export function ObjectDetailPills({
 	object,
@@ -190,15 +191,19 @@ export function ObjectDetailIdentity({
 	onDriverChange,
 	onTitleChange,
 	showPills = true,
+	metaEnd,
 }: {
-	/** The page draws the pills on their own row (`ObjectDetailPills`) and turns them off here. */
+	/** Turns the status and owner pills off on the meta line, for a host that draws them itself. */
 	showPills?: boolean
+	/** Sits after the pills on the meta line (the page puts the quiet Origin text here). It drops
+	 *  to its own line when the row has no room. */
+	metaEnd?: ReactNode
 	object: ObjectResponse
 	statuses: string[]
 	members: MemberResponse[]
 	/** Workspace ID the D6 credits chip links back to for the billing anchor. */
 	workspaceId: string
-	/** D6: when `'empty'`, renders the amber `⏸ PAUSED · NO CREDITS` chip
+	/** D6: when `'empty'`, renders the amber `⏸ PAUSED · UPGRADE` chip
 	 *  immediately after the status chip. Any other value renders nothing. */
 	creditsState?: 'empty' | 'ok' | 'unknown'
 	onStatusChange: (status: string) => void
@@ -214,33 +219,44 @@ export function ObjectDetailIdentity({
 
 	return (
 		<div>
-			<div className="flex flex-wrap items-center gap-2 text-[11.5px] text-muted-foreground">
-				{/* The type's glyph leads the meta row (mockup 1058 `odTypeIcon`) —
-				    a 13px stroke in the type's own colour, not a filled tile. */}
-				{Icon && <Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />}
-				<span>{typeLabel(object.type)}</span>
-				{/* SPEC §D5: star sits left of the status chip on the detail meta row. */}
-				<DetailMetaStar objectId={object.id} />
-				{showPills && (
-					<ObjectDetailPills
-						object={object}
-						statuses={statuses}
-						members={members}
-						workspaceId={workspaceId}
-						creditsState={creditsState}
-						onStatusChange={onStatusChange}
-						onDriverChange={onDriverChange}
-					/>
-				)}
-			</div>
-
 			<EditableTitle
 				value={object.title}
 				entityId={object.id}
 				onChange={onTitleChange}
 				ariaLabel="Item title"
-				className="mt-2.5 text-[clamp(24px,3vw,30px)]"
+				className="text-[clamp(24px,3vw,30px)]"
 			/>
+
+			{/* One meta line under the title: star, type, status, owner, then origin. The first
+			    four stay together and wrap only on a phone; origin drops below them when the row
+			    is full. */}
+			<div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-muted-foreground">
+				<div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:shrink-0">
+					{/* SPEC §D5: the star leads the meta row. The -3px lines its 14px glyph up
+					    with the title's left edge. */}
+					<span className="-ml-[3px] inline-flex">
+						<DetailMetaStar objectId={object.id} />
+					</span>
+					{/* The type's glyph (mockup 1058 `odTypeIcon`) — a 13px stroke in the type's
+					    own colour, not a filled tile. */}
+					{Icon && (
+						<Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />
+					)}
+					<span>{typeLabel(object.type)}</span>
+					{showPills && (
+						<ObjectDetailPills
+							object={object}
+							statuses={statuses}
+							members={members}
+							workspaceId={workspaceId}
+							creditsState={creditsState}
+							onStatusChange={onStatusChange}
+							onDriverChange={onDriverChange}
+						/>
+					)}
+				</div>
+				{metaEnd}
+			</div>
 		</div>
 	)
 }

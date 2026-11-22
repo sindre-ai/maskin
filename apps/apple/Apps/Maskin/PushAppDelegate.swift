@@ -86,10 +86,13 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 		case .open, .notHandled:
 			guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
 		}
-		// `userInfo` isn't Sendable; carry only the one string across the actor hop.
-		let link = response.notification.request.content.userInfo["deep_link"] as? String
+		// `userInfo` isn't Sendable; carry only the strings across the actor hop.
+		let userInfo = response.notification.request.content.userInfo
+		let link = userInfo["deep_link"] as? String
+		let notificationId = userInfo["notification_id"] as? String
+		let notificationType = userInfo["notification_type"] as? String
 		await MainActor.run {
-			Analytics.shared.track("push_notification_opened")
+			Analytics.shared.pushNotificationOpened(notificationId: notificationId, type: notificationType)
 			receiveTap(deepLink: link)
 		}
 	}
@@ -106,6 +109,16 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 			UNUserNotificationCenter.current().delegate = self
 			NotificationActionRunner.registerFallbackCategory()
 			return true
+		}
+
+		/// Names the delegate that receives the home screen icon actions (see `QuickActionSceneDelegate`).
+		func application(
+			_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession,
+			options: UIScene.ConnectionOptions
+		) -> UISceneConfiguration {
+			let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+			configuration.delegateClass = QuickActionSceneDelegate.self
+			return configuration
 		}
 
 		func application(

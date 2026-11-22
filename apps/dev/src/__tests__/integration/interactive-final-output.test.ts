@@ -1017,11 +1017,33 @@ ${surviving}
 			expect(calls).toHaveLength(0)
 			const rows = await messagesFor(conversationId)
 			expect(rows).toHaveLength(1)
-			// The detail still reaches the human — it is the actionable part.
-			expect(rows[0]?.content).toContain('Credit balance is too low')
-			expect(
-				(rows[0]?.metadata as { final_output?: { error_kind?: string } })?.final_output?.error_kind,
-			).toBe('permanent')
+			// The body is one plain line: no provider text. The raw text stays on the message.
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(rows[0]?.content).not.toContain('Credit balance is too low')
+			const output = (
+				rows[0]?.metadata as { final_output?: { error_kind?: string; error_detail?: string } }
+			)?.final_output
+			expect(output?.error_kind).toBe('permanent')
+			expect(output?.error_detail).toBe('Credit balance is too low')
+		})
+
+		it('does not say nothing was created when the failed turn ran a tool', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${userTurnLine(13)}\n`)
+			await feed(session.id, `${toolUseLine('mcp__maskin__create_objects')}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Maskin could not run this. Some steps may already be done.')
 		})
 
 		describe('a turn that hits "Credit balance is too low"', () => {
@@ -1210,6 +1232,65 @@ ${surviving}
 			expect(stopped).toEqual([])
 		})
 
+		it('stops the session when its login expired so a retry after a token refresh starts fresh', async () => {
+			// The container keeps the login it launched with. Left running, a retry
+			// after the human refreshes the token replays on the dead login and
+			// fails the same way; a fresh session refreshes the slot at start.
+			const stopped: Array<{ sessionId: string; reason: string }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => null,
+				onStopSession: async (sessionId, reason) => {
+					stopped.push({ sessionId, reason })
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({
+					is_error: true,
+					result: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+				})}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([{ sessionId: session.id, reason: 'login_expired' }])
+			const rows = await messagesFor(conversationId)
+			// The body is the plain line; the provider's own text stays on the message.
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(
+				(rows[0]?.metadata as { final_output?: { error_detail?: string } })?.final_output
+					?.error_detail,
+			).toContain('OAuth session expired')
+		})
+
+		it('keeps the session running for a 403 block page that also opens with Failed to authenticate', async () => {
+			const stopped: string[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onStopSession: async (sessionId) => {
+					stopped.push(sessionId)
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({
+					is_error: true,
+					result: 'Failed to authenticate. API Error: 403 Attention Required! | Cloudflare',
+				})}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([])
+		})
+
 		it('does not treat an onStopSession failure as fatal — the human still sees the moved-subscription notice', async () => {
 			// The stop is best-effort. A stopSession error (network blip to the
 			// remote agent-server, or a container that's already gone) must not
@@ -1251,8 +1332,11 @@ ${surviving}
 			await instance.settlePendingRetries()
 
 			const rows = await messagesFor(conversationId)
-			expect(rows[0]?.content).toContain("You've hit your weekly limit")
-			expect(rows[0]?.content).not.toContain('switched this workspace')
+			expect(rows[0]?.content).toBe('Maskin could not run this. Nothing was created.')
+			expect(
+				(rows[0]?.metadata as { final_output?: { error_detail?: string } })?.final_output
+					?.error_detail,
+			).toContain("You've hit your weekly limit")
 		})
 
 		it('does not treat a non-limit permanent failure as a subscription limit', async () => {
@@ -1833,6 +1917,165 @@ ${surviving}
 			expect(rows[0]?.content).toContain('instead of running them')
 			expect(rows[0]?.content).not.toContain('tried again')
 			expect(rows[0]?.content).not.toContain('skill_called')
+		})
+	})
+
+	describe('replies that end with work still to do', () => {
+		function withRetry(options: { env?: NodeJS.ProcessEnv } = {}) {
+			const calls: Array<{ sessionId: string; payload: unknown }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				retryTurn: async (sessionId, payload) => {
+					calls.push({ sessionId, payload })
+				},
+				delay: async () => {},
+				...options,
+			})
+			return { instance, calls }
+		}
+
+		const announce = (what: string) =>
+			`${resultLine({ result: `Done with that part. Next I'll ${what}.` })}\n`
+
+		it('posts the reply, then sends the turn back once as a correction on the same session', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			// The human still reads what the agent did.
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('run the phone lookups')
+
+			expect(calls).toHaveLength(1)
+			expect(calls[0]?.sessionId).toBe(session.id)
+			const payload = calls[0]?.payload as { message?: { role?: string; content?: string } }
+			expect(payload.message?.role).toBe('user')
+			expect(payload.message?.content).toContain('[system correction]')
+			expect(payload.message?.content).toContain('next step')
+		})
+
+		it('sends a permission question back when the step sends nothing', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${toolUseLine('Bash')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ result: 'Six companies found. Do you want me to go ahead and score them?' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(1)
+		})
+
+		it('leaves a courtesy closing alone when the turn ran no tool', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${resultLine({ result: 'The cap is two. Let me know if you need more.' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+			expect(calls).toHaveLength(0)
+		})
+
+		it("does not send back a question about a step that sends in a person's name", async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${toolUseLine('Bash')}\n`)
+			await feed(session.id, `${toolResultLine()}\n`)
+			await feed(
+				session.id,
+				`${resultLine({ result: 'The draft is ready. Do you want me to send the email to Hans?' })}\n`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(0)
+		})
+
+		it('stops after two send-backs on one chat message and lets the third reply end the turn', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run lookup A'))
+			await feed(session.id, announce('run lookup B'))
+			await feed(session.id, announce('run lookup C'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(2)
+			expect(await messagesFor(conversationId)).toHaveLength(3)
+		})
+
+		it('gives a new human message its own two send-backs', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run lookup A'))
+			await feed(session.id, announce('run lookup B'))
+			await feed(session.id, announce('run lookup C'))
+			await feed(session.id, `${userTurnLine(9001)}\n`)
+			await feed(session.id, announce('run lookup D'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(3)
+		})
+
+		it('does not send back a replayed reply a second time', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(1)
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+		})
+
+		it('does nothing when the killswitch is off, and still posts the reply', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry({ env: { FEATURE_TURN_SEND_BACK: '0' } })
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			expect(await messagesFor(conversationId)).toHaveLength(1)
+			expect(calls).toHaveLength(0)
+		})
+
+		it('does not send back a helper session, which ends on its result', async () => {
+			const session = await seedSession({ config: { stop_on_result: true } })
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, announce('run the phone lookups'))
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(0)
 		})
 	})
 

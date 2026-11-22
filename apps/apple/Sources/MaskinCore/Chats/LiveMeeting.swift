@@ -81,9 +81,9 @@ public struct NewConversationDraft: Equatable, Sendable {
 		recipientIDs.removeAll { $0 == id }
 	}
 
-	/// Actors still offered under "Add someone": not you, not already chosen.
+	/// Actors still offered under "Add someone": not you, not an integration account, not already chosen.
 	public func addable(from actors: [ChatActor], excluding selfID: String?) -> [ChatActor] {
-		actors.filter { $0.id != selfID && !recipientIDs.contains($0.id) }
+		actors.filter { $0.id != selfID && !$0.isIntegration && !recipientIDs.contains($0.id) }
 			.sorted {
 				($0.isChiefOfStaff ? 0 : 1, $0.participant.kind == .agent ? 0 : 1, $0.participant.name)
 					< ($1.isChiefOfStaff ? 0 : 1, $1.participant.kind == .agent ? 0 : 1, $1.participant.name)

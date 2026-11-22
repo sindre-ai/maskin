@@ -80,6 +80,17 @@ struct ChatStoreTests {
 		#expect(h.outbox.entries.isEmpty)
 	}
 
+	@Test("an attachment with no text is queued, and a blank message with no attachment still is not")
+	func attachmentOnly() async {
+		let h = ChatHarness(online: false)
+		let file = ChatSendMetadata(attachments: [ChatAttachmentRef(fileID: "f1", name: "a.png")])
+		#expect(h.store.send("  ", metadata: file) != nil)
+		#expect(h.outbox.entries.count == 1)
+		let mentionOnly = ChatSendMetadata(mentions: ["relay"])
+		#expect(h.store.send("", metadata: mentionOnly) == nil)
+		#expect(h.outbox.entries.count == 1)
+	}
+
 	@Test("a message typed offline waits, shows as sending, and goes out once when online")
 	func offlineSend() async {
 		let h = ChatHarness(online: false)
@@ -944,7 +955,8 @@ struct ChatStoreTests {
 		let h = ChatHarness(detail: chatConvo("c1", participants: [chatMe, chatRelay]))
 		await h.store.start()
 		await h.api.setAddDecodeFails(true)
-		await h.store.addParticipants(["sam"])
+		let added = await h.store.addParticipants(["sam"])
+		#expect(added)
 		#expect(h.store.participants.map(\.id) == ["me", "relay", "sam"])
 		#expect(h.store.notice == nil)
 	}

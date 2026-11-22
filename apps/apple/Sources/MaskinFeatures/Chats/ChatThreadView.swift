@@ -97,6 +97,8 @@ struct ChatThreadView: View {
 	@State private var matchIDs: [String] = []
 	@State private var matchSet: Set<String> = []
 	@State private var handsFreeTracker = HandsFreeTracker()
+	/// A sent message waits out its Undo window here (flag chat-undo-send).
+	@State private var undoSend = UndoSendHold()
 	private var failedCount: Int { store.messages.filter(\.isFailed).count }
 	private var currentMatchID: String? {
 		guard searching, let matchIndex, matchIDs.indices.contains(matchIndex) else { return nil }
@@ -197,6 +199,9 @@ struct ChatThreadView: View {
 				.backChevronOnly()
 				.task { await runtime?.mentionRoster()?.load() }
 				.task { runtime?.chatOpened(store.conversationID) }
+				.task(id: store.participants.map(\.id)) {
+					runtime?.chatParticipantsLoaded(store.participants, selfID: store.currentActorID)
+				}
 				.onAppear {
 					liveCalls?.visibleConversationID = store.conversationID
 					composer.splitsLongMessages = true
@@ -211,13 +216,19 @@ struct ChatThreadView: View {
 					primeHandsFree()
 				}
 				.onDisappear {
+					// Leaving the thread sends a held message at once, so it is never dropped.
+					undoSend.flush()
 					store.isActive = false
 					// A call keeps speaking when you leave the thread.
 					if liveCalls?.current == nil { SpeechReader.shared.stop() }
 					store.stop()
 					if liveCalls?.visibleConversationID == store.conversationID { liveCalls?.visibleConversationID = nil }
 				}
-				.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
+				.onChange(of: scenePhase) { _, phase in
+					store.isActive = phase == .active
+					// Going to the background sends a held message at once.
+					if phase != .active { undoSend.flush() }
+				}
 				// An agent's reply is on screen: the moment to explain notifications.
 				.onChange(of: store.messages.contains { $0.author == .agent && $0.status == .sent }, initial: true) { _, seen in
 					if seen { runtime?.valueMomentSeen() }
@@ -413,10 +424,16 @@ struct ChatThreadView: View {
 		}
 	}
 
+	/// What the thread's `+` menu uploads through; the same source the chat's own composer uses.
+	private var threadUploader: (any ChatFileUploading)? {
+		guard let env = runtime?.environment else { return nil }
+		return APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? "", largeUploads: env.largeUploads)
+	}
+
 	@ViewBuilder
 	private func threadDestination(_ route: ThreadRoute) -> some View {
 		if let root = store.threadRoot(route.rootID) {
-			ThreadScreen(store: store, root: root)
+			ThreadScreen(store: store, root: root, uploader: threadUploader)
 		} else {
 			// The root is older than the page held: fetch it rather than show an empty screen.
 			ProgressView()
@@ -777,9 +794,11 @@ struct ChatThreadView: View {
 						searchText = ""
 					})
 			} else {
+				if undoSend.isHeld { UndoSendBar(onUndo: undoSend.undo) }
 				composerField
 			}
 		}
+		.animation(MaskinMotion.quick, value: undoSend.isHeld)
 		// Floats above the stack instead of sitting in it. This stack is the bottom inset, so a
 		// button that took room in it made the inset taller the moment it appeared; the thread's
 		// viewport moved, "near the bottom" flipped, the button went away and the inset shrank
@@ -860,22 +879,35 @@ struct ChatThreadView: View {
 			return
 		}
 		// Over the cap: the full text uploads as a file first, then the short message goes.
+		let snapshot = composer.snapshot()
 		if composer.isOverLength {
 			Task {
 				guard let (text, metadata) = await composer.takeLong() else { return }
-				deliver(text, metadata: metadata)
+				deliver(text, metadata: metadata, undoing: snapshot)
 			}
 			return
 		}
 		guard let (text, metadata) = composer.take() else { return }
-		deliver(text, metadata: metadata)
+		deliver(text, metadata: metadata, undoing: snapshot)
 	}
 
-	private func deliver(_ text: String, metadata: ChatSendMetadata?) {
+	/// Queues the message, or with undo send on holds it for the Undo window first.
+	private func deliver(_ text: String, metadata: ChatSendMetadata?, undoing snapshot: ChatComposerModel.Snapshot) {
+		guard runtime?.featureFlags.isEnabled(FeatureFlagID.chatUndoSend) == true else {
+			queue(text, metadata: metadata)
+			return
+		}
+		MaskinHaptics.play(.light)
+		undoSend.hold(
+			send: { queue(text, metadata: metadata, quietly: true) },
+			restore: { composer.restore(snapshot) })
+	}
+
+	private func queue(_ text: String, metadata: ChatSendMetadata?, quietly: Bool = false) {
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
 			composer.text = text
-		} else {
+		} else if !quietly {
 			MaskinHaptics.play(.light)
 		}
 	}
@@ -1055,6 +1087,8 @@ struct ChatThreadView: View {
 /// swaps the lazy stack for a plain one there.
 struct ThreadTranscript: View {
 	let store: ChatStore
+	/// Opens a working agent's session from the thread's working line.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	var lazy = true
 	var now = Date()
 	var onEdit: (ChatMessage) -> Void = { _ in }
@@ -1128,14 +1162,13 @@ struct ThreadTranscript: View {
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
 			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
 			inlineTranscript: false)
-		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		let namesAgents = namesAgents
 		let runs = ThreadLayout.runs(in: items)
 		ForEach(items) { item in
 			row(
-				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				item, answers: answers, anchors: anchors, statusIDs: statusIDs,
 				cardOwners: cardOwners, namesAgents: namesAgents, runs: runs)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
@@ -1157,6 +1190,17 @@ struct ThreadTranscript: View {
 	private func activity(at date: Date) -> some View {
 		let live = store.presences(at: date).map { PresenceRow(agent: $0.agent, presence: $0.presence) }
 		let sessions = store.liveSessions(at: date)
+		// The new chat list (flag chat-list-v2): one line naming who is working, each name a link to its session.
+		if ChatListFlagCache.lastKnown, !sessions.isEmpty {
+			ThreadWorkingLine(
+				agents: sessions.map {
+					ThreadWorkingLine.Agent(name: store.participant(for: $0.actorID).name, sessionID: $0.id)
+				},
+				onOpenSession: { runtime?.presentation = .session($0) }
+			)
+			.padding(.top, Self.listGap)
+			.padding(.horizontal, MaskinSpace.s3)
+		}
 		ForEach(live) { row in
 			Group {
 				let session = sessions.first { $0.actorID == row.agent.id }
@@ -1208,7 +1252,7 @@ struct ThreadTranscript: View {
 		}
 	}
 
-	private func actions(for message: ChatMessage, isOwn: Bool, isLatestOwn: Bool) -> MessageMenuActions {
+	private func actions(for message: ChatMessage, isOwn: Bool) -> MessageMenuActions {
 		var actions = MessageMenuActions()
 		let hasText = !message.content.isEmpty
 		if hasText {
@@ -1229,7 +1273,7 @@ struct ThreadTranscript: View {
 			actions.isPinned = store.isPinned(message)
 			actions.onPin = { if store.isPinned(message) { store.unpin() } else { store.pin(message) } }
 		}
-		if isLatestOwn, message.canEdit(by: store.currentActorID) {
+		if message.canEdit(by: store.currentActorID) {
 			actions.onEdit = { onEdit(message) }
 		}
 		if message.author == .agent, message.serverID != nil {
@@ -1274,7 +1318,7 @@ struct ThreadTranscript: View {
 
 	@ViewBuilder
 	private func row(
-		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
 		statusIDs: Set<String>, cardOwners: [String: String], namesAgents: Bool, runs: [String: ThreadLayout.Run]
 	) -> some View {
 		switch item {
@@ -1292,11 +1336,10 @@ struct ThreadTranscript: View {
 			LiveReceiptRow(event: event)
 		case .callSummary(let summary, let transcript):
 			LiveCallSummaryCard(summary: summary, transcript: transcript)
-		case .handoff(let session, let behind):
-			HandoffRow(session: session, behind: behind)
+		case .handoff(let entries):
+			HandoffGroup(entries: entries)
 		case .message(let message, let showsAuthor):
 			let isOwn = message.actorID == store.currentActorID
-			let isLatestOwn = message.id == latestOwnID
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn).padding(.bottom, MaskinSpace.s3)
 			}
@@ -1313,7 +1356,7 @@ struct ThreadTranscript: View {
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,
-				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
+				actions: actions(for: message, isOwn: isOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: canOpenThread(message) ? { onOpenThread(message) } : nil,
 				onQuoteTap: message.quotedReply == nil
@@ -1337,6 +1380,10 @@ struct ThreadTranscript: View {
 				onSelectVersion: { store.selectVersion($0, of: message.id) },
 				onApprovedDraft: { title, body in
 					store.tellAgentOfApproval(title: title, body: body, linkedBy: message.actorID, author: message.author)
+				},
+				draftSkipped: message.author == .agent && message.serverID.map { store.isDraftSkipped(inMessage: $0) } == true,
+				onSkippedDraft: {
+					store.tellAgentOfSkip(linkedBy: message.actorID, author: message.author, cardMessageID: message.serverID)
 				},
 				cardOwners: cardOwners
 			)

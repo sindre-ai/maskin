@@ -341,7 +341,7 @@ async function openFailedSession(
 	await page.goto(`/${account.workspaceId}/objects/${object.id}`, {
 		waitUntil: 'domcontentloaded',
 	})
-	await page.getByRole('button', { name: 'Origin — click to expand' }).click({ timeout: 15_000 })
+	await page.getByRole('button', { name: 'Show where this came from' }).click({ timeout: 15_000 })
 	await page.getByRole('button', { name: 'Draft the weekly note' }).click()
 	const panel = page.getByRole('dialog')
 	await expect(panel).toBeVisible()

@@ -211,6 +211,25 @@ export class WorkspaceDesktopRegistry {
 		return this.desktops.get(desktopKey(workspaceId, agentId))
 	}
 
+	/**
+	 * How this server treats its computers: whether an idle one is suspended to a snapshot (and
+	 * after how many minutes), and the image a new one is created from. Existing computers keep
+	 * the image they were created from, so the second is not what any one of them runs.
+	 */
+	hostInfo(): {
+		snapshots: { enabled: boolean; idle_minutes: number | null }
+		new_computer_image: string
+	} {
+		const snapshots = this.deps.snapshots
+		return {
+			snapshots: {
+				enabled: snapshots !== undefined,
+				idle_minutes: snapshots ? snapshots.idleSuspendMs / 60_000 : null,
+			},
+			new_computer_image: this.deps.image,
+		}
+	}
+
 	/** Every desktop in one workspace (running or suspended). */
 	listForWorkspace(workspaceId: string): WorkspaceDesktop[] {
 		const ws = workspaceId.toLowerCase()

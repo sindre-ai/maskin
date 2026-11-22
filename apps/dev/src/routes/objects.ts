@@ -13,6 +13,7 @@ import {
 	subscriptions,
 	workspaces,
 } from '@maskin/db/schema'
+import { TARGET_TYPE } from '@maskin/ext-targets/shared'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import {
 	type ActorRef,
@@ -65,15 +66,18 @@ import {
 } from '../lib/analytics/knowledge-events'
 import { trackObjectCreated } from '../lib/analytics/object-events'
 import { trackSupportItemOpened, trackSupportItemResolved } from '../lib/analytics/support-events'
+import { getDoneWhen } from '../lib/done-when'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
+import { getLiveGoAhead } from '../lib/go-aheads'
 import { resolveEndpointTitles, sessionTitleFrom } from '../lib/graph/endpoint-titles'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
+import { getLiveNextStep, serializeNextStep } from '../lib/next-steps'
 import { withDeliveryState } from '../lib/object-delivery'
 import { buildObjectPreview } from '../lib/object-preview'
-import { applyObjectUpdate } from '../lib/object-update'
+import { BodyEditError, applyObjectUpdate } from '../lib/object-update'
 import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
@@ -83,6 +87,8 @@ import {
 	traverseGraphResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { OutcomeCheckError, holdAgentClose, requiresOutcomeCheck } from '../lib/outcome-check'
+import { runLimited } from '../lib/run-limited'
 import {
 	TITLE_COVERAGE_SCALE,
 	TITLE_HIT_WEIGHT,
@@ -401,9 +407,14 @@ const SEARCH_STOPWORDS: ReadonlySet<string> = new Set([
  *   lowercase → replace `[^a-z0-9\s_-]+` with space → split on whitespace →
  *   drop tokens shorter than 3 chars or in the shared stopword set → dedupe
  *   preserving first-seen order.
+ * then keep only the first MAX_SEARCH_TOKENS distinct words (the rest are ignored,
+ * not an error): every word adds an ILIKE pair to the WHERE and to the rank
+ * ORDER BY, so a 10-word query cost 9.5 s on production against 0.8 s for two.
  * Empty / whitespace / punctuation-only / all-stopword inputs collapse to `[]`,
  * which the caller uses to fall through to an unfiltered result set.
  */
+export const MAX_SEARCH_TOKENS = 6
+
 export function tokenizeSearchQuery(q: string): string[] {
 	if (!q) return []
 	const normalized = q.toLowerCase().replace(/[^a-z0-9\s_-]+/g, ' ')
@@ -415,6 +426,7 @@ export function tokenizeSearchQuery(q: string): string[] {
 		if (seen.has(token)) continue
 		seen.add(token)
 		tokens.push(token)
+		if (tokens.length >= MAX_SEARCH_TOKENS) break
 	}
 	return tokens
 }
@@ -1024,6 +1036,7 @@ const facetsObjectsRoute = createRoute({
 })
 
 const DAY_MS = 86_400_000
+const FACET_CONCURRENCY = 3
 
 app.openapi(facetsObjectsRoute, async (c) => {
 	const db = c.get('db')
@@ -1083,46 +1096,79 @@ app.openapi(facetsObjectsRoute, async (c) => {
 	const groupExpr = (resolveGroupExpression(query.group_by, query.tz) ??
 		resolveGroupExpression('status')) as SQL
 
+	// The four `updated` buckets and `fresh` share one condition set (every filter
+	// but recency), so they are one scan with a FILTER per count instead of five
+	// queries.
+	const recencyCounts = async () => {
+		const bucketEntries = Object.entries(updatedBounds ?? {})
+		const selection: Record<string, SQL<unknown>> = {
+			fresh: sql`count(*) filter (where ${gte(objects.updatedAt, sinceWeek)})`,
+		}
+		for (const [bucket, [from, to]] of bucketEntries) {
+			const parts: SQL[] = []
+			if (from !== null) parts.push(gte(objects.updatedAt, new Date(from)))
+			if (to !== null) parts.push(lt(objects.updatedAt, new Date(to)))
+			selection[`updated_${bucket}`] = sql`count(*) filter (where ${and(...parts) ?? sql`true`})`
+		}
+		const [row] = (await db
+			.select(selection)
+			.from(objects)
+			.where(and(...noRecency))) as Array<Record<string, unknown>>
+		return {
+			fresh: toCount(row?.fresh),
+			updated: bucketEntries.map(
+				([bucket]) => [bucket, toCount(row?.[`updated_${bucket}`])] as const,
+			),
+		}
+	}
+
+	// At most FACET_CONCURRENCY queries on the pool at once: the page asks for ~10
+	// independent counts on every filter change and SSE refresh.
 	const [
 		total,
 		groupRows,
 		typeRows,
 		statusRows,
 		driverRows,
-		fresh,
+		recency,
 		starred,
 		working,
 		waiting,
-		updatedEntries,
 		[workspace],
-	] = await Promise.all([
-		countWhere(conditionsWithout({})),
-		grouped(groupExpr, conditionsWithout({})),
-		grouped(sql`${objects.type}`, conditionsWithout({ type: true })),
-		grouped(sql`${objects.status}`, conditionsWithout({ status: true })),
-		grouped(sql`coalesce(${objects.driver}::text, '')`, conditionsWithout({ driver: true })),
-		countWhere([...noRecency, gte(objects.updatedAt, sinceWeek)]),
-		countWhere([...conditionsWithout({ starred: true }), starredByCondition(actorId)]),
-		countWhere([
-			...conditionsWithout({ working: true }),
-			sql`${objects.activeSessionId} is not null`,
-		]),
-		waitingIds.length === 0
-			? Promise.resolve(0)
-			: countWhere([
-					...conditionsWithout({ attention_ids: true }),
-					inArray(objects.id, waitingIds),
-				]),
-		Promise.all(
-			Object.entries(updatedBounds ?? {}).map(async ([bucket, [from, to]]) => {
-				const where = [...noRecency]
-				if (from !== null) where.push(gte(objects.updatedAt, new Date(from)))
-				if (to !== null) where.push(lt(objects.updatedAt, new Date(to)))
-				return [bucket, await countWhere(where)] as const
-			}),
-		),
-		db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1),
-	])
+	] = (await runLimited<unknown>(FACET_CONCURRENCY, [
+		() => countWhere(conditionsWithout({})),
+		() => grouped(groupExpr, conditionsWithout({})),
+		() => grouped(sql`${objects.type}`, conditionsWithout({ type: true })),
+		() => grouped(sql`${objects.status}`, conditionsWithout({ status: true })),
+		() => grouped(sql`coalesce(${objects.driver}::text, '')`, conditionsWithout({ driver: true })),
+		recencyCounts,
+		() => countWhere([...conditionsWithout({ starred: true }), starredByCondition(actorId)]),
+		() =>
+			countWhere([
+				...conditionsWithout({ working: true }),
+				sql`${objects.activeSessionId} is not null`,
+			]),
+		() =>
+			waitingIds.length === 0
+				? Promise.resolve(0)
+				: countWhere([
+						...conditionsWithout({ attention_ids: true }),
+						inArray(objects.id, waitingIds),
+					]),
+		() => db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1),
+	])) as [
+		number,
+		Array<{ value: string; total: number }>,
+		Array<{ value: string; total: number }>,
+		Array<{ value: string; total: number }>,
+		Array<{ value: string; total: number }>,
+		Awaited<ReturnType<typeof recencyCounts>>,
+		number,
+		number,
+		number,
+		Array<typeof workspaces.$inferSelect>,
+	]
+	const { fresh, updated: updatedEntries } = recency
 
 	// Group order: statuses follow the workspace's configured lifecycle order,
 	// dates run newest first, everything else A to Z with "no value" last.
@@ -1297,6 +1343,8 @@ const searchObjectsRoute = createRoute({
 	path: '/search',
 	tags: ['Objects'],
 	summary: 'Search objects by text',
+	description:
+		'Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.',
 	request: {
 		headers: workspaceIdHeader,
 		query: searchObjectsSchema,
@@ -1637,7 +1685,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 })
 
 // GET /{id}/graph/traverse - Bounded multi-hop BFS across the relationships
-// table starting at {id}. Returns nodes (objects only) + edges as flat lists.
+// table starting at {id}. Returns nodes (objects, files, chats and sessions) + edges as flat lists.
 // Bounds: depth cap, node cap, and their product ceiling (5000). Cycles are
 // broken by a visited set keyed on object id, so a workspace with a
 // `supersedes`/`contradicts` loop returns a bounded, terminating response.
@@ -1674,7 +1722,7 @@ const traverseGraphRoute = createRoute({
 	tags: ['Objects'],
 	summary: 'Bounded multi-hop graph traversal from an object',
 	description:
-		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.",
+		"Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.",
 	request: {
 		headers: workspaceIdHeader,
 		params: idParamSchema,
@@ -1982,35 +2030,50 @@ app.openapi(getObjectRoute, async (c) => {
 	}
 
 	const basePreview = buildObjectPreview(object)
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred, lastSession] =
-		await Promise.all([
-			isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
-			getUnreadCount(db, {
-				workspaceId: object.workspaceId,
-				actorId,
-				entityType: 'object',
-				entityId: id,
-			}),
-			getSubscriberCount(db, {
-				workspaceId: object.workspaceId,
-				entityType: 'object',
-				entityId: id,
-			}),
-			object.activeSessionId
-				? db
-						.select({ currentActivity: sessions.currentActivity, status: sessions.status })
-						.from(sessions)
-						.where(eq(sessions.id, object.activeSessionId))
-						.limit(1)
-						.then((rows) => rows[0] ?? null)
-				: Promise.resolve(null),
-			isObjectStarredByActor(db, { actorId, objectId: id }),
-			loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
-		])
+	const [
+		subscribed,
+		unreadCount,
+		subscriberCount,
+		activeSession,
+		starred,
+		lastSession,
+		nextStep,
+		goAhead,
+		doneWhen,
+	] = await Promise.all([
+		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+		getUnreadCount(db, {
+			workspaceId: object.workspaceId,
+			actorId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		getSubscriberCount(db, {
+			workspaceId: object.workspaceId,
+			entityType: 'object',
+			entityId: id,
+		}),
+		object.activeSessionId
+			? db
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
+					.from(sessions)
+					.where(eq(sessions.id, object.activeSessionId))
+					.limit(1)
+					.then((rows) => rows[0] ?? null)
+			: Promise.resolve(null),
+		isObjectStarredByActor(db, { actorId, objectId: id }),
+		loadObjectLastSession(db, object, { actorId, workspaceRole: c.get('workspaceRole') }),
+		getLiveNextStep(db, id),
+		getLiveGoAhead(db, id),
+		getDoneWhen(db, id),
+	])
 
 	return c.json(
 		{
 			...serialize(object),
+			next_step: nextStep ? serializeNextStep(nextStep) : null,
+			go_ahead: goAhead,
+			done_when: doneWhen,
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
 			last_session: lastSession,
@@ -2043,6 +2106,8 @@ const updateObjectRoute = createRoute({
 						chat: z
 							.object({ conversation_id: z.string().uuid(), agent_id: z.string().uuid() })
 							.optional(),
+						/** Apply only if the object is still in this status; otherwise nothing is written and the answer is 409. */
+						expected_status: z.string().optional(),
 					}),
 				},
 			},
@@ -2061,6 +2126,10 @@ const updateObjectRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Object not found',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'The object is no longer in expected_status',
+		},
 	},
 })
 
@@ -2068,7 +2137,7 @@ app.openapi(updateObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
-	const { chat, ...body } = c.req.valid('json')
+	const { chat, expected_status: expectedStatus, ...body } = c.req.valid('json')
 
 	// Get existing object for workspace context
 	const [existing] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
@@ -2109,11 +2178,68 @@ app.openapi(updateObjectRoute, async (c) => {
 		}
 	}
 
-	// One transaction for the update, its status event and the notification fan-out.
-	const { row: updated } = await db.transaction((tx) =>
-		applyObjectUpdate(tx, { id, actorId, body, sessionId: c.get('maskinSessionId') }),
-	)
+	// An agent closing a job that has an approved done-when list is held for the outcome check.
+	// The check runs here, before the write, and the write refuses a close that skipped it.
+	let outcomeCheckId: string | undefined
+	if (c.get('actorType') === 'agent' && existing.type !== TARGET_TYPE) {
+		const hold = await holdAgentClose(db, {
+			existing,
+			toStatus: body.status,
+			actorId,
+			sessionId: c.get('maskinSessionId'),
+		})
+		if (hold.held) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					hold.message,
+					undefined,
+					'The job stays where it is. Fix what the message names, then ask to close it again.',
+				),
+				409,
+			)
+		}
+		outcomeCheckId = hold.checkId
+	}
 
+	// One transaction for the update, its status event and the notification fan-out.
+	let updated: typeof objects.$inferSelect | undefined
+	let staleStatus: string | null | undefined
+	try {
+		const result = await db.transaction((tx) =>
+			applyObjectUpdate(tx, {
+				id,
+				actorId,
+				body,
+				sessionId: c.get('maskinSessionId'),
+				actorType: c.get('actorType'),
+				onlyIfStatus: expectedStatus,
+				outcomeCheckId,
+			}),
+		)
+		updated = result.row
+		staleStatus = result.staleStatus
+	} catch (err) {
+		if (err instanceof OutcomeCheckError) {
+			return c.json(createApiError('CONFLICT', err.message), 409)
+		}
+		if (err instanceof BodyEditError) {
+			return c.json(createApiError('BAD_REQUEST', err.message), 400)
+		}
+		throw err
+	}
+
+	if (staleStatus !== undefined) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				`This item is no longer ${expectedStatus}. It is ${staleStatus ?? 'gone'} now, so nothing was changed.`,
+				undefined,
+				'Read the item again and decide from its current status.',
+			),
+			409,
+		)
+	}
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
@@ -2765,6 +2891,20 @@ app.openapi(bulkUpdateObjectsRoute, async (c) => {
 				})
 				continue
 			}
+		}
+
+		// A close behind the outcome check goes through the single update, where the check runs.
+		if (
+			c.get('actorType') === 'agent' &&
+			(await requiresOutcomeCheck(db, existing, patch.status))
+		) {
+			results.push({
+				id,
+				ok: false,
+				error:
+					'This job has an approved done-when list, so it only closes after the outcome check. Close it with a single update (update_objects) and the check runs.',
+			})
+			continue
 		}
 
 		const updateData: Partial<typeof objects.$inferInsert> = { updatedAt: now }

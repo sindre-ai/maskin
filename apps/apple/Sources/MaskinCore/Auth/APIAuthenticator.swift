@@ -25,6 +25,7 @@ public struct APIAuthenticator: Authenticating {
 	/// server did answer sends them in the wrong direction. The cause is logged (never the
 	/// credentials: only the error's own description), the screen shows plain copy.
 	static func classify(_ error: any Error) -> AuthError {
+		ErrorReporter.shared.reportThrown(error)
 		let underlying = (error as? ClientError)?.underlyingError ?? error
 		if underlying is URLError || error is URLError {
 			return .network(error.localizedDescription)
@@ -56,6 +57,26 @@ public struct APIAuthenticator: Authenticating {
 		}
 	}
 
+	public func requestPasswordReset(email: String) async throws {
+		let output: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output
+		do {
+			output = try await client.post_sol_api_sol_auth_sol_forgot_hyphen_password(
+				.init(body: .json(.init(email: email))))
+		} catch {
+			throw PasswordResetError.network(error.localizedDescription)
+		}
+
+		switch output {
+		case .ok:
+			return
+		case .undocumented(let status, _):
+			throw PasswordResetError.server(status: status)
+		default:
+			// The only other documented answer is 429.
+			throw PasswordResetError.rateLimited
+		}
+	}
+
 	public func signUp(
 		name: String, organization: String, role: String, email: String, password: String,
 		idempotencyKey: String
@@ -70,7 +91,10 @@ public struct APIAuthenticator: Authenticating {
 						body: .json(
 							.init(
 								_type: .human, name: name, email: email, password: password,
-								auto_create_workspace: true))))
+								auto_create_workspace: true,
+								// Asks for the card step, as the web sign-up does. The server holds the
+								// workspace for a card only while its flag is on; off, this is ignored.
+								card_step: true))))
 			}
 		} catch {
 			throw SignUpError.network(error.localizedDescription)

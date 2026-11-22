@@ -9,6 +9,7 @@ import type { EditorState } from '@tiptap/pm/state'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { MarkdownEditor } from './editor'
+import { EmojiSuggestion, type EmojiSuggestionOptions, isEmojiMenuOpen } from './emoji-suggestion'
 
 export interface ComposerTag {
 	id: string
@@ -80,6 +81,12 @@ export interface MarkdownComposerProps {
 	 * while the picker is open.
 	 */
 	onKeyDown: (event: KeyboardEvent) => boolean
+	/**
+	 * Draws the emoji list that opens when ":" and two letters are typed at the start of a word.
+	 * Read once: without it the box has no emoji list. While the list is open it takes Enter, Tab
+	 * and the arrows before `onKeyDown` sees them.
+	 */
+	createEmojiView?: EmojiSuggestionOptions['createView']
 }
 
 const MENTION_NODE = 'composerMention'
@@ -221,6 +228,16 @@ function inListOrCode(state: EditorState): boolean {
 	return false
 }
 
+// The caret is in a list item with nothing in it (one empty paragraph), the item to leave the list from.
+function inEmptyListItem(state: EditorState): boolean {
+	const { $from } = state.selection
+	if ($from.depth < 2 || $from.parent.type.name !== 'paragraph' || $from.parent.content.size > 0) {
+		return false
+	}
+	const item = $from.node($from.depth - 1)
+	return item.type.name === 'listItem' && item.childCount === 1
+}
+
 /**
  * A table copied from a page or a sheet reaches the box with a body-only first row (a sheet has
  * no header cells), header cells in the body, or cells with several paragraphs. A markdown table
@@ -338,6 +355,9 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 	}
 	const extensions = [
 		createMentionNode((id) => handlers.current.props.chipClass(id)),
+		...(handlers.current.props.createEmojiView
+			? [EmojiSuggestion.configure({ createView: handlers.current.props.createEmojiView })]
+			: []),
 		Extension.create({
 			name: 'composerBehaviour',
 			onBeforeCreate() {
@@ -376,11 +396,18 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 							},
 							transformPastedHTML: shapeTablesForMarkdown,
 							handleKeyDown: (view, event) => {
+								// The emoji list is open: its own plugin takes the key, Enter picks instead of sends.
+								const open = handlers.current.editor
+								if (open && isEmojiMenuOpen(open)) return false
 								const enter = event.key === 'Enter' && !event.shiftKey
 								const withMod = event.metaKey || event.ctrlKey
 								if (enter && !withMod && !triggerOpen && inListOrCode(view.state)) return false
 								if (handlers.current.props.onKeyDown(event)) return true
 								if (event.key === 'Enter' && event.shiftKey && !event.isComposing) {
+									// An empty item leaves the list, as Enter on it does.
+									if (inEmptyListItem(view.state)) {
+										return handlers.current.editor?.commands.liftListItem('listItem') ?? false
+									}
 									if (inListOrCode(view.state)) return false
 									return handlers.current.editor?.commands.splitBlock() ?? false
 								}
@@ -398,6 +425,10 @@ export function createComposerExtensions(handlers: { current: Handlers }) {
 export const MarkdownComposer = forwardRef<MarkdownComposerHandle, MarkdownComposerProps>(
 	function MarkdownComposer(props, ref) {
 		const handlers = useRef<Handlers>({ props, editor: null })
+		// The editor reads `value` once, as its first content; later text goes in through
+		// `setMarkdown`. Handing it the live value would let its empty-document check run on a
+		// value the editor does not hold yet, and swap the box for plain text for good.
+		const initialValue = useRef(props.value).current
 		handlers.current.props = props
 
 		// Built once: the editor is rebuilt when the list changes, and the box would lose its text.
@@ -486,7 +517,7 @@ export const MarkdownComposer = forwardRef<MarkdownComposerHandle, MarkdownCompo
 
 		return (
 			<MarkdownEditor
-				value={props.value}
+				value={initialValue}
 				// The box reports on every change through the extension; the blur emit has nothing to add.
 				onChange={noop}
 				variant="notification"

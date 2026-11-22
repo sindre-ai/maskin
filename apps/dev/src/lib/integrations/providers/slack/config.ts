@@ -1,3 +1,4 @@
+import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../../../mcp-session-header'
 import type { ProviderConfig, StoredCredentials } from '../../types'
 
 export const config: ProviderConfig = {
@@ -139,6 +140,8 @@ export const config: ProviderConfig = {
 			headers: {
 				Authorization: 'Bearer ${MASKIN_API_KEY}',
 				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				// Lets the send check see which flow the call comes from (a flow in pilot holds sends).
+				[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
 			},
 		},
 	},

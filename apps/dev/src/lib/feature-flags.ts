@@ -7,6 +7,7 @@
 //   FF_TESTER_ACTOR_IDS=<uuid>,<uuid>          actors who see tester features
 //   FF_TESTER_FEATURES=some-flag,other-flag    flag ids on for those tester actors
 //   FF_WORKSPACE_FEATURES=<uuid>:<flag>,...    workspace-scoped flag entries
+//   FF_SIGNUP_FEATURES=some-flag,other-flag    flag ids on for every NEW sign-up
 //
 // A flag has exactly two states: off, or on for the tester actors / listed
 // workspaces. There is deliberately no "on for everyone" setting — shipping a
@@ -27,26 +28,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Gates connecting Deepdots in Integrations (bet [Connect Deepdots so agents can read the
-	 * latest customer feedback](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f24572b9-f500-496c-ba7d-4eee3af6ed7a)).
-	 * The connect route answers 404 when it is off for the caller, and the web app hides the
-	 * Deepdots row. Actor-scoped (FF_TESTER_ACTOR_IDS), because the web app only reads actor
-	 * flags. Retire once Deepdots is on for everyone.
-	 */
-	DEEPDOTS_CONNECT: 'deepdots-connect',
-	/**
-	 * Gates the weekly capability note that Chief of Staff sends in a person's
-	 * 1-1 (bet
-	 * [Agents look through connected integrations for new things they can do](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3dae5ff5-7c94-41ee-8687-0023b37994f2)).
-	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace at the
-	 * top of runCapabilityDigest. Off means no note is sent in that workspace and
-	 * findings stay pending, so they merge into the first note once it is on.
-	 * The scan itself is not flagged (it only writes events); its off-switch is
-	 * the env var FEATURE_CAPABILITY_SCAN=0. Retire once the notes are on for
-	 * everyone.
-	 */
-	AGENT_PROACTIVE_1_1: 'agent-proactive-1-1',
-	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section
@@ -56,28 +37,18 @@ export const FLAGS = {
 	 */
 	DAILY_BUDGET: 'daily-budget',
 	/**
-	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
-	 * between the person's clipboard and the agent's computer while they are in
-	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
-	 * once the buttons are on for everyone.
-	 */
-	COMPUTER_CLIPBOARD: 'computer-clipboard',
-	/**
-	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
-	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
-	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES
-	 * empty). Listing and disconnecting connections is NOT behind this flag: a flag that hides
-	 * the only revoke button is a trap. Discovery, the token endpoint and token acceptance act
-	 * before any person is known and sit behind the MASKIN_MCP_OAUTH_ENABLED switch instead.
-	 * See docs/reference/mcp-oauth.md. Retire when the connector ships to everyone.
-	 */
-	MCP_OAUTH_CONSENT: 'mcp-oauth-consent',
-	/**
 	 * Gates editing a draft's text in place on the web For You card, with Send saving the
 	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
 	 * in draft-preview. Retire once editing is on for everyone.
 	 */
 	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
+	/**
+	 * Gates the Edit action on your own comments on a task, bet or insight in the web app. Frontend
+	 * only: read with useFeatureFlag in activity-comment. Off means a comment shows no Edit button.
+	 * The edit route behind it only changes a comment's text for its author and is safe with the
+	 * flag off. Retire once editing is on for everyone.
+	 */
+	COMMENT_EDIT: 'comment-edit',
 	/**
 	 * Gates the visual layer of agent change review (bet
 	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
@@ -105,6 +76,188 @@ export const FLAGS = {
 	 * box formatting reads the same id. Retire once it is on for everyone.
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
+	/**
+	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
+	 * else, or a decision card it posted expires. Backend only, workspace-scoped: read with
+	 * isFlagEnabledForWorkspace in services/driver-wake.ts. Off means no wake is started and
+	 * nothing is recorded. Turn on only after the self-start limits (cap, back-off and daily
+	 * budget) are live, because they are the only brake on a wake. Retire once the wake is on for
+	 * everyone.
+	 */
+	DRIVER_WAKE: 'driver-wake',
+	/**
+	 * Gates the sweep for overdue or missing next steps (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * rule 4, fallback half). Backend only, workspace-scoped: read with isFlagEnabledForWorkspace
+	 * in services/next-step-sweep.ts, and the sweep only visits workspaces named in
+	 * FF_WORKSPACE_FEATURES. On means the sweep runs in RECORD-ONLY mode: it writes what it would
+	 * have woken and starts nothing. Off (the default) means the sweep does not look at the
+	 * workspace and writes nothing. Nothing here starts a run until NEXT_STEP_SWEEP_WAKE is on too.
+	 */
+	NEXT_STEP_SWEEP: 'next-step-sweep',
+	/**
+	 * Lets the sweep start runs. Needs NEXT_STEP_SWEEP on for the workspace, and the sweep must
+	 * have been recording for at least 3 days (the first-run flood guard). Turn on only after the
+	 * would-wake list was compared with what is really stuck and the self-start limits are live.
+	 */
+	NEXT_STEP_SWEEP_WAKE: 'next-step-sweep-wake',
+	/**
+	 * Gates the item card beside a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
+	 * when a view asks to open an item, the loop page shows its card in a side panel, where the
+	 * person can change its status or approve it, instead of going to the object's page. Frontend
+	 * only: read once, in `LoopViewTab`. Off means Open goes to the object's page as before. Retire
+	 * once it is on for everyone.
+	 */
+	LOOP_VIEW_ITEM_PANEL: 'loop-view-item-panel',
+	/**
+	 * Gates date and time changes from a loop view (bet [Act on items inside loop views](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/d9bdf0fe-d570-4c0f-93d9-744e18def585)):
+	 * when a view proposes a new day or post time for an item, the loop page asks the person
+	 * "Move to 14 Nov?" and saves only after they confirm. Frontend only: read once, in
+	 * `LoopViewTab`. Off means a view's proposal is ignored and nothing can be changed from a view.
+	 * Retire once it is on for everyone.
+	 */
+	LOOP_VIEW_DATE_CHANGE: 'loop-view-date-change',
+	/**
+	 * Gates Export in the three-dot menu of a custom view: Markdown, PDF or PNG of what the view
+	 * shows now, built in the browser and saved by the person's click (task [Export a view as
+	 * Markdown, PDF or PNG](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e5494586-905b-4845-80d8-33314a419635)).
+	 * Frontend only: read once, in `LoopViewTab`. Off means the menu has no Export. Retire once it
+	 * is on for everyone.
+	 */
+	LOOP_VIEW_EXPORT: 'loop-view-export',
+	/**
+	 * Gates the default on silence for decision cards (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
+	 * task [Let decision cards carry a default on silence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/bcfed848-7a51-418e-a5d0-172999385c9c)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in routes/events.ts
+	 * (off means a card that names a default is refused, so no agent is promised a wake that
+	 * never comes) and in services/decision-default-wake.ts (off means no wake is started). The
+	 * card line on web and iOS only draws for a card that names a default. Turn on only after the
+	 * self-start limits (cap, back-off and daily budget) are live, because the wake goes through
+	 * them. Retire once it is on for everyone.
+	 */
+	DECISION_DEFAULT: 'decision-default',
+	/**
+	 * Gates undo send in chat: a sent message is held in the client for a few seconds
+	 * behind an Undo bar, and nothing is posted until the window ends. Frontend only: web reads
+	 * it once, in `useUndoSend`, and iOS reads it from `GET /api/feature-flags` (`FeatureFlagID`).
+	 * Off means a send posts at once, as before. The API is untouched. Retire once undo send is
+	 * on for everyone.
+	 */
+	CHAT_UNDO_SEND: 'chat-undo-send',
+	/**
+	 * Gates the mail to the billing owner when a workspace uses up its plan (task [Email when a
+	 * workspace uses up its plan](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/456ff70b-5c4a-4e2a-80c6-fded357ea84a)).
+	 * Backend only, workspace-scoped: read with isFlagEnabledForWorkspace in
+	 * services/plan-limit-email.ts before anything is stored or sent. Off means no mail and no
+	 * row, so a workspace that is already over its limit when this ships is not mailed; only a
+	 * refusal or stop after the flag is on counts. Turned on by a person after the wording is
+	 * approved. Retire once it is on for everyone.
+	 */
+	PLAN_LIMIT_EMAIL: 'plan-limit-email',
+	/**
+	 * Gates the new chat list on web (bet [Chat list: date groups, attention markers, filter
+	 * search](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/57d0ac81-c1c3-4e5f-9a70-b0bcb941945e)).
+	 * UI only, actor-scoped: the Chats route layout reads it once and swaps the list column. Off
+	 * means the list looks as it does today. The server's new list fields are additive and safe for
+	 * everyone without it. Retire once the new list is on for everyone.
+	 */
+	CHAT_LIST_V2: 'chat-list-v2',
+	/**
+	 * Gates the Create view with agent item in the menus on the Items list, an item's page and
+	 * a flow page (task [Add Create view with agent menu item](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/93b3749a-d33d-4d67-9513-4a79c11fc83c)).
+	 * Frontend only, actor-scoped: read with useFeatureFlag in use-create-view-with-agent. Off
+	 * means the three menus look as they do today. The chat it opens, pinned files and flow
+	 * views are existing features and are not gated. Retire once the item is on for everyone.
+	 */
+	CREATE_VIEW_WITH_AGENT: 'create-view-with-agent',
+	/**
+	 * Gates the Send permissions screen under Settings, where a human admin or owner sets
+	 * Always allow, Ask first or Deny per agent and draft kind. Frontend only: read with
+	 * useFeatureFlag in the settings layout (the nav entry) and the route. The send gate and
+	 * the settings API are not flagged, they read the saved settings. Retire once the screen
+	 * is on for everyone.
+	 */
+	SEND_PERMISSIONS_SCREEN: 'send-permissions-screen',
+	/**
+	 * Gates the agents in the top row of the iOS share sheet (task [Agents show as people in the iOS share sheet](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e7484a53-3495-4654-b7c3-bded62fb9348)).
+	 * iOS app only, actor-scoped: read by AppRuntime before the app donates an agent to iOS. Off
+	 * means nothing new is donated and the row shows what it shows today. Retire once the row is
+	 * on for everyone.
+	 */
+	IOS_SHARE_SUGGESTIONS: 'ios-share-suggestions',
+	/**
+	 * Gates the Azure DevOps integration (task [Add Azure DevOps integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/508145fe-70aa-497c-a08a-d37e76f90c82)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Entra app registration is approved for customers and the provider is on for everyone.
+	 */
+	AZURE_DEVOPS: 'azure-devops',
+	/**
+	 * Gates the Zoom integration (task [Add Zoom integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/db07585a-26e3-462f-b73e-e2690e0f142b)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Zoom Marketplace app is approved for customers and the provider is on for everyone.
+	 */
+	ZOOM: 'zoom',
+	/**
+	 * Gates Salesforce and the paste form for a customer's own sign-in app (task
+	 * [Let customers connect with their own app](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1fe9152c-c039-4f84-95d1-0a673fad9957)).
+	 * Actor-scoped, read by the integrations routes: off means Salesforce is missing from
+	 * GET /api/integrations/providers and its connect and app calls are refused, so Settings shows
+	 * nothing new. The sign-in change for providers with a server-wide app is not behind the flag:
+	 * it only does anything when a workspace has saved its own app. Retire once a real Salesforce
+	 * admin has connected through the form and the provider is on for everyone.
+	 */
+	SALESFORCE: 'salesforce',
+	/**
+	 * Gates the four meeting-notes integrations Fireflies, Granola, Fathom and Otter (task
+	 * [Add four meeting-notes integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/7bfb4736-6c21-4cc9-9a19-2e6f8f4d35d6)).
+	 * Actor-scoped, read by the integrations routes: off means the four are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	MEETING_NOTES_INTEGRATIONS: 'meeting-notes-integrations',
+	/**
+	 * Gates the ten developer and data integrations Cloudflare, Supabase, Neon, PlanetScale, Netlify,
+	 * Datadog, New Relic, PagerDuty, Retool and Hex (task
+	 * [Add developer and data integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0ecefc6-7add-4653-8157-d6e83ea2163d)).
+	 * Actor-scoped, read by the integrations routes: off means the ten are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	DEVELOPER_DATA_INTEGRATIONS: 'developer-data-integrations',
+	/**
+	 * Gates the eight sales and automation integrations Apollo, ZoomInfo, Outreach, Gong, Clay,
+	 * Calendly, monday.com and Make (task
+	 * [Add sales and automation integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/18a0ef4c-3cd5-468e-a8cb-3ea3b3344599)).
+	 * Actor-scoped, read by the integrations routes: off means the eight are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
+	/**
+	 * Gates connecting Uniconta (task
+	 * [Connect Uniconta to the accounting flow](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e303850f-6315-428b-bb65-b764f7729314)).
+	 * Actor-scoped, read by the integrations routes: off means Uniconta is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Uniconta sign-in has worked and Uniconta is on for everyone.
+	 */
+	UNICONTA_CONNECT: 'uniconta-connect',
+	/**
+	 * Gates connecting Dinero (task
+	 * [Add Dinero integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f1c15747-e94d-44f2-8834-441a57345e48)).
+	 * Actor-scoped, read by the integrations routes: off means Dinero is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Dinero sign-in has worked, the draft-only tool list is set and Dinero is on for everyone.
+	 */
+	DINERO: 'dinero',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
@@ -123,6 +276,12 @@ export interface FeatureFlagConfig {
 	 * this set.
 	 */
 	workspaceFeatures: Set<string>
+	/**
+	 * Flag ids on for every new sign-up, sourced from `FF_SIGNUP_FEATURES`. A person who has not
+	 * signed up yet cannot be named in `FF_TESTER_ACTOR_IDS`, so a sign-up-time feature (the card
+	 * step) needs a list that is not keyed by actor. Read only by `isSignupFlagEnabled`.
+	 */
+	signupFeatures: Set<string>
 }
 
 function parseList(raw: string | undefined): string[] {
@@ -156,6 +315,7 @@ export function parseFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): Fe
 		testerActorIds: new Set(parseList(env.FF_TESTER_ACTOR_IDS).map((id) => id.toLowerCase())),
 		testerFlags: new Set(parseList(env.FF_TESTER_FEATURES)),
 		workspaceFeatures: parseWorkspaceFeatures(env.FF_WORKSPACE_FEATURES),
+		signupFeatures: new Set(parseList(env.FF_SIGNUP_FEATURES)),
 	}
 }
 
@@ -217,6 +377,20 @@ export function isFlagEnabledForWorkspace(
 	if (flagConfig.workspaceFeatures.has(target)) return true
 	if (config?.actorId && isFlagEnabled(config.actorId, flagId, flagConfig, registry)) return true
 	return false
+}
+
+/**
+ * Whether a flag is on for the sign-up happening right now. Not tied to an actor or a workspace:
+ * the person does not exist yet when the sign-up route decides. Unknown flag ids (typos, ids not
+ * in the registry) always resolve to false.
+ */
+export function isSignupFlagEnabled(
+	flagId: string,
+	flagConfig: FeatureFlagConfig = getFeatureFlagConfig(),
+	registry: Record<string, string> = FLAGS,
+): boolean {
+	if (!Object.values(registry).includes(flagId)) return false
+	return flagConfig.signupFeatures.has(flagId)
 }
 
 let _config: FeatureFlagConfig | null = null

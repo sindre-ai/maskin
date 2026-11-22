@@ -1,10 +1,9 @@
 /**
- * briefing-email-scheduler.ts — the summary email: one grouped mail a day, with a teaching block
- * on the first three.
+ * briefing-email-scheduler.ts — the digest email: one mail a day of what waits on the person and
+ * what they have not opened yet, with a teaching block on the first three.
  *
- * Sits beside the daily briefing push and reuses its facts (`loadBriefingFacts`,
- * `buildBriefingText`), so the email says the same numbers as the push and the For You screen.
- * It has its OWN query because the push only reaches people with a saved preferences row, a stored
+ * Sits beside the daily briefing push and reads Needs you from the same For You function the app
+ * and the push read, so the count matches the For You screen. It has its OWN recipient query because the push only reaches people with a saved preferences row, a stored
  * timezone, the briefing switch on and a push device; a new sign-up has none of those.
  *
  * Who gets it (EMAIL_RECIPIENT_RULE_SQL, runnable on its own and read-only): a saved email choice
@@ -25,10 +24,13 @@
  * summary. Steps are never skipped, one mail per day at most. With nothing to say nothing is sent
  * and the step is not used up.
  *
- * Each mail has three parts (see briefing-email-text.ts): runs finished since the last mail, what
- * waits, and one next-step line chosen by plain rules from the person's role in the anchor
- * workspace (the `email_sent` event carries it as `role`: owner_admin or member). "Since the last mail" is the days since the last send, at least
- * 24 hours, at most MAX_LOOKBACK_DAYS.
+ * Each mail is one digest (see briefing-email-text.ts and digest-email-data.ts): "Needs you", what
+ * waits on the person for a decision or a reply, then "Updates", their other unread notifications
+ * in three groups (Objects, Flows, Chats), then one next-step line chosen by plain rules from the
+ * person's role in the anchor workspace (the `email_sent` event carries it as `role`: owner_admin
+ * or member). Updates look back 24 hours, or since the last mail for a weekly person, at most
+ * MAX_LOOKBACK_DAYS. The anchor workspace is the one the first waiting item (else the newest
+ * update) belongs to.
  *
  * Exactly once: the step is claimed with one conditional UPDATE on the step counter and
  * `email_last_sent_on` (or an INSERT for someone with no row yet) before the mail goes out; a
@@ -41,7 +43,8 @@
  * not. The week is claimed together with the mail and released with it.
  *
  * Production without a Resend key, APP_URL or stop-link secret: log and skip, nothing is claimed.
- * Killswitch env FEATURE_BRIEFING_EMAIL=0 skips the tick. The push is not affected.
+ * Killswitch env FEATURE_BRIEFING_EMAIL skips the tick: in production unless it is exactly 1,
+ * elsewhere when it is 0. The push is not affected.
  */
 import type { Database } from '@maskin/db'
 import { actors, objects, workspaceMembers } from '@maskin/db/schema'
@@ -56,11 +59,19 @@ import { localClock, localTimeReached } from '../lib/local-time'
 import { logger } from '../lib/logger'
 import { buildSummaryEmail, emailRole, pickNextStep } from './briefing-email-text'
 import type { EmailRole, EmailStep, PickBlock } from './briefing-email-text'
-import { buildBriefingText, loadBriefingFacts } from './briefing-push-scheduler'
+import { loadDigest } from './digest-email-data'
 import { loadMarketplacePick, pickWeekOpen } from './marketplace-pick'
 
 const TICK_MS = 60_000
 export const EMAIL_KILLSWITCH_ENV_VAR = 'FEATURE_BRIEFING_EMAIL'
+/**
+ * True when the email switch stops sending. In production only an exact "1" sends, so an unset or
+ * empty value sends nothing; elsewhere only an exact "0" stops it, so tests and local runs send.
+ */
+export function emailSwitchedOff(env: NodeJS.ProcessEnv): boolean {
+	if (env.NODE_ENV === 'production') return env[EMAIL_KILLSWITCH_ENV_VAR] !== '1'
+	return env[EMAIL_KILLSWITCH_ENV_VAR] === '0'
+}
 /** How long after the send time a late tick may still send the "morning" mail. */
 export const EMAIL_CATCH_UP_WINDOW_MINUTES = 180
 /** Send time for a person with no stored timezone: 08:00 UTC. */
@@ -235,9 +246,9 @@ export function dueEmailStep(
 }
 
 /**
- * Pure: how many days of finished runs the mail looks back over. Since the last mail, at least one
- * day and at most a week. The first mail looks back one day like the push; the first weekly mail
- * looks back the whole week.
+ * Pure: how many days a weekly person's Updates look back over. Since the last mail, at least one
+ * day and at most a week; the first weekly mail looks back the whole week. A daily person always
+ * looks back one day.
  */
 export function lookbackDays(
 	rhythm: string | null,
@@ -281,7 +292,7 @@ export class BriefingEmailScheduler {
 	/** Public for test injection; returns how many emails this tick sent. */
 	async tick(now: Date = new Date()): Promise<number> {
 		if (this.running) return 0
-		if (this.env[EMAIL_KILLSWITCH_ENV_VAR] === '0') return 0
+		if (emailSwitchedOff(this.env)) return 0
 		if (this.env.NODE_ENV === 'production' && !this.productionReady(now)) return 0
 		this.running = true
 		let sent = 0
@@ -346,39 +357,42 @@ export class BriefingEmailScheduler {
 		const due = dueEmailStep(row, clock.date, ageDays)
 		if (!due) return false
 
-		// Runs finished since the last mail: the days since it (at least 24 h), so a quiet day does
-		// not drop work and a busy one is not repeated.
-		const sinceDays = lookbackDays(row.emailRhythm, row.emailLastSentOn, clock.date)
-		const facts = await loadBriefingFacts(
-			this.db,
-			row.actorId,
-			row.mutedWorkspaceIds,
+		// Updates look back a day (a weekly person: since the last mail), so a quiet day does not
+		// drop a notification and a busy one is not repeated.
+		const lookbackMs =
+			(row.emailRhythm === 'weekly'
+				? lookbackDays(row.emailRhythm, row.emailLastSentOn, clock.date)
+				: 1) * DAY_MS
+		const digest = await loadDigest(this.db, {
+			actorId: row.actorId,
+			mutedWorkspaceIds: row.mutedWorkspaceIds,
 			now,
-			sinceDays * DAY_MS,
-		)
-		const summary = buildBriefingText(facts)
-		if (!summary) {
+			lookbackMs,
+		})
+		const anchorWorkspaceId = digest.anchorWorkspaceId
+		if (!anchorWorkspaceId || digest.waitingCount + digest.updatesCount === 0) {
 			this.emptyUntil.set(row.actorId, now.getTime() + EMPTY_RECHECK_MS)
 			return false
 		}
 
 		const appUrl = this.appUrl() ?? 'http://localhost:5173'
-		const topObjectId = summary.topObjectId
-		const buttonPath = topObjectId
-			? `/${summary.workspaceId}/objects/${topObjectId}`
-			: `/${summary.workspaceId}`
 		const { role, nextStep } = await this.nextStepFor(
 			row.actorId,
-			summary.workspaceId,
-			summary.waiting,
+			anchorWorkspaceId,
+			digest.waitingCount,
 		)
-		const pick = await this.choosePickBlock(row, due.step, clock.date, summary.workspaceId, appUrl)
+		const pick = await this.choosePickBlock(row, due.step, clock.date, anchorWorkspaceId, appUrl)
 		const mail = buildSummaryEmail({
-			summary,
+			digest,
 			step: due.step,
-			nextStep,
-			buttonUrl: `${appUrl}${buttonPath}?surface=email&block=summary`,
+			appUrl,
+			timezone,
+			now,
+			sendTime: `${String(Math.floor(sendMinute / 60)).padStart(2, '0')}:${String(sendMinute % 60).padStart(2, '0')}`,
+			rhythm: row.emailRhythm,
+			buttonUrl: `${appUrl}/${anchorWorkspaceId}?surface=email&block=summary`,
 			stopUrl: buildEmailStopUrl(row.actorId, this.env),
+			nextStep,
 			pick: pick?.block ?? null,
 		})
 
@@ -397,14 +411,20 @@ export class BriefingEmailScheduler {
 		}
 
 		void capturePosthogEvent('email_sent', row.actorId, {
-			workspace_id: summary.workspaceId,
+			workspace_id: anchorWorkspaceId,
 			actor_id: row.actorId,
 			actor_type: 'human',
+			kind: 'digest',
 			step: String(due.step),
 			role,
 			rhythm: row.emailRhythm === 'weekly' ? ('weekly' satisfies EmailRhythm) : 'daily',
 			account_age_days: Math.max(ageDays, 0),
 			pick: pick !== null,
+			// Numbers only: never a title, a name or any text.
+			needs_you_count: digest.waitingCount,
+			objects_count: digest.groups.find((g) => g.kind === 'objects')?.count ?? 0,
+			flows_count: digest.groups.find((g) => g.kind === 'flows')?.count ?? 0,
+			chats_count: digest.groups.find((g) => g.kind === 'chats')?.count ?? 0,
 		})
 		return true
 	}

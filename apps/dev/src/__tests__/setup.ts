@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
@@ -73,7 +74,8 @@ export function createTestContext() {
 				prop === 'selectDistinct' ||
 				prop === 'insert' ||
 				prop === 'update' ||
-				prop === 'delete'
+				prop === 'delete' ||
+				prop === 'execute'
 			) {
 				// Map selectDistinct to the same bucket as select
 				const key = prop === 'selectDistinct' ? 'select' : (prop as string)
@@ -246,6 +248,7 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 	return {
 		put: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue(Buffer.from('')),
+		getStream: vi.fn().mockImplementation(async () => Readable.from(Buffer.from(''))),
 		list: vi.fn().mockResolvedValue([]),
 		listWithMetadata: vi.fn().mockResolvedValue([]),
 		delete: vi.fn().mockResolvedValue(undefined),
@@ -261,6 +264,7 @@ export function createMockStorageProvider(overrides?: Record<string, unknown>) {
 		abortMultipartUpload: vi.fn().mockResolvedValue(undefined),
 		headObject: vi.fn().mockResolvedValue(null),
 		presignDownload: vi.fn().mockResolvedValue('https://storage.test/download/file'),
+		presignUpload: vi.fn().mockResolvedValue('https://storage.test/upload/file'),
 		...overrides,
 	} as unknown as StorageProvider
 }

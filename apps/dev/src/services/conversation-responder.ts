@@ -3,11 +3,14 @@ import {
 	actors,
 	conversationParticipants,
 	conversationPendingTurns,
+	files,
 	messages,
+	sessions,
 } from '@maskin/db/schema'
 import { HUMAN_MESSAGE_STYLE_SHORT, decideWakes } from '@maskin/shared'
 import { and, count, desc, eq, inArray, isNull, lt, lte, ne, sql } from 'drizzle-orm'
 import { isHumanPaused } from '../lib/agent-pause'
+import { trackChatSessionSeeded } from '../lib/analytics/chat-session-events'
 import {
 	type AgentRoutingOutcome,
 	type GroupChatDelivery,
@@ -16,18 +19,30 @@ import {
 	trackGroupChatMessageRouted,
 } from '../lib/analytics/group-chat-routing-events'
 import { logger } from '../lib/logger'
-import { loadSiblingSessionsNote, loadThreadSeed, takeSessionDigests } from './chat-session-context'
-import { insertConversationMessage } from './conversation-messages'
+import {
+	DEFAULT_AGENT_TIMEZONE,
+	findChatPersonId,
+	formatPersonClockLine,
+	resolvePersonTimezone,
+} from '../lib/person-timezone'
+import {
+	loadChatFilesList,
+	loadSiblingSessionsNote,
+	loadThreadSeed,
+	takeEditNotes,
+	takeSessionDigests,
+} from './chat-session-context'
+import { computerHandbackForMessage } from './computer-handback'
+import { attachedFileIds, insertConversationMessage } from './conversation-messages'
 import { startSession } from './session-lifecycle'
 import { type SessionManager, matchThread } from './session-manager'
 import { loadActiveSessionsNote } from './spawned-sessions'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
-// mirrors MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
-// auto-spawn), same purpose: prevent runaway agent-to-agent ping-pong. Kept
-// as its own constant since the two features can tune independently even
-// though the value happens to match today.
-const MAX_CONSECUTIVE_AGENT_REPLIES = 5
+// same purpose as MAX_CONSECUTIVE_AGENT_REPLIES in routes/events.ts (thread-reply
+// auto-spawn): prevent runaway agent-to-agent ping-pong. Its own constant, tuned
+// separately (here 20, there 5).
+const MAX_CONSECUTIVE_AGENT_REPLIES = 20
 const LOOKBACK_LIMIT = 50
 const HISTORY_CONTEXT_MESSAGES = 15
 
@@ -64,7 +79,7 @@ const GROUP_HANDOFF_HINT =
  * degrades to "stay silent" so a broken rule input can't spam a conversation.
  *
  * Returns 'agent_cap' when the turn is dropped because the conversation already
- * ends in 5 agent messages in a row, so a caller that cannot afford a silent
+ * ends in 20 agent messages in a row, so a caller that cannot afford a silent
  * drop can record it. Every other path returns nothing.
  */
 export async function evaluateAndRespond(ctx: {
@@ -98,6 +113,11 @@ export async function evaluateAndRespond(ctx: {
 		 * agents whose answers the user didn't ask to regenerate.
 		 */
 		targetAgentId?: string
+		/**
+		 * Do not apply the consecutive-agent-messages cap. Set for a finished sub-chat's result,
+		 * which must always wake the agent that started it: it is one message, not a ping-pong.
+		 */
+		skipAgentCap?: boolean
 	}
 }): Promise<'agent_cap' | undefined> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
@@ -189,7 +209,7 @@ export async function evaluateAndRespond(ctx: {
 	// Auto-posted end-of-turn output is excluded. The cap exists to bound
 	// responder-triggered agent-to-agent chains, and a final_output message
 	// cannot start one — the finalizer never calls evaluateAndRespond. Every
-	// agent turn now yields up to two rows (an optional MCP heads-up plus the
+	// agent turn can yield two rows (a mid-turn MCP post plus the
 	// automatic final output), so counting both would halve the effective cap
 	// and mute a conversation after ~3 turns.
 	const recent = await db
@@ -209,7 +229,7 @@ export async function evaluateAndRespond(ctx: {
 		if (row.actorType === 'agent') consecutiveAgents++
 		else break
 	}
-	if (consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
+	if (!options?.skipAgentCap && consecutiveAgents >= MAX_CONSECUTIVE_AGENT_REPLIES) {
 		logger.info('Skipping conversation responder (consecutive agent cap reached)', {
 			conversationId,
 			consecutiveAgents,
@@ -261,13 +281,18 @@ export async function evaluateAndRespond(ctx: {
 	}
 
 	const historyRows = await db
-		.select({ actorName: actors.name, content: messages.content })
+		.select({
+			actorName: actors.name,
+			content: messages.content,
+			metadata: messages.metadata,
+			editedAt: messages.editedAt,
+		})
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
 		.where(and(eq(messages.conversationId, conversationId), eq(messages.kind, 'message')))
 		.orderBy(desc(messages.id))
 		.limit(HISTORY_CONTEXT_MESSAGES)
-	const conversationHistory = historyRows.slice().reverse()
+	const conversationHistory = await historyEntries(db, workspaceId, historyRows.slice().reverse())
 
 	// Group chat (3 or more active participants): a plain rule decides, never the model.
 	if (emitsRoutingEvent) {
@@ -723,6 +748,8 @@ export async function deliverTurnToAgent(params: {
 		// this turn, which the message started anyway, and is never delivered on its own.
 		const digest = takeSessionDigests(existing.id)
 		if (digest) turnPayload.message.content += `\n\n${digest}`
+		const editNotes = takeEditNotes(existing.id)
+		if (editNotes) turnPayload.message.content += `\n\n${editNotes}`
 	}
 	if (existing && existing.status !== 'running') {
 		// The agent's session is still booting (pending/starting/queued) —
@@ -750,7 +777,29 @@ export async function deliverTurnToAgent(params: {
 	}
 	if (existing) {
 		try {
-			await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
+			// A Done on this agent's computer card: its next turn starts with a screenshot taken now.
+			const handback = await computerHandbackForMessage(db, {
+				workspaceId,
+				conversationId,
+				messageId,
+				agentId,
+			}).catch((err: unknown) => {
+				logger.warn('Could not check the turn for a computer handback', {
+					conversationId,
+					messageId,
+					error: String(err),
+				})
+				return null
+			})
+			if (handback) turnPayload.message.content += `\n\n${handback.note}`
+			await sessionManager.writeInput(
+				existing.id,
+				turnPayload,
+				undefined,
+				messageId,
+				undefined,
+				handback?.images,
+			)
 			return 'wrote_to_running_session'
 		} catch (err) {
 			logger.warn(
@@ -895,6 +944,30 @@ async function spawnOrJoinConversationSession(params: {
 		})
 	}
 
+	// The chat's files, rebuilt from the database on every fresh session: the history above is
+	// text only, so an upload from an early message would otherwise be out of sight.
+	const chatFiles = await loadChatFilesList(db, { conversationId, workspaceId })
+
+	// The person's local time, so the agent speaks in their zone and not in UTC. A lookup that
+	// fails costs the line, not the session: the default zone is used.
+	let timezone = DEFAULT_AGENT_TIMEZONE
+	try {
+		const personId = await findChatPersonId(db, {
+			conversationId,
+			authorActorId: message.actorId,
+			authorType: message.authorType,
+		})
+		timezone = await resolvePersonTimezone(db, personId)
+	} catch (err) {
+		logger.warn('Could not resolve the chat person timezone — using the default', {
+			conversationId,
+			error: String(err),
+		})
+	}
+
+	// A chat whose last session was closed for being too big starts from its handoff note.
+	const rotated = await loadRotationHandoff(db, { conversationId, agentId, threadRootId })
+
 	try {
 		await startSession({
 			workspaceId,
@@ -911,7 +984,10 @@ async function spawnOrJoinConversationSession(params: {
 				groupWakeRule,
 				activeSessionsNote,
 				siblingSessionsNote,
+				filesNote: chatFiles.note,
+				clockLine: formatPersonClockLine(new Date(), timezone),
 				threadRootId,
+				handoffNote: rotated?.note ?? null,
 			}),
 			config: {
 				interactive: true,
@@ -953,6 +1029,14 @@ async function spawnOrJoinConversationSession(params: {
 				})
 			}
 		}
+		void trackChatSessionSeeded({
+			workspaceId,
+			conversationId,
+			agentId,
+			threadRootId,
+			filesListedCount: chatFiles.listedCount,
+		})
+		if (rotated) await announceContinuedInFreshSession(db, { workspaceId, conversationId, message })
 		return 'started_new_session'
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
@@ -1171,6 +1255,51 @@ function appendContextBlock(
 	return lines.join('\n')
 }
 
+type HistoryRow = {
+	actorName: string
+	content: string
+	metadata: unknown
+	editedAt: Date | null
+}
+
+/**
+ * One chat message as the agent's history block shows it: the text, then the same context and
+ * file lines the live prompt carries, and an edited marker. Without these a message that is only
+ * chips or files reads as empty, and an edited one looks like it never changed. Only files in
+ * liveFileIds are listed, so a deleted file or one from another workspace never shows its name.
+ */
+export function historyEntry(
+	row: HistoryRow,
+	liveFileIds: Set<string>,
+): { actorName: string; content: string } {
+	const metadata = row.metadata as Parameters<typeof appendContextBlock>[1]
+	const content = appendContextBlock(
+		row.content,
+		metadata?.attachments
+			? { ...metadata, attachments: metadata.attachments.filter((a) => liveFileIds.has(a.file_id)) }
+			: metadata,
+	)
+	return { actorName: row.actorName, content: row.editedAt ? `[edited] ${content}` : content }
+}
+
+/** historyEntry for a whole history block, looking up which attached files still exist here. */
+export async function historyEntries(
+	db: Database,
+	workspaceId: string,
+	rows: HistoryRow[],
+): Promise<Array<{ actorName: string; content: string }>> {
+	const ids = [...new Set(rows.flatMap((r) => attachedFileIds(r.metadata)))]
+	const live =
+		ids.length === 0
+			? []
+			: await db
+					.select({ id: files.id })
+					.from(files)
+					.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, ids)))
+	const liveFileIds = new Set(live.map((f) => f.id))
+	return rows.map((r) => historyEntry(r, liveFileIds))
+}
+
 /** Shared `{actorName}: {content}` transcript join, used by the seed prompt and the auto-titler. */
 export function formatConversationTranscript(
 	history: Array<{ actorName: string; content: string }>,
@@ -1185,6 +1314,68 @@ export function formatConversationTranscript(
  * directly rather than telling the agent to go fetch it via MCP tools, since
  * this only runs once per session (not once per reply).
  */
+/**
+ * What the agent's newest session in this chat left behind when it was closed for being too
+ * big (sessions.config.rotation), or null when it was not. Only the newest session counts: a
+ * later session that was not rotated ends the chain. A fallback rotation has no note.
+ */
+export async function loadRotationHandoff(
+	db: Database,
+	ctx: { conversationId: string; agentId: string; threadRootId: number | null },
+): Promise<{ note: string | null } | null> {
+	try {
+		const [latest] = await db
+			.select({ config: sessions.config })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, ctx.conversationId),
+					eq(sessions.actorId, ctx.agentId),
+					matchThread(sessions.threadRootId, ctx.threadRootId),
+					eq(sessions.interactive, true),
+				),
+			)
+			.orderBy(desc(sessions.createdAt))
+			.limit(1)
+		const rotation = (latest?.config as { rotation?: { note?: unknown } } | null)?.rotation
+		if (!rotation || typeof rotation !== 'object') return null
+		return { note: typeof rotation.note === 'string' && rotation.note ? rotation.note : null }
+	} catch (err) {
+		logger.warn('Could not read the rotation handoff, seeding without a note', {
+			conversationId: ctx.conversationId,
+			error: String(err),
+		})
+		return null
+	}
+}
+
+/**
+ * The one line a chat shows when its session restarted on a handoff note. Authored by the sender
+ * and not the agent, like the paused-agent line: an agent-authored line would count toward the
+ * consecutive-agent-messages cap. Never throws: the new session is already running.
+ */
+async function announceContinuedInFreshSession(
+	db: Database,
+	ctx: { workspaceId: string; conversationId: string; message: { actorId: string } },
+): Promise<void> {
+	try {
+		await insertConversationMessage(db, {
+			conversationId: ctx.conversationId,
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.message.actorId,
+			content: 'Continued in a fresh session',
+			metadata: null,
+			sessionId: null,
+			kind: 'system',
+		})
+	} catch (err) {
+		logger.warn('Failed to post the continued-in-a-fresh-session line', {
+			conversationId: ctx.conversationId,
+			error: String(err),
+		})
+	}
+}
+
 function buildConversationReplyPrompt(ctx: {
 	conversationId: string
 	conversationHistory: Array<{ actorName: string; content: string }>
@@ -1197,7 +1388,13 @@ function buildConversationReplyPrompt(ctx: {
 	activeSessionsNote: string
 	/** A thread session's note on the agent's other live sessions in this chat; '' for none. */
 	siblingSessionsNote: string
+	/** The chat's files from loadChatFilesList; '' for none. */
+	filesNote: string
+	/** The person's local date, time and zone, from formatPersonClockLine. */
+	clockLine: string
 	threadRootId: number | null
+	/** The handoff note of the session this one replaces after a rotation; null for none. */
+	handoffNote?: string | null
 }): string {
 	return [
 		'A new message was posted in a conversation you are a participant in. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
@@ -1207,12 +1404,24 @@ function buildConversationReplyPrompt(ctx: {
 		'"""',
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
+		...(ctx.handoffNote
+			? [
+					'',
+					'You are carrying on this chat in a fresh session: the earlier session grew too large and was closed. Its handoff note follows. Every standing rule in it still holds, and every decision in it still stands.',
+					'"""',
+					ctx.handoffNote,
+					'"""',
+				]
+			: []),
 		'',
 		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${HUMAN_MESSAGE_STYLE_SHORT} ${describeReplyExpectation(ctx)}`,
-		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
+		'Do not post progress notes while you work, however long this turn takes: no acknowledgement, no line on what you are about to do, no note that you are still on it. The chat already shows them that you are working, so your reply is the only message they should get. Use post_conversation_message mid-turn only when you cannot go on without something from them, or to bring another agent in.',
 		...(ctx.groupWakeRule && !ctx.isDirectConversation ? [GROUP_HANDOFF_HINT] : []),
 		...(ctx.activeSessionsNote ? ['', ctx.activeSessionsNote] : []),
 		...(ctx.siblingSessionsNote ? ['', ctx.siblingSessionsNote] : []),
+		...(ctx.filesNote ? ['', ctx.filesNote] : []),
+		'',
+		ctx.clockLine,
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,

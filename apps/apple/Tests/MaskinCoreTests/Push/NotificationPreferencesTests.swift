@@ -304,6 +304,23 @@ struct PreferencesWireTests {
 		#expect(patch.applied(to: NotificationPreferences(emailDigestEnabled: true)).emailDigestEnabled == false)
 	}
 
+	@Test("the only per-kind email choice sent is Flow activity, and an old response still reads")
+	func onlyFlowActivityEmailKind() throws {
+		var patch = NotificationPreferencesPatch()
+		patch.emailFlowActivity = true
+		let json = try object(patch)
+		#expect((json["email_categories"] as? [String: Bool]) == ["flow_activity": true])
+		let old = """
+			{"categories":{"needs_you":true,"conversation":true,"digest":true,"tips":true},
+			"briefing_enabled":true,"briefing_time":510,
+			"email_categories":{"needs_you":true,"conversation":true,"tips":true,"flow_activity":true},
+			"muted_workspace_ids":[]}
+			"""
+		let decoded = try JSONDecoder().decode(
+			APINotificationPreferencesSource.Wire.self, from: Data(old.utf8))
+		#expect(decoded.model.emailFlowActivity == true)
+	}
+
 	@Test("the rhythm is sent as email_rhythm, and a move to Weekly keeps the email on")
 	func emailRhythm() throws {
 		var patch = NotificationPreferencesPatch()

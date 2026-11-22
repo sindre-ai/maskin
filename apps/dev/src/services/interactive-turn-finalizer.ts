@@ -3,10 +3,12 @@ import type { Database } from '@maskin/db'
 import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, classifyTurnLine, parseResultLine, splitLines } from '@maskin/shared'
 import * as Sentry from '@sentry/node'
-import { and, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, isNull, like, lte, or, sql } from 'drizzle-orm'
+import { trackTurnCheckCapHit, trackTurnSentBack } from '../lib/analytics/turn-check-events'
 import { markApiKeyOutOfCredit } from '../lib/api-key-credit-mark'
 import {
 	classifyBannerResult,
+	classifyClaudeAuthFailureText,
 	classifyCreditExhaustion,
 	isCreditBalanceLowText,
 } from '../lib/credit-classifier'
@@ -18,6 +20,7 @@ import {
 	extractCloudflareRayId,
 	isProviderBlockPage,
 } from '../lib/turn-error-classifier'
+import { type WorkLeftMatch, buildSendBackNudge, detectWorkLeft } from '../lib/work-left'
 import { reportChatReply } from './chat-reply-tracking'
 import { shareReplyDigest } from './chat-session-context'
 import type { StreamJsonUserMessage } from './container-manager'
@@ -151,6 +154,30 @@ const RETRY_UNANSWERED_MESSAGE =
 const MAX_PSEUDO_TOOL_CALL_NUDGES = 1
 
 /**
+ * How many times a helper is told its background jobs are still running when
+ * it gives its final message. Two: enough for an agent that simply forgot to
+ * wait to wait, short enough that a job that never reports back (a killed
+ * shell, a lost notification) cannot hold a session open. After this the
+ * helper ends as it always did.
+ */
+const MAX_HELPER_JOB_NUDGES = 2
+
+/** What a helper is told when it ends its turn with background jobs still running. */
+const helperJobsNudge = (jobs: number): string =>
+	`${jobs} background ${jobs === 1 ? 'job is' : 'jobs are'} still running. Giving your final message now ends this session and stops ${jobs === 1 ? 'it' : 'them'}, so nothing they were doing will finish. Wait for ${jobs === 1 ? 'it' : 'them'} to finish, then give your final message. If you do want to stop anyway, say so.`
+
+/** Switches the end-of-turn "work remains" send-back off when set to `0`. Default on. */
+export const TURN_SEND_BACK_KILLSWITCH_ENV_VAR = 'FEATURE_TURN_SEND_BACK'
+
+/**
+ * How many times one chat turn is sent back for ending with work the agent could still do. Two:
+ * a model that can act on the correction does so on the first or second, and every send-back is a
+ * full turn of tokens. After the cap the turn ends and the job carries on through its next step
+ * and the wake, not through more send-backs.
+ */
+export const MAX_TURN_SEND_BACKS = 2
+
+/**
  * The correction written back to the model's stdin as a user turn.
  *
  * Addressed to the model, never shown in the chat. States the mistake, its
@@ -223,9 +250,16 @@ const EMPTY_TURN_UNAVAILABLE_MESSAGE =
 const EMPTY_TURN_UNANSWERED_MESSAGE =
 	"I couldn't complete that turn — the model came back empty, I asked it again, and the run never came back. Send your message again and I'll pick it up."
 
-/** What the human reads for a failure no replay would fix. */
-const permanentErrorMessage = (detail: string): string =>
-	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
+/** Longest provider error text kept on a failed turn's message for admins and support. */
+const ERROR_DETAIL_MAX_LENGTH = 4000
+
+/**
+ * What the human reads for a failure no replay would fix. Plain on purpose: the provider's own
+ * text (status code, token counts, key links) is kept on the message as `error_detail`, not shown.
+ * Claims nothing was created only when the turn ran no tool calls.
+ */
+const permanentErrorMessage = (ranTools: boolean): string =>
+	`Maskin could not run this. ${ranTools ? 'Some steps may already be done.' : 'Nothing was created.'}`
 
 /**
  * The workspace's active subscription has moved onto the next slot AND this
@@ -394,6 +428,14 @@ export type InteractiveTurnFinalizerOptions = {
 	 * Injected for the same reason as the options above.
 	 */
 	onLimitResult?: (sessionId: string, outcome: { isError: true; text: string }) => Promise<void>
+	/**
+	 * Asked for every top-level result of a chat session before it is posted. True means the result
+	 * is a handoff note the session was asked for, and goes nowhere near the chat. Sync, must not
+	 * throw; a throw is treated as false.
+	 */
+	isHandoffResult?: (sessionId: string, result: { text: string; isError: boolean }) => boolean
+	/** Test seam: replaces process.env for the end-of-turn send-back killswitch. */
+	env?: NodeJS.ProcessEnv
 }
 
 export class InteractiveTurnFinalizer {
@@ -419,6 +461,8 @@ export class InteractiveTurnFinalizer {
 	 * emitting markup be nudged forever. Cleared when a turn posts normally.
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
+	/** sessionId -> how many times a helper was told its jobs are still running. */
+	private readonly helperJobNudges = new Map<string, number>()
 	/**
 	 * sessionId -> attempts spent on the empty turn answering one chat message.
 	 *
@@ -440,6 +484,14 @@ export class InteractiveTurnFinalizer {
 		string,
 		{ primaryModel: string; armedAfterLogId: number }
 	>()
+	/**
+	 * sessionId -> send-backs spent on the turn answering one chat message.
+	 *
+	 * Keyed by session with the originating message id beside it, like `emptyTurns`: the
+	 * correction is a NEW user turn with different content, so a payload key would restart the
+	 * budget each time. A different `origin` is a new human message and starts its own budget.
+	 */
+	private readonly turnSendBacks = new Map<string, { origin: number | null; count: number }>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly setModel?: InteractiveTurnFinalizerOptions['setModel']
 	private readonly fallbackModel: string | null
@@ -449,17 +501,21 @@ export class InteractiveTurnFinalizer {
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly onLimitResult?: InteractiveTurnFinalizerOptions['onLimitResult']
+	private readonly isHandoffResult?: InteractiveTurnFinalizerOptions['isHandoffResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
+	private readonly env: NodeJS.ProcessEnv
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
+		this.env = options.env ?? process.env
 		this.retryTurn = options.retryTurn
 		this.setModel = options.setModel
 		this.fallbackModel = options.fallbackModel ?? null
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
 		this.onLimitResult = options.onLimitResult
+		this.isHandoffResult = options.isHandoffResult
 		this.onStopSession = options.onStopSession
 		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
@@ -513,6 +569,15 @@ export class InteractiveTurnFinalizer {
 		}
 	}
 
+	private claimsAsHandoff(sessionId: string, result: { text: string; isError: boolean }): boolean {
+		try {
+			return this.isHandoffResult?.(sessionId, result) === true
+		} catch (err) {
+			logger.warn(`isHandoffResult failed for session ${sessionId}: ${describeError(err)}`)
+			return false
+		}
+	}
+
 	private turnFinished(sessionId: string, outcome: 'done' | 'failed'): void {
 		try {
 			this.onTurnFinished?.(sessionId, outcome)
@@ -525,7 +590,9 @@ export class InteractiveTurnFinalizer {
 	forgetSession(sessionId: string): void {
 		this.clearRetryCounts(sessionId)
 		this.pseudoToolCallNudges.delete(sessionId)
+		this.helperJobNudges.delete(sessionId)
 		this.emptyTurns.delete(sessionId)
+		this.turnSendBacks.delete(sessionId)
 		this.fallbackActive.delete(sessionId)
 		// A replay was written and its turn never came back; the session going
 		// away is proof it never will. Fire the notice instead of dropping the
@@ -597,6 +664,9 @@ export class InteractiveTurnFinalizer {
 			await this.failOnLimitResult(sessionId, result, logId)
 			return
 		}
+
+		// The note a big chat was asked to write for its fresh session is not a reply.
+		if (this.claimsAsHandoff(sessionId, result)) return
 
 		// The `result` envelope is the intended carrier for the turn's reply, but
 		// it is not reliable: when the model's turn ends on a non-text block (a
@@ -683,6 +753,10 @@ export class InteractiveTurnFinalizer {
 		this.pseudoToolCallNudges.delete(sessionId)
 		this.emptyTurns.delete(sessionId)
 
+		// Decided before the post, because the post puts the turn in `seen`. The reply is posted
+		// either way: the human reads what the agent did, then the correction runs as the next turn.
+		const workLeft = await this.assessWorkLeft(sessionId, text, result, logId)
+
 		await this.postTurnMessage(
 			sessionId,
 			gate,
@@ -692,6 +766,143 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+
+		if (workLeft) this.sendTurnBack(sessionId, gate, workLeft.match, workLeft.origin)
+	}
+
+	/**
+	 * Does this chat reply end with work the agent could still do? Stage 1: phrases on the closing
+	 * text, plus whether the turn ran any tool. A phrase only ever flags; it is never the reason a
+	 * turn passes. Null means leave the turn alone.
+	 *
+	 * Acts only on the newest turn that has not been posted yet, because the agent-server replays a
+	 * session's stdout when this process restarts and an old reply must not be sent back again.
+	 * Never throws: a bug in the check must not cost the human their reply.
+	 */
+	private async assessWorkLeft(
+		sessionId: string,
+		text: string,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+	): Promise<{ match: WorkLeftMatch; origin: number | null } | null> {
+		try {
+			if (this.env[TURN_SEND_BACK_KILLSWITCH_ENV_VAR] === '0') return null
+			const match = detectWorkLeft(text)
+			if (!match) {
+				// A clean ending closes the episode, so a later lapse gets its own two send-backs.
+				this.turnSendBacks.delete(sessionId)
+				return null
+			}
+			const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
+			if (this.seen.has(dedupeKey)) return null
+			if (
+				!(await this.isNewestTurn(sessionId, logId)) ||
+				(await this.findExistingFinalOutputMessageId(sessionId, dedupeKey)) !== null
+			) {
+				return null
+			}
+			if (match.needsToolCalls && !(await this.turnRanTools(sessionId, logId, result.raw))) {
+				return null
+			}
+			return { match, origin: await this.resolveTurnMessageId(sessionId, logId) }
+		} catch (err) {
+			logger.warn(`Turn send-back check failed for session ${sessionId}: ${describeError(err)}`)
+			return null
+		}
+	}
+
+	/**
+	 * True when the turn that closed at `logId` made at least one tool call. Walks the log
+	 * backwards to the previous turn boundary, like assessBlankTurn. A reply tool is a boundary:
+	 * what came before it was already shown to the human.
+	 */
+	private async turnRanTools(
+		sessionId: string,
+		logId: number,
+		resultRaw: string,
+	): Promise<boolean> {
+		const rows = await this.db
+			.select({ id: sessionLogs.id, content: sessionLogs.content })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					lte(sessionLogs.id, logId),
+					eq(sessionLogs.stream, 'stdout'),
+				),
+			)
+			.orderBy(desc(sessionLogs.id))
+			.limit(RECOVERY_SCAN_LIMIT)
+
+		for (const row of rows) {
+			let lines = splitRowLines(row.content)
+			if (row.id === logId) {
+				const at = lines.findIndex((line) => line.trim() === resultRaw)
+				lines = at === -1 ? [] : lines.slice(0, at)
+			}
+			for (let i = lines.length - 1; i >= 0; i--) {
+				const line = classifyTurnLine(lines[i] ?? '')
+				if (line.kind === 'work_tool') return true
+				if (line.kind === 'turn_start' || line.kind === 'reply_tool') return false
+			}
+		}
+		return false
+	}
+
+	/**
+	 * Write the correction as the next user turn on the same live session, at most
+	 * MAX_TURN_SEND_BACKS times per chat message. Past the cap the turn ends as it is and the cap
+	 * hit is counted. Not awaited by the caller, for the same reason handleFailedTurn is not: this
+	 * runs on the log-ingest path and a stdin write must not stall the live feed.
+	 */
+	private sendTurnBack(
+		sessionId: string,
+		gate: SessionGate,
+		match: WorkLeftMatch,
+		origin: number | null,
+	): void {
+		const tracked = this.turnSendBacks.get(sessionId)
+		const spent = tracked && tracked.origin === origin ? tracked.count : 0
+		const props = {
+			workspaceId: gate.workspaceId,
+			agentId: gate.actorId,
+			surface: 'chat' as const,
+			stage: 'phrase_check' as const,
+			reason: match.kind,
+		}
+
+		if (spent >= MAX_TURN_SEND_BACKS) {
+			this.turnSendBacks.delete(sessionId)
+			logger.info(
+				`Interactive session ${sessionId} still ended with work left after ${spent} send-back(s) (${match.kind}); letting the turn end`,
+			)
+			void trackTurnCheckCapHit({ ...props, sendBackNumber: spent })
+			return
+		}
+		if (!this.retryTurn) return
+
+		this.turnSendBacks.set(sessionId, { origin, count: spent + 1 })
+		void trackTurnSentBack({ ...props, sendBackNumber: spent + 1 })
+		logger.info(
+			`Interactive session ${sessionId} ended with work left (${match.kind}); sending the turn back (${spent + 1}/${MAX_TURN_SEND_BACKS})`,
+		)
+
+		const task = (async () => {
+			try {
+				await this.retryTurn?.(sessionId, {
+					type: 'user',
+					message: { role: 'user', content: buildSendBackNudge(match.kind) },
+				})
+			} catch (err) {
+				// The reply is already posted, so the human lost nothing. Refund the send-back.
+				this.turnSendBacks.set(sessionId, { origin, count: spent })
+				logger.warn(
+					`Interactive session ${sessionId} could not be sent a work-left correction: ${describeError(err)}`,
+				)
+			}
+		})()
+		this.pendingRetries.add(task)
+		void task.finally(() => this.pendingRetries.delete(task))
 	}
 
 	/**
@@ -736,6 +947,7 @@ export class InteractiveTurnFinalizer {
 		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
 		if (this.seen.has(dedupeKey)) return
 		if (!(await this.isNewestTurn(sessionId, logId))) return
+		if (!result.isError && (await this.nudgeHelperAboutJobs(sessionId))) return
 		this.rememberKey(dedupeKey)
 		try {
 			await this.onHelperResult?.(sessionId, { isError: result.isError, text: result.text })
@@ -744,6 +956,93 @@ export class InteractiveTurnFinalizer {
 				`Helper session ${sessionId} could not be ended after its result: ${describeError(err)}`,
 			)
 		}
+	}
+
+	/**
+	 * A helper's final message ends the session, and a background job or subagent
+	 * dies with it. If any are still running, tell the helper instead of ending:
+	 * the CLI starts a new turn by itself when a job reports back, so a helper
+	 * that waits is woken. Returns true when the nudge was written and the
+	 * session must stay open.
+	 *
+	 * Capped, and any failure to count or write falls through to ending the
+	 * session, so a stuck job can never hold one open.
+	 */
+	private async nudgeHelperAboutJobs(sessionId: string): Promise<boolean> {
+		if (!this.retryTurn) return false
+		const spent = this.helperJobNudges.get(sessionId) ?? 0
+		if (spent >= MAX_HELPER_JOB_NUDGES) return false
+		try {
+			const running = await this.countRunningJobs(sessionId)
+			if (running === 0) return false
+			this.helperJobNudges.set(sessionId, spent + 1)
+			logger.warn(
+				`Helper session ${sessionId} gave its result with ${running} background job(s) still running; asking it to wait (nudge ${spent + 1}/${MAX_HELPER_JOB_NUDGES})`,
+			)
+			await this.retryTurn(sessionId, {
+				type: 'user',
+				message: { role: 'user', content: helperJobsNudge(running) },
+			})
+			return true
+		} catch (err) {
+			logger.error(
+				`Helper session ${sessionId} could not be told about its running jobs: ${describeError(err)}`,
+			)
+			return false
+		}
+	}
+
+	/**
+	 * Background jobs and subagents the CLI started that have not reported back:
+	 * every `task_started` line with no later `task_notification` or terminal
+	 * `task_updated` for the same task id. A task started with
+	 * `is_backgrounded: false` ran in the foreground, which blocks the turn, so
+	 * it cannot be what is left running when the turn ends.
+	 */
+	private async countRunningJobs(sessionId: string): Promise<number> {
+		const rows = await this.db
+			.select({ content: sessionLogs.content })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					eq(sessionLogs.stream, 'stdout'),
+					or(
+						like(sessionLogs.content, '%"subtype":"task_started"%'),
+						like(sessionLogs.content, '%"subtype":"task_notification"%'),
+						like(sessionLogs.content, '%"subtype":"task_updated"%'),
+					),
+				),
+			)
+			.orderBy(asc(sessionLogs.id))
+		const running = new Set<string>()
+		for (const row of rows) {
+			for (const line of splitRowLines(row.content)) {
+				let parsed: Record<string, unknown>
+				try {
+					parsed = JSON.parse(line.trim()) as Record<string, unknown>
+				} catch {
+					continue
+				}
+				if (parsed.type !== 'system' || typeof parsed.task_id !== 'string') continue
+				if (parsed.subtype === 'task_started') {
+					if (parsed.is_backgrounded !== false) running.add(parsed.task_id)
+				} else if (parsed.subtype === 'task_notification') {
+					running.delete(parsed.task_id)
+				} else if (parsed.subtype === 'task_updated') {
+					const status = (parsed.patch as { status?: unknown } | undefined)?.status
+					if (
+						status === 'completed' ||
+						status === 'failed' ||
+						status === 'killed' ||
+						status === 'stopped'
+					) {
+						running.delete(parsed.task_id)
+					}
+				}
+			}
+		}
+		return running.size
 	}
 
 	/**
@@ -1304,7 +1603,7 @@ export class InteractiveTurnFinalizer {
 				.set({ spawnedByMessageId: messageId })
 				.where(
 					and(
-						// REST `create_session` records the spawner as
+						// REST `create_sub_chat` records the spawner as
 						// `spawned_by_session_id` (from the X-Maskin-Session-Id header);
 						// `source_session_id` is only set when the agent passes it.
 						or(
@@ -1432,15 +1731,20 @@ export class InteractiveTurnFinalizer {
 			// Session-exit failover never sees an interactive turn (see
 			// turn-error-classifier.ts), so route the same move from here.
 			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
+			// A failed look-up must not hide the failure from the human: assume work may have run.
+			const ranTools = movedTo
+				? false
+				: await this.turnRanTools(sessionId, logId, result.raw).catch(() => true)
 			await this.postTurnMessage(
 				sessionId,
 				gate,
 				conversationId,
 				result,
 				logId,
-				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
+				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(ranTools),
 				{
 					error_kind: 'permanent',
+					...(movedTo ? {} : { error_detail: detail.slice(0, ERROR_DETAIL_MAX_LENGTH) }),
 					// Lets the idle close tell a chat that only ever hit a dead key from one
 					// that did real work (session-manager onlyCreditErrorTurns).
 					...(isCreditBalanceLowText(detail) ? { credit_balance_low: true } : {}),
@@ -1468,6 +1772,25 @@ export class InteractiveTurnFinalizer {
 			// Answer the unanswered message on the new subscription ourselves. Only
 			// reached when the pointer actually moved, so a spent chain (movedTo
 			// null) cannot loop: each resume consumes one slot of the chain.
+			// A login that lapsed inside this container (no move happened) is dead for
+			// as long as the session lives: the CLI keeps its own copy, so a token
+			// the human refreshes afterwards is never read, and every retry replays
+			// on the dead login. Stop it so the retry spawns a fresh session, whose
+			// start path refreshes the slot. Nothing is resumed here: the token is
+			// still dead, so the human refreshes it and retries.
+			if (
+				!movedTo &&
+				this.onStopSession &&
+				classifyClaudeAuthFailureText(detail)?.reason_code === 'oauth_expired'
+			) {
+				try {
+					await this.onStopSession(sessionId, 'login_expired')
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not be stopped after its login expired: ${describeError(err)}`,
+					)
+				}
+			}
 			if (movedTo && this.onResumeAfterMove) {
 				try {
 					await this.onResumeAfterMove({

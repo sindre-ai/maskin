@@ -171,7 +171,7 @@ test('write tool names throw before any call and map to exit code 2', async () =
 		'create_objects',
 		'update_objects',
 		'delete_object',
-		'run_agent',
+		'create_sub_chat',
 		'tools/call',
 	]) {
 		assert.throws(() => assertReadOnly(name), ReadOnlyViolation)

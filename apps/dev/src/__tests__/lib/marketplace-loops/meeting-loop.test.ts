@@ -1,0 +1,175 @@
+import { describe, expect, it } from 'vitest'
+import {
+	getActorData,
+	getSkillData,
+	getTriggerData,
+} from '../../../lib/marketplace-loops/loop-data'
+import { loopSettingsSchema } from '../../../lib/marketplace-loops/loop-settings'
+import {
+	MEETING_LOOP,
+	MEETING_LOOP_ACTOR_IDS,
+	MEETING_LOOP_SKILL_IDS,
+	MEETING_LOOP_TRIGGER_IDS,
+} from '../../../lib/marketplace-loops/meeting-loop'
+
+describe('Meeting insights flow definition', () => {
+	it('uses the correct slug and metadata', () => {
+		expect(MEETING_LOOP.slug).toBe('meeting-loop')
+		expect(MEETING_LOOP.name).toBe('Meeting insights')
+		expect(MEETING_LOOP.useCase).toBe('Operations')
+		expect(MEETING_LOOP.version).toBe('1.2.0')
+		expect(MEETING_LOOP.description.length).toBeGreaterThan(0)
+	})
+
+	it('ships entry condition, close condition and tags, with no targets', () => {
+		const settings = loopSettingsSchema.parse(MEETING_LOOP.settings)
+		expect(settings.entryCondition).toMatch(/connected meeting or notetaker tool/)
+		expect(settings.entryCondition).not.toMatch(/Google Meet/)
+		expect(settings.closeCondition).toMatch(/stays at happened/)
+		expect(settings.tags).toEqual(['Context'])
+		expect(settings.targets).toBeUndefined()
+	})
+
+	it('links meetings into the flow from every ingest trigger', () => {
+		const withStep = MEETING_LOOP_TRIGGER_IDS.map(getTriggerData)
+			.filter((t) => /in_loop/.test(t.actionPrompt ?? ''))
+			.map((t) => t.name)
+			.sort()
+		expect(withStep).toEqual([
+			'Catch-up ingest: meetings stuck at happened',
+			'Google Meet transcript ready: ingest on arrival (optional fast path)',
+			'Meeting sweep: ingest new meetings (every 2h, weekdays)',
+		])
+		for (const id of MEETING_LOOP_TRIGGER_IDS) {
+			const prompt = getTriggerData(id).actionPrompt ?? ''
+			if (/in_loop/.test(prompt)) expect(prompt).toMatch(/Meeting insights flow.*list_loops/)
+		}
+	})
+
+	it('works with any meeting tool and treats Google Meet as an optional fast path', () => {
+		const [actorId] = MEETING_LOOP_ACTOR_IDS
+		expect(getActorData(actorId).systemPrompt).toMatch(/No single tool is required/)
+		const triggers = Object.fromEntries(
+			MEETING_LOOP_TRIGGER_IDS.map((id) => [getTriggerData(id).name, getTriggerData(id)]),
+		)
+		const sweep = triggers['Meeting sweep: ingest new meetings (every 2h, weekdays)']
+		expect(sweep.actionPrompt).toMatch(/main path for every meeting tool/)
+		expect(sweep.actionPrompt).toMatch(/Microsoft Teams/)
+		expect(sweep.actionPrompt).toMatch(/Zoom/)
+		expect(sweep.actionPrompt).toMatch(/names the meeting, notetaker and calendar tools it used/)
+		const fast = triggers['Google Meet transcript ready: ingest on arrival (optional fast path)']
+		expect(fast.actionPrompt).toMatch(/optional speed-up/)
+		// Google Meet is named only by its own fast trigger, and as an example elsewhere.
+		const settingsText = JSON.stringify(MEETING_LOOP.settings)
+		expect(settingsText).not.toMatch(/Google Meet/)
+	})
+
+	it('ships one actor, six triggers and eight skills, no duplicates', () => {
+		expect(MEETING_LOOP_ACTOR_IDS.length).toBe(1)
+		expect(MEETING_LOOP_TRIGGER_IDS.length).toBe(6)
+		expect(MEETING_LOOP_SKILL_IDS.length).toBe(8)
+		expect(new Set(MEETING_LOOP_TRIGGER_IDS).size).toBe(MEETING_LOOP_TRIGGER_IDS.length)
+		expect(new Set(MEETING_LOOP_SKILL_IDS).size).toBe(MEETING_LOOP_SKILL_IDS.length)
+	})
+
+	it('drives every trigger with the Meeting Manager', () => {
+		const [actorId] = MEETING_LOOP_ACTOR_IDS
+		expect(getActorData(actorId).name).toBe('Meeting Manager')
+		const byName = Object.fromEntries(
+			MEETING_LOOP_TRIGGER_IDS.map((id) => {
+				const t = getTriggerData(id)
+				return [t.name, t.targetActorId]
+			}),
+		)
+		expect(Object.keys(byName).sort()).toEqual([
+			'Catch-up ingest: meetings stuck at happened',
+			'Daily check: meeting pipeline health',
+			'Draft agenda for scheduled internal meeting',
+			'Google Meet transcript ready: ingest on arrival (optional fast path)',
+			'Meeting follow-up check (weekdays 14:00 UTC, weekly review Mondays)',
+			'Meeting sweep: ingest new meetings (every 2h, weekdays)',
+		])
+		for (const target of Object.values(byName)) expect(target).toBe(actorId)
+	})
+
+	it('attaches the four meeting skills and four shared skills to the agent', () => {
+		const names = MEETING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()
+		expect(names).toEqual([
+			'ask-an-agent-first',
+			'for-you-format',
+			'maskin-way-of-working',
+			'meeting-internal-jobs',
+			'meeting-ownership',
+			'meeting-people-and-extraction',
+			'meeting-types-and-summaries',
+			'plain-english-voice',
+		])
+	})
+
+	it('wires every trigger to a published actor and every skill to published actors only', () => {
+		const actorIds = new Set<string>(MEETING_LOOP_ACTOR_IDS)
+		for (const id of MEETING_LOOP_TRIGGER_IDS) {
+			expect(actorIds.has(getTriggerData(id).targetActorId)).toBe(true)
+		}
+		for (const id of MEETING_LOOP_SKILL_IDS) {
+			const attached = getSkillData(id).attachedActorIds
+			expect(attached.length).toBeGreaterThan(0)
+			for (const actorId of attached) expect(actorIds.has(actorId)).toBe(true)
+		}
+	})
+
+	// This bundle is a template for any workspace: nothing in it may name the
+	// company, people or ids it was derived from, carry a date, or carry a
+	// source id. The Meeting Manager is the one agent that ships, so its name is
+	// the one exception.
+	it('carries no workspace-specific text and no credentials', () => {
+		const text = JSON.stringify([
+			MEETING_LOOP,
+			...MEETING_LOOP_ACTOR_IDS.map(getActorData),
+			...MEETING_LOOP_TRIGGER_IDS.map(getTriggerData),
+			...MEETING_LOOP_SKILL_IDS.map(getSkillData),
+		])
+		const forbidden = [
+			/sebastian|sebk|magnus/i,
+			/vaerksted|skjald|meshfirm|fireflies/i,
+			// The product's own name is only allowed inside a skill's name
+			/maskin(?!-way-of-working)/i,
+			/\bCTO\b|\bCCO\b|chief of staff/i,
+			/assum/i,
+			/\b20\d\d\b/,
+			/\b\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b/,
+			/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}\b/,
+			/—/,
+		]
+		for (const pattern of forbidden) expect(text).not.toMatch(pattern)
+
+		const ownIds = new Set<string>([
+			...MEETING_LOOP_ACTOR_IDS,
+			...MEETING_LOOP_TRIGGER_IDS,
+			...MEETING_LOOP_SKILL_IDS,
+		])
+		const foreignIds = (
+			text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) ?? []
+		)
+			.filter((id) => id !== '00000000-0000-0000-0000-000000000000')
+			.filter((id) => !ownIds.has(id))
+		expect(foreignIds).toEqual([])
+
+		for (const id of MEETING_LOOP_ACTOR_IDS) {
+			expect(JSON.stringify(getActorData(id).tools)).not.toContain('mcpServers')
+		}
+	})
+
+	it('says flow, not loop, in the text a person reads', () => {
+		const texts = [
+			MEETING_LOOP.description,
+			...MEETING_LOOP_ACTOR_IDS.map((id) => {
+				const a = getActorData(id)
+				return `${a.name} ${a.description} ${a.systemPrompt}`
+			}),
+			...MEETING_LOOP_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? ''),
+		]
+		// Tool and object type names (list_loops, in_loop, update_loop) are one word, so they do not match.
+		for (const text of texts) expect(text).not.toMatch(/\b[Ll]oops?\b/)
+	})
+})

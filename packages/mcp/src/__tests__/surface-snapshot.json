@@ -158,13 +158,12 @@
 			"workspace_id"
 		],
 		"create_relationship": ["source_id", "target_id", "type", "workspace_id"],
-		"create_session": [
+		"create_sub_chat": [
 			"action_prompt",
 			"actor_id",
 			"initiated_from_object_id",
 			"source_session_id",
 			"spawned_by_message_id",
-			"wait",
 			"workspace_id"
 		],
 		"create_trigger": [
@@ -189,6 +188,7 @@
 		"delete_trigger": ["id", "workspace_id"],
 		"delete_workspace_field": ["name", "type", "workspace_id"],
 		"delete_workspace_skill": ["name", "workspace_id"],
+		"desktop_attach_file": ["agent_id", "path", "selector", "workspace_id"],
 		"desktop_click": ["agent_id", "button", "double", "workspace_id", "x", "y"],
 		"desktop_close_port": ["agent_id", "relay_port", "workspace_id"],
 		"desktop_drag": ["agent_id", "from_x", "from_y", "to_x", "to_y", "workspace_id"],
@@ -197,10 +197,12 @@
 		"desktop_list_ports": ["agent_id", "workspace_id"],
 		"desktop_move": ["agent_id", "workspace_id", "x", "y"],
 		"desktop_run": ["agent_id", "command", "timeout_s", "workspace_id"],
+		"desktop_save_file": ["agent_id", "name", "path", "workspace_id"],
 		"desktop_screenshot": ["agent_id", "workspace_id"],
 		"desktop_scroll": ["agent_id", "amount", "direction", "workspace_id", "x", "y"],
 		"desktop_type": ["agent_id", "text", "workspace_id"],
 		"disconnect_integration": ["id", "workspace_id"],
+		"fork_loop": ["id", "workspace_id"],
 		"get_actor": ["id", "workspace_id"],
 		"get_comments": ["cursor", "entity_id", "limit", "workspace_id"],
 		"get_conversation": ["conversation_id", "workspace_id"],
@@ -219,7 +221,6 @@
 			"stream",
 			"workspace_id"
 		],
-		"get_started": ["confirm", "loop_id", "workspace_id", "workspace_name"],
 		"get_trigger": ["id", "workspace_id"],
 		"get_workspace_schema": ["type", "workspace_id"],
 		"get_workspace_skill": ["name", "workspace_id"],
@@ -233,6 +234,7 @@
 			"to",
 			"workspace_id"
 		],
+		"install_loop": ["loop_id", "workspace_id", "workspace_name"],
 		"list_actors": ["cursor", "limit", "offset", "workspace_id"],
 		"list_conversation_messages": [
 			"after_id",
@@ -248,6 +250,7 @@
 		"list_integrations": ["cursor", "limit", "workspace_id"],
 		"list_keychain_credentials": ["workspace_id"],
 		"list_loops": ["cursor", "limit", "workspace_id"],
+		"list_marketplace": ["workspace_id"],
 		"list_notifications": ["kind", "limit", "offset", "status", "type", "workspace_id"],
 		"list_objects": [
 			"cursor",
@@ -406,8 +409,21 @@
 			"updated_after",
 			"workspace_id"
 		],
+		"set_next_step": [
+			"action",
+			"blocked_on_actor_id",
+			"blocked_on_decision_comment_id",
+			"blocked_on_object_id",
+			"blocked_reason",
+			"due_at",
+			"object_id",
+			"owner_id",
+			"replace",
+			"workspace_id"
+		],
 		"show_computer": ["task", "workspace_id"],
 		"stop_session": ["id", "workspace_id"],
+		"transcribe_file": ["id", "language", "workspace_id"],
 		"traverse_graph": [
 			"direction",
 			"edge_type_allow_list",
@@ -422,11 +438,13 @@
 			"detach_skill_ids",
 			"email",
 			"id",
+			"initials",
 			"llm_config",
 			"llm_config.model",
 			"llm_config.provider",
 			"name",
 			"role",
+			"starter_prompts",
 			"system_prompt",
 			"tools",
 			"workspace_id"
@@ -488,6 +506,19 @@
 			"remove_trigger_ids",
 			"status",
 			"tags",
+			"workspace_id"
+		],
+		"update_next_step": [
+			"action",
+			"blocked_on_actor_id",
+			"blocked_on_decision_comment_id",
+			"blocked_on_object_id",
+			"blocked_reason",
+			"due_at",
+			"evidence",
+			"object_id",
+			"owner_id",
+			"status",
 			"workspace_id"
 		],
 		"update_notification": [

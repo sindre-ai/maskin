@@ -68,10 +68,13 @@ struct PeopleSheet: View {
 	@State private var memberRoles: [String: String] = [:]
 	@State private var confirmingLeave = false
 	@State private var adding: Bool
-	/// Which kind the add list shows: agents (Add agent), people (Invite person), or both.
-	@State private var addingKind: ChatParticipant.Kind?
 	@State private var selection: Set<String> = []
 	@State private var query = ""
+	/// The workspace list has been asked for; until then the add list shows placeholder rows.
+	@State private var actorsLoaded = false
+	@State private var isAdding = false
+	@State private var addFailed = false
+	@State private var toast: String?
 	@State private var removeTarget: ChatParticipant?
 
 	init(
@@ -89,16 +92,15 @@ struct PeopleSheet: View {
 			List {
 				if adding {
 					ActorPickerList(
-						actors: conversations.actors.filter { addingKind == nil || $0.participant.kind == addingKind },
-						excluding: Set(chat.participants.map(\.id)),
-						selection: $selection, query: query)
+						actors: conversations.actors, excluding: Set(chat.participants.map(\.id)),
+						selection: $selection, query: query,
+						isLoading: conversations.actors.isEmpty && !actorsLoaded, roles: memberRoles)
 				} else {
 					Section {
 						ForEach(chat.participants) { person in row(person) }
 					}
-					Section("Add") {
-						addRow("Add agent", symbol: "sparkles", detail: agentHint, kind: .agent)
-						addRow("Invite person", symbol: "person.badge.plus", detail: "Members and guests", kind: .human)
+					Section {
+						addRow("Add people", symbol: "person.badge.plus", detail: "Teammates and agents from this workspace")
 					}
 					if canLeave {
 						Section {
@@ -138,30 +140,26 @@ struct PeopleSheet: View {
 			.searchable(text: $query, isPresented: .constant(adding), prompt: "Search people and agents")
 			.scrollContentBackground(.hidden)
 			.ambientBackground(showsBottom: false)
+			.safeAreaInset(edge: .bottom) { if adding { dock } }
+			.comingSoonToast($toast, seconds: 3)
+			.onChange(of: selection.count) { _, count in
+				if count > 0 { AccessibilityNotification.Announcement("\(count) selected").post() }
+			}
 			.sheetTitle(adding ? "Add people" : "People · \(chat.participants.count)")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
-					Button(adding ? "Back" : "Done") { if adding { adding = false; addingKind = nil } else { dismiss() } }
+					Button(adding ? "Back" : "Done") { if adding { closePicker() } else { dismiss() } }
 				}
-				if adding {
-					ToolbarItem(placement: .confirmationAction) {
-						Button("Add") {
-							Task {
-								await chat.addParticipants(Array(selection))
-								selection = []
-								adding = false
-								addingKind = nil
-							}
-						}
-						.disabled(selection.isEmpty)
-					}
+				if !adding {
+					ToolbarItem(placement: .confirmationAction) { Button("Add") { adding = true } }
 				}
 			}
 			.task {
 				await conversations.loadActors()
+				actorsLoaded = true
 				await loadRoles()
 			}
 		}
@@ -209,9 +207,8 @@ struct PeopleSheet: View {
 		}
 	}
 
-	private func addRow(_ title: String, symbol: String, detail: String, kind: ChatParticipant.Kind) -> some View {
+	private func addRow(_ title: String, symbol: String, detail: String) -> some View {
 		Button {
-			addingKind = kind
 			adding = true
 		} label: {
 			HStack(spacing: MaskinSpace.s7) {
@@ -230,14 +227,49 @@ struct PeopleSheet: View {
 		}
 	}
 
-	/// "Chief of Staff, Code Reviewer, +3": agents in the workspace that are not in this chat yet.
-	private var agentHint: String {
-		let here = Set(chat.participants.map(\.id))
-		let names = conversations.actors.filter { $0.participant.kind == .agent && !here.contains($0.id) }
-			.map(\.participant.name)
-		guard !names.isEmpty else { return "Agents of this workspace" }
-		let shown = names.prefix(2).joined(separator: ", ")
-		return names.count > 2 ? "\(shown), +\(names.count - 2)" : shown
+	/// The Add button, docked above the search field and the keyboard so it is always on screen. A
+	/// failed add says so above it and keeps the picks.
+	private var dock: some View {
+		VStack(spacing: MaskinSpace.s5) {
+			if addFailed {
+				Text(AddPeople.failureText)
+					.maskinText(.subhead).foregroundStyle(MaskinColor.danger)
+					.padding(MaskinSpace.s7).frame(maxWidth: .infinity, alignment: .leading)
+					.background(MaskinSurface.fill, in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
+					.onAppear { AccessibilityNotification.Announcement(AddPeople.failureText).post() }
+			}
+			Button {
+				Task { await addSelected() }
+			} label: {
+				Text(AddPeople.buttonTitle(count: selection.count))
+					.maskinText(.body).fontWeight(.semibold)
+					.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin)
+			}
+			.buttonStyle(.borderedProminent)
+			.disabled(selection.isEmpty || isAdding)
+		}
+		.padding(.horizontal, MaskinSpace.s9).padding(.vertical, MaskinSpace.s5)
+	}
+
+	private func addSelected() async {
+		let ids = Array(selection)
+		let names = conversations.actors.filter { selection.contains($0.id) }.map(\.participant.name)
+		isAdding = true
+		addFailed = false
+		defer { isAdding = false }
+		if await chat.addParticipants(ids, reportsFailure: false) {
+			closePicker()
+			toast = AddPeople.addedToast(names: names)
+		} else {
+			addFailed = true
+		}
+	}
+
+	private func closePicker() {
+		adding = false
+		selection = []
+		query = ""
+		addFailed = false
 	}
 
 	private func roleLine(_ person: ChatParticipant) -> String {

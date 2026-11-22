@@ -27,6 +27,31 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	case loop(workspaceId: String, id: String)
 	/// `…/<ws>/triggers/<id>`: one trigger.
 	case trigger(workspaceId: String, id: String)
+	/// `…/<ws>/sessions/<id>`: one agent session (the app shows its log).
+	case session(workspaceId: String, id: String)
+	/// `…/<ws>/settings` or `…/<ws>/settings/<page>`: Settings, on one page when the link names it.
+	case settings(workspaceId: String, page: SettingsPage?)
+	/// `…/<ws>/triggers`, `…/<ws>/loops`, `…/<ws>/chats`: a list page, which opens the matching tab or sheet.
+	case list(workspaceId: String, kind: ListKind)
+
+	/// The Settings pages a link can open. Raw values are the app's canonical path segment; the web's
+	/// `keychain` and `mcp` pages live on the app's Keys page, `extensions` on Item types.
+	public enum SettingsPage: String, Equatable, Hashable, Sendable {
+		case members, integrations, keys, skills, billing, notifications, objects
+
+		init?(webSegment: String) {
+			switch webSegment {
+			case "keychain", "mcp": self = .keys
+			case "extensions": self = .objects
+			default: self.init(rawValue: webSegment)
+			}
+		}
+	}
+
+	/// The list pages a link can open. Raw values are the web's path segment (flows are `loops` there).
+	public enum ListKind: String, Equatable, Hashable, Sendable {
+		case triggers, loops, chats
+	}
 
 	public static let scheme = "maskin"
 
@@ -36,7 +61,8 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 	public var workspaceId: String {
 		switch self {
 		case .object(let ws, _), .chat(let ws, _), .thread(let ws, _, _), .file(let ws, _),
-			.notifications(let ws), .agents(let ws), .agent(let ws, _), .loop(let ws, _), .trigger(let ws, _): ws
+			.notifications(let ws), .agents(let ws), .agent(let ws, _), .loop(let ws, _), .trigger(let ws, _),
+			.session(let ws, _), .settings(let ws, _), .list(let ws, _): ws
 		}
 	}
 
@@ -55,6 +81,9 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case .agent(_, let id): c.path = "/agents/\(id)"
 		case .loop(_, let id): c.path = "/loops/\(id)"
 		case .trigger(_, let id): c.path = "/triggers/\(id)"
+		case .session(_, let id): c.path = "/sessions/\(id)"
+		case .settings(_, let page): c.path = "/settings" + (page.map { "/\($0.rawValue)" } ?? "")
+		case .list(_, let kind): c.path = "/\(kind.rawValue)"
 		}
 		return c.url!
 	}
@@ -74,6 +103,9 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case .agent(let ws, let id): c.path = "/\(ws)/agents/\(id)"
 		case .loop(let ws, let id): c.path = "/\(ws)/loops/\(id)"
 		case .trigger(let ws, let id): c.path = "/\(ws)/triggers/\(id)"
+		case .session(let ws, let id): c.path = "/\(ws)/sessions/\(id)"
+		case .settings(let ws, let page): c.path = "/\(ws)/settings" + (page.map { "/\($0.rawValue)" } ?? "")
+		case .list(let ws, let kind): c.path = "/\(ws)/\(kind.rawValue)"
 		}
 		return c.url!
 	}
@@ -112,10 +144,23 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 		case 0:
 			// The bare workspace URL is the web's "pulse"/inbox page. `maskin://<ws>` alone too.
 			self = .notifications(workspaceId: workspace)
+		case _ where rest.first == "settings":
+			// `settings`, `settings/<page>`, and one id below a page (`settings/integrations/google-drive`),
+			// which opens that page. Anything else under settings is not a page the app has.
+			guard rest.count <= 3, rest.dropFirst(2).allSatisfy(Self.isSafeID) else { return nil }
+			if rest.count == 1 {
+				self = .settings(workspaceId: workspace, page: nil)
+			} else if let page = SettingsPage(webSegment: rest[1]) {
+				self = .settings(workspaceId: workspace, page: page)
+			} else {
+				return nil
+			}
 		case 1 where rest[0] == "notifications":
 			self = .notifications(workspaceId: workspace)
 		case 1 where rest[0] == "agents":
 			self = .agents(workspaceId: workspace)
+		case 1 where ListKind(rawValue: rest[0]) != nil:
+			self = .list(workspaceId: workspace, kind: ListKind(rawValue: rest[0])!)
 		case 2:
 			guard Self.isSafeID(rest[1]) else { return nil }
 			switch rest[0] {
@@ -130,10 +175,31 @@ public enum DeepLink: Equatable, Hashable, Sendable {
 			case "agents": self = .agent(workspaceId: workspace, id: rest[1])
 			case "loops": self = .loop(workspaceId: workspace, id: rest[1])
 			case "triggers": self = .trigger(workspaceId: workspace, id: rest[1])
+			case "sessions": self = .session(workspaceId: workspace, id: rest[1])
 			default: return nil
 			}
 		default:
 			return nil
+		}
+	}
+
+	/// Whether a URL is a page of a Maskin workspace (`maskin://<ws>/…`, or `https://maskin.io/<ws>/…`
+	/// with a workspace id first), whether or not the app has a screen for it. A page the app cannot
+	/// open must not fall through to Safari, where the person is signed out.
+	public static func isWorkspacePage(
+		_ url: URL, universalHosts: Set<String> = DeepLink.defaultUniversalHosts
+	) -> Bool {
+		guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false), c.user == nil, c.password == nil,
+			c.port == nil
+		else { return false }
+		switch c.scheme?.lowercased() {
+		case scheme: return c.host.map { UUID(uuidString: $0) != nil } ?? false
+		case "https":
+			guard let host = c.host?.lowercased(), universalHosts.contains(host),
+				let first = segments(c.path).first
+			else { return false }
+			return UUID(uuidString: first) != nil
+		default: return false
 		}
 	}
 

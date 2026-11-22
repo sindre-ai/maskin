@@ -84,6 +84,9 @@ export const queryKeys = {
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
 	},
+	sendPermissions: {
+		all: (workspaceId: string) => ['send-permissions', workspaceId] as const,
+	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
@@ -93,6 +96,8 @@ export const queryKeys = {
 			['integrations', workspaceId, 'agent-access', actorId] as const,
 		auditLog: (workspaceId: string, integrationId: string) =>
 			['integrations', workspaceId, integrationId, 'audit-log'] as const,
+		oauthApp: (workspaceId: string, provider: string) =>
+			['integrations', workspaceId, 'oauth-app', provider] as const,
 		githubLinkable: (workspaceId: string) =>
 			['integrations', workspaceId, 'github', 'linkable'] as const,
 		githubPendingSelection: (workspaceId: string, integrationId: string) =>

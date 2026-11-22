@@ -76,7 +76,7 @@ interface SaveMeetingArgs {
 }
 
 /** Insert-or-update by `external_id`, including the fall-through when a concurrent delivery wins the insert. */
-async function saveMeeting(
+export async function saveMeeting(
 	db: Database,
 	{ workspaceId, systemActorId, externalId, title, content, metadata }: SaveMeetingArgs,
 ): Promise<UpsertSkjaldMeetingResult> {

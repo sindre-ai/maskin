@@ -4,13 +4,16 @@
  * names, agent display names that already passed the visibility filter, scope
  * names) and cleans every one of them before it reaches the text.
  *
+ * It says what a person can now get done, one sentence per app, and never a
+ * tool name: a tool name is turned into plain words before it is shown.
+ *
  * The note never carries an approval, a spend or a risk call, never a decision
  * block, and never says grant or attach. An integration nobody can use is
  * reported as connected, with the decision left to an admin.
  */
 
 export const NOTE_MAX_CHARS = 900
-export const NOTE_MAX_ITEMS = 5
+export const NOTE_MAX_ITEMS = 3
 
 const NAME_MAX = 40
 const TOOLS_SHOWN = 3
@@ -55,42 +58,64 @@ function joinList(names: string[], shown: number): string {
 	return `${head.slice(0, -1).join(', ')} and ${head[head.length - 1]}`
 }
 
-/** Tool names in brackets read as a plain comma list: a, b, c and 2 more. */
-function toolList(names: string[]): string {
-	const head = names.slice(0, TOOLS_SHOWN)
-	const rest = names.length - head.length
-	return rest > 0 ? `${head.join(', ')} and ${rest} more` : head.join(', ')
+/**
+ * A tool name as plain words: "slack_react" under Slack becomes "react". The
+ * integration name is dropped when the tool name starts with it, and every
+ * separator becomes a space, so no snake_case reaches the person.
+ */
+export function toolPhrase(tool: string, integration: string): string {
+	const last = tool.split('__').filter(Boolean).pop() ?? tool
+	const words = last
+		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+		.split(/[^A-Za-z0-9]+/)
+		.filter(Boolean)
+		.map((w) => w.toLowerCase())
+	const app = cleanText(integration)
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter(Boolean)
+	const trimmed =
+		app.length > 0 && app.every((w, i) => words[i] === w) ? words.slice(app.length) : words
+	return cleanText((trimmed.length > 0 ? trimmed : words).join(' '))
+}
+
+/** Actions as a plain list: react, pin and 2 other things. */
+function actionList(phrases: string[]): string {
+	const unique = [...new Set(phrases.filter(Boolean))]
+	const head = unique.slice(0, TOOLS_SHOWN)
+	const rest = unique.length - head.length
+	const base =
+		head.length > 1
+			? `${head.slice(0, -1).join(', ')} and ${head[head.length - 1]}`
+			: (head[0] ?? '')
+	if (rest <= 0) return base
+	return `${head.join(', ')} and ${rest} other ${rest === 1 ? 'thing' : 'things'}`
 }
 
 function newToolsSentence(item: Extract<NoteItem, { kind: 'new_tools' }>): string {
-	const count = item.tools.length
-	const noun = count === 1 ? 'tool' : 'tools'
-	const them = count === 1 ? 'it' : 'them'
-	const tools = toolList(item.tools.map((t) => cleanText(t, NAME_MAX)))
+	const actions = actionList(item.tools.map((t) => toolPhrase(t, item.integration)))
 	const agents = joinList(
 		item.agents.map((a) => cleanText(a, NAME_MAX)),
 		AGENTS_SHOWN,
 	)
-	return `${cleanText(item.integration)} has ${count} new ${noun} (${tools}), and ${agents} can use ${them}.`
+	return `Your ${agents} can now ${actions} in ${cleanText(item.integration)}.`
 }
 
 function reconnectSentence(item: Extract<NoteItem, { kind: 'needs_reconnect' }>): string {
 	const scopes = item.scopes.map(scopeLabel).filter(Boolean)
 	const name = cleanText(item.integration)
-	if (scopes.length === 0) return `${name} wants a reconnect before the new tools work.`
-	const list = joinList(scopes, SCOPES_SHOWN)
-	return scopes.length === 1
-		? `${name} wants a reconnect before the new ${list} scope works.`
-		: `${name} wants a reconnect before the new ${list} scopes work.`
+	if (scopes.length === 0)
+		return `${name} needs a reconnect before your agents can use what is new.`
+	return `${name} needs a reconnect before your agents can use the new ${joinList(scopes, SCOPES_SHOWN)} access.`
 }
 
 function render(firstName: string, items: NoteItem[], hidden: number): string {
-	const parts = [`Hey ${cleanText(firstName) || 'there'}, quick check on what your agents can do.`]
+	const parts = [`Hey ${cleanText(firstName) || 'there'}, here is what your agents can now do.`]
 
 	const fresh = items.filter(
 		(i): i is Extract<NoteItem, { kind: 'new_tools' }> => i.kind === 'new_tools',
 	)
-	if (fresh.length > 0) parts.push(`New this week: ${fresh.map(newToolsSentence).join(' ')}`)
+	if (fresh.length > 0) parts.push(fresh.map(newToolsSentence).join(' '))
 
 	const reconnect = items.filter(
 		(i): i is Extract<NoteItem, { kind: 'needs_reconnect' }> => i.kind === 'needs_reconnect',

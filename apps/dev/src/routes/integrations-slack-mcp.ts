@@ -12,12 +12,15 @@ import {
 import { toolGateFor } from '../lib/integrations/tool-gate'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
+import { callingSessionId } from '../lib/session-flow'
 import { isWorkspaceWriter } from '../lib/workspace-auth'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		apiKeySessionId?: string | null
+		maskinSessionId?: string
 	}
 }
 
@@ -145,6 +148,7 @@ app.post('/', async (c) => {
 			iconUrl,
 			workspaceId,
 			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
 			slackTeamId: resolved.slackTeamId,
 			db,
 		},

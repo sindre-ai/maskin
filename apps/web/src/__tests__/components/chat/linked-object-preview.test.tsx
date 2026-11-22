@@ -10,6 +10,16 @@ const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TestWrapper 
 const useObject = vi.fn()
 const updateMutate = vi.fn()
 const approveMutate = vi.fn()
+const sendMutate = vi.fn()
+let sendPending = false
+const chatMessages = vi.fn()
+
+vi.mock('@/hooks/use-conversation', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/hooks/use-conversation')>()),
+	useSendMessage: () => ({ mutate: sendMutate, isPending: sendPending }),
+	useConversationMessages: () => ({ data: chatMessages() }),
+}))
+vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObject: (id: string) => useObject(id),
@@ -82,8 +92,10 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 import {
+	DraftNotesContext,
 	LinkedCardOrLink,
 	LinkedObjectCard,
+	SKIP_DRAFT_TEXT,
 	outsideChatLinkedCards,
 } from '@/components/chat/linked-object-preview'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
@@ -148,6 +160,9 @@ describe('LinkedObjectCard', () => {
 		useObject.mockReset()
 		updateMutate.mockReset()
 		approveMutate.mockReset()
+		sendMutate.mockReset()
+		sendPending = false
+		chatMessages.mockReset()
 	})
 
 	// What the server adds to an object an integration can deliver.
@@ -189,10 +204,185 @@ describe('LinkedObjectCard', () => {
 		renderCard({ conversationId: CHAT, agentId: AGENT })
 		await expand()
 		const quoted = screen.getByText('We already have governance and culture.')
-		expect(screen.getByText('In reply to')).toBeInTheDocument()
+		expect(screen.getByText('Liz Benison wrote')).toBeInTheDocument()
 		expect(screen.getByText('Liz Benison')).toBeInTheDocument()
 		const text = screen.getByText(/tillykke med fusionen/)
 		expect(quoted.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('shows the message being answered above the reply, labelled with who wrote it', async () => {
+		useObject.mockReturnValue({
+			data: objectRow({
+				preview: previewOf({
+					context: 'Can we meet Thursday?',
+					recipients: [{ role: 'to', name: 'Liz Benison', address: 'liz@example.com' }],
+				}),
+			}),
+		})
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.getByText('Liz Benison wrote')).toBeInTheDocument()
+		const quoted = screen.getByText('Can we meet Thursday?')
+		const reply = screen.getByText(/tillykke med fusionen/)
+		expect(quoted.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
+	it('draws no quote for a draft that answers nothing', async () => {
+		useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+		renderCard({ conversationId: CHAT, agentId: AGENT })
+		await expand()
+		expect(screen.queryByText(/ wrote$/)).not.toBeInTheDocument()
+		expect(screen.queryByText('In reply to')).not.toBeInTheDocument()
+	})
+
+	describe('Skip', () => {
+		it('sends a hidden message to the agent that names the draft, and approves nothing', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({ pages: [{ messages: [] }] })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			await userEvent.click(screen.getByRole('button', { name: 'Skip' }))
+			expect(sendMutate).toHaveBeenCalledWith({
+				content: SKIP_DRAFT_TEXT,
+				metadata: {
+					hidden_from_chat: true,
+					context_objects: [{ id: ID, type: 'task', title: 'LinkedIn note to Catja' }],
+				},
+			})
+			expect(approveMutate).not.toHaveBeenCalled()
+		})
+
+		it("says Skipped, with no buttons, once the chat holds the person's skip for this draft", async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({
+				pages: [
+					{
+						messages: [
+							{
+								id: 9,
+								actorId: 'me',
+								content: SKIP_DRAFT_TEXT,
+								metadata: { hidden_from_chat: true, context_objects: [{ id: ID }] },
+							},
+						],
+					},
+				],
+			})
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(screen.getByText('Skipped')).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Skip' })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Approve draft/ })).not.toBeInTheDocument()
+		})
+
+		it('ignores a skip of another draft', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({
+				pages: [
+					{
+						messages: [
+							{
+								id: 9,
+								actorId: 'me',
+								content: SKIP_DRAFT_TEXT,
+								metadata: { context_objects: [{ id: 'another-draft' }] },
+							},
+						],
+					},
+				],
+			})
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(screen.queryByText('Skipped')).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+		})
+
+		it('cannot be approved while the skip is still being sent', async () => {
+			sendPending = true
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({ pages: [{ messages: [] }] })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			const approve = screen.getByRole('button', { name: /Approve draft/ })
+			expect(approve).toBeDisabled()
+			await userEvent.click(approve)
+			expect(approveMutate).not.toHaveBeenCalled()
+		})
+
+		it('is not offered outside a chat, where nobody can be told', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			render(<LinkedObjectCard workspaceId={WS} objectId={ID} standalone />)
+			await expand()
+			expect(screen.queryByRole('button', { name: 'Skip' })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+		})
+
+		it('is not offered once the draft is approved', async () => {
+			useObject.mockReturnValue({
+				data: objectRow({ preview: previewOf({ delivery: { state: 'approved', at: null } }) }),
+			})
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(screen.queryByRole('button', { name: 'Skip' })).not.toBeInTheDocument()
+			expect(screen.getByText('Approved, waiting for send')).toBeInTheDocument()
+		})
+	})
+
+	describe('a question asked with the draft', () => {
+		const withNote = (note: { question: string; reason?: string }) =>
+			render(
+				<DraftNotesContext.Provider value={new Map([[ID, note]])}>
+					<LinkedObjectCard workspaceId={WS} objectId={ID} conversationId={CHAT} agentId={AGENT} />
+				</DraftNotesContext.Provider>,
+			)
+
+		it("is a short note inside the draft card, with the suggested option's reason", async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			withNote({ question: 'Send this to Catja today?', reason: 'She asked for it by Friday.' })
+			await expand()
+			expect(screen.getByText('Send this to Catja today?')).toBeInTheDocument()
+			expect(screen.getByText('She asked for it by Friday.')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Approve draft/ })).toBeInTheDocument()
+		})
+
+		it('is dropped once the draft is approved', async () => {
+			useObject.mockReturnValue({
+				data: objectRow({ preview: previewOf({ delivery: { state: 'approved', at: null } }) }),
+			})
+			withNote({ question: 'Send this to Catja today?' })
+			await expand()
+			expect(screen.getByText('Approved, waiting for send')).toBeInTheDocument()
+			expect(screen.queryByText('Send this to Catja today?')).not.toBeInTheDocument()
+		})
+
+		it('is dropped once the draft is skipped', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			chatMessages.mockReturnValue({
+				pages: [
+					{
+						messages: [
+							{
+								id: 9,
+								actorId: 'me',
+								content: SKIP_DRAFT_TEXT,
+								metadata: { hidden_from_chat: true, context_objects: [{ id: ID }] },
+							},
+						],
+					},
+				],
+			})
+			withNote({ question: 'Send this to Catja today?' })
+			await expand()
+			expect(screen.getByText('Skipped')).toBeInTheDocument()
+			expect(screen.queryByText('Send this to Catja today?')).not.toBeInTheDocument()
+		})
+
+		it('adds nothing to a draft the question is not about', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			expect(document.querySelector('[data-linked-card-note]')).toBeNull()
+		})
 	})
 
 	it('says so when nobody is filed as the recipient', async () => {
@@ -266,6 +456,67 @@ describe('LinkedObjectCard', () => {
 			// A draft starts open; the person folds it.
 			await userEvent.click(screen.getByRole('button', { name: 'Contract preview' }))
 			expect(screen.getByText('LinkedIn message · P1 · Recipient: Liz Benison')).toBeInTheDocument()
+		})
+	})
+
+	describe('standalone, beside a loop view', () => {
+		const renderStandalone = (onAction = vi.fn()) => {
+			render(
+				<LinkedObjectCard
+					workspaceId={WS}
+					objectId={ID}
+					standalone
+					defaultExpanded
+					onAction={onAction}
+				/>,
+			)
+			return onAction
+		}
+
+		it('moves the status as the person, with no chat, and only if the object is still in the status shown', async () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			const onAction = renderStandalone()
+			await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
+			expect(updateMutate).toHaveBeenCalledWith({
+				id: ID,
+				data: { status: 'done', chat: undefined, expected_status: 'in_review' },
+			})
+			expect(onAction).toHaveBeenCalledWith('status_change')
+		})
+
+		it('approves a draft with no chat, so no agent is told', async () => {
+			useObject.mockReturnValue({ data: objectRow({ preview: previewOf() }) })
+			const onAction = renderStandalone()
+			await userEvent.click(screen.getByRole('button', { name: /Approve draft/ }))
+			expect(approveMutate).toHaveBeenCalledWith({
+				draft: expect.objectContaining({ object_id: ID }),
+				chat: undefined,
+			})
+			expect(onAction).toHaveBeenCalledWith('approve')
+		})
+
+		it('still draws the header, title and status for an object with no text', () => {
+			useObject.mockReturnValue({ data: objectRow({ content: '' }) })
+			renderStandalone()
+			expect(screen.getByText('LinkedIn note to Catja')).toBeInTheDocument()
+			expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('in_review')
+		})
+
+		it('does not offer to edit the text', () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			renderStandalone()
+			expect(screen.queryByRole('button', { name: 'Edit the text' })).not.toBeInTheDocument()
+		})
+
+		it('sends no expected status from a chat card, and still draws nothing for an object with no text', async () => {
+			useObject.mockReturnValue({ data: objectRow() })
+			renderCard({ conversationId: CHAT, agentId: AGENT })
+			await expand()
+			await userEvent.click(screen.getByRole('button', { name: /Move to Done/ }))
+			expect(updateMutate).toHaveBeenCalledWith({ id: ID, data: { status: 'done', chat: CARD } })
+			useObject.mockReturnValue({ data: objectRow({ content: '' }) })
+			const { container } = render(<LinkedObjectCard workspaceId={WS} objectId={ID} />)
+			expect(container).toBeEmptyDOMElement()
 		})
 	})
 
@@ -707,10 +958,10 @@ describe('LinkedCardOrLink', () => {
 		}
 	})
 
-	it('draws any other object as a reference card: type, status, title, text and owner', () => {
+	it('draws a contact as a reference card: type, status, title, text and owner', () => {
 		useObject.mockReturnValue({
 			data: objectRow({
-				type: 'insight',
+				type: 'contact',
 				title: 'Ship the card',
 				status: 'in_review',
 				content: '## Plan\n\nDo **the thing** with [a link](https://x.test).',
@@ -727,6 +978,13 @@ describe('LinkedCardOrLink', () => {
 		expect(card).toHaveTextContent('Developer')
 		expect(card).toHaveTextContent('Working now')
 		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+	})
+
+	it('draws an event with text alone on its own line as a card with its text, with no Approve', () => {
+		useObject.mockReturnValue({ data: objectRow({ type: 'event' }), isLoading: false })
+		renderObject()
+		expect(screen.queryByText('the original link')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
 	})
 
 	it('draws a task with text alone on its own line as a card with its text, with no Approve', () => {

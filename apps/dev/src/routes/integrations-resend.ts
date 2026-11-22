@@ -31,7 +31,14 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage } from '../lib/send-gate'
+import {
+	decideSend,
+	deniedMessage,
+	pilotIsReason,
+	recordAutoSent,
+	withPilotReason,
+} from '../lib/send-gate'
+import { callingSessionId } from '../lib/session-flow'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
 /**
@@ -58,6 +65,8 @@ const app = new OpenAPIHono<{
 		actorId: string
 		workspaceRole?: string
 		storageProvider?: StorageProvider
+		apiKeySessionId?: string | null
+		maskinSessionId?: string
 	}
 }>({ defaultHook: validationFailureHook })
 
@@ -264,7 +273,12 @@ app.openapi(sendRoute, async (c) => {
 	}
 
 	// 3. The agent's send setting for emails, then exactly what is going out.
-	const decision = await decideSend(db, { workspaceId, agentId: actorId, kind: 'email' })
+	const decision = await decideSend(db, {
+		workspaceId,
+		agentId: actorId,
+		kind: 'email',
+		sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+	})
 	if (decision === 'denied') {
 		const f = fail(403, 'FORBIDDEN', deniedMessage('emails'))
 		return c.json(f.body, f.status)
@@ -278,10 +292,20 @@ app.openapi(sendRoute, async (c) => {
 	)
 	if (loaded.failure) return c.json(loaded.failure.body, loaded.failure.status)
 	if (!loaded.approvalEventId && decision === 'needs_approval') {
+		const pilot = await pilotIsReason(db, {
+			workspaceId,
+			agentId: actorId,
+			kind: 'email',
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+		const askFirst = 'This agent is set to ask first, so a person has to approve this email.'
 		const f = fail(
 			403,
 			'FORBIDDEN',
-			'Not sent. This agent is set to ask first, so a person has to approve this email. The draft shows an Approve button in For You and in chat; they can edit the text there first. If the person has just said yes in a chat you are in, after you showed them this draft there, call approve_draft_from_chat with this object_id and the id of their message, then call this tool again. Otherwise end your turn; when they have approved it, call this tool again with the same object_id.',
+			withPilotReason(
+				`Not sent. ${pilot ? 'A person has to approve this email.' : askFirst} The draft shows an Approve button in For You and in chat; they can edit the text there first. If the person has just said yes in a chat you are in, after you showed them this draft there, call approve_draft_from_chat with this object_id and the id of their message, then call this tool again. Otherwise end your turn; when they have approved it, call this tool again with the same object_id.`,
+				pilot,
+			),
 		)
 		return c.json(f.body, f.status)
 	}
@@ -296,6 +320,16 @@ app.openapi(sendRoute, async (c) => {
 			'This draft was already sent. Do not send it again. Create a new task for a new email.',
 		)
 		return c.json(f.body, f.status)
+	}
+	// Released on Always allow with no approval: log it on the draft.
+	if (!approvalEventId) {
+		await recordAutoSent(db, {
+			workspaceId,
+			agentId: actorId,
+			object: { id: objectId, type: loaded.objectType },
+			kind: 'email',
+			contentHash: loaded.contentHash,
+		})
 	}
 	const mode = approvalEventId ? ('approved_draft' as const) : ('direct' as const)
 	const idempotencyKey = approvalEventId

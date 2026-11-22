@@ -12,7 +12,6 @@ struct ObjectOverviewView<Decision: View>: View {
 	let store: ObjectDetailStore
 	let object: WorkObject
 	var onShowActivity: () -> Void = {}
-	var sessionActions = ObjectSessionActions.none
 	@ViewBuilder var decision: () -> Decision
 
 	var body: some View {
@@ -37,15 +36,6 @@ struct ObjectOverviewView<Decision: View>: View {
 				.padding(.vertical, MaskinSpace.s9)
 				.background(
 					MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
-			}
-			if let session = object.lastSession,
-				let line = ObjectSessionCopy.originLine(
-					starterName: store.directory.name(for: session.createdByActorID),
-					agentName: store.directory.name(for: session.agentID))
-			{
-				ObjectOriginRow(
-					session: session, line: line, starterName: store.directory.name(for: session.createdByActorID),
-					actions: sessionActions)
 			}
 			OutcomesSection(outputs: store.outcomes, sourceName: object.displayTitle)
 			ObjectPropertiesCard(store: store, object: object)

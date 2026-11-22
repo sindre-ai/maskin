@@ -16,7 +16,9 @@ import SwiftUI
 struct ProfileSheet: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
-	@State private var path: [Route] = []
+	/// A `NavigationPath`, not `[Route]`: the Settings page pushes `SettingsRoute` values with
+	/// `NavigationLink(value:)`, which a path typed to `Route` cannot take (the row highlights and nothing opens).
+	@State private var path = NavigationPath()
 	@State private var showWorkspaces = false
 	@State private var confirmSignOut = false
 	/// Flows and agents for the stat tiles, the workspace line and the Members page. Built once per
@@ -74,7 +76,7 @@ struct ProfileSheet: View {
 									AnyView(
 										ProfileRow(
 											title: item.title, symbol: item.symbol, value: value(for: item)
-										) { path.append(.item(item)) })
+										) { path.append(Route.item(item)) })
 								})
 						}
 					}
@@ -156,7 +158,7 @@ struct ProfileSheet: View {
 	@ViewBuilder private var profileCard: some View {
 		if let session = environment.auth.session {
 			Button {
-				path.append(.item(.account))
+				path.append(Route.item(.account))
 			} label: {
 				HStack(spacing: MaskinSpace.s8) {
 					ActorAvatar(
@@ -234,7 +236,7 @@ struct ProfileSheet: View {
 				runtime.selectedTab = .loops
 			}
 			ProfileStatTile(value: agents?.workingCount ?? 0, label: "agents working", destination: "Members") {
-				path.append(.item(.members))
+				path.append(Route.item(.members))
 			}
 		}
 	}
@@ -359,8 +361,10 @@ struct ProfileSheet: View {
 		case .members:
 			MembersView(
 				store: services.membersStore(), agents: agents, invitations: services.invitationsStore(),
-				onOpenAgent: { path.append(.agent($0)) },
-				onHire: { path.append(.item(.marketplace)) })
+				onOpenAgent: { path.append(Route.agent($0)) },
+				onHire: { path.append(Route.item(.marketplace)) },
+				onMessage: { runtime.startChat(with: $0, entryPoint: $1) },
+				canMessage: environment.workspaces.selected?.role != "viewer")
 		default:
 			if let route = item.settingsRoute { SettingsRouteView(route: route, environment: environment) }
 		}

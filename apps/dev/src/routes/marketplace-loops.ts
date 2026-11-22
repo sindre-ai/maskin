@@ -324,7 +324,7 @@ app.openapi(getMarketplaceLoopRoute, (async (c) => {
 
 	const [row] = await db.select().from(marketplaceLoops).where(eq(marketplaceLoops.id, id)).limit(1)
 	if (!row) {
-		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Marketplace flow not found'), 404)
 	}
 
 	const itemRows = await db
@@ -343,7 +343,9 @@ app.openapi(getMarketplaceLoopRoute, (async (c) => {
 
 	const response: z.infer<typeof marketplaceLoopDetailResponseSchema> = {
 		loop: toMarketplaceLoopSummary(row, itemTypes),
-		items: itemRows.map(toMarketplaceLoopItem),
+		// Custom views are part of the install but not an item a person can pick on
+		// its own, and the clients only know the four item types.
+		items: itemRows.filter((item) => isItemType(item.itemType)).map(toMarketplaceLoopItem),
 	}
 
 	logger.info('marketplace loop detail fetched', {
@@ -636,6 +638,29 @@ app.openapi(uninstallItemRoute, (async (c) => {
 	// the 2h timeout — see session-cleanup.ts.
 	if (type === 'actor' && !keepProvisionedItems) {
 		await stopSessionsForActors(db, c.get('sessionManager'), [entityId], c.get('actorId'))
+	}
+
+	// Remove the agent's S3 folder before the DB rows, same as DELETE /actors/:id:
+	// a storage failure returns an error while the actor still exists, so the
+	// uninstall can be retried. After the actor row is gone a retry would 404
+	// and strand the objects for a later agent created with the same id.
+	if (type === 'actor' && !keepProvisionedItems) {
+		try {
+			await agentStorage.deleteAllAgentFiles(entityId, workspaceId)
+		} catch (err) {
+			logger.error('Marketplace uninstall aborted: could not remove agent files from storage', {
+				actorId: entityId,
+				workspaceId,
+				error: String(err),
+			})
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					'Could not delete agent files from storage; agent not uninstalled',
+				),
+				500,
+			)
+		}
 	}
 
 	await db.transaction(async (tx) => {

@@ -8,7 +8,9 @@ import { useCanWrite } from '@/hooks/use-can-write'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
 import { useDuration } from '@/hooks/use-duration'
 import { useSession, useStopSession } from '@/hooks/use-sessions'
+import { secondsSince, trackChatStopClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
+import { plainActivityLine } from '@/lib/plain-activity'
 import { AlertTriangle, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -29,11 +31,11 @@ interface MessageActivityProps {
  * One agent's chain-of-thought for a single conversation turn, anchored to the
  * message it belongs to rather than pooled at the bottom of the thread.
  *
- * A live turn is not a disclosure widget — v2 draws it open, with the agent's
- * name, three pulsing dots, the verb, and an elapsed readout on one line, then
- * the steps it has taken with the current one picked out in ink and the rest
- * greyed behind it. A finished turn collapses to a single muted line the reader
- * can open if they want the trace.
+ * A live turn is drawn closed: the agent's name, three pulsing dots, one plain
+ * line for what it is doing now, and an elapsed readout. A small "Show steps"
+ * toggle opens the steps it has taken, with the current one picked out in ink
+ * and the rest greyed behind it. A finished turn collapses to a single muted
+ * "Show work" line the reader can open if they want the trace.
  */
 export function MessageActivity({ workspaceId, turn, layout = 'block' }: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
@@ -57,19 +59,14 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 					name={name}
 					type={actor?.type ?? 'agent'}
 					size="md"
-					className="shrink-0 rounded-lg"
+					className="shrink-0"
 				/>
 				<div className="min-w-0 flex-1 md:max-w-[660px]">
 					<div className="flex items-center gap-2">
 						<span className="shrink-0 text-[12.5px] font-bold text-foreground">{name}</span>
 						<TypingDots />
 						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">
-							{/* The verb only claims a reply is being written once the
-							    agent has actually stopped calling tools — before that it
-							    is still reading (mockup 7815). */}
-							{turn.steps.some((s) => s.kind === 'tool_use') && !isLastStepATool(turn)
-								? 'is writing a reply'
-								: 'is working on it'}
+							{turn.steps.length === 0 ? 'Starting…' : plainActivityLine(turn.steps)}
 						</span>
 						{elapsed ? (
 							<span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
@@ -77,11 +74,7 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 							</span>
 						) : null}
 					</div>
-					{/* No separate "sources" pill row: a live turn is drawn open, so
-					    the pills would repeat the step list string for string. The
-					    mockup can show both because its steps are prose and its
-					    sources are object names — here both are the same tool calls. */}
-					<StepList turn={turn} className="mt-[7px]" />
+					<LiveSteps turn={turn} />
 					{/* While the session is still booting (pending/starting/queued)
 					    there is no container or agent-server to stop yet — POST
 					    /sessions/:id/stop would 400 on `no container` and the
@@ -94,7 +87,13 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 								variant="ghost"
 								size="sm"
 								className="h-6 px-0 text-[10.5px] font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
-								onClick={() => stopSession.mutate(turn.sessionId)}
+								onClick={() => {
+									trackChatStopClicked({
+										session_id: turn.sessionId,
+										seconds_running: secondsSince(session?.startedAt),
+									})
+									stopSession.mutate(turn.sessionId)
+								}}
 								disabled={stopSession.isPending || !canWrite}
 							>
 								Stop
@@ -109,11 +108,31 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 	return <FinishedTurn turn={turn} name={name} indented={layout === 'block'} />
 }
 
+/** The live turn's step list, closed until the reader asks for it. */
+function LiveSteps({ turn }: { turn: MessageTurnActivity }) {
+	const [open, setOpen] = useState(false)
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger className="mt-1 flex cursor-pointer items-center gap-1 py-px text-[10.5px] text-muted-foreground hover:opacity-65">
+				<span>{open ? 'Hide steps' : 'Show steps'}</span>
+				<ChevronDown
+					size={11}
+					className={cn('shrink-0 text-border-strong transition-transform', open && 'rotate-180')}
+					aria-hidden
+				/>
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<StepList turn={turn} className="mt-[7px]" />
+			</CollapsibleContent>
+		</Collapsible>
+	)
+}
+
 /**
  * A completed (or failed) turn: a quiet "show work" line the reader can open
- * into the trace (mockup 413–430). Closed, it says what the agent last did —
- * the message beside it already carries the name, so repeating that would say
- * nothing.
+ * into the trace (mockup 413–430). Closed, it reads "Show work" —
+ * the message beside it already carries the name, and the last tool name says
+ * nothing a reader can use.
  */
 function FinishedTurn({
 	turn,
@@ -131,8 +150,7 @@ function FinishedTurn({
 		setOpen(turn.failed === true)
 	}, [turn.failed, manuallyToggled])
 
-	const lastStep = turn.steps[turn.steps.length - 1]
-	const closedLabel = turn.failed ? `${name} failed to start` : (lastStep?.text ?? 'Show work')
+	const closedLabel = turn.failed ? `${name} failed to start` : 'Show work'
 
 	return (
 		<Collapsible
@@ -288,8 +306,4 @@ function TypingDots() {
 			<span className="size-[5px] animate-pulse rounded-full bg-muted-foreground [animation-delay:320ms]" />
 		</span>
 	)
-}
-
-function isLastStepATool(turn: MessageTurnActivity): boolean {
-	return turn.steps[turn.steps.length - 1]?.kind === 'tool_use'
 }

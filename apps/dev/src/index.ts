@@ -15,13 +15,15 @@ import {
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { FileUploadReaperJob } from './jobs/file-upload-reaper'
 import { ChainSnapshotJob } from './jobs/keychain-chain-snapshot'
 import { KeychainUndoSweeperJob } from './jobs/keychain-undo-sweeper'
+import { LumaRegistrationsSyncJob } from './jobs/luma-registrations-sync'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { RotateDeksJob } from './jobs/rotate-deks'
+import { StripePaymentSyncJob } from './jobs/stripe-payment-sync'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
@@ -29,6 +31,11 @@ import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import { STALLED_QUERY_AFTER_MS, resolveDbPoolConfig } from './lib/db-pool-config'
+import {
+	isDbWatchdogEnabled,
+	resolveDbWatchdogFailAfterMs,
+	startDbWatchdog,
+} from './lib/db-watchdog'
 import { runDefaultHeartbeatBackfillOnBoot } from './lib/default-heartbeat-boot'
 import { canAccessDesktop } from './lib/desktop-access'
 import {
@@ -55,17 +62,21 @@ import { BriefingPushScheduler } from './services/briefing-push-scheduler'
 import { CapabilityScanner } from './services/capability-scanner'
 import { DailyBudgetCardScheduler } from './services/daily-budget-card-scheduler'
 import { DailyBudgetSummaryScheduler } from './services/daily-budget-events'
+import { DecisionDefaultWake } from './services/decision-default-wake'
 import { handleDesktopStreamUpgrade, isDesktopStreamRequest } from './services/desktop-relay'
 import { DriveWatchRenewer } from './services/drive-watch-renewer'
+import { DriverWaker } from './services/driver-wake'
 import { FlowActivityNotifier } from './services/flow-activity'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { GscSyncScheduler } from './services/gsc-sync-scheduler'
+import { createHeldSessionRelease } from './services/held-session-release'
 import { LifecyclePushScheduler } from './services/lifecycle-push-scheduler'
 import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
-import { NotificationEmailFanout } from './services/notification-email'
+import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
+import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -88,6 +99,7 @@ import { WebPushSender } from './services/web-push'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 import { createWorkspaceDesktopService } from './services/workspace-desktop'
+import { WorkspaceUsageSnapshotScheduler } from './services/workspace-usage-snapshot'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -108,11 +120,13 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
-	onPoolRecycled: ({ runningQueries, sql }) => {
-		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
-			runningQueries,
-			sql,
-		})
+	onPoolRecycled: ({ runningQueries, sql, reason }) => {
+		logger.warn(
+			reason === 'read_only'
+				? 'DB pool replaced: a write was refused as read-only, so the connections are on a node that is no longer the primary'
+				: 'DB pool replaced: a query got no answer and the database was not busy',
+			{ runningQueries, sql, reason },
+		)
 	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
@@ -298,6 +312,22 @@ triggerRunner
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
 
+// Wakes the driver when its child tasks close, a blocker clears, its object is moved by someone
+// else or a decision card expires. Does nothing unless the workspace has the driver-wake flag.
+const driverWaker = new DriverWaker(db, notifyBridge)
+driverWaker.start()
+
+// Finds objects with an overdue or missing next step and wakes their driver. Only looks at
+// workspaces with the next-step-sweep flag, and is record-only there until the workspace has been
+// swept for 3 days and has the next-step-sweep-wake flag.
+const nextStepSweep = new NextStepSweep(db)
+nextStepSweep.start()
+
+// Carries out the default on silence of a decision card whose deadline passed with no answer.
+// Does nothing unless the workspace has the decision-default flag.
+const decisionDefaultWake = new DecisionDefaultWake(db)
+decisionDefaultWake.start()
+
 const apnsSender = new ApnsSender(db)
 const webPushSender = new WebPushSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, [apnsSender, webPushSender])
@@ -305,9 +335,6 @@ notificationPush.start()
 
 const flowActivity = new FlowActivityNotifier(db, notifyBridge)
 flowActivity.start()
-
-const notificationEmail = new NotificationEmailFanout(db, notifyBridge)
-notificationEmail.start()
 
 const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
 	turns: sessionManager,
@@ -321,6 +348,10 @@ logger.info('Gmail watch renewer started')
 const gscSyncScheduler = new GscSyncScheduler(db)
 gscSyncScheduler.start()
 logger.info('GSC sync scheduler started')
+
+const microsoftSyncScheduler = new MicrosoftSyncScheduler(db)
+microsoftSyncScheduler.start()
+logger.info('Microsoft sync scheduler started')
 
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
@@ -377,7 +408,7 @@ briefingPushScheduler.start()
 const lifecyclePushScheduler = new LifecyclePushScheduler(db)
 lifecyclePushScheduler.start()
 // Summary email (one grouped mail a day). Own query, own claim; killswitch
-// FEATURE_BRIEFING_EMAIL=0 stops the emails and leaves the push alone.
+// FEATURE_BRIEFING_EMAIL: in production only =1 sends, elsewhere =0 stops; the push is left alone.
 const briefingEmailScheduler = new BriefingEmailScheduler(db)
 briefingEmailScheduler.start()
 // Daily budget 1a: one summary event per workspace per day, no model call.
@@ -387,6 +418,9 @@ dailyBudgetSummaryScheduler.start()
 // workspace that has set a daily target (off by default).
 const dailyBudgetCardScheduler = new DailyBudgetCardScheduler(db)
 dailyBudgetCardScheduler.start()
+// One workspace_usage_snapshot PostHog event per active workspace per day (percent and tokens).
+const workspaceUsageSnapshotScheduler = new WorkspaceUsageSnapshotScheduler(db)
+workspaceUsageSnapshotScheduler.start()
 
 // §9.4 — self-heal: back-fills the session_* events row for terminal sessions
 // that never got one, and settles remote pauses stuck in `snapshotting`. Ticks
@@ -437,6 +471,42 @@ if (telnyxSyncWorkspaceId && telnyxSyncActorId && telnyxSyncLoopId) {
 	logger.info('Telnyx recording sync started')
 }
 
+// Stripe payments: reads paid invoices and completed checkouts from our own Stripe account and
+// writes a stripe.paid reading on the person whose email matches exactly. No model in the path.
+// Off unless STRIPE_PAYMENT_SYNC_WORKSPACE_ID, _ACTOR_ID (the agent granted the Stripe key) and
+// _LOOP_ID (where the count of unmatched payments is written) are set. Optional: _KEY_NAME
+// (Keychain name, default Stripe), _FROM (earliest payment to read, default 2026-11-01).
+const stripeSyncWorkspaceId = process.env.STRIPE_PAYMENT_SYNC_WORKSPACE_ID
+const stripeSyncActorId = process.env.STRIPE_PAYMENT_SYNC_ACTOR_ID
+const stripeSyncLoopId = process.env.STRIPE_PAYMENT_SYNC_LOOP_ID
+if (stripeSyncWorkspaceId && stripeSyncActorId && stripeSyncLoopId) {
+	const stripePaymentSyncJob = new StripePaymentSyncJob(db, {
+		workspaceId: stripeSyncWorkspaceId,
+		actorId: stripeSyncActorId,
+		loopId: stripeSyncLoopId,
+		keyName: process.env.STRIPE_PAYMENT_SYNC_KEY_NAME || 'Stripe',
+		backfillFrom: new Date(process.env.STRIPE_PAYMENT_SYNC_FROM || '2026-11-01T00:00:00Z'),
+	})
+	stripePaymentSyncJob.start()
+	logger.info('Stripe payment sync started')
+}
+
+// Luma registrations: every 30 minutes reads the guest list of each Luma event between planned
+// and live and writes the approved count as a luma.registrations reading. No model in the path.
+// Off unless LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID and _ACTOR_ID (the agent granted the Luma key)
+// are set. Optional: _KEY_NAME (Keychain name, default Luma). With no key it logs once and waits.
+const lumaSyncWorkspaceId = process.env.LUMA_REGISTRATIONS_SYNC_WORKSPACE_ID
+const lumaSyncActorId = process.env.LUMA_REGISTRATIONS_SYNC_ACTOR_ID
+if (lumaSyncWorkspaceId && lumaSyncActorId) {
+	const lumaRegistrationsSyncJob = new LumaRegistrationsSyncJob(db, {
+		workspaceId: lumaSyncWorkspaceId,
+		actorId: lumaSyncActorId,
+		keyName: process.env.LUMA_REGISTRATIONS_SYNC_KEY_NAME || 'Luma',
+	})
+	lumaRegistrationsSyncJob.start()
+	logger.info('Luma registrations sync started')
+}
+
 // Keychain: nightly legacy-to-envelope upgrade. Built but OFF: it does nothing
 // unless KEYCHAIN_LEGACY_UPGRADE_ENABLED=true, which waits on the dual-read follow-on.
 const upgradeLegacyCredentialsJob = new UpgradeLegacyCredentialsJob(db)
@@ -479,7 +549,7 @@ void runDefaultHeartbeatBackfillOnBoot(db)
 // database, and never blocks or fails startup.
 void runDraftApprovalSkillBackfillOnBoot(db, agentStorage)
 
-const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
+const loopVersionPusher = new LoopVersionPusher(db, agentStorage, undefined, storageProvider)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 
@@ -516,6 +586,14 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// way the trigger runner learns to stop firing against it.
 	onPermanentFailure: ({ workspaceId, reasonCode, noCredentialsConfigured }) =>
 		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode, noCredentialsConfigured),
+	// Daily budget: lets sessions held at the daily limit go when there is room (most important
+	// first). Runs on the queue's tick, throttled; nothing is held outside production.
+	beforeClaim: () => releaseHeldSessionsOnTick(),
+})
+const releaseHeldSessionsOnTick = createHeldSessionRelease({
+	db,
+	makeDue: (sessionId) => sessionDispatchQueue.makeDue(sessionId),
+	freeStartSlots: (workspaceId) => sessionManager.freeStartSlots(workspaceId),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
@@ -596,7 +674,7 @@ logger.info('Session dispatch queue started')
 initMcpRateLimit()
 
 let shuttingDown = false
-const shutdown = async (signal: string) => {
+const shutdown = async (signal: string, exitCode = 0) => {
 	// A second signal while the first is still settling is an operator asking
 	// harder, not asking twice. The first gets the graceful path; the second
 	// exits now — otherwise a replay wedged on a hung write leaves SIGKILL as
@@ -608,6 +686,9 @@ const shutdown = async (signal: string) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	driverWaker.stop()
+	nextStepSweep.stop()
+	decisionDefaultWake.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
 	oauthSweeper.stop()
@@ -618,12 +699,12 @@ const shutdown = async (signal: string) => {
 	chainSnapshotJob.stop()
 	notificationPush.stop()
 	flowActivity.stop()
-	notificationEmail.stop()
 	briefingPushScheduler.stop()
 	briefingEmailScheduler.stop()
 	lifecyclePushScheduler.stop()
 	dailyBudgetSummaryScheduler.stop()
 	dailyBudgetCardScheduler.stop()
+	workspaceUsageSnapshotScheduler.stop()
 	liveActivityPush.stop()
 	voiceSessionTimeoutSweeper.stop()
 	// Rows would otherwise stay live until the sweeper finds them after restart.
@@ -645,10 +726,24 @@ const shutdown = async (signal: string) => {
 			`Failed to settle in-flight turn replays: ${err instanceof Error ? err.message : String(err)}`,
 		)
 	}
-	process.exit(0)
+	process.exit(exitCode)
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
+
+// Safety net: if the database stays unreachable, exit so the supervisor restarts the process with
+// a fresh pool. See lib/db-watchdog.ts and docs/runbooks/db-watchdog.md.
+if (isDbWatchdogEnabled(process.env)) {
+	startDbWatchdog({
+		probe: () => db.execute(sql`SELECT 1`),
+		shutdown: () => void shutdown('db-watchdog', 1),
+		forceExit: (code) => process.exit(code),
+		logError: (message, fields) => logger.error(message, fields),
+		inFlightCount: () => dbLoad.count,
+		failAfterMs: resolveDbWatchdogFailAfterMs(process.env),
+	})
+	logger.info('DB watchdog started')
+}
 
 logger.info(`Starting server on port ${port}`)
 

@@ -8,7 +8,10 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
-import { trackCreateNotificationCalled } from '../../../lib/analytics/notification-events'
+import {
+	trackCreateNotificationCalled,
+	trackNotificationSent,
+} from '../../../lib/analytics/notification-events'
 
 function stubDb(agentName: string | null): Database {
 	const rows = agentName === null ? [] : [{ name: agentName }]
@@ -96,5 +99,35 @@ describe('trackCreateNotificationCalled', () => {
 				notificationType: 'info',
 			}),
 		).resolves.toBeUndefined()
+	})
+})
+
+describe('trackNotificationSent', () => {
+	const sent = {
+		workspaceId: 'ws-1',
+		actorId: 'person-1',
+		notificationId: 'notif-5',
+		notificationType: 'needs_input',
+		category: 'needs_you',
+		rollup: false,
+	}
+
+	it('sends ids, the type and the category for the person the push is for, and nothing else', async () => {
+		await trackNotificationSent(sent)
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('notification_sent', 'person-1', {
+			workspace_id: 'ws-1',
+			actor_id: 'person-1',
+			notification_id: 'notif-5',
+			type: 'needs_input',
+			category: 'needs_you',
+			rollup: false,
+		})
+	})
+
+	it('swallows capture failures so the push is never held up', async () => {
+		capturePosthogEventMock.mockRejectedValueOnce(new Error('posthog down'))
+
+		await expect(trackNotificationSent(sent)).resolves.toBeUndefined()
 	})
 })

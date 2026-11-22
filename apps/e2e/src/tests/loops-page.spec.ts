@@ -34,14 +34,14 @@ test.describe('Loops list page', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback',
-				status: 'learning',
+				status: 'pilot',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
 			await expect(page.getByText('Customer feedback')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByTestId('loop-pill')).toHaveText('Learning')
+			await expect(page.getByTestId('loop-pill')).toHaveText('Pilot')
 		})
 
 		test(`page search narrows flows; both searches are reachable with no sideways scroll at ${viewport.label}`, async ({
@@ -53,12 +53,12 @@ test.describe('Loops list page', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Alpha pipeline',
-				status: 'learning',
+				status: 'pilot',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Zulu pipeline',
-				status: 'learning',
+				status: 'pilot',
 			})
 			await page.goto(`/${account.workspaceId}/loops`)
 			await expect(page.getByText('Alpha pipeline')).toBeVisible({ timeout: 10000 })
@@ -97,7 +97,7 @@ test.describe('Loops list page', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Sales pipeline',
-				status: 'learning',
+				status: 'pilot',
 				metadata: {
 					tags: ['Sales'],
 					targets: [{ label: 'customers closed', source: 'manual', actual: 0, target: 10 }],
@@ -106,15 +106,15 @@ test.describe('Loops list page', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Product pipeline',
-				status: 'learning',
+				status: 'pilot',
 				metadata: { tags: ['Product'] },
 			})
 			await page.goto(`/${account.workspaceId}/loops`)
 			await expect(page.getByText('Sales pipeline')).toBeVisible({ timeout: 10000 })
 
-			// Only the flow with a target carries a progress bar (the others show a decorative one
-			// of items completed), and a target nobody has met is Missed.
-			await expect(page.getByRole('progressbar')).toHaveCount(1)
+			// Only the flow with a target carries a target progress bar (the others show a decorative
+			// one of items completed), and a target nobody has met is Missed.
+			await expect(page.getByRole('progressbar', { name: /customers closed/ })).toHaveCount(1)
 			await expect(
 				page.getByRole('progressbar', { name: '0 of 10 customers closed' }),
 			).toBeVisible()
@@ -241,12 +241,12 @@ test.describe('Loops list page', () => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Alpha loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 		await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Zulu loop',
-			status: 'learning',
+			status: 'pilot',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)
@@ -370,7 +370,7 @@ test.describe('Loops list page', () => {
 				await account.api.createObject(account.workspaceId, {
 					type: 'loop',
 					title,
-					status: 'learning',
+					status: 'pilot',
 					metadata: { targets: [{ label: 'deals', source: 'manual', actual: 4, target: 10 }] },
 				})
 			}

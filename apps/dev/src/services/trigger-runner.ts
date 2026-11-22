@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	nextSteps,
 	notifications,
 	objects,
 	sessions,
@@ -12,7 +13,12 @@ import {
 	workspaceSuppressions,
 } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
+import {
+	SAFE_METADATA_FIELD_NAME_RE,
+	readChanges,
+	reversePatch,
+	usesItemDriverTarget,
+} from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { isActorHumanPaused, isHumanPaused } from '../lib/agent-pause'
@@ -20,6 +26,7 @@ import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
 } from '../lib/analytics/comment-responder-events'
+import { trackDriverWoken } from '../lib/analytics/driver-woken-events'
 import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
 import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
 import {
@@ -33,15 +40,24 @@ import {
 } from '../lib/comment-responder-claims'
 import { recordEvent } from '../lib/events/record-event'
 import {
+	type PrecheckResult,
+	decidePrecheck,
+	isDailyHeartbeat,
+	readPrecheckFacts,
+} from '../lib/heartbeat-precheck'
+import {
 	CredentialResolutionTimeoutError,
 	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
+	SubscriptionStillLimitedError,
+	TrialNotStartedError,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import { returnsToChatByDefault } from './chat-origin-routing'
 import { resolveSpawnLink } from './helper-link'
 import { evaluateAgentMentionGuards, verifyHelperReturn } from './mention-guards'
+import { SessionNotAdmittedError } from './self-start-limits'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
@@ -254,6 +270,15 @@ const TRIGGER_CRUD_ACTIONS = new Set(['created', 'updated', 'deleted'])
 
 /** Largest delay setTimeout honours (2^31-1 ms, ~24.8 days); above it Node fires after ~1 ms. */
 const MAX_TIMEOUT_MS = 2_147_483_647
+
+/** A reminder pinned to a step does nothing when it fires more than this long after its time. */
+const REMINDER_MAX_LATE_MS = 60 * 60 * 1000
+/** A reminder whose time is still this far off when it fires is left for the timer armed at its new time. */
+const REMINDER_EARLY_FIRE_TOLERANCE_MS = 5_000
+
+/** When a reminder's session fails to start it is tried again after this long, up to the attempt limit. */
+const REMINDER_START_RETRY_MS = 60 * 1000
+const REMINDER_START_MAX_ATTEMPTS = 5
 
 /** The trigger fields a human edits; a change in any of them counts as an edit. */
 function triggerFingerprint(trigger: typeof triggers.$inferSelect): string {
@@ -550,6 +575,10 @@ export class TriggerRunner {
 	): Promise<void> {
 		const now = new Date()
 
+		// A refused self-started run (cap, back-off, daily budget) is a decision, not a failure.
+		// The refusal is already logged and written as a session_admission event.
+		if (err instanceof SessionNotAdmittedError) return
+
 		if (err instanceof PlanCapExceededError) {
 			// `periodEnd` is Unix MILLISECONDS. Stripe writes `current_period_end`
 			// in seconds, but checkPlanCap converts it before constructing this
@@ -564,7 +593,10 @@ export class TriggerRunner {
 				workspaceId,
 				{
 					until,
-					reason: `${err.plan} plan cap exceeded ($${(err.used / 100).toFixed(2)} of $${(err.cap / 100).toFixed(2)})`,
+					reason:
+						err instanceof TrialNotStartedError
+							? 'trial not started (waiting for a card)'
+							: `${err.plan} plan used up`,
 				},
 				triggerName,
 			)
@@ -580,7 +612,8 @@ export class TriggerRunner {
 		if (
 			err instanceof LlmCredentialsUnavailableError &&
 			!err.transient &&
-			!(err instanceof CredentialResolutionTimeoutError)
+			!(err instanceof CredentialResolutionTimeoutError) &&
+			!(err instanceof SubscriptionStillLimitedError)
 		) {
 			await this.suppressWorkspace(
 				workspaceId,
@@ -927,18 +960,22 @@ export class TriggerRunner {
 		// the event row so `filter.actorId` matches the author (the JSON
 		// payload has no author field), and `on_target_type` from the hydrated
 		// object row so `filter.on_target_type` pins to bet/task/insight (tech
-		// spec §5.4 fold 6). For every other event action the root stays the
+		// spec §5.4 fold 6), plus `driver` from the same row so a condition on
+		// the commented item's driver reads like it does on updated events.
+		// For every other event action the root stays the
 		// raw data payload — no shape change.
 		const buildFilterRoot = async (
 			data: Record<string, unknown>,
 		): Promise<Record<string, unknown>> => {
 			if (event.action === 'commented') {
 				const ctx = await getObjectContext()
-				const targetType = (ctx.current as { type?: string } | undefined)?.type
+				const target = ctx.current as { type?: string; driver?: string | null } | undefined
+				const targetType = target?.type
 				return {
 					...data,
 					actorId: event.actor_id,
 					...(targetType !== undefined ? { on_target_type: targetType } : {}),
+					...(target ? { driver: target.driver ?? null } : {}),
 				}
 			}
 			const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
@@ -1059,17 +1096,45 @@ export class TriggerRunner {
 				continue
 			}
 
+			// A trigger set to the item's driver starts whoever drives the item at this
+			// moment, read from the same row the driver condition reads. No driver (or a
+			// person driving it) means nobody to wake: log it and fall back to no one.
+			let targetActorId = trigger.targetActorId
+			if (usesItemDriverTarget(config)) {
+				const data = await getEventData()
+				const root: Record<string, unknown> = data ? await buildFilterRoot(data) : {}
+				const driver = await this.resolveItemDriver(root.driver)
+				if ('skipReason' in driver) {
+					logger.info(`Trigger '${trigger.name}' skipped (${driver.skipReason})`)
+					await recordEvent(this.db, {
+						workspaceId: event.workspace_id,
+						actorId: trigger.targetActorId,
+						action: 'trigger_skipped',
+						entityType: 'trigger',
+						entityId: trigger.id,
+						data: {
+							trigger_name: trigger.name,
+							reason: driver.skipReason,
+							source_event_id: event.event_id,
+							entity_id: event.entity_id,
+						},
+					})
+					continue
+				}
+				targetActorId = driver.actorId
+			}
+
 			// Log trigger fired event
 			await recordEvent(this.db, {
 				workspaceId: event.workspace_id,
-				actorId: trigger.targetActorId,
+				actorId: targetActorId,
 				action: 'trigger_fired',
 				entityType: 'trigger',
 				entityId: trigger.id,
 				data: {
 					trigger_name: trigger.name,
 					prompt: trigger.actionPrompt,
-					target_actor_id: trigger.targetActorId,
+					target_actor_id: targetActorId,
 					source_event: event,
 				},
 			})
@@ -1078,7 +1143,7 @@ export class TriggerRunner {
 			const initiatedFrom = await loadInitiatedFromObject(this.db, event.entity_id)
 			startSession({
 				workspaceId: event.workspace_id,
-				actorId: trigger.targetActorId,
+				actorId: targetActorId,
 				callerKind: 'trigger',
 				actionPrompt: prompt,
 				triggerId: trigger.id,
@@ -1136,6 +1201,21 @@ export class TriggerRunner {
 					),
 				)
 		}
+	}
+
+	/** The agent to start for a trigger set to the item's driver, or why there is none. */
+	private async resolveItemDriver(
+		driver: unknown,
+	): Promise<{ actorId: string } | { skipReason: 'item_has_no_driver' | 'item_driver_not_agent' }> {
+		if (typeof driver !== 'string' || !UUID_RE.test(driver)) {
+			return { skipReason: 'item_has_no_driver' }
+		}
+		const [actor] = await this.db
+			.select({ type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, driver))
+			.limit(1)
+		return actor?.type === 'agent' ? { actorId: driver } : { skipReason: 'item_driver_not_agent' }
 	}
 
 	private async handleTriggerChange(event: PgEvent) {
@@ -1310,6 +1390,11 @@ export class TriggerRunner {
 			return
 		}
 
+		// Record-only: ask whether this daily heartbeat has anything to do, log the answer, and run
+		// it either way. After the claim, so one instance writes it, and before trigger_fired is
+		// recorded, so the last run is still the previous one. Fails open, like the idle check.
+		const precheck = await this.recordHeartbeatPrecheck(trigger, tick)
+
 		logger.info(`Cron trigger '${trigger.name}' firing`)
 
 		const eventData: Record<string, unknown> = {
@@ -1344,6 +1429,10 @@ export class TriggerRunner {
 			// correct value when no single originating object exists (spec §3.3,
 			// cron/reminder rows).
 			initiatedFromObjectId: null,
+			// Marks the run so DriverWaker reports whether it changed anything when it ends.
+			config: precheck
+				? { driver_wake: { source: 'heartbeat', reasons: precheck.reasons } }
+				: undefined,
 			await: 'none',
 		}).catch((err) =>
 			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
@@ -1354,6 +1443,55 @@ export class TriggerRunner {
 				}),
 			),
 		)
+	}
+
+	/**
+	 * The heartbeat pre-check, record-only (bet "Agents take the lead", sweep task, item 4). Writes
+	 * what it found as a heartbeat_precheck event on the trigger and as driver_woken (source
+	 * heartbeat, outcome skipped_nothing_due when it would have skipped).
+	 * It never stops a run: enforcing it is a separate step that needs the owners' agreement.
+	 */
+	private async recordHeartbeatPrecheck(
+		trigger: typeof triggers.$inferSelect,
+		tick: Date,
+	): Promise<PrecheckResult | null> {
+		if (!isDailyHeartbeat(trigger)) return null
+		try {
+			const result = decidePrecheck(await readPrecheckFacts(this.db, trigger, tick))
+			logger.info(
+				`Heartbeat '${trigger.name}' pre-check: ${result.wouldSkip ? 'would have skipped' : 'has work'}`,
+				{ trigger_id: trigger.id, reasons: result.reasons },
+			)
+			await recordEvent(this.db, {
+				workspaceId: trigger.workspaceId,
+				actorId: trigger.targetActorId,
+				action: 'heartbeat_precheck',
+				entityType: 'trigger',
+				entityId: trigger.id,
+				data: {
+					would_skip: result.wouldSkip,
+					reasons: result.reasons,
+					last_run_at: result.facts.lastRunAt?.toISOString() ?? null,
+					overdue: result.facts.overdue,
+					missing: result.facts.missing,
+					other_actor_events: result.facts.otherActorEvents,
+					new_insights: result.facts.newInsights,
+				},
+			})
+			if (result.wouldSkip) {
+				void trackDriverWoken({
+					workspaceId: trigger.workspaceId,
+					agentId: trigger.targetActorId,
+					source: 'heartbeat',
+					reason: 'nothing_due',
+					outcome: 'skipped_nothing_due',
+				})
+			}
+			return result
+		} catch (err) {
+			logger.warn(`Heartbeat '${trigger.name}' pre-check failed, running anyway: ${String(err)}`)
+			return null
+		}
 	}
 
 	private async queryScopeMatches(
@@ -1585,76 +1723,193 @@ export class TriggerRunner {
 		}
 	}
 
-	private scheduleReminder(trigger: typeof triggers.$inferSelect) {
+	private scheduleReminder(trigger: typeof triggers.$inferSelect, attempt = 0) {
 		const config = trigger.config as Record<string, unknown>
 		const scheduledAt = new Date(config.scheduled_at as string)
 		const remaining = Math.max(0, scheduledAt.getTime() - Date.now())
 		// setTimeout treats a delay above 2^31-1 ms (~24.8 days) as 1 ms, which
 		// would fire a far-future reminder at once. Arm at most MAX_TIMEOUT_MS and
 		// re-arm from the timer callback until the real time is in range.
-		const delay = Math.min(remaining, MAX_TIMEOUT_MS)
-		const clamped = remaining > MAX_TIMEOUT_MS
+		const delay = attempt > 0 ? REMINDER_START_RETRY_MS : Math.min(remaining, MAX_TIMEOUT_MS)
+		const clamped = attempt === 0 && remaining > MAX_TIMEOUT_MS
 
-		// Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot,
-		// so skipping it here would consume its timeout and drop it permanently
-		// rather than defer it — and being one-shot it cannot produce the
-		// repeating volume the suppression exists to stop. It still routes its
-		// failure through handleSessionCreateFailure so an over-cap reminder is
-		// classified (and can open a pause) rather than paging.
 		const timeout = setTimeout(async () => {
 			if (clamped) {
 				this.scheduleReminder(trigger)
 				return
 			}
-
-			logger.info(`Reminder trigger '${trigger.name}' firing`)
-
-			await recordEvent(this.db, {
-				workspaceId: trigger.workspaceId,
-				actorId: trigger.targetActorId,
-				action: 'trigger_fired',
-				entityType: 'trigger',
-				entityId: trigger.id,
-				data: {
-					trigger_name: trigger.name,
-					prompt: trigger.actionPrompt,
-					target_actor_id: trigger.targetActorId,
-					scheduled_at: config.scheduled_at,
-				},
-			})
-
-			startSession({
-				workspaceId: trigger.workspaceId,
-				actorId: trigger.targetActorId,
-				callerKind: 'trigger',
-				actionPrompt: trigger.actionPrompt,
-				triggerId: trigger.id,
-				triggerType: trigger.type,
-				createdBy: trigger.createdBy,
-				// Reminder trigger: one-shot, no originating object.
-				initiatedFromObjectId: null,
-				await: 'none',
-			}).catch((err) =>
-				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
-					(persistErr) =>
-						logger.error('handleSessionCreateFailure persistence failed', {
-							workspaceId: trigger.workspaceId,
-							trigger: trigger.name,
-							error: String(persistErr),
-						}),
-				),
-			)
-
-			// Auto-disable after firing
-			await this.db
-				.update(triggers)
-				.set({ enabled: false, updatedAt: new Date() })
-				.where(eq(triggers.id, trigger.id))
-
 			this.reminderTimeouts.delete(trigger.id)
+			try {
+				const outcome = await this.fireReminder(trigger.id)
+				if (outcome === 'start_failed' && attempt + 1 < REMINDER_START_MAX_ATTEMPTS) {
+					this.scheduleReminder(trigger, attempt + 1)
+				}
+			} catch (err) {
+				logger.error(`Reminder trigger '${trigger.name}' failed to fire`, {
+					triggerId: trigger.id,
+					error: String(err),
+				})
+			}
 		}, delay)
 
 		this.reminderTimeouts.set(trigger.id, timeout)
+	}
+
+	/**
+	 * Fires one reminder. Reads the row again first, because the copy captured
+	 * when the timer was armed can be hours or weeks old: a reminder that was
+	 * disabled or deleted since must do nothing. The (trigger_id, event_id) claim
+	 * in trigger_dispatches stops a second instance (rolling deploy) from firing
+	 * the same reminder; the key is the negative of the scheduled time in unix
+	 * seconds, the same scheme cron uses, so it cannot collide with an event id.
+	 * The reminder is disabled only after the session row exists. When the start
+	 * fails the claim is released and the reminder stays enabled, so it is retried
+	 * and, failing that, fires again at the next boot.
+	 *
+	 * Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot, so
+	 * skipping it here would drop it permanently rather than defer it. It still
+	 * routes a start failure through handleSessionCreateFailure so an over-cap
+	 * reminder is classified (and can open a pause) rather than paging.
+	 */
+	private async fireReminder(triggerId: string): Promise<'fired' | 'skipped' | 'start_failed'> {
+		const [trigger] = await this.db.select().from(triggers).where(eq(triggers.id, triggerId))
+		if (!trigger || !trigger.enabled || trigger.type !== 'reminder') return 'skipped'
+
+		const config = trigger.config as {
+			scheduled_at: string
+			object_id?: string
+			step_id?: string
+		}
+		const scheduledAt = new Date(config.scheduled_at)
+
+		// A reminder pinned to a step is only worth acting on near its time. A late
+		// one (boot after downtime, queued behind a deploy) leaves the step open for
+		// the sweep rather than waking the owner on stale facts.
+		if (config.step_id && Date.now() - scheduledAt.getTime() > REMINDER_MAX_LATE_MS) {
+			await this.skipReminder(trigger, 'late')
+			return 'skipped'
+		}
+
+		// A rescheduled reminder keeps its row, but a timer armed from the old copy can still fire
+		// first. The update event arms the right timer, so this one does nothing and stays enabled.
+		if (scheduledAt.getTime() - Date.now() > REMINDER_EARLY_FIRE_TOLERANCE_MS) return 'skipped'
+
+		// A reminder pinned to a step only means something while the step is open. Closed,
+		// replaced or blocked since, there is nobody to wake.
+		if (config.step_id) {
+			const [step] = await this.db
+				.select({ status: nextSteps.status })
+				.from(nextSteps)
+				.where(eq(nextSteps.id, config.step_id))
+			if (!step || step.status !== 'open') {
+				await this.skipReminder(trigger, 'step_closed')
+				return 'skipped'
+			}
+		}
+
+		let objectLine = ''
+		if (config.object_id) {
+			const [object] = await this.db
+				.select({ id: objects.id, title: objects.title, status: objects.status })
+				.from(objects)
+				.where(and(eq(objects.id, config.object_id), eq(objects.workspaceId, trigger.workspaceId)))
+			if (!object) {
+				await this.skipReminder(trigger, 'object_missing')
+				return 'skipped'
+			}
+			objectLine = `\n\nThis wake-up is for the object "${object.title ?? ''}" (id ${object.id}, status ${object.status ?? 'none'}).${
+				config.step_id ? ` Its next step is ${config.step_id}.` : ''
+			}`
+		}
+
+		const claimKey = -Math.floor(scheduledAt.getTime() / 1000)
+		const claimed = await this.db
+			.insert(triggerDispatches)
+			.values({ triggerId: trigger.id, eventId: claimKey })
+			.onConflictDoNothing()
+			.returning({ triggerId: triggerDispatches.triggerId })
+		if (claimed.length === 0) {
+			logger.info(`Reminder trigger '${trigger.name}' already fired by another process`)
+			return 'skipped'
+		}
+
+		logger.info(`Reminder trigger '${trigger.name}' firing`)
+
+		await recordEvent(this.db, {
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: trigger.id,
+			data: {
+				trigger_name: trigger.name,
+				prompt: trigger.actionPrompt,
+				target_actor_id: trigger.targetActorId,
+				scheduled_at: config.scheduled_at,
+				object_id: config.object_id ?? null,
+				step_id: config.step_id ?? null,
+			},
+		})
+
+		try {
+			await startSession({
+				workspaceId: trigger.workspaceId,
+				actorId: trigger.targetActorId,
+				callerKind: 'trigger',
+				actionPrompt: `${trigger.actionPrompt}${objectLine}`,
+				triggerId: trigger.id,
+				triggerType: trigger.type,
+				createdBy: trigger.createdBy,
+				// Null for an unpinned reminder: there is no originating object.
+				initiatedFromObjectId: config.object_id ?? null,
+				await: 'none',
+			})
+		} catch (err) {
+			await this.db
+				.delete(triggerDispatches)
+				.where(
+					and(eq(triggerDispatches.triggerId, trigger.id), eq(triggerDispatches.eventId, claimKey)),
+				)
+			await this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
+				(persistErr) =>
+					logger.error('handleSessionCreateFailure persistence failed', {
+						workspaceId: trigger.workspaceId,
+						trigger: trigger.name,
+						error: String(persistErr),
+					}),
+			)
+			return 'start_failed'
+		}
+
+		await this.disableReminder(trigger.id)
+		if (config.step_id) {
+			await this.db
+				.update(nextSteps)
+				.set({ wakeCount: sql`${nextSteps.wakeCount} + 1`, lastWokenAt: new Date() })
+				.where(eq(nextSteps.id, config.step_id))
+		}
+		return 'fired'
+	}
+
+	private async disableReminder(triggerId: string) {
+		await this.db
+			.update(triggers)
+			.set({ enabled: false, updatedAt: new Date() })
+			.where(eq(triggers.id, triggerId))
+	}
+
+	/** Gives up on a reminder without starting a session: records why, then disables it. */
+	private async skipReminder(trigger: typeof triggers.$inferSelect, reason: string) {
+		logger.info(`Reminder trigger '${trigger.name}' skipped (${reason})`)
+		await recordEvent(this.db, {
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			action: 'trigger_skipped',
+			entityType: 'trigger',
+			entityId: trigger.id,
+			data: { trigger_name: trigger.name, reason },
+		})
+		await this.disableReminder(trigger.id)
 	}
 }
 

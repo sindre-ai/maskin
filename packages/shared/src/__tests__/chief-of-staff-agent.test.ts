@@ -41,12 +41,12 @@ describe('Chief of Staff default template', () => {
 describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 	const content = CONTINUOUS_ONBOARDING_SKILL.content
 
-	it('opens with a named Classify step positioned above Steps 1–5', () => {
+	it('keeps a named Classify step positioned above the first chat script', () => {
 		const classifyIdx = content.indexOf('## Classify')
-		const stepsIdx = content.indexOf('## Steps 1–5')
+		const chatIdx = content.indexOf('## The first chat')
 		expect(classifyIdx).toBeGreaterThan(-1)
-		expect(stepsIdx).toBeGreaterThan(-1)
-		expect(classifyIdx).toBeLessThan(stepsIdx)
+		expect(chatIdx).toBeGreaterThan(-1)
+		expect(classifyIdx).toBeLessThan(chatIdx)
 	})
 
 	it('contains the classifier rule verbatim (default Fetchable, escalate only on no public source or framing/priority)', () => {
@@ -85,24 +85,63 @@ describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 		}
 	})
 
-	it('codifies the batch-container pattern: one container per batch, children relates_to, one create_comment on the container', () => {
-		expect(content).toContain('batch container')
-		expect(content).toMatch(/type:\s*knowledge/)
-		expect(content).toMatch(/status:\s*draft/)
-		expect(content).toMatch(/type:\s*relates_to/)
-		expect(content).toMatch(/exactly ONE\s+`create_comment` on the container/)
-		expect(content).toMatch(/`entity_id`:\s*\*\*the container's id\*\*/)
+	it('is a chat script: first message, research check, recommendations, one question at a time', () => {
+		for (const heading of [
+			'### Message 1',
+			'### Message 2',
+			'### Message 3',
+			'### Message 4 onward',
+		]) {
+			expect(content).toContain(heading)
+		}
+		expect(content).toContain('One question per message')
+		expect(content).toContain('Never post the welcome as a comment on the checklist')
 	})
 
-	it('uses the exact "Confirm batch?" decision title with the three load-bearing chip labels', () => {
-		expect(content).toContain('"Confirm batch?"')
-		expect(content).toContain('**Confirm all**')
-		expect(content).toContain('**Confirm each**')
-		// "Skip" appears elsewhere as ordinary English; assert the chip form with surrounding order and recommended marker.
-		expect(content).toMatch(
-			/\*\*Confirm all\*\*\s*\(recommended\)\s*\/\s*\*\*Confirm each\*\*\s*\/\s*\*\*Skip\*\*/,
-		)
+	it('shows the research with exactly three taps in order and no longer uses the batch card', () => {
+		expect(content).toMatch(/\*\*Looks right\*\*, \*\*Needs correction\*\*, \*\*Wrong entirely\*\*/)
+		expect(content).toContain('ask_user_question')
+		expect(content).not.toContain('Confirm batch?')
+		expect(content).not.toContain('**Confirm all**')
 	})
+
+	it('points to the card in Message 2 instead of restating the summary', () => {
+		const start = content.indexOf('### Message 2')
+		const end = content.indexOf('### Message 3')
+		const message2 = content.slice(start, end)
+		expect(message2).toContain("It's waiting in the card.")
+		expect(message2).toContain('Do not restate the summary')
+		expect(message2).toContain('do not post a second card')
+		// the quoted line the person reads is a pointer, not a question with taps
+		const quoted = message2
+			.split('\n')
+			.filter((line) => line.startsWith('>'))
+			.join('\n')
+		expect(quoted).not.toContain('Is that right?')
+	})
+
+	it('keeps the script line tying the brief to the trigger gate', () => {
+		expect(content).toContain('First-pass brief filed')
+	})
+
+	it('recommends only from the catalog, as an Install link, and never installs', () => {
+		expect(content).toContain('Never recommend something that is not in the catalog')
+		expect(content).toContain('NEVER call install_loop')
+		expect(content).toContain('Install is a link, not a button in the chat')
+	})
+
+	it('keeps tech words out of every scripted line the person reads', () => {
+		const scriptLines = content
+			.split('\n')
+			.filter((line) => line.startsWith('>'))
+			.join('\n')
+		expect(scriptLines.length).toBeGreaterThan(0)
+		expect(scriptLines).not.toMatch(
+			/\b(agent|model|prompt|loop|KPI|MCP|integration|workflow|LLM)\b/i,
+		)
+		expect(scriptLines).not.toContain('\u2014')
+	})
+
 	it('states the driver convention: agents drive knowledge objects, never the human owner', () => {
 		// The seeded `First-pass brief filed -> present for confirmation` trigger gates on
 		// driver = Researcher. The skill must name that, or the model improvises and the

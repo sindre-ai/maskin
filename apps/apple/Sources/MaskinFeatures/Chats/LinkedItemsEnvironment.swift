@@ -40,6 +40,7 @@ enum LinkedItemStores {
 			places: APILinkedPlacesRemote(client: environment.client, workspaceID: workspaceId),
 			loops: { try await loops.loops() },
 			triggers: { try await triggers.listPage() },
+			events: environment.events,
 			workspaceID: { [weak environment] in environment?.workspaceId },
 			// The workspace switcher's list: a workspace the reader is not in has no name here.
 			workspaceName: { [weak environment] id in

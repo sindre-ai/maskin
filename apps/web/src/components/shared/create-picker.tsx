@@ -172,6 +172,9 @@ export function CreatePicker({
 	const [agentId, setAgentId] = useState<string | null>(null)
 	const [full, setFull] = useState(false)
 	const [commandIndex, setCommandIndex] = useState(0)
+	// Esc hides the `/` type list without touching the typed text. Cleared on the
+	// next edit so typing after Esc brings the list back.
+	const [commandDismissed, setCommandDismissed] = useState(false)
 	const [submitting, setSubmitting] = useState(false)
 	const inputRef = useRef<HTMLInputElement>(null)
 
@@ -189,6 +192,7 @@ export function CreatePicker({
 		setAgentId(null)
 		setFull(false)
 		setCommandIndex(0)
+		setCommandDismissed(false)
 		setSubmitting(false)
 	}, [open, defaultType, defaultObjectSubtype, defaultText])
 
@@ -229,7 +233,8 @@ export function CreatePicker({
 	}, [agentId, agentOptions, defaultAgent])
 
 	const trimmed = text.trim()
-	const commandOpen = entityKind === null && objectType === null && text.startsWith('/')
+	const commandOpen =
+		entityKind === null && objectType === null && text.startsWith('/') && !commandDismissed
 	const commandQuery = commandOpen ? text.slice(1).trim().toLowerCase() : ''
 
 	interface CommandRow {
@@ -265,6 +270,18 @@ export function CreatePicker({
 		: allCommandRows
 
 	const activeCommand = commandRows[Math.min(commandIndex, commandRows.length - 1)] ?? null
+
+	// The list scrolls (max 300px), so keep the highlighted row in view as the arrow keys move it.
+	const activeCommandKey = commandOpen ? (activeCommand?.key ?? null) : null
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the highlighted row changes
+	useEffect(() => {
+		if (!activeCommandKey) return
+		document
+			.getElementById(
+				`${commandListId}-${commandRows.findIndex((r) => r.key === activeCommandKey)}`,
+			)
+			?.scrollIntoView?.({ block: 'nearest' })
+	}, [activeCommandKey])
 
 	function selectObjectType(type: string) {
 		setEntityKind(null)
@@ -498,6 +515,13 @@ export function CreatePicker({
 		<ResponsiveDialog open={open && canWrite} onOpenChange={onOpenChange}>
 			<ResponsiveDialogContent
 				onEscapeKeyDown={(event) => {
+					// Radix listens for Escape on the document before the input's own
+					// keydown runs, so the list has to be closed here, innermost first.
+					if (commandOpen && commandRows.length > 0) {
+						event.preventDefault()
+						setCommandDismissed(true)
+						return
+					}
 					if (full) {
 						event.preventDefault()
 						setFull(false)
@@ -762,6 +786,7 @@ export function CreatePicker({
 									onChange={(e) => {
 										setText(e.target.value)
 										setCommandIndex(0)
+										setCommandDismissed(false)
 									}}
 									onKeyDown={handleKeyDown}
 									placeholder={placeholder}

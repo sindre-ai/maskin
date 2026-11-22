@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { doneWhenBlockSchema, doneWhenStrings, findDoneWhenViolations } from './done-when'
 
 /**
  * The structured decision block an agent attaches to a comment when it needs a
@@ -97,6 +98,12 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			'Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.',
 		),
+	default_on_silence: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.',
+		),
 	set_status: z
 		.object({
 			status: z.string().min(1).describe('The status to put the object in, e.g. "active".'),
@@ -111,6 +118,12 @@ export const decisionOptionSchema = z.object({
 		.optional()
 		.describe(
 			'Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.',
+		),
+	approve_done_when: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on the one option that approves the done-when list on this card (needs done_when). A person tapping it approves the list as themselves, and it also gives the go-ahead for every line that does not send, spend or delete. Your own call can never approve a list: only the tap does. Leave it off otherwise.',
 		),
 	delete_agent: z
 		.object({
@@ -266,6 +279,11 @@ export const commentDecisionSchema = z
 			.describe(
 				'Set by the API: the object the card is about (the one its set_status option moves, else the one the comment is on) and the status that object was in when the card was posted. The card drops once the object is in any other status. On a card with no set_status option it is left off when the card has only_while_status or keep_on_status_change. Do not set it yourself; any value you send is replaced.',
 			),
+		done_when: doneWhenBlockSchema
+			.optional()
+			.describe(
+				'Attach this to propose the done-when list for a job: what will be true when the work is done. The card shows your questions on top and the lines below, each tagged Code, Checker or You. Posting the card saves the lines as a draft; a person tapping the option with approve_done_when approves them. You cannot approve or edit an approved list. If a person replies with changes, post a new card with the redrafted lines. Put the job in the comment\u2019s object.',
+			),
 		draft: decisionDraftSchema
 			.optional()
 			.describe(
@@ -346,6 +364,12 @@ export function validateDecisionProse(
 		['title', decision.title],
 		['summary', decision.summary],
 		...(decision.ask === undefined ? [] : ([['ask', decision.ask]] as Array<[string, string]>)),
+		...(decision.done_when
+			? doneWhenStrings(decision.done_when).map<[string, string]>(([path, value]) => [
+					`done_when.${path}`,
+					value,
+				])
+			: []),
 		...decision.options.flatMap<[string, string]>((option, index) => [
 			[`options.${index}.label`, option.label],
 			...option.consequences.map<[string, string]>((line, lineIndex) => [
@@ -379,6 +403,26 @@ export function validateDecisionProse(
 			`expires_at must be in the future, or the card would never show. Got: "${decision.expires_at}"`,
 		)
 	}
+
+	if (decision.done_when) {
+		for (const found of findDoneWhenViolations(decision.done_when)) {
+			add(`done_when.${found.path}`, found.message)
+		}
+	}
+	const approving = decision.options.filter((option) => option.approve_done_when)
+	if (approving.length > 0 && !decision.done_when) {
+		add(
+			'options',
+			'approve_done_when needs a done_when block on the same card. Add the lines, or drop approve_done_when.',
+		)
+	}
+	if (decision.done_when && approving.length !== 1) {
+		add(
+			'options',
+			`A card with done_when needs exactly one option with approve_done_when, got ${approving.length}.`,
+		)
+	}
+	violations.push(...findDefaultOnSilenceViolations(decision))
 
 	const titleWords = words(decision.title)
 	if (titleWords.length < TITLE_MIN_WORDS || titleWords.length > TITLE_MAX_WORDS) {
@@ -462,6 +506,60 @@ export function validateDecisionProse(
 		})
 	})
 
+	return violations
+}
+
+/** The option a card names as its default on silence, or null when it names none. */
+export function findDefaultOnSilenceOption(
+	decision: Pick<CommentDecision, 'options'> | null | undefined,
+): CommentDecisionOption | null {
+	return decision?.options.find((option) => option.default_on_silence) ?? null
+}
+
+/**
+ * The rules for a default on silence. It needs a deadline and one option, and it is refused on any
+ * card that could send, spend or delete: a person must say yes to those, so silence never does.
+ * The whole card is refused, not only the default option, so "Send" next to a harmless "Hold" with
+ * the default on "Hold" is still refused: the card exists to get a yes to the send.
+ */
+function findDefaultOnSilenceViolations(decision: CommentDecision): DecisionProseViolation[] {
+	const defaults = decision.options.flatMap((option, index) =>
+		option.default_on_silence ? [index] : [],
+	)
+	if (defaults.length === 0) return []
+	const path = `options.${defaults[0]}.default_on_silence`
+	const violations: DecisionProseViolation[] = []
+	if (defaults.length > 1) {
+		violations.push({
+			path,
+			message: `Only one option can be the default on silence, got ${defaults.length}. Keep it on the option you would take.`,
+		})
+	}
+	if (!decision.expires_at) {
+		violations.push({
+			path,
+			message:
+				'A default on silence needs expires_at: it happens when that time passes with no answer. Set expires_at, or drop default_on_silence.',
+		})
+	}
+	const chosen = decision.options[defaults[0] as number] as CommentDecisionOption
+	if (chosen.set_status) {
+		violations.push({
+			path,
+			message: `"${chosen.label}" moves a status, which a person decides. Put the default on an option that changes nothing, or drop default_on_silence.`,
+		})
+	}
+	if (
+		decision.options.some((option) => option.destructive || option.delete_agent) ||
+		decision.draft ||
+		decision.drafts?.length
+	) {
+		violations.push({
+			path,
+			message:
+				'A card that sends, spends or deletes never gets a default on silence: it has a destructive option, a delete_agent option or a draft. Drop default_on_silence and wait for the answer.',
+		})
+	}
 	return violations
 }
 

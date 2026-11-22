@@ -195,7 +195,7 @@ export const READ_TOOL_NAMES = new Set<string>([
 	'list_integration_providers',
 	'list_extensions',
 	'list_for_you',
-	'get_started',
+	'list_marketplace',
 ])
 
 const GUIDANCE: Record<string, ToolGuidance> = {
@@ -443,14 +443,14 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 			hint: 'list_extensions({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
 		},
 	},
-	get_started: {
+	list_marketplace: {
 		notFound: {
 			tool: 'list_workspaces',
-			hint: 'list_workspaces() to confirm workspace access, then get_started({ workspace_id: "<uuid>" }).',
+			hint: 'list_workspaces() to confirm workspace access, then list_marketplace({ workspace_id: "<uuid>" }).',
 		},
 		invalidParam: {
-			tool: 'get_started',
-			hint: 'get_started({ workspace_id: "<uuid>", loop_id: "<uuid>", confirm: true }) — call without args first to see available loops.',
+			tool: 'list_marketplace',
+			hint: 'list_marketplace({ workspace_id: "<uuid>" }) — lists the available loops; install one with install_loop({ loop_id: "<uuid>" }).',
 		},
 	},
 }

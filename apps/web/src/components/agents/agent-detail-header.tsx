@@ -3,9 +3,8 @@ import {
 	AgentStatusPill,
 	type PortraitStatus,
 	agentAvatarStatus,
-	agentTileClass,
 } from '@/components/agents/agent-portrait-card'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { ActorAvatar, getActorInitials } from '@/components/shared/actor-avatar'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
@@ -16,7 +15,7 @@ import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
-import { ACTOR_DESCRIPTION_MAX_LENGTH } from '@maskin/shared'
+import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_INITIALS_MAX_LENGTH } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Camera } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
@@ -33,11 +32,9 @@ export function AgentDetailHeader({
 }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
-	const uploadAvatar = useUploadActorAvatar(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: loops } = useLoops(workspaceId)
 	const canChangeAvatar = isCurrentActorAdmin(members)
-	const avatarInputRef = useRef<HTMLInputElement>(null)
 	// A loop-managed agent's identity is owned by its loop — fork to edit.
 	const isManaged = !!agent.installedLoopId
 
@@ -55,7 +52,7 @@ export function AgentDetailHeader({
 		[loops, agent.id],
 	)
 
-	const save = (data: { name?: string; description?: string }, label: string) =>
+	const save = (data: { name?: string; description?: string; initials?: string }, label: string) =>
 		updateActor.mutate(
 			{ id: agent.id, data },
 			{ onError: () => toast.error(`Couldn't save ${label} for ${agent.name}`) },
@@ -68,50 +65,13 @@ export function AgentDetailHeader({
 					name={agent.name}
 					type={agent.type}
 					size="xl"
-					tone="strong"
 					status={agentAvatarStatus(portrait)}
-					className={cn(
-						'size-17 rounded-2xl text-2xl font-bold [&>img]:rounded-2xl',
-						agentTileClass(portrait),
-					)}
+					className="size-17"
 					id={agent.id}
 					imageUrl={agent.avatar_url ?? undefined}
+					initials={agent.initials}
 				/>
-				{canChangeAvatar && (
-					<>
-						{/* Always visible, not a hover reveal: there is no hover on touch. */}
-						<button
-							type="button"
-							onClick={() => avatarInputRef.current?.click()}
-							disabled={uploadAvatar.isPending}
-							aria-label={`Change profile picture for ${agent.name}`}
-							className="absolute inset-0 flex items-start justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
-						>
-							<span className="-mr-1 -mt-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
-								{uploadAvatar.isPending ? <Spinner className="size-3" /> : <Camera size={12} />}
-							</span>
-						</button>
-						<input
-							ref={avatarInputRef}
-							type="file"
-							accept="image/png,image/jpeg"
-							className="hidden"
-							onChange={(e) => {
-								const file = e.target.files?.[0]
-								e.target.value = ''
-								if (!file) return
-								if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
-									toast.error('Only PNG or JPG images are supported.')
-									return
-								}
-								uploadAvatar.mutate(
-									{ id: agent.id, file },
-									{ onError: (err) => toast.error(err.message || "Couldn't upload the picture") },
-								)
-							}}
-						/>
-					</>
-				)}
+				{canChangeAvatar && <AvatarUploadButton actorId={agent.id} name={agent.name} />}
 			</div>
 			<div className="flex min-w-0 flex-1 flex-col gap-2.5">
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -155,6 +115,21 @@ export function AgentDetailHeader({
 						inputClassName="text-[15px]"
 					/>
 				</p>
+				{canChangeAvatar && !isManaged && (
+					<p className="flex items-baseline gap-1.5 text-[13px] text-muted-foreground">
+						<span className="shrink-0">Initials</span>
+						<EditableField
+							value={agent.initials ?? ''}
+							displayValue={agent.initials ?? `Automatic (${getActorInitials(agent.name)})`}
+							label="Initials"
+							maxLength={ACTOR_INITIALS_MAX_LENGTH}
+							placeholder="Up to 3 letters"
+							onSave={(next) => save({ initials: next }, 'the initials')}
+							className={agent.initials ? 'text-foreground' : 'text-muted-foreground'}
+							inputClassName="w-24 text-[13px]"
+						/>
+					</p>
+				)}
 				{flows.length > 0 && (
 					<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
 						<span>Works in</span>
@@ -176,10 +151,55 @@ export function AgentDetailHeader({
 }
 
 /**
+ * The camera badge on an actor's avatar, with the hidden file input behind it. The agent page and
+ * the person page both draw it; the caller decides whether the viewer may change the picture.
+ */
+export function AvatarUploadButton({ actorId, name }: { actorId: string; name: string }) {
+	const { workspaceId } = useWorkspace()
+	const uploadAvatar = useUploadActorAvatar(workspaceId)
+	const avatarInputRef = useRef<HTMLInputElement>(null)
+	return (
+		<>
+			{/* Always visible, not a hover reveal: there is no hover on touch. */}
+			<button
+				type="button"
+				onClick={() => avatarInputRef.current?.click()}
+				disabled={uploadAvatar.isPending}
+				aria-label={`Change profile picture for ${name}`}
+				className="absolute inset-0 flex items-start justify-end rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
+			>
+				<span className="-mr-1 -mt-1 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+					{uploadAvatar.isPending ? <Spinner className="size-3" /> : <Camera size={12} />}
+				</span>
+			</button>
+			<input
+				ref={avatarInputRef}
+				type="file"
+				accept="image/png,image/jpeg"
+				className="hidden"
+				onChange={(e) => {
+					const file = e.target.files?.[0]
+					e.target.value = ''
+					if (!file) return
+					if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+						toast.error('Only PNG or JPG images are supported.')
+						return
+					}
+					uploadAvatar.mutate(
+						{ id: actorId, file },
+						{ onError: (err) => toast.error(err.message || "Couldn't upload the picture") },
+					)
+				}}
+			/>
+		</>
+	)
+}
+
+/**
  * Click-to-edit text. Reads as plain text until you click it, so the header
  * stays a header — the v2 surfaces show identity, they don't look like a form.
  */
-function EditableField({
+export function EditableField({
 	value,
 	displayValue,
 	label,

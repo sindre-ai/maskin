@@ -6,7 +6,7 @@ import {
 	typeIconOf,
 	typeTileClass,
 } from '@/components/chat/linked-card-face'
-import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
+import { loopPillStyle } from '@/components/loops/loop-pill'
 import { loopActivityLine } from '@/components/loops/loop-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime, formatRelative } from '@/components/shared/relative-time'
@@ -1108,7 +1108,7 @@ export function LoopReferenceChip({
 	}
 
 	const name = loop.name?.trim() || 'Untitled flow'
-	const state = LOOP_PILL_STYLES[loop.pill].label.toLowerCase()
+	const state = loopPillStyle(loop.pill).label.toLowerCase()
 	return (
 		<ChipPreview card={card} sheet={sheet} enabled>
 			<Link
@@ -1157,7 +1157,7 @@ export function LoopReferenceCard({
 		return <UnavailableCard shell={shell} marker={marker} kind="loop" />
 	}
 
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	const snippet = plainSnippet(loop.content)
 	const activity = loopActivityLine(loop)
 	const agentNames = agents.map((agent) => agent.name).join(', ')
@@ -1543,6 +1543,7 @@ export function AgentReferenceCard({
 								type={actor.type}
 								size="sm"
 								imageUrl={actor.avatar_url ?? undefined}
+								initials={actor.initials}
 								className={AVATAR}
 							/>
 							<span className="truncate">{name}</span>

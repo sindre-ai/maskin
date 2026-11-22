@@ -48,8 +48,11 @@ public struct FileScreen: View {
 							Button { showFileInfo = true } label: { Label("File", systemImage: "info.circle") }
 							Button { showTagEditor = true } label: { Label("Tags", systemImage: "tag") }
 							// The bytes are written only when the person actually shares.
-							ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
-								Label("Share", systemImage: "square.and.arrow.up")
+							// A file over the inline cap has no bytes here to share.
+							if !file.contentOmitted {
+								ShareLink(item: FileExport(file: file), preview: SharePreview(file.name)) {
+									Label("Share", systemImage: "square.and.arrow.up")
+								}
 							}
 						} label: {
 							Label("More", systemImage: "ellipsis.circle")

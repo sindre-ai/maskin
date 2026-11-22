@@ -74,3 +74,12 @@ export const createCommentSchema = z.object({
 				"Leave unset if you genuinely can't judge urgency; an unset score sorts below any scored comment. Reserve 5 for things that are genuinely business-critical — inflating scores buries the comments that actually need it.",
 		),
 })
+
+// Editing a comment changes what it says and nothing else: mentions, attachments and the
+// parent stay as they were, so an edit never wakes anyone.
+export const updateCommentSchema = z.object({
+	content: z
+		.string()
+		.min(1, 'Comment cannot be empty')
+		.max(COMMENT_MAX_LENGTH, `Comment must be ${COMMENT_MAX_LENGTH} characters or fewer.`),
+})

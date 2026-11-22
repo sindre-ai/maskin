@@ -5,7 +5,7 @@ import type { ActorResponse, MessageMetadata } from '@/lib/api'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { useCallback, useReducer } from 'react'
+import { type ReactNode, useCallback, useReducer } from 'react'
 import { toast } from 'sonner'
 
 /**
@@ -25,7 +25,19 @@ import { toast } from 'sonner'
  * no-ops when one is already live (apps/dev/src/routes/actors.ts:1265–1290),
  * which would silently swallow what was just typed.
  */
-export function AgentComposer({ agent }: { agent: ActorResponse }) {
+export function AgentComposer({
+	agent,
+	leading,
+	placeholder = `Message ${agent.name}…`,
+	attachAtEnd,
+}: {
+	agent: ActorResponse
+	/** Sits first inside the bar (the item page's Comment / Message chip). */
+	leading?: ReactNode
+	placeholder?: string
+	/** The + menu follows the box, so Tab reaches the box first. */
+	attachAtEnd?: boolean
+}) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
@@ -99,7 +111,9 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 				disabled={false}
 				pending={false}
 				surface="pulse-bar"
-				placeholder={`Message ${agent.name}…`}
+				placeholder={placeholder}
+				leading={leading}
+				attachAtEnd={attachAtEnd}
 				textareaLabel={`Message ${agent.name}`}
 				selection={selection}
 				onDispatchSelection={dispatchSelection}

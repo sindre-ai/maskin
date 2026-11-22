@@ -17,8 +17,7 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn() },
 }))
 
-// The Claude tab reads the connector flag and the person's connections. Off and empty by default.
-let mockFlagOn = false
+// The Claude tab reads the person's connections. Empty by default.
 let mockGrants: {
 	data?: unknown[]
 	isPending: boolean
@@ -27,7 +26,6 @@ let mockGrants: {
 } = { data: [], isPending: false, isError: false, refetch: vi.fn() }
 const mockDisconnect = { mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }
 
-vi.mock('@/hooks/use-feature-flag', () => ({ useFeatureFlag: () => mockFlagOn }))
 vi.mock('@/hooks/use-oauth', () => ({
 	useOauthGrants: () => mockGrants,
 	useDisconnectGrant: () => mockDisconnect,
@@ -55,7 +53,6 @@ describe('McpConnectionSection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockApiKey = KEY
-		mockFlagOn = false
 		mockGrants = { data: [], isPending: false, isError: false, refetch: vi.fn() }
 		location = stubLocationAssign()
 	})
@@ -64,25 +61,35 @@ describe('McpConnectionSection', () => {
 		location.restore()
 	})
 
-	it('renders one tab per app, in order, with no Claude tab', () => {
+	it('renders the Claude tab first, then one tab per app, in order', () => {
 		render(<McpConnectionSection workspaceId="ws-1" />)
 		const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent)
-		expect(tabs).toEqual(['Claude Code', 'Cursor', 'VS Code', 'Claude Desktop', 'Other'])
-		expect(screen.queryByRole('tab', { name: 'Claude' })).not.toBeInTheDocument()
+		expect(tabs).toEqual([
+			'ClaudeSign in',
+			'Claude Code',
+			'Cursor',
+			'VS Code',
+			'Claude Desktop',
+			'Other',
+		])
 	})
 
-	it('opens on the Claude Code tab', () => {
+	it('opens on the Claude tab and shows Terminal on the Claude Code tab', async () => {
+		const user = userEvent.setup()
 		render(<McpConnectionSection workspaceId="ws-1" />)
-		expect(screen.getByRole('tab', { name: 'Claude Code' })).toHaveAttribute(
+		expect(screen.getByRole('tab', { name: /^Claude\s*Sign in$/i })).toHaveAttribute(
 			'aria-selected',
 			'true',
 		)
+
+		await user.click(screen.getByRole('tab', { name: 'Claude Code' }))
 		expect(screen.getByText('Terminal')).toBeInTheDocument()
 	})
 
 	it('shows the MCP URL as the page origin plus /mcp', async () => {
 		const user = userEvent.setup()
 		render(<McpConnectionSection workspaceId="ws-1" />)
+		await user.click(screen.getByRole('tab', { name: 'Claude Code' }))
 		expect(
 			screen.getByText(/claude mcp add --transport http maskin https:\/\/app\.example\/mcp /),
 		).toBeInTheDocument()
@@ -91,8 +98,9 @@ describe('McpConnectionSection', () => {
 		expect(screen.getByText('https://app.example/mcp')).toBeInTheDocument()
 	})
 
-	it('puts the Authorization and workspace headers in the Claude Code command', () => {
+	it('puts the Authorization and workspace headers in the Claude Code command', async () => {
 		render(<McpConnectionSection workspaceId="ws-1" />)
+		await userEvent.click(screen.getByRole('tab', { name: 'Claude Code' }))
 		const command = screen.getByText(/claude mcp add/).textContent
 		expect(command).toContain(`--header "Authorization: Bearer ${KEY}"`)
 		expect(command).toContain('--header "X-Workspace-Id: ws-1"')
@@ -261,8 +269,9 @@ describe('McpConnectionSection', () => {
 			}
 		})
 
-		it('swaps the key for a placeholder and disables Copy on blocks that hold it', () => {
+		it('swaps the key for a placeholder and disables Copy on blocks that hold it', async () => {
 			render(<McpConnectionSection workspaceId="ws-1" />)
+			await userEvent.click(screen.getByRole('tab', { name: 'Claude Code' }))
 			expect(screen.getByText(/claude mcp add/).textContent).toContain('Bearer <API_KEY>')
 			expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled()
 		})
@@ -300,17 +309,7 @@ describe('McpConnectionSection', () => {
 			last_used_at: null,
 		}
 
-		it('is not rendered without the flag and without a connection', () => {
-			render(<McpConnectionSection workspaceId="ws-1" />)
-			expect(screen.queryByRole('tab', { name: 'Claude' })).not.toBeInTheDocument()
-			expect(screen.getByRole('tab', { name: 'Claude Code' })).toHaveAttribute(
-				'aria-selected',
-				'true',
-			)
-		})
-
-		it('opens first with the flag on, tagged Sign in, with a prefill link that carries no key', () => {
-			mockFlagOn = true
+		it('opens first, tagged Sign in, with a prefill link that carries no key', () => {
 			render(<McpConnectionSection workspaceId="ws-1" />)
 
 			const tab = screen.getByRole('tab', { name: /^Claude\s*Sign in$/i })
@@ -326,7 +325,6 @@ describe('McpConnectionSection', () => {
 
 		it('puts the Add button first and keeps the manual steps closed until asked for', async () => {
 			const user = userEvent.setup()
-			mockFlagOn = true
 			render(<McpConnectionSection workspaceId="ws-1" />)
 
 			const add = screen.getByRole('link', { name: 'Add to Claude' })
@@ -343,7 +341,7 @@ describe('McpConnectionSection', () => {
 			expect(screen.getByText('https://app.example/mcp')).toBeInTheDocument()
 		})
 
-		it('shows the connection and hides Add when connected, even with the flag off', () => {
+		it('shows the connection and hides Add when connected', () => {
 			mockGrants = { data: [GRANT], isPending: false, isError: false, refetch: vi.fn() }
 			render(<McpConnectionSection workspaceId="ws-1" />)
 
@@ -353,14 +351,10 @@ describe('McpConnectionSection', () => {
 			)
 			expect(screen.getByText('Workspace: Acme Studio')).toBeInTheDocument()
 			expect(screen.queryByRole('link', { name: 'Add to Claude' })).not.toBeInTheDocument()
-			expect(
-				screen.getByText(/Adding new Claude connections is switched off for now/),
-			).toBeInTheDocument()
 			expect(screen.queryByText(/One row per workspace/)).not.toBeInTheDocument()
 		})
 
 		it('lists newest first and explains the one-row-per-workspace rule for two connections', () => {
-			mockFlagOn = true
 			mockGrants = {
 				data: [
 					GRANT,
@@ -380,7 +374,6 @@ describe('McpConnectionSection', () => {
 			const rows = screen.getAllByText(/^Workspace: /).map((row) => row.textContent)
 			expect(rows).toEqual(['Workspace: Personal', 'Workspace: Acme Studio'])
 			expect(screen.getByText(/One row per workspace/)).toBeInTheDocument()
-			expect(screen.queryByText(/switched off for now/)).not.toBeInTheDocument()
 		})
 
 		it('disconnects the chosen row after the dialog is confirmed', async () => {
@@ -402,7 +395,6 @@ describe('McpConnectionSection', () => {
 		it('keeps the Add steps when the check fails, with a Try again', async () => {
 			const user = userEvent.setup()
 			const refetch = vi.fn()
-			mockFlagOn = true
 			mockGrants = { data: undefined, isPending: false, isError: true, refetch }
 			render(<McpConnectionSection workspaceId="ws-1" />)
 

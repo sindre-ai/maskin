@@ -160,7 +160,7 @@ function AvatarPortrait({
 				/>
 			</svg>
 			<div className="absolute inset-0 flex items-center justify-center">
-				<ActorAvatar id={id} name={name} type={type} size="md" className="h-12 w-12 text-base" />
+				<ActorAvatar id={id} name={name} type={type} size="md" className="h-12 w-12" />
 			</div>
 		</div>
 	)
@@ -180,11 +180,6 @@ export function describeFocus(status: PortraitStatus, session?: SessionResponse)
 		return session.actionPrompt
 	}
 	return 'Standing by'
-}
-
-/** The initials tile of an agent in the list and the detail hero (v11): tinted while it works, plain otherwise. */
-export function agentTileClass(status: PortraitStatus): string {
-	return status === 'running' ? 'bg-status-in_progress-bg text-success' : 'bg-muted text-foreground'
 }
 
 /** The avatar's status dot for a portrait status: working or failed, nothing otherwise. */

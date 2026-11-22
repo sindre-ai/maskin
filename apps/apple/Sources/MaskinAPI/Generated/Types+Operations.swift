@@ -472,6 +472,122 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/preview`.
                         public var preview: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.previewPayload?
+                        /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step`.
+                        public struct next_stepPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/action`.
+                            public var action: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/owner_id`.
+                            public var owner_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/due_at`.
+                            public var due_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case open = "open"
+                                case blocked = "blocked"
+                                case done = "done"
+                                case skipped = "skipped"
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/status`.
+                            public var status: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.next_stepPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/blocked_on_object_id`.
+                            public var blocked_on_object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/blocked_on_actor_id`.
+                            public var blocked_on_actor_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/blocked_on_decision_comment_id`.
+                            public var blocked_on_decision_comment_id: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/blocked_reason`.
+                            public var blocked_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/evidence`.
+                            public var evidence: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/wake_count`.
+                            public var wake_count: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/created_by`.
+                            public var created_by: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/created_at`.
+                            public var created_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/updated_at`.
+                            public var updated_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step/closed_at`.
+                            public var closed_at: Swift.String?
+                            /// Creates a new `next_stepPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - object_id:
+                            ///   - action:
+                            ///   - owner_id:
+                            ///   - due_at:
+                            ///   - status:
+                            ///   - blocked_on_object_id:
+                            ///   - blocked_on_actor_id:
+                            ///   - blocked_on_decision_comment_id:
+                            ///   - blocked_reason:
+                            ///   - evidence:
+                            ///   - wake_count:
+                            ///   - created_by:
+                            ///   - created_at:
+                            ///   - updated_at:
+                            ///   - closed_at:
+                            public init(
+                                id: Swift.String,
+                                object_id: Swift.String,
+                                action: Swift.String,
+                                owner_id: Swift.String? = nil,
+                                due_at: Swift.String,
+                                status: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.next_stepPayload.statusPayload,
+                                blocked_on_object_id: Swift.String? = nil,
+                                blocked_on_actor_id: Swift.String? = nil,
+                                blocked_on_decision_comment_id: Swift.Double? = nil,
+                                blocked_reason: Swift.String? = nil,
+                                evidence: Swift.String? = nil,
+                                wake_count: Swift.Double,
+                                created_by: Swift.String? = nil,
+                                created_at: Swift.String,
+                                updated_at: Swift.String,
+                                closed_at: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.object_id = object_id
+                                self.action = action
+                                self.owner_id = owner_id
+                                self.due_at = due_at
+                                self.status = status
+                                self.blocked_on_object_id = blocked_on_object_id
+                                self.blocked_on_actor_id = blocked_on_actor_id
+                                self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                self.blocked_reason = blocked_reason
+                                self.evidence = evidence
+                                self.wake_count = wake_count
+                                self.created_by = created_by
+                                self.created_at = created_at
+                                self.updated_at = updated_at
+                                self.closed_at = closed_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case object_id
+                                case action
+                                case owner_id
+                                case due_at
+                                case status
+                                case blocked_on_object_id
+                                case blocked_on_actor_id
+                                case blocked_on_decision_comment_id
+                                case blocked_reason
+                                case evidence
+                                case wake_count
+                                case created_by
+                                case created_at
+                                case updated_at
+                                case closed_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/jsonPayload/next_step`.
+                        public var next_step: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.next_stepPayload?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -495,6 +611,7 @@ public enum Operations {
                         ///   - subscriber_count:
                         ///   - is_starred_by_me:
                         ///   - preview:
+                        ///   - next_step:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -515,7 +632,8 @@ public enum Operations {
                             unread_count: Swift.Double? = nil,
                             subscriber_count: Swift.Double? = nil,
                             is_starred_by_me: Swift.Bool? = nil,
-                            preview: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.previewPayload? = nil
+                            preview: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.previewPayload? = nil,
+                            next_step: Operations.get_sol_api_sol_objects.Output.Ok.Body.jsonPayloadPayload.next_stepPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -537,6 +655,7 @@ public enum Operations {
                             self.subscriber_count = subscriber_count
                             self.is_starred_by_me = is_starred_by_me
                             self.preview = preview
+                            self.next_step = next_step
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -559,6 +678,7 @@ public enum Operations {
                             case subscriber_count
                             case is_starred_by_me
                             case preview
+                            case next_step
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/objects/GET/responses/200/content/json`.
@@ -1192,6 +1312,122 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/preview`.
                         public var preview: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.previewPayload?
+                        /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step`.
+                        public struct next_stepPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/action`.
+                            public var action: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/owner_id`.
+                            public var owner_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/due_at`.
+                            public var due_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case open = "open"
+                                case blocked = "blocked"
+                                case done = "done"
+                                case skipped = "skipped"
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/status`.
+                            public var status: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.next_stepPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/blocked_on_object_id`.
+                            public var blocked_on_object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/blocked_on_actor_id`.
+                            public var blocked_on_actor_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/blocked_on_decision_comment_id`.
+                            public var blocked_on_decision_comment_id: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/blocked_reason`.
+                            public var blocked_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/evidence`.
+                            public var evidence: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/wake_count`.
+                            public var wake_count: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/created_by`.
+                            public var created_by: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/created_at`.
+                            public var created_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/updated_at`.
+                            public var updated_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step/closed_at`.
+                            public var closed_at: Swift.String?
+                            /// Creates a new `next_stepPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - object_id:
+                            ///   - action:
+                            ///   - owner_id:
+                            ///   - due_at:
+                            ///   - status:
+                            ///   - blocked_on_object_id:
+                            ///   - blocked_on_actor_id:
+                            ///   - blocked_on_decision_comment_id:
+                            ///   - blocked_reason:
+                            ///   - evidence:
+                            ///   - wake_count:
+                            ///   - created_by:
+                            ///   - created_at:
+                            ///   - updated_at:
+                            ///   - closed_at:
+                            public init(
+                                id: Swift.String,
+                                object_id: Swift.String,
+                                action: Swift.String,
+                                owner_id: Swift.String? = nil,
+                                due_at: Swift.String,
+                                status: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.next_stepPayload.statusPayload,
+                                blocked_on_object_id: Swift.String? = nil,
+                                blocked_on_actor_id: Swift.String? = nil,
+                                blocked_on_decision_comment_id: Swift.Double? = nil,
+                                blocked_reason: Swift.String? = nil,
+                                evidence: Swift.String? = nil,
+                                wake_count: Swift.Double,
+                                created_by: Swift.String? = nil,
+                                created_at: Swift.String,
+                                updated_at: Swift.String,
+                                closed_at: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.object_id = object_id
+                                self.action = action
+                                self.owner_id = owner_id
+                                self.due_at = due_at
+                                self.status = status
+                                self.blocked_on_object_id = blocked_on_object_id
+                                self.blocked_on_actor_id = blocked_on_actor_id
+                                self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                self.blocked_reason = blocked_reason
+                                self.evidence = evidence
+                                self.wake_count = wake_count
+                                self.created_by = created_by
+                                self.created_at = created_at
+                                self.updated_at = updated_at
+                                self.closed_at = closed_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case object_id
+                                case action
+                                case owner_id
+                                case due_at
+                                case status
+                                case blocked_on_object_id
+                                case blocked_on_actor_id
+                                case blocked_on_decision_comment_id
+                                case blocked_reason
+                                case evidence
+                                case wake_count
+                                case created_by
+                                case created_at
+                                case updated_at
+                                case closed_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/json/next_step`.
+                        public var next_step: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.next_stepPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -1215,6 +1451,7 @@ public enum Operations {
                         ///   - subscriber_count:
                         ///   - is_starred_by_me:
                         ///   - preview:
+                        ///   - next_step:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -1235,7 +1472,8 @@ public enum Operations {
                             unread_count: Swift.Double? = nil,
                             subscriber_count: Swift.Double? = nil,
                             is_starred_by_me: Swift.Bool? = nil,
-                            preview: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.previewPayload? = nil
+                            preview: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.previewPayload? = nil,
+                            next_step: Operations.post_sol_api_sol_objects.Output.Created.Body.jsonPayload.next_stepPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -1257,6 +1495,7 @@ public enum Operations {
                             self.subscriber_count = subscriber_count
                             self.is_starred_by_me = is_starred_by_me
                             self.preview = preview
+                            self.next_step = next_step
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -1279,6 +1518,7 @@ public enum Operations {
                             case subscriber_count
                             case is_starred_by_me
                             case preview
+                            case next_step
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/objects/POST/responses/201/content/application\/json`.
@@ -2506,6 +2746,8 @@ public enum Operations {
     }
     /// Search objects by text
     ///
+    /// Matches objects whose title or content contains any of the words in `q`, ranked by how many words hit (title hits first). Words shorter than 3 characters and common stopwords are ignored, and only the first 6 distinct words are used; any further words are ignored, not an error.
+    ///
     /// - Remark: HTTP `GET /api/objects/search`.
     /// - Remark: Generated from `#/paths//api/objects/search/get`.
     public enum get_sol_api_sol_objects_sol_search {
@@ -2930,6 +3172,122 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/preview`.
                         public var preview: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.previewPayload?
+                        /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step`.
+                        public struct next_stepPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/action`.
+                            public var action: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/owner_id`.
+                            public var owner_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/due_at`.
+                            public var due_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case open = "open"
+                                case blocked = "blocked"
+                                case done = "done"
+                                case skipped = "skipped"
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/status`.
+                            public var status: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.next_stepPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/blocked_on_object_id`.
+                            public var blocked_on_object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/blocked_on_actor_id`.
+                            public var blocked_on_actor_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/blocked_on_decision_comment_id`.
+                            public var blocked_on_decision_comment_id: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/blocked_reason`.
+                            public var blocked_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/evidence`.
+                            public var evidence: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/wake_count`.
+                            public var wake_count: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/created_by`.
+                            public var created_by: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/created_at`.
+                            public var created_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/updated_at`.
+                            public var updated_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step/closed_at`.
+                            public var closed_at: Swift.String?
+                            /// Creates a new `next_stepPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - object_id:
+                            ///   - action:
+                            ///   - owner_id:
+                            ///   - due_at:
+                            ///   - status:
+                            ///   - blocked_on_object_id:
+                            ///   - blocked_on_actor_id:
+                            ///   - blocked_on_decision_comment_id:
+                            ///   - blocked_reason:
+                            ///   - evidence:
+                            ///   - wake_count:
+                            ///   - created_by:
+                            ///   - created_at:
+                            ///   - updated_at:
+                            ///   - closed_at:
+                            public init(
+                                id: Swift.String,
+                                object_id: Swift.String,
+                                action: Swift.String,
+                                owner_id: Swift.String? = nil,
+                                due_at: Swift.String,
+                                status: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.next_stepPayload.statusPayload,
+                                blocked_on_object_id: Swift.String? = nil,
+                                blocked_on_actor_id: Swift.String? = nil,
+                                blocked_on_decision_comment_id: Swift.Double? = nil,
+                                blocked_reason: Swift.String? = nil,
+                                evidence: Swift.String? = nil,
+                                wake_count: Swift.Double,
+                                created_by: Swift.String? = nil,
+                                created_at: Swift.String,
+                                updated_at: Swift.String,
+                                closed_at: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.object_id = object_id
+                                self.action = action
+                                self.owner_id = owner_id
+                                self.due_at = due_at
+                                self.status = status
+                                self.blocked_on_object_id = blocked_on_object_id
+                                self.blocked_on_actor_id = blocked_on_actor_id
+                                self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                self.blocked_reason = blocked_reason
+                                self.evidence = evidence
+                                self.wake_count = wake_count
+                                self.created_by = created_by
+                                self.created_at = created_at
+                                self.updated_at = updated_at
+                                self.closed_at = closed_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case object_id
+                                case action
+                                case owner_id
+                                case due_at
+                                case status
+                                case blocked_on_object_id
+                                case blocked_on_actor_id
+                                case blocked_on_decision_comment_id
+                                case blocked_reason
+                                case evidence
+                                case wake_count
+                                case created_by
+                                case created_at
+                                case updated_at
+                                case closed_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/jsonPayload/next_step`.
+                        public var next_step: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.next_stepPayload?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -2953,6 +3311,7 @@ public enum Operations {
                         ///   - subscriber_count:
                         ///   - is_starred_by_me:
                         ///   - preview:
+                        ///   - next_step:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -2973,7 +3332,8 @@ public enum Operations {
                             unread_count: Swift.Double? = nil,
                             subscriber_count: Swift.Double? = nil,
                             is_starred_by_me: Swift.Bool? = nil,
-                            preview: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.previewPayload? = nil
+                            preview: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.previewPayload? = nil,
+                            next_step: Operations.get_sol_api_sol_objects_sol_search.Output.Ok.Body.jsonPayloadPayload.next_stepPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -2995,6 +3355,7 @@ public enum Operations {
                             self.subscriber_count = subscriber_count
                             self.is_starred_by_me = is_starred_by_me
                             self.preview = preview
+                            self.next_step = next_step
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -3017,6 +3378,7 @@ public enum Operations {
                             case subscriber_count
                             case is_starred_by_me
                             case preview
+                            case next_step
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/objects/search/GET/responses/200/content/json`.
@@ -3588,6 +3950,122 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/preview`.
                             public var preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.previewPayload?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step`.
+                            public struct next_stepPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/object_id`.
+                                public var object_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/action`.
+                                public var action: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/owner_id`.
+                                public var owner_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/due_at`.
+                                public var due_at: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case open = "open"
+                                    case blocked = "blocked"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/status`.
+                                public var status: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.next_stepPayload.statusPayload
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/blocked_on_object_id`.
+                                public var blocked_on_object_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/blocked_on_actor_id`.
+                                public var blocked_on_actor_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/blocked_on_decision_comment_id`.
+                                public var blocked_on_decision_comment_id: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/blocked_reason`.
+                                public var blocked_reason: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/evidence`.
+                                public var evidence: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/wake_count`.
+                                public var wake_count: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/created_by`.
+                                public var created_by: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/created_at`.
+                                public var created_at: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/updated_at`.
+                                public var updated_at: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step/closed_at`.
+                                public var closed_at: Swift.String?
+                                /// Creates a new `next_stepPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - object_id:
+                                ///   - action:
+                                ///   - owner_id:
+                                ///   - due_at:
+                                ///   - status:
+                                ///   - blocked_on_object_id:
+                                ///   - blocked_on_actor_id:
+                                ///   - blocked_on_decision_comment_id:
+                                ///   - blocked_reason:
+                                ///   - evidence:
+                                ///   - wake_count:
+                                ///   - created_by:
+                                ///   - created_at:
+                                ///   - updated_at:
+                                ///   - closed_at:
+                                public init(
+                                    id: Swift.String,
+                                    object_id: Swift.String,
+                                    action: Swift.String,
+                                    owner_id: Swift.String? = nil,
+                                    due_at: Swift.String,
+                                    status: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.next_stepPayload.statusPayload,
+                                    blocked_on_object_id: Swift.String? = nil,
+                                    blocked_on_actor_id: Swift.String? = nil,
+                                    blocked_on_decision_comment_id: Swift.Double? = nil,
+                                    blocked_reason: Swift.String? = nil,
+                                    evidence: Swift.String? = nil,
+                                    wake_count: Swift.Double,
+                                    created_by: Swift.String? = nil,
+                                    created_at: Swift.String,
+                                    updated_at: Swift.String,
+                                    closed_at: Swift.String? = nil
+                                ) {
+                                    self.id = id
+                                    self.object_id = object_id
+                                    self.action = action
+                                    self.owner_id = owner_id
+                                    self.due_at = due_at
+                                    self.status = status
+                                    self.blocked_on_object_id = blocked_on_object_id
+                                    self.blocked_on_actor_id = blocked_on_actor_id
+                                    self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                    self.blocked_reason = blocked_reason
+                                    self.evidence = evidence
+                                    self.wake_count = wake_count
+                                    self.created_by = created_by
+                                    self.created_at = created_at
+                                    self.updated_at = updated_at
+                                    self.closed_at = closed_at
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case object_id
+                                    case action
+                                    case owner_id
+                                    case due_at
+                                    case status
+                                    case blocked_on_object_id
+                                    case blocked_on_actor_id
+                                    case blocked_on_decision_comment_id
+                                    case blocked_reason
+                                    case evidence
+                                    case wake_count
+                                    case created_by
+                                    case created_at
+                                    case updated_at
+                                    case closed_at
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object/next_step`.
+                            public var next_step: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.next_stepPayload?
                             /// Creates a new `objectPayload`.
                             ///
                             /// - Parameters:
@@ -3611,6 +4089,7 @@ public enum Operations {
                             ///   - subscriber_count:
                             ///   - is_starred_by_me:
                             ///   - preview:
+                            ///   - next_step:
                             public init(
                                 id: Swift.String,
                                 workspaceId: Swift.String,
@@ -3631,7 +4110,8 @@ public enum Operations {
                                 unread_count: Swift.Double? = nil,
                                 subscriber_count: Swift.Double? = nil,
                                 is_starred_by_me: Swift.Bool? = nil,
-                                preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.previewPayload? = nil
+                                preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.previewPayload? = nil,
+                                next_step: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.objectPayload.next_stepPayload? = nil
                             ) {
                                 self.id = id
                                 self.workspaceId = workspaceId
@@ -3653,6 +4133,7 @@ public enum Operations {
                                 self.subscriber_count = subscriber_count
                                 self.is_starred_by_me = is_starred_by_me
                                 self.preview = preview
+                                self.next_step = next_step
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -3675,6 +4156,7 @@ public enum Operations {
                                 case subscriber_count
                                 case is_starred_by_me
                                 case preview
+                                case next_step
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/object`.
@@ -4070,6 +4552,122 @@ public enum Operations {
                             }
                             /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/preview`.
                             public var preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.previewPayload?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step`.
+                            public struct next_stepPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/object_id`.
+                                public var object_id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/action`.
+                                public var action: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/owner_id`.
+                                public var owner_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/due_at`.
+                                public var due_at: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/status`.
+                                @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case open = "open"
+                                    case blocked = "blocked"
+                                    case done = "done"
+                                    case skipped = "skipped"
+                                }
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/status`.
+                                public var status: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.next_stepPayload.statusPayload
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/blocked_on_object_id`.
+                                public var blocked_on_object_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/blocked_on_actor_id`.
+                                public var blocked_on_actor_id: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/blocked_on_decision_comment_id`.
+                                public var blocked_on_decision_comment_id: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/blocked_reason`.
+                                public var blocked_reason: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/evidence`.
+                                public var evidence: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/wake_count`.
+                                public var wake_count: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/created_by`.
+                                public var created_by: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/created_at`.
+                                public var created_at: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/updated_at`.
+                                public var updated_at: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step/closed_at`.
+                                public var closed_at: Swift.String?
+                                /// Creates a new `next_stepPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - object_id:
+                                ///   - action:
+                                ///   - owner_id:
+                                ///   - due_at:
+                                ///   - status:
+                                ///   - blocked_on_object_id:
+                                ///   - blocked_on_actor_id:
+                                ///   - blocked_on_decision_comment_id:
+                                ///   - blocked_reason:
+                                ///   - evidence:
+                                ///   - wake_count:
+                                ///   - created_by:
+                                ///   - created_at:
+                                ///   - updated_at:
+                                ///   - closed_at:
+                                public init(
+                                    id: Swift.String,
+                                    object_id: Swift.String,
+                                    action: Swift.String,
+                                    owner_id: Swift.String? = nil,
+                                    due_at: Swift.String,
+                                    status: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.next_stepPayload.statusPayload,
+                                    blocked_on_object_id: Swift.String? = nil,
+                                    blocked_on_actor_id: Swift.String? = nil,
+                                    blocked_on_decision_comment_id: Swift.Double? = nil,
+                                    blocked_reason: Swift.String? = nil,
+                                    evidence: Swift.String? = nil,
+                                    wake_count: Swift.Double,
+                                    created_by: Swift.String? = nil,
+                                    created_at: Swift.String,
+                                    updated_at: Swift.String,
+                                    closed_at: Swift.String? = nil
+                                ) {
+                                    self.id = id
+                                    self.object_id = object_id
+                                    self.action = action
+                                    self.owner_id = owner_id
+                                    self.due_at = due_at
+                                    self.status = status
+                                    self.blocked_on_object_id = blocked_on_object_id
+                                    self.blocked_on_actor_id = blocked_on_actor_id
+                                    self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                    self.blocked_reason = blocked_reason
+                                    self.evidence = evidence
+                                    self.wake_count = wake_count
+                                    self.created_by = created_by
+                                    self.created_at = created_at
+                                    self.updated_at = updated_at
+                                    self.closed_at = closed_at
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case object_id
+                                    case action
+                                    case owner_id
+                                    case due_at
+                                    case status
+                                    case blocked_on_object_id
+                                    case blocked_on_actor_id
+                                    case blocked_on_decision_comment_id
+                                    case blocked_reason
+                                    case evidence
+                                    case wake_count
+                                    case created_by
+                                    case created_at
+                                    case updated_at
+                                    case closed_at
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objectsPayload/next_step`.
+                            public var next_step: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.next_stepPayload?
                             /// Creates a new `connected_objectsPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -4093,6 +4691,7 @@ public enum Operations {
                             ///   - subscriber_count:
                             ///   - is_starred_by_me:
                             ///   - preview:
+                            ///   - next_step:
                             public init(
                                 id: Swift.String,
                                 workspaceId: Swift.String,
@@ -4113,7 +4712,8 @@ public enum Operations {
                                 unread_count: Swift.Double? = nil,
                                 subscriber_count: Swift.Double? = nil,
                                 is_starred_by_me: Swift.Bool? = nil,
-                                preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.previewPayload? = nil
+                                preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.previewPayload? = nil,
+                                next_step: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub__sol_graph.Output.Ok.Body.jsonPayload.connected_objectsPayloadPayload.next_stepPayload? = nil
                             ) {
                                 self.id = id
                                 self.workspaceId = workspaceId
@@ -4135,6 +4735,7 @@ public enum Operations {
                                 self.subscriber_count = subscriber_count
                                 self.is_starred_by_me = is_starred_by_me
                                 self.preview = preview
+                                self.next_step = next_step
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -4157,6 +4758,7 @@ public enum Operations {
                                 case subscriber_count
                                 case is_starred_by_me
                                 case preview
+                                case next_step
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/objects/{id}/graph/GET/responses/200/content/json/connected_objects`.
@@ -4543,7 +5145,7 @@ public enum Operations {
     }
     /// Bounded multi-hop graph traversal from an object
     ///
-    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on object id, so cyclic edges (e.g. `supersedes` loops) terminate. Only object endpoints inside the caller's workspace are followed — file endpoints and cross-workspace ids are skipped.
+    /// Breadth-first walk from the given object across `relationships`, bounded by `max_depth`, `max_nodes`, and an optional `edge_types` allow-list. Visited set keyed on node id, so cyclic edges (e.g. `supersedes` loops) terminate. Nodes can be objects, files, chats (`conversation`) and sessions in the caller's workspace; cross-workspace ids are skipped. The start node must be an object.
     ///
     /// - Remark: HTTP `GET /api/objects/{id}/graph/traverse`.
     /// - Remark: Generated from `#/paths//api/objects/{id}/graph/traverse/get`.
@@ -5456,6 +6058,122 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/preview`.
                         public var preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload?
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step`.
+                        public struct next_stepPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/action`.
+                            public var action: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/owner_id`.
+                            public var owner_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/due_at`.
+                            public var due_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case open = "open"
+                                case blocked = "blocked"
+                                case done = "done"
+                                case skipped = "skipped"
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/status`.
+                            public var status: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/blocked_on_object_id`.
+                            public var blocked_on_object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/blocked_on_actor_id`.
+                            public var blocked_on_actor_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/blocked_on_decision_comment_id`.
+                            public var blocked_on_decision_comment_id: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/blocked_reason`.
+                            public var blocked_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/evidence`.
+                            public var evidence: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/wake_count`.
+                            public var wake_count: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/created_by`.
+                            public var created_by: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/created_at`.
+                            public var created_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/updated_at`.
+                            public var updated_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step/closed_at`.
+                            public var closed_at: Swift.String?
+                            /// Creates a new `next_stepPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - object_id:
+                            ///   - action:
+                            ///   - owner_id:
+                            ///   - due_at:
+                            ///   - status:
+                            ///   - blocked_on_object_id:
+                            ///   - blocked_on_actor_id:
+                            ///   - blocked_on_decision_comment_id:
+                            ///   - blocked_reason:
+                            ///   - evidence:
+                            ///   - wake_count:
+                            ///   - created_by:
+                            ///   - created_at:
+                            ///   - updated_at:
+                            ///   - closed_at:
+                            public init(
+                                id: Swift.String,
+                                object_id: Swift.String,
+                                action: Swift.String,
+                                owner_id: Swift.String? = nil,
+                                due_at: Swift.String,
+                                status: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload.statusPayload,
+                                blocked_on_object_id: Swift.String? = nil,
+                                blocked_on_actor_id: Swift.String? = nil,
+                                blocked_on_decision_comment_id: Swift.Double? = nil,
+                                blocked_reason: Swift.String? = nil,
+                                evidence: Swift.String? = nil,
+                                wake_count: Swift.Double,
+                                created_by: Swift.String? = nil,
+                                created_at: Swift.String,
+                                updated_at: Swift.String,
+                                closed_at: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.object_id = object_id
+                                self.action = action
+                                self.owner_id = owner_id
+                                self.due_at = due_at
+                                self.status = status
+                                self.blocked_on_object_id = blocked_on_object_id
+                                self.blocked_on_actor_id = blocked_on_actor_id
+                                self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                self.blocked_reason = blocked_reason
+                                self.evidence = evidence
+                                self.wake_count = wake_count
+                                self.created_by = created_by
+                                self.created_at = created_at
+                                self.updated_at = updated_at
+                                self.closed_at = closed_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case object_id
+                                case action
+                                case owner_id
+                                case due_at
+                                case status
+                                case blocked_on_object_id
+                                case blocked_on_actor_id
+                                case blocked_on_decision_comment_id
+                                case blocked_reason
+                                case evidence
+                                case wake_count
+                                case created_by
+                                case created_at
+                                case updated_at
+                                case closed_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/json/next_step`.
+                        public var next_step: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -5479,6 +6197,7 @@ public enum Operations {
                         ///   - subscriber_count:
                         ///   - is_starred_by_me:
                         ///   - preview:
+                        ///   - next_step:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -5499,7 +6218,8 @@ public enum Operations {
                             unread_count: Swift.Double? = nil,
                             subscriber_count: Swift.Double? = nil,
                             is_starred_by_me: Swift.Bool? = nil,
-                            preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload? = nil
+                            preview: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload? = nil,
+                            next_step: Operations.get_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -5521,6 +6241,7 @@ public enum Operations {
                             self.subscriber_count = subscriber_count
                             self.is_starred_by_me = is_starred_by_me
                             self.preview = preview
+                            self.next_step = next_step
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -5543,6 +6264,7 @@ public enum Operations {
                             case subscriber_count
                             case is_starred_by_me
                             case preview
+                            case next_step
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/objects/{id}/GET/responses/200/content/application\/json`.
@@ -5851,6 +6573,8 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/chat`.
                     public var chat: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.chatPayload?
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/json/expected_status`.
+                    public var expected_status: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -5860,13 +6584,15 @@ public enum Operations {
                     ///   - metadata:
                     ///   - driver:
                     ///   - chat:
+                    ///   - expected_status:
                     public init(
                         title: Swift.String? = nil,
                         content: Swift.String? = nil,
                         status: Swift.String? = nil,
                         metadata: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.metadataPayload? = nil,
                         driver: Swift.String? = nil,
-                        chat: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.chatPayload? = nil
+                        chat: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Input.Body.jsonPayload.chatPayload? = nil,
+                        expected_status: Swift.String? = nil
                     ) {
                         self.title = title
                         self.content = content
@@ -5874,6 +6600,7 @@ public enum Operations {
                         self.metadata = metadata
                         self.driver = driver
                         self.chat = chat
+                        self.expected_status = expected_status
                     }
                     public enum CodingKeys: String, CodingKey {
                         case title
@@ -5882,6 +6609,7 @@ public enum Operations {
                         case metadata
                         case driver
                         case chat
+                        case expected_status
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/requestBody/content/application\/json`.
@@ -6200,6 +6928,122 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/preview`.
                         public var preview: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload?
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step`.
+                        public struct next_stepPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/object_id`.
+                            public var object_id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/action`.
+                            public var action: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/owner_id`.
+                            public var owner_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/due_at`.
+                            public var due_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case open = "open"
+                                case blocked = "blocked"
+                                case done = "done"
+                                case skipped = "skipped"
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/status`.
+                            public var status: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/blocked_on_object_id`.
+                            public var blocked_on_object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/blocked_on_actor_id`.
+                            public var blocked_on_actor_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/blocked_on_decision_comment_id`.
+                            public var blocked_on_decision_comment_id: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/blocked_reason`.
+                            public var blocked_reason: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/evidence`.
+                            public var evidence: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/wake_count`.
+                            public var wake_count: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/created_by`.
+                            public var created_by: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/created_at`.
+                            public var created_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/updated_at`.
+                            public var updated_at: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step/closed_at`.
+                            public var closed_at: Swift.String?
+                            /// Creates a new `next_stepPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - object_id:
+                            ///   - action:
+                            ///   - owner_id:
+                            ///   - due_at:
+                            ///   - status:
+                            ///   - blocked_on_object_id:
+                            ///   - blocked_on_actor_id:
+                            ///   - blocked_on_decision_comment_id:
+                            ///   - blocked_reason:
+                            ///   - evidence:
+                            ///   - wake_count:
+                            ///   - created_by:
+                            ///   - created_at:
+                            ///   - updated_at:
+                            ///   - closed_at:
+                            public init(
+                                id: Swift.String,
+                                object_id: Swift.String,
+                                action: Swift.String,
+                                owner_id: Swift.String? = nil,
+                                due_at: Swift.String,
+                                status: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload.statusPayload,
+                                blocked_on_object_id: Swift.String? = nil,
+                                blocked_on_actor_id: Swift.String? = nil,
+                                blocked_on_decision_comment_id: Swift.Double? = nil,
+                                blocked_reason: Swift.String? = nil,
+                                evidence: Swift.String? = nil,
+                                wake_count: Swift.Double,
+                                created_by: Swift.String? = nil,
+                                created_at: Swift.String,
+                                updated_at: Swift.String,
+                                closed_at: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.object_id = object_id
+                                self.action = action
+                                self.owner_id = owner_id
+                                self.due_at = due_at
+                                self.status = status
+                                self.blocked_on_object_id = blocked_on_object_id
+                                self.blocked_on_actor_id = blocked_on_actor_id
+                                self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                self.blocked_reason = blocked_reason
+                                self.evidence = evidence
+                                self.wake_count = wake_count
+                                self.created_by = created_by
+                                self.created_at = created_at
+                                self.updated_at = updated_at
+                                self.closed_at = closed_at
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case object_id
+                                case action
+                                case owner_id
+                                case due_at
+                                case status
+                                case blocked_on_object_id
+                                case blocked_on_actor_id
+                                case blocked_on_decision_comment_id
+                                case blocked_reason
+                                case evidence
+                                case wake_count
+                                case created_by
+                                case created_at
+                                case updated_at
+                                case closed_at
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/json/next_step`.
+                        public var next_step: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -6223,6 +7067,7 @@ public enum Operations {
                         ///   - subscriber_count:
                         ///   - is_starred_by_me:
                         ///   - preview:
+                        ///   - next_step:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -6243,7 +7088,8 @@ public enum Operations {
                             unread_count: Swift.Double? = nil,
                             subscriber_count: Swift.Double? = nil,
                             is_starred_by_me: Swift.Bool? = nil,
-                            preview: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload? = nil
+                            preview: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.previewPayload? = nil,
+                            next_step: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.next_stepPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -6265,6 +7111,7 @@ public enum Operations {
                             self.subscriber_count = subscriber_count
                             self.is_starred_by_me = is_starred_by_me
                             self.preview = preview
+                            self.next_step = next_step
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -6287,6 +7134,7 @@ public enum Operations {
                             case subscriber_count
                             case is_starred_by_me
                             case preview
+                            case next_step
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/200/content/application\/json`.
@@ -6475,6 +7323,144 @@ public enum Operations {
                     }
                 }
             }
+            public struct Forbidden: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/403/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body
+                /// Creates a new `Forbidden`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden.Body) {
+                    self.body = body
+                }
+            }
+            /// An agent tried to change what defines done: a target's fields or status, or a flow's targets, entry condition, close condition or closed statuses
+            ///
+            /// - Remark: Generated from `#/paths//api/objects/{id}/patch/responses/403`.
+            ///
+            /// HTTP response code: `403 forbidden`.
+            case forbidden(Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden)
+            /// The associated value of the enum case if `self` is `.forbidden`.
+            ///
+            /// - Throws: An error if `self` is not `.forbidden`.
+            /// - SeeAlso: `.forbidden`.
+            public var forbidden: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Forbidden {
+                get throws {
+                    switch self {
+                    case let .forbidden(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "forbidden",
+                            response: self
+                        )
+                    }
+                }
+            }
             public struct NotFound: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/404/content`.
                 @frozen public enum Body: Sendable, Hashable {
@@ -6608,6 +7594,144 @@ public enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/details`.
+                            public var details: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/json/error`.
+                        public var error: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/objects/{id}/PATCH/responses/409/content/application\/json`.
+                    case json(Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The object is no longer in expected_status
+            ///
+            /// - Remark: Generated from `#/paths//api/objects/{id}/patch/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.patch_sol_api_sol_objects_sol__lcub_id_rcub_.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
                             response: self
                         )
                     }
@@ -8586,6 +9710,8 @@ public enum Operations {
                         public var tags: [Swift.String]?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/starter_prompts`.
                         public var starter_prompts: [Swift.String]?
+                        /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/initials`.
+                        public var initials: Swift.String?
                         /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload`.
                         public struct workspacesPayloadPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/actors/GET/responses/200/content/jsonPayload/workspacesPayload/id`.
@@ -8637,6 +9763,7 @@ public enum Operations {
                         ///   - avatar_url:
                         ///   - tags:
                         ///   - starter_prompts:
+                        ///   - initials:
                         ///   - workspaces:
                         ///   - skills:
                         public init(
@@ -8653,6 +9780,7 @@ public enum Operations {
                             avatar_url: Swift.String? = nil,
                             tags: [Swift.String]? = nil,
                             starter_prompts: [Swift.String]? = nil,
+                            initials: Swift.String? = nil,
                             workspaces: Operations.get_sol_api_sol_actors.Output.Ok.Body.jsonPayloadPayload.workspacesPayload? = nil,
                             skills: [Swift.String]? = nil
                         ) {
@@ -8669,6 +9797,7 @@ public enum Operations {
                             self.avatar_url = avatar_url
                             self.tags = tags
                             self.starter_prompts = starter_prompts
+                            self.initials = initials
                             self.workspaces = workspaces
                             self.skills = skills
                         }
@@ -8686,6 +9815,7 @@ public enum Operations {
                             case avatar_url
                             case tags
                             case starter_prompts
+                            case initials
                             case workspaces
                             case skills
                         }
@@ -9181,6 +10311,8 @@ public enum Operations {
                     public var llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/auto_create_workspace`.
                     public var auto_create_workspace: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/card_step`.
+                    public var card_step: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/workspace_id`.
                     public var workspace_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/actors/POST/requestBody/json/first_stepsPayload`.
@@ -9237,6 +10369,7 @@ public enum Operations {
                     ///   - llm_provider:
                     ///   - llm_config:
                     ///   - auto_create_workspace:
+                    ///   - card_step:
                     ///   - workspace_id:
                     ///   - first_steps:
                     ///   - needed_integrations:
@@ -9252,6 +10385,7 @@ public enum Operations {
                         llm_provider: Swift.String? = nil,
                         llm_config: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.llm_configPayload? = nil,
                         auto_create_workspace: Swift.Bool? = nil,
+                        card_step: Swift.Bool? = nil,
                         workspace_id: Swift.String? = nil,
                         first_steps: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.first_stepsPayload? = nil,
                         needed_integrations: [Swift.String]? = nil
@@ -9267,6 +10401,7 @@ public enum Operations {
                         self.llm_provider = llm_provider
                         self.llm_config = llm_config
                         self.auto_create_workspace = auto_create_workspace
+                        self.card_step = card_step
                         self.workspace_id = workspace_id
                         self.first_steps = first_steps
                         self.needed_integrations = needed_integrations
@@ -9283,6 +10418,7 @@ public enum Operations {
                         case llm_provider
                         case llm_config
                         case auto_create_workspace
+                        case card_step
                         case workspace_id
                         case first_steps
                         case needed_integrations
@@ -11233,6 +12369,8 @@ public enum Operations {
                     public var tags: [Swift.String]?
                     /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/starter_prompts`.
                     public var starter_prompts: [Swift.String]?
+                    /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/json/initials`.
+                    public var initials: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -11248,6 +12386,7 @@ public enum Operations {
                     ///   - default_workspace_id:
                     ///   - tags:
                     ///   - starter_prompts:
+                    ///   - initials:
                     public init(
                         name: Swift.String? = nil,
                         email: Swift.String? = nil,
@@ -11260,7 +12399,8 @@ public enum Operations {
                         mailbox: Swift.String? = nil,
                         default_workspace_id: Swift.String? = nil,
                         tags: [Swift.String]? = nil,
-                        starter_prompts: [Swift.String]? = nil
+                        starter_prompts: [Swift.String]? = nil,
+                        initials: Swift.String? = nil
                     ) {
                         self.name = name
                         self.email = email
@@ -11274,6 +12414,7 @@ public enum Operations {
                         self.default_workspace_id = default_workspace_id
                         self.tags = tags
                         self.starter_prompts = starter_prompts
+                        self.initials = initials
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -11288,6 +12429,7 @@ public enum Operations {
                         case default_workspace_id
                         case tags
                         case starter_prompts
+                        case initials
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/actors/{id}/PATCH/requestBody/content/application\/json`.
@@ -15413,6 +16555,297 @@ public enum Operations {
             }
         }
     }
+    /// Email a password reset link
+    ///
+    /// Always answers the same 200, whether or not the email has an account with a password.
+    ///
+    /// - Remark: HTTP `POST /api/auth/forgot-password`.
+    /// - Remark: Generated from `#/paths//api/auth/forgot-password/post`.
+    public enum post_sol_api_sol_auth_sol_forgot_hyphen_password {
+        public static let id: Swift.String = "post/api/auth/forgot-password"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers
+            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/json`.
+                public struct jsonPayload: Codable, Hashable, Sendable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/json/email`.
+                    public var email: Swift.String
+                    /// Creates a new `jsonPayload`.
+                    ///
+                    /// - Parameters:
+                    ///   - email:
+                    public init(email: Swift.String) {
+                        self.email = email
+                    }
+                    public enum CodingKeys: String, CodingKey {
+                        case email
+                    }
+                }
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/requestBody/content/application\/json`.
+                case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body.jsonPayload)
+            }
+            public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body?
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Headers = .init(),
+                body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Input.Body? = nil
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/json/ok`.
+                        public var ok: Swift.Bool
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - ok:
+                        public init(ok: Swift.Bool) {
+                            self.ok = ok
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case ok
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/200/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// If the email has an account, a link was sent
+            ///
+            /// - Remark: Generated from `#/paths//api/auth/forgot-password/post/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct TooManyRequests: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/details`.
+                            public var details: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/json/error`.
+                        public var error: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/auth/forgot-password/POST/responses/429/content/application\/json`.
+                    case json(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body
+                /// Creates a new `TooManyRequests`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests.Body) {
+                    self.body = body
+                }
+            }
+            /// Too many requests from this IP
+            ///
+            /// - Remark: Generated from `#/paths//api/auth/forgot-password/post/responses/429`.
+            ///
+            /// HTTP response code: `429 tooManyRequests`.
+            case tooManyRequests(Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests)
+            /// The associated value of the enum case if `self` is `.tooManyRequests`.
+            ///
+            /// - Throws: An error if `self` is not `.tooManyRequests`.
+            /// - SeeAlso: `.tooManyRequests`.
+            public var tooManyRequests: Operations.post_sol_api_sol_auth_sol_forgot_hyphen_password.Output.TooManyRequests {
+                get throws {
+                    switch self {
+                    case let .tooManyRequests(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "tooManyRequests",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// List skills for an agent
     ///
     /// - Remark: HTTP `GET /api/actors/{actorId}/skills`.
@@ -17507,6 +18940,10 @@ public enum Operations {
                         public var isDefault: Swift.Bool
                         /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/isTeam`.
                         public var isTeam: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/internal`.
+                        public var _internal: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/jsonPayload/paying`.
+                        public var paying: Swift.Bool
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -17525,6 +18962,8 @@ public enum Operations {
                         ///   - memberCount:
                         ///   - isDefault:
                         ///   - isTeam:
+                        ///   - _internal:
+                        ///   - paying:
                         public init(
                             id: Swift.String,
                             name: Swift.String,
@@ -17540,7 +18979,9 @@ public enum Operations {
                             role: Swift.String,
                             memberCount: Swift.Int,
                             isDefault: Swift.Bool,
-                            isTeam: Swift.Bool
+                            isTeam: Swift.Bool,
+                            _internal: Swift.Bool,
+                            paying: Swift.Bool
                         ) {
                             self.id = id
                             self.name = name
@@ -17557,6 +18998,8 @@ public enum Operations {
                             self.memberCount = memberCount
                             self.isDefault = isDefault
                             self.isTeam = isTeam
+                            self._internal = _internal
+                            self.paying = paying
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -17574,6 +19017,8 @@ public enum Operations {
                             case memberCount
                             case isDefault
                             case isTeam
+                            case _internal = "internal"
+                            case paying
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/workspaces/GET/responses/200/content/json`.
@@ -18638,8 +20083,10 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/plan`.
                             @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case trial = "trial"
+                                case starter = "starter"
                                 case pro = "pro"
                                 case team = "team"
+                                case ultra = "ultra"
                                 case enterprise = "enterprise"
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/plan`.
@@ -18654,6 +20101,24 @@ public enum Operations {
                             public var period_end: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/hard_cap_usd_cents`.
                             public var hard_cap_usd_cents: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_state`.
+                            @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case awaiting_card = "awaiting_card"
+                                case started = "started"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_state`.
+                            public var trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
+                            @frozen public enum trial_walletPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case apple_pay = "apple_pay"
+                                case google_pay = "google_pay"
+                                case other = "other"
+                                case none = "none"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_wallet`.
+                            public var trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/trial_promo_code_id`.
+                            public var trial_promo_code_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -18678,6 +20143,9 @@ public enum Operations {
                             ///   - period_start:
                             ///   - period_end:
                             ///   - hard_cap_usd_cents:
+                            ///   - trial_state:
+                            ///   - trial_wallet:
+                            ///   - trial_promo_code_id:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -18689,6 +20157,9 @@ public enum Operations {
                                 period_start: Swift.Double? = nil,
                                 period_end: Swift.Double? = nil,
                                 hard_cap_usd_cents: Swift.Double? = nil,
+                                trial_state: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
+                                trial_wallet: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
+                                trial_promo_code_id: Swift.String? = nil,
                                 status: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -18700,6 +20171,9 @@ public enum Operations {
                                 self.period_start = period_start
                                 self.period_end = period_end
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
+                                self.trial_state = trial_state
+                                self.trial_wallet = trial_wallet
+                                self.trial_promo_code_id = trial_promo_code_id
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -18712,6 +20186,9 @@ public enum Operations {
                                 case period_start
                                 case period_end
                                 case hard_cap_usd_cents
+                                case trial_state
+                                case trial_wallet
+                                case trial_promo_code_id
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -18722,105 +20199,315 @@ public enum Operations {
                         public var billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget`.
                         public struct daily_budgetPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/unit`.
-                            @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
-                                case tokens = "tokens"
-                                case dollars = "dollars"
-                            }
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/unit`.
-                            public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/amount`.
-                            public var amount: Swift.Double
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share`.
-                            public struct stop_sharePayload: Codable, Hashable, Sendable {
-                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value1`.
-                                public var value1: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value2`.
-                                public var value2: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share/value3`.
-                                public var value3: Swift.Double?
-                                /// Creates a new `stop_sharePayload`.
-                                ///
-                                /// - Parameters:
-                                ///   - value1:
-                                ///   - value2:
-                                ///   - value3:
-                                public init(
-                                    value1: Swift.Double? = nil,
-                                    value2: Swift.Double? = nil,
-                                    value3: Swift.Double? = nil
-                                ) {
-                                    self.value1 = value1
-                                    self.value2 = value2
-                                    self.value3 = value3
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1`.
+                            public struct Value1Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case percent = "percent"
                                 }
-                                public init(from decoder: any Swift.Decoder) throws {
-                                    var errors: [any Swift.Error] = []
-                                    do {
-                                        self.value1 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/unit`.
+                                public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
                                     }
-                                    do {
-                                        self.value2 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
                                     }
-                                    do {
-                                        self.value3 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
-                                    }
-                                    try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
-                                        [
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
                                             self.value1,
                                             self.value2,
                                             self.value3
-                                        ],
-                                        type: Self.self,
-                                        codingPath: decoder.codingPath,
-                                        errors: errors
-                                    )
+                                        ])
+                                    }
                                 }
-                                public func encode(to encoder: any Swift.Encoder) throws {
-                                    try encoder.encodeFirstNonNilValueToSingleValueContainer([
-                                        self.value1,
-                                        self.value2,
-                                        self.value3
-                                    ])
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value1Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
                                 }
                             }
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/stop_share`.
-                            public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload?
-                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/timezone`.
-                            public var timezone: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value1`.
+                            public var value1: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2`.
+                            public struct Value2Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case tokens = "tokens"
+                                    case dollars = "dollars"
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/unit`.
+                                public var unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
+                                    }
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
+                                    }
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                            self.value1,
+                                            self.value2,
+                                            self.value3
+                                        ])
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public var stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value2Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget/value2`.
+                            public var value2: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload?
                             /// Creates a new `daily_budgetPayload`.
                             ///
                             /// - Parameters:
-                            ///   - unit:
-                            ///   - amount:
-                            ///   - stop_share:
-                            ///   - timezone:
+                            ///   - value1:
+                            ///   - value2:
                             public init(
-                                unit: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload,
-                                amount: Swift.Double,
-                                stop_share: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload? = nil,
-                                timezone: Swift.String? = nil
+                                value1: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload? = nil,
+                                value2: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload? = nil
                             ) {
-                                self.unit = unit
-                                self.amount = amount
-                                self.stop_share = stop_share
-                                self.timezone = timezone
+                                self.value1 = value1
+                                self.value2 = value2
                             }
-                            public enum CodingKeys: String, CodingKey {
-                                case unit
-                                case amount
-                                case stop_share
-                                case timezone
+                            public init(from decoder: any Swift.Decoder) throws {
+                                var errors: [any Swift.Error] = []
+                                do {
+                                    self.value1 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self.value2 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                    [
+                                        self.value1,
+                                        self.value2
+                                    ],
+                                    type: Self.self,
+                                    codingPath: decoder.codingPath,
+                                    errors: errors
+                                )
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try self.value1?.encode(to: encoder)
+                                try self.value2?.encode(to: encoder)
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/daily_budget`.
                         public var daily_budget: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget`.
+                        public struct agent_daily_budgetPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget/default_tokens`.
+                            public var default_tokens: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget/per_agent`.
+                            public struct per_agentPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Swift.Int]
+                                /// Creates a new `per_agentPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Swift.Int] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget/per_agent`.
+                            public var per_agent: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.per_agentPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget/warn_only_until`.
+                            public struct warn_only_untilPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Foundation.Date]
+                                /// Creates a new `warn_only_untilPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Foundation.Date] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget/warn_only_until`.
+                            public var warn_only_until: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.warn_only_untilPayload?
+                            /// Creates a new `agent_daily_budgetPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - default_tokens:
+                            ///   - per_agent:
+                            ///   - warn_only_until:
+                            public init(
+                                default_tokens: Swift.Int? = nil,
+                                per_agent: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.per_agentPayload? = nil,
+                                warn_only_until: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.warn_only_untilPayload? = nil
+                            ) {
+                                self.default_tokens = default_tokens
+                                self.per_agent = per_agent
+                                self.warn_only_until = warn_only_until
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case default_tokens
+                                case per_agent
+                                case warn_only_until
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/agent_daily_budget`.
+                        public var agent_daily_budget: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice`.
                         public struct voicePayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/workspaces/POST/requestBody/json/settings/voice/persist_transcripts`.
@@ -18916,6 +20603,7 @@ public enum Operations {
                         ///   - custom_llm:
                         ///   - billing:
                         ///   - daily_budget:
+                        ///   - agent_daily_budget:
                         ///   - voice:
                         ///   - north_star_metric:
                         ///   - default_agent_id:
@@ -18937,6 +20625,7 @@ public enum Operations {
                             custom_llm: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.custom_llmPayload? = nil,
                             billing: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.billingPayload? = nil,
                             daily_budget: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload? = nil,
+                            agent_daily_budget: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload? = nil,
                             voice: Operations.post_sol_api_sol_workspaces.Input.Body.jsonPayload.settingsPayload.voicePayload? = nil,
                             north_star_metric: Swift.String? = nil,
                             default_agent_id: Swift.String? = nil,
@@ -18958,6 +20647,7 @@ public enum Operations {
                             self.custom_llm = custom_llm
                             self.billing = billing
                             self.daily_budget = daily_budget
+                            self.agent_daily_budget = agent_daily_budget
                             self.voice = voice
                             self.north_star_metric = north_star_metric
                             self.default_agent_id = default_agent_id
@@ -18980,6 +20670,7 @@ public enum Operations {
                             case custom_llm
                             case billing
                             case daily_budget
+                            case agent_daily_budget
                             case voice
                             case north_star_metric
                             case default_agent_id
@@ -19481,7 +21172,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Actor has reached their workspace-ownership cap for their plan tier
+            /// Caller is an agent (workspaces are created by people), or the actor has reached their workspace-ownership cap for their plan tier
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/post/responses/403`.
             ///
@@ -20667,8 +22358,10 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/plan`.
                             @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case trial = "trial"
+                                case starter = "starter"
                                 case pro = "pro"
                                 case team = "team"
+                                case ultra = "ultra"
                                 case enterprise = "enterprise"
                             }
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/plan`.
@@ -20683,6 +22376,24 @@ public enum Operations {
                             public var period_end: Swift.Double?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/hard_cap_usd_cents`.
                             public var hard_cap_usd_cents: Swift.Double?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_state`.
+                            @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case awaiting_card = "awaiting_card"
+                                case started = "started"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_state`.
+                            public var trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
+                            @frozen public enum trial_walletPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case apple_pay = "apple_pay"
+                                case google_pay = "google_pay"
+                                case other = "other"
+                                case none = "none"
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_wallet`.
+                            public var trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/trial_promo_code_id`.
+                            public var trial_promo_code_id: Swift.String?
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/billing/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case active = "active"
@@ -20707,6 +22418,9 @@ public enum Operations {
                             ///   - period_start:
                             ///   - period_end:
                             ///   - hard_cap_usd_cents:
+                            ///   - trial_state:
+                            ///   - trial_wallet:
+                            ///   - trial_promo_code_id:
                             ///   - status:
                             ///   - credit_balance_cents:
                             ///   - linkedin_addon_subscription_id:
@@ -20718,6 +22432,9 @@ public enum Operations {
                                 period_start: Swift.Double? = nil,
                                 period_end: Swift.Double? = nil,
                                 hard_cap_usd_cents: Swift.Double? = nil,
+                                trial_state: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_statePayload? = nil,
+                                trial_wallet: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.trial_walletPayload? = nil,
+                                trial_promo_code_id: Swift.String? = nil,
                                 status: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload.statusPayload? = nil,
                                 credit_balance_cents: Swift.Int? = nil,
                                 linkedin_addon_subscription_id: Swift.String? = nil,
@@ -20729,6 +22446,9 @@ public enum Operations {
                                 self.period_start = period_start
                                 self.period_end = period_end
                                 self.hard_cap_usd_cents = hard_cap_usd_cents
+                                self.trial_state = trial_state
+                                self.trial_wallet = trial_wallet
+                                self.trial_promo_code_id = trial_promo_code_id
                                 self.status = status
                                 self.credit_balance_cents = credit_balance_cents
                                 self.linkedin_addon_subscription_id = linkedin_addon_subscription_id
@@ -20741,6 +22461,9 @@ public enum Operations {
                                 case period_start
                                 case period_end
                                 case hard_cap_usd_cents
+                                case trial_state
+                                case trial_wallet
+                                case trial_promo_code_id
                                 case status
                                 case credit_balance_cents
                                 case linkedin_addon_subscription_id
@@ -20751,105 +22474,315 @@ public enum Operations {
                         public var billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget`.
                         public struct daily_budgetPayload: Codable, Hashable, Sendable {
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/unit`.
-                            @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
-                                case tokens = "tokens"
-                                case dollars = "dollars"
-                            }
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/unit`.
-                            public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/amount`.
-                            public var amount: Swift.Double
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share`.
-                            public struct stop_sharePayload: Codable, Hashable, Sendable {
-                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value1`.
-                                public var value1: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value2`.
-                                public var value2: Swift.Double?
-                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share/value3`.
-                                public var value3: Swift.Double?
-                                /// Creates a new `stop_sharePayload`.
-                                ///
-                                /// - Parameters:
-                                ///   - value1:
-                                ///   - value2:
-                                ///   - value3:
-                                public init(
-                                    value1: Swift.Double? = nil,
-                                    value2: Swift.Double? = nil,
-                                    value3: Swift.Double? = nil
-                                ) {
-                                    self.value1 = value1
-                                    self.value2 = value2
-                                    self.value3 = value3
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1`.
+                            public struct Value1Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case percent = "percent"
                                 }
-                                public init(from decoder: any Swift.Decoder) throws {
-                                    var errors: [any Swift.Error] = []
-                                    do {
-                                        self.value1 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/unit`.
+                                public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
                                     }
-                                    do {
-                                        self.value2 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
                                     }
-                                    do {
-                                        self.value3 = try decoder.decodeFromSingleValueContainer()
-                                    } catch {
-                                        errors.append(error)
-                                    }
-                                    try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
-                                        [
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
                                             self.value1,
                                             self.value2,
                                             self.value3
-                                        ],
-                                        type: Self.self,
-                                        codingPath: decoder.codingPath,
-                                        errors: errors
-                                    )
+                                        ])
+                                    }
                                 }
-                                public func encode(to encoder: any Swift.Encoder) throws {
-                                    try encoder.encodeFirstNonNilValueToSingleValueContainer([
-                                        self.value1,
-                                        self.value2,
-                                        self.value3
-                                    ])
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/stop_share`.
+                                public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value1Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
                                 }
                             }
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/stop_share`.
-                            public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload?
-                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/timezone`.
-                            public var timezone: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value1`.
+                            public var value1: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2`.
+                            public struct Value2Payload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/unit`.
+                                @frozen public enum unitPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                    case tokens = "tokens"
+                                    case dollars = "dollars"
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/unit`.
+                                public var unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/amount`.
+                                public var amount: Swift.Double
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public struct stop_sharePayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share/value1`.
+                                    public var value1: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share/value2`.
+                                    public var value2: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share/value3`.
+                                    public var value3: Swift.Double?
+                                    /// Creates a new `stop_sharePayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - value1:
+                                    ///   - value2:
+                                    ///   - value3:
+                                    public init(
+                                        value1: Swift.Double? = nil,
+                                        value2: Swift.Double? = nil,
+                                        value3: Swift.Double? = nil
+                                    ) {
+                                        self.value1 = value1
+                                        self.value2 = value2
+                                        self.value3 = value3
+                                    }
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        var errors: [any Swift.Error] = []
+                                        do {
+                                            self.value1 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value2 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        do {
+                                            self.value3 = try decoder.decodeFromSingleValueContainer()
+                                        } catch {
+                                            errors.append(error)
+                                        }
+                                        try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                            [
+                                                self.value1,
+                                                self.value2,
+                                                self.value3
+                                            ],
+                                            type: Self.self,
+                                            codingPath: decoder.codingPath,
+                                            errors: errors
+                                        )
+                                    }
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                            self.value1,
+                                            self.value2,
+                                            self.value3
+                                        ])
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/stop_share`.
+                                public var stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload?
+                                /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2/timezone`.
+                                public var timezone: Swift.String?
+                                /// Creates a new `Value2Payload`.
+                                ///
+                                /// - Parameters:
+                                ///   - unit:
+                                ///   - amount:
+                                ///   - stop_share:
+                                ///   - timezone:
+                                public init(
+                                    unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.unitPayload,
+                                    amount: Swift.Double,
+                                    stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload.stop_sharePayload? = nil,
+                                    timezone: Swift.String? = nil
+                                ) {
+                                    self.unit = unit
+                                    self.amount = amount
+                                    self.stop_share = stop_share
+                                    self.timezone = timezone
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case unit
+                                    case amount
+                                    case stop_share
+                                    case timezone
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget/value2`.
+                            public var value2: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload?
                             /// Creates a new `daily_budgetPayload`.
                             ///
                             /// - Parameters:
-                            ///   - unit:
-                            ///   - amount:
-                            ///   - stop_share:
-                            ///   - timezone:
+                            ///   - value1:
+                            ///   - value2:
                             public init(
-                                unit: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.unitPayload,
-                                amount: Swift.Double,
-                                stop_share: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.stop_sharePayload? = nil,
-                                timezone: Swift.String? = nil
+                                value1: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value1Payload? = nil,
+                                value2: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload.Value2Payload? = nil
                             ) {
-                                self.unit = unit
-                                self.amount = amount
-                                self.stop_share = stop_share
-                                self.timezone = timezone
+                                self.value1 = value1
+                                self.value2 = value2
                             }
-                            public enum CodingKeys: String, CodingKey {
-                                case unit
-                                case amount
-                                case stop_share
-                                case timezone
+                            public init(from decoder: any Swift.Decoder) throws {
+                                var errors: [any Swift.Error] = []
+                                do {
+                                    self.value1 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                do {
+                                    self.value2 = try .init(from: decoder)
+                                } catch {
+                                    errors.append(error)
+                                }
+                                try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                    [
+                                        self.value1,
+                                        self.value2
+                                    ],
+                                    type: Self.self,
+                                    codingPath: decoder.codingPath,
+                                    errors: errors
+                                )
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try self.value1?.encode(to: encoder)
+                                try self.value2?.encode(to: encoder)
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/daily_budget`.
                         public var daily_budget: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload?
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget`.
+                        public struct agent_daily_budgetPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget/default_tokens`.
+                            public var default_tokens: Swift.Int?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget/per_agent`.
+                            public struct per_agentPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Swift.Int]
+                                /// Creates a new `per_agentPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Swift.Int] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget/per_agent`.
+                            public var per_agent: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.per_agentPayload?
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget/warn_only_until`.
+                            public struct warn_only_untilPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: Foundation.Date]
+                                /// Creates a new `warn_only_untilPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: Foundation.Date] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget/warn_only_until`.
+                            public var warn_only_until: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.warn_only_untilPayload?
+                            /// Creates a new `agent_daily_budgetPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - default_tokens:
+                            ///   - per_agent:
+                            ///   - warn_only_until:
+                            public init(
+                                default_tokens: Swift.Int? = nil,
+                                per_agent: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.per_agentPayload? = nil,
+                                warn_only_until: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload.warn_only_untilPayload? = nil
+                            ) {
+                                self.default_tokens = default_tokens
+                                self.per_agent = per_agent
+                                self.warn_only_until = warn_only_until
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case default_tokens
+                                case per_agent
+                                case warn_only_until
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/agent_daily_budget`.
+                        public var agent_daily_budget: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload?
                         /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice`.
                         public struct voicePayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/workspaces/{id}/PATCH/requestBody/json/settings/voice/persist_transcripts`.
@@ -20945,6 +22878,7 @@ public enum Operations {
                         ///   - custom_llm:
                         ///   - billing:
                         ///   - daily_budget:
+                        ///   - agent_daily_budget:
                         ///   - voice:
                         ///   - north_star_metric:
                         ///   - default_agent_id:
@@ -20966,6 +22900,7 @@ public enum Operations {
                             custom_llm: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.custom_llmPayload? = nil,
                             billing: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.billingPayload? = nil,
                             daily_budget: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.daily_budgetPayload? = nil,
+                            agent_daily_budget: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.agent_daily_budgetPayload? = nil,
                             voice: Operations.patch_sol_api_sol_workspaces_sol__lcub_id_rcub_.Input.Body.jsonPayload.settingsPayload.voicePayload? = nil,
                             north_star_metric: Swift.String? = nil,
                             default_agent_id: Swift.String? = nil,
@@ -20987,6 +22922,7 @@ public enum Operations {
                             self.custom_llm = custom_llm
                             self.billing = billing
                             self.daily_budget = daily_budget
+                            self.agent_daily_budget = agent_daily_budget
                             self.voice = voice
                             self.north_star_metric = north_star_metric
                             self.default_agent_id = default_agent_id
@@ -21009,6 +22945,7 @@ public enum Operations {
                             case custom_llm
                             case billing
                             case daily_budget
+                            case agent_daily_budget
                             case voice
                             case north_star_metric
                             case default_agent_id
@@ -21513,7 +23450,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Caller is not a human workspace admin or owner (for name, llm_keys or custom_llm), or the workspace is not entitled to BYO LLM credentials
+            /// Caller is not a human workspace admin or owner (for name, llm_keys, custom_llm or agent_daily_budget), or the workspace is not entitled to BYO LLM credentials
             ///
             /// - Remark: Generated from `#/paths//api/workspaces/{id}/patch/responses/403`.
             ///
@@ -29963,6 +31900,13 @@ public enum Operations {
                 public var enabled: Operations.get_sol_api_sol_triggers.Input.Query.enabledPayload?
                 /// - Remark: Generated from `#/paths/api/triggers/GET/query/q`.
                 public var q: Swift.String?
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/include_last_run`.
+                @frozen public enum include_last_runPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case _true = "true"
+                    case _false = "false"
+                }
+                /// - Remark: Generated from `#/paths/api/triggers/GET/query/include_last_run`.
+                public var include_last_run: Operations.get_sol_api_sol_triggers.Input.Query.include_last_runPayload?
                 /// Creates a new `Query`.
                 ///
                 /// - Parameters:
@@ -29975,6 +31919,7 @@ public enum Operations {
                 ///   - target_actor_id:
                 ///   - enabled:
                 ///   - q:
+                ///   - include_last_run:
                 public init(
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil,
@@ -29984,7 +31929,8 @@ public enum Operations {
                     cursor_id: Swift.String? = nil,
                     target_actor_id: Swift.String? = nil,
                     enabled: Operations.get_sol_api_sol_triggers.Input.Query.enabledPayload? = nil,
-                    q: Swift.String? = nil
+                    q: Swift.String? = nil,
+                    include_last_run: Operations.get_sol_api_sol_triggers.Input.Query.include_last_runPayload? = nil
                 ) {
                     self.limit = limit
                     self.offset = offset
@@ -29995,6 +31941,7 @@ public enum Operations {
                     self.target_actor_id = target_actor_id
                     self.enabled = enabled
                     self.q = q
+                    self.include_last_run = include_last_run
                 }
             }
             public var query: Operations.get_sol_api_sol_triggers.Input.Query
@@ -30112,6 +32059,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/triggers/GET/responses/200/content/jsonPayload/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/triggers/GET/responses/200/content/jsonPayload/lastRunAt`.
+                        public var lastRunAt: Swift.String?
                         /// Creates a new `jsonPayloadPayload`.
                         ///
                         /// - Parameters:
@@ -30127,6 +32076,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - lastRunAt:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -30139,7 +32089,8 @@ public enum Operations {
                             metadata: Operations.get_sol_api_sol_triggers.Output.Ok.Body.jsonPayloadPayload.metadataPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            lastRunAt: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -30153,6 +32104,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.lastRunAt = lastRunAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -30167,6 +32119,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case lastRunAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/triggers/GET/responses/200/content/json`.
@@ -30799,15 +32752,29 @@ public enum Operations {
                         public struct configPayload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case3/config/scheduled_at`.
                             public var scheduled_at: Foundation.Date
+                            /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case3/config/object_id`.
+                            public var object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case3/config/step_id`.
+                            public var step_id: Swift.String?
                             /// Creates a new `configPayload`.
                             ///
                             /// - Parameters:
                             ///   - scheduled_at:
-                            public init(scheduled_at: Foundation.Date) {
+                            ///   - object_id:
+                            ///   - step_id:
+                            public init(
+                                scheduled_at: Foundation.Date,
+                                object_id: Swift.String? = nil,
+                                step_id: Swift.String? = nil
+                            ) {
                                 self.scheduled_at = scheduled_at
+                                self.object_id = object_id
+                                self.step_id = step_id
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case scheduled_at
+                                case object_id
+                                case step_id
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/POST/requestBody/json/case3/config`.
@@ -30971,6 +32938,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/triggers/POST/responses/201/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/triggers/POST/responses/201/content/json/lastRunAt`.
+                        public var lastRunAt: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -30986,6 +32955,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - lastRunAt:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -30998,7 +32968,8 @@ public enum Operations {
                             metadata: Operations.post_sol_api_sol_triggers.Output.Created.Body.jsonPayload.metadataPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            lastRunAt: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -31012,6 +32983,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.lastRunAt = lastRunAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -31026,6 +32998,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case lastRunAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/triggers/POST/responses/201/content/application\/json`.
@@ -31383,6 +33356,404 @@ public enum Operations {
             }
         }
     }
+    /// Get a trigger
+    ///
+    /// - Remark: HTTP `GET /api/triggers/{id}`.
+    /// - Remark: Generated from `#/paths//api/triggers/{id}/get`.
+    public enum get_sol_api_sol_triggers_sol__lcub_id_rcub_ {
+        public static let id: Swift.String = "get/api/triggers/{id}"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/path/id`.
+                public var id: Swift.String
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Swift.String) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/header/x-workspace-id`.
+                public var x_hyphen_workspace_hyphen_id: Swift.String
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - x_hyphen_workspace_hyphen_id:
+                ///   - accept:
+                public init(
+                    x_hyphen_workspace_hyphen_id: Swift.String,
+                    accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.AcceptableContentType>] = .defaultValues()
+                ) {
+                    self.x_hyphen_workspace_hyphen_id = x_hyphen_workspace_hyphen_id
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Path,
+                headers: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Input.Headers
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/id`.
+                        public var id: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/workspaceId`.
+                        public var workspaceId: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/name`.
+                        public var name: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/type`.
+                        public var _type: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/config`.
+                        public struct configPayload: Codable, Hashable, Sendable {
+                            /// A container of undocumented properties.
+                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                            /// Creates a new `configPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - additionalProperties: A container of undocumented properties.
+                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                self.additionalProperties = additionalProperties
+                            }
+                            public init(from decoder: any Swift.Decoder) throws {
+                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/config`.
+                        public var config: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.configPayload?
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/actionPrompt`.
+                        public var actionPrompt: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/targetActorId`.
+                        public var targetActorId: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/enabled`.
+                        public var enabled: Swift.Bool
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/metadata`.
+                        public struct metadataPayload: Codable, Hashable, Sendable {
+                            /// A container of undocumented properties.
+                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                            /// Creates a new `metadataPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - additionalProperties: A container of undocumented properties.
+                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                self.additionalProperties = additionalProperties
+                            }
+                            public init(from decoder: any Swift.Decoder) throws {
+                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/metadata`.
+                        public var metadata: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.metadataPayload?
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/createdBy`.
+                        public var createdBy: Swift.String
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/createdAt`.
+                        public var createdAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/updatedAt`.
+                        public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/json/lastRunAt`.
+                        public var lastRunAt: Swift.String?
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - id:
+                        ///   - workspaceId:
+                        ///   - name:
+                        ///   - _type:
+                        ///   - config:
+                        ///   - actionPrompt:
+                        ///   - targetActorId:
+                        ///   - enabled:
+                        ///   - metadata:
+                        ///   - createdBy:
+                        ///   - createdAt:
+                        ///   - updatedAt:
+                        ///   - lastRunAt:
+                        public init(
+                            id: Swift.String,
+                            workspaceId: Swift.String,
+                            name: Swift.String,
+                            _type: Swift.String,
+                            config: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.configPayload? = nil,
+                            actionPrompt: Swift.String,
+                            targetActorId: Swift.String,
+                            enabled: Swift.Bool,
+                            metadata: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.metadataPayload? = nil,
+                            createdBy: Swift.String,
+                            createdAt: Swift.String? = nil,
+                            updatedAt: Swift.String? = nil,
+                            lastRunAt: Swift.String? = nil
+                        ) {
+                            self.id = id
+                            self.workspaceId = workspaceId
+                            self.name = name
+                            self._type = _type
+                            self.config = config
+                            self.actionPrompt = actionPrompt
+                            self.targetActorId = targetActorId
+                            self.enabled = enabled
+                            self.metadata = metadata
+                            self.createdBy = createdBy
+                            self.createdAt = createdAt
+                            self.updatedAt = updatedAt
+                            self.lastRunAt = lastRunAt
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case id
+                            case workspaceId
+                            case name
+                            case _type = "type"
+                            case config
+                            case actionPrompt
+                            case targetActorId
+                            case enabled
+                            case metadata
+                            case createdBy
+                            case createdAt
+                            case updatedAt
+                            case lastRunAt
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/200/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The trigger, with when it last fired
+            ///
+            /// - Remark: Generated from `#/paths//api/triggers/{id}/get/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            public struct NotFound: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/details`.
+                            public var details: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/json/error`.
+                        public var error: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/triggers/{id}/GET/responses/404/content/application\/json`.
+                    case json(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body
+                /// Creates a new `NotFound`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound.Body) {
+                    self.body = body
+                }
+            }
+            /// Trigger not found
+            ///
+            /// - Remark: Generated from `#/paths//api/triggers/{id}/get/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            public var notFound: Operations.get_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// Update a trigger
     ///
     /// - Remark: HTTP `PATCH /api/triggers/{id}`.
@@ -31675,15 +34046,29 @@ public enum Operations {
                         public struct Value3Payload: Codable, Hashable, Sendable {
                             /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value3/scheduled_at`.
                             public var scheduled_at: Foundation.Date
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value3/object_id`.
+                            public var object_id: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value3/step_id`.
+                            public var step_id: Swift.String?
                             /// Creates a new `Value3Payload`.
                             ///
                             /// - Parameters:
                             ///   - scheduled_at:
-                            public init(scheduled_at: Foundation.Date) {
+                            ///   - object_id:
+                            ///   - step_id:
+                            public init(
+                                scheduled_at: Foundation.Date,
+                                object_id: Swift.String? = nil,
+                                step_id: Swift.String? = nil
+                            ) {
                                 self.scheduled_at = scheduled_at
+                                self.object_id = object_id
+                                self.step_id = step_id
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case scheduled_at
+                                case object_id
+                                case step_id
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/requestBody/json/config/value3`.
@@ -31870,6 +34255,8 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/responses/200/content/json/lastRunAt`.
+                        public var lastRunAt: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -31885,6 +34272,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - lastRunAt:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -31897,7 +34285,8 @@ public enum Operations {
                             metadata: Operations.patch_sol_api_sol_triggers_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.metadataPayload? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            lastRunAt: Swift.String? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -31911,6 +34300,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.lastRunAt = lastRunAt
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -31925,6 +34315,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case lastRunAt
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/triggers/{id}/PATCH/responses/200/content/application\/json`.
@@ -32498,20 +34889,22 @@ public enum Operations {
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/status`.
                             @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case draft = "draft"
-                                case paused = "paused"
-                                case learning = "learning"
+                                case pilot = "pilot"
                                 case supervised = "supervised"
-                                case fully_autonomous = "fully_autonomous"
+                                case live = "live"
+                                case paused = "paused"
+                                case archived = "archived"
                             }
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/status`.
                             public var status: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.statusPayload
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/pill`.
                             @frozen public enum pillPayload: String, Codable, Hashable, Sendable, CaseIterable {
                                 case draft = "draft"
-                                case paused = "paused"
-                                case learning = "learning"
+                                case pilot = "pilot"
                                 case supervised = "supervised"
-                                case fully_autonomous = "fully_autonomous"
+                                case live = "live"
+                                case paused = "paused"
+                                case archived = "archived"
                                 case waiting_on_you = "waiting_on_you"
                             }
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/pill`.
@@ -32616,6 +35009,37 @@ public enum Operations {
                                 }
                                 /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targetsPayload/pace_policy`.
                                 public var pace_policy: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.targetsPayloadPayload.pace_policyPayload?
+                                /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targetsPayload/reading`.
+                                public struct readingPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targetsPayload/reading/readAt`.
+                                    public var readAt: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targetsPayload/reading/source`.
+                                    public var source: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targetsPayload/reading/expected`.
+                                    public var expected: Swift.Double?
+                                    /// Creates a new `readingPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - readAt:
+                                    ///   - source:
+                                    ///   - expected:
+                                    public init(
+                                        readAt: Swift.String,
+                                        source: Swift.String,
+                                        expected: Swift.Double? = nil
+                                    ) {
+                                        self.readAt = readAt
+                                        self.source = source
+                                        self.expected = expected
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case readAt
+                                        case source
+                                        case expected
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targetsPayload/reading`.
+                                public var reading: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.targetsPayloadPayload.readingPayload?
                                 /// Creates a new `targetsPayloadPayload`.
                                 ///
                                 /// - Parameters:
@@ -32625,13 +35049,15 @@ public enum Operations {
                                 ///   - target:
                                 ///   - ownerActorId:
                                 ///   - pace_policy:
+                                ///   - reading:
                                 public init(
                                     label: Swift.String,
                                     source: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.targetsPayloadPayload.sourcePayload,
                                     actual: Swift.Double,
                                     target: Swift.Double,
                                     ownerActorId: Swift.String? = nil,
-                                    pace_policy: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.targetsPayloadPayload.pace_policyPayload? = nil
+                                    pace_policy: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.targetsPayloadPayload.pace_policyPayload? = nil,
+                                    reading: Operations.get_sol_api_sol_loops.Output.Ok.Body.jsonPayload.loopsPayloadPayload.targetsPayloadPayload.readingPayload? = nil
                                 ) {
                                     self.label = label
                                     self.source = source
@@ -32639,6 +35065,7 @@ public enum Operations {
                                     self.target = target
                                     self.ownerActorId = ownerActorId
                                     self.pace_policy = pace_policy
+                                    self.reading = reading
                                 }
                                 public enum CodingKeys: String, CodingKey {
                                     case label
@@ -32647,6 +35074,7 @@ public enum Operations {
                                     case target
                                     case ownerActorId
                                     case pace_policy
+                                    case reading
                                 }
                             }
                             /// - Remark: Generated from `#/paths/api/loops/GET/responses/200/content/json/loopsPayload/targets`.
@@ -46719,8 +49147,10 @@ public enum Operations {
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/plan`.
                         @frozen public enum planPayload: String, Codable, Hashable, Sendable, CaseIterable {
                             case trial = "trial"
+                            case starter = "starter"
                             case pro = "pro"
                             case team = "team"
+                            case ultra = "ultra"
                             case enterprise = "enterprise"
                         }
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/plan`.
@@ -46781,6 +49211,13 @@ public enum Operations {
                         }
                         /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/linkedin_identity_addon`.
                         public var linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload?
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/trial_state`.
+                        @frozen public enum trial_statePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                            case awaiting_card = "awaiting_card"
+                            case started = "started"
+                        }
+                        /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/json/trial_state`.
+                        public var trial_state: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.trial_statePayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -46795,6 +49232,7 @@ public enum Operations {
                         ///   - credit_balance_cents:
                         ///   - credit_topup_available:
                         ///   - linkedin_identity_addon:
+                        ///   - trial_state:
                         public init(
                             plan: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.planPayload,
                             status: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.statusPayload,
@@ -46806,7 +49244,8 @@ public enum Operations {
                             stripe_subscription_id: Swift.String? = nil,
                             credit_balance_cents: Swift.Int,
                             credit_topup_available: Swift.Bool,
-                            linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil
+                            linkedin_identity_addon: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.linkedin_identity_addonPayload? = nil,
+                            trial_state: Operations.get_sol_api_sol_billing_sol_usage.Output.Ok.Body.jsonPayload.trial_statePayload? = nil
                         ) {
                             self.plan = plan
                             self.status = status
@@ -46819,6 +49258,7 @@ public enum Operations {
                             self.credit_balance_cents = credit_balance_cents
                             self.credit_topup_available = credit_topup_available
                             self.linkedin_identity_addon = linkedin_identity_addon
+                            self.trial_state = trial_state
                         }
                         public enum CodingKeys: String, CodingKey {
                             case plan
@@ -46832,6 +49272,7 @@ public enum Operations {
                             case credit_balance_cents
                             case credit_topup_available
                             case linkedin_identity_addon
+                            case trial_state
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/billing/usage/GET/responses/200/content/application\/json`.
@@ -47731,7 +50172,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// Workspace cannot be charged automatically yet
+            /// Workspace cannot be charged automatically yet, or auto top-up is closed on plans
             ///
             /// - Remark: Generated from `#/paths//api/billing/auto-top-up/put/responses/400`.
             ///
@@ -48590,6 +51031,10 @@ public enum Operations {
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/destructive`.
                             public var destructive: Swift.Bool?
+                            /// Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.
+                            ///
+                            /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/default_on_silence`.
+                            public var default_on_silence: Swift.Bool?
                             /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                             ///
                             /// - Remark: Generated from `#/paths/api/events/POST/requestBody/json/decision/optionsPayload/set_status`.
@@ -48653,6 +51098,7 @@ public enum Operations {
                             ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                             ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                             ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                            ///   - default_on_silence: Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.
                             ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                             ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                             public init(
@@ -48660,6 +51106,7 @@ public enum Operations {
                                 consequences: [Swift.String],
                                 recommended: Swift.Bool? = nil,
                                 destructive: Swift.Bool? = nil,
+                                default_on_silence: Swift.Bool? = nil,
                                 set_status: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
                                 delete_agent: Operations.post_sol_api_sol_events.Input.Body.jsonPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                             ) {
@@ -48667,6 +51114,7 @@ public enum Operations {
                                 self.consequences = consequences
                                 self.recommended = recommended
                                 self.destructive = destructive
+                                self.default_on_silence = default_on_silence
                                 self.set_status = set_status
                                 self.delete_agent = delete_agent
                             }
@@ -48675,6 +51123,7 @@ public enum Operations {
                                 case consequences
                                 case recommended
                                 case destructive
+                                case default_on_silence
                                 case set_status
                                 case delete_agent
                             }
@@ -49414,6 +51863,15 @@ public enum Operations {
                 }
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/sort`.
                 public var sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/scope`.
+                @frozen public enum scopePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                    case priority = "priority"
+                    case recent = "recent"
+                }
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/scope`.
+                public var scope: Operations.get_sol_api_sol_conversations.Input.Query.scopePayload?
+                /// - Remark: Generated from `#/paths/api/conversations/GET/query/hide_quiet`.
+                public var hide_quiet: Swift.Bool?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/conversations/GET/query/offset`.
@@ -49429,6 +51887,8 @@ public enum Operations {
                 ///   - updated_after:
                 ///   - has_human:
                 ///   - sort:
+                ///   - scope:
+                ///   - hide_quiet:
                 ///   - limit:
                 ///   - offset:
                 public init(
@@ -49440,6 +51900,8 @@ public enum Operations {
                     updated_after: Foundation.Date? = nil,
                     has_human: Swift.Bool? = nil,
                     sort: Operations.get_sol_api_sol_conversations.Input.Query.sortPayload? = nil,
+                    scope: Operations.get_sol_api_sol_conversations.Input.Query.scopePayload? = nil,
+                    hide_quiet: Swift.Bool? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil
                 ) {
@@ -49451,6 +51913,8 @@ public enum Operations {
                     self.updated_after = updated_after
                     self.has_human = has_human
                     self.sort = sort
+                    self.scope = scope
+                    self.hide_quiet = hide_quiet
                     self.limit = limit
                     self.offset = offset
                 }
@@ -60955,6 +63419,8 @@ public enum Operations {
                     public var interactive: Swift.Bool?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/notify_on_complete`.
                     public var notify_on_complete: Swift.Bool?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/file_ids`.
+                    public var file_ids: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -60970,6 +63436,7 @@ public enum Operations {
                     ///   - depends_on_session_ids:
                     ///   - interactive:
                     ///   - notify_on_complete:
+                    ///   - file_ids:
                     public init(
                         actor_id: Swift.String,
                         action_prompt: Swift.String,
@@ -60982,7 +63449,8 @@ public enum Operations {
                         spawned_by_message_id: Swift.Int? = nil,
                         depends_on_session_ids: [Swift.String]? = nil,
                         interactive: Swift.Bool? = nil,
-                        notify_on_complete: Swift.Bool? = nil
+                        notify_on_complete: Swift.Bool? = nil,
+                        file_ids: [Swift.String]? = nil
                     ) {
                         self.actor_id = actor_id
                         self.action_prompt = action_prompt
@@ -60996,6 +63464,7 @@ public enum Operations {
                         self.depends_on_session_ids = depends_on_session_ids
                         self.interactive = interactive
                         self.notify_on_complete = notify_on_complete
+                        self.file_ids = file_ids
                     }
                     public enum CodingKeys: String, CodingKey {
                         case actor_id
@@ -61010,6 +63479,7 @@ public enum Operations {
                         case depends_on_session_ids
                         case interactive
                         case notify_on_complete
+                        case file_ids
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/content/application\/json`.
@@ -71317,6 +73787,122 @@ public enum Operations {
                                 }
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/preview`.
                                 public var preview: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload?
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step`.
+                                public struct next_stepPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/id`.
+                                    public var id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/object_id`.
+                                    public var object_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/action`.
+                                    public var action: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/owner_id`.
+                                    public var owner_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/due_at`.
+                                    public var due_at: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/status`.
+                                    @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                        case open = "open"
+                                        case blocked = "blocked"
+                                        case done = "done"
+                                        case skipped = "skipped"
+                                    }
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/status`.
+                                    public var status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload.statusPayload
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_on_object_id`.
+                                    public var blocked_on_object_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_on_actor_id`.
+                                    public var blocked_on_actor_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_on_decision_comment_id`.
+                                    public var blocked_on_decision_comment_id: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_reason`.
+                                    public var blocked_reason: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/evidence`.
+                                    public var evidence: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/wake_count`.
+                                    public var wake_count: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/created_by`.
+                                    public var created_by: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/created_at`.
+                                    public var created_at: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/updated_at`.
+                                    public var updated_at: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step/closed_at`.
+                                    public var closed_at: Swift.String?
+                                    /// Creates a new `next_stepPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - id:
+                                    ///   - object_id:
+                                    ///   - action:
+                                    ///   - owner_id:
+                                    ///   - due_at:
+                                    ///   - status:
+                                    ///   - blocked_on_object_id:
+                                    ///   - blocked_on_actor_id:
+                                    ///   - blocked_on_decision_comment_id:
+                                    ///   - blocked_reason:
+                                    ///   - evidence:
+                                    ///   - wake_count:
+                                    ///   - created_by:
+                                    ///   - created_at:
+                                    ///   - updated_at:
+                                    ///   - closed_at:
+                                    public init(
+                                        id: Swift.String,
+                                        object_id: Swift.String,
+                                        action: Swift.String,
+                                        owner_id: Swift.String? = nil,
+                                        due_at: Swift.String,
+                                        status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload.statusPayload,
+                                        blocked_on_object_id: Swift.String? = nil,
+                                        blocked_on_actor_id: Swift.String? = nil,
+                                        blocked_on_decision_comment_id: Swift.Double? = nil,
+                                        blocked_reason: Swift.String? = nil,
+                                        evidence: Swift.String? = nil,
+                                        wake_count: Swift.Double,
+                                        created_by: Swift.String? = nil,
+                                        created_at: Swift.String,
+                                        updated_at: Swift.String,
+                                        closed_at: Swift.String? = nil
+                                    ) {
+                                        self.id = id
+                                        self.object_id = object_id
+                                        self.action = action
+                                        self.owner_id = owner_id
+                                        self.due_at = due_at
+                                        self.status = status
+                                        self.blocked_on_object_id = blocked_on_object_id
+                                        self.blocked_on_actor_id = blocked_on_actor_id
+                                        self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                        self.blocked_reason = blocked_reason
+                                        self.evidence = evidence
+                                        self.wake_count = wake_count
+                                        self.created_by = created_by
+                                        self.created_at = created_at
+                                        self.updated_at = updated_at
+                                        self.closed_at = closed_at
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case id
+                                        case object_id
+                                        case action
+                                        case owner_id
+                                        case due_at
+                                        case status
+                                        case blocked_on_object_id
+                                        case blocked_on_actor_id
+                                        case blocked_on_decision_comment_id
+                                        case blocked_reason
+                                        case evidence
+                                        case wake_count
+                                        case created_by
+                                        case created_at
+                                        case updated_at
+                                        case closed_at
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object/next_step`.
+                                public var next_step: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload?
                                 /// Creates a new `objectPayload`.
                                 ///
                                 /// - Parameters:
@@ -71340,6 +73926,7 @@ public enum Operations {
                                 ///   - subscriber_count:
                                 ///   - is_starred_by_me:
                                 ///   - preview:
+                                ///   - next_step:
                                 public init(
                                     id: Swift.String,
                                     workspaceId: Swift.String,
@@ -71360,7 +73947,8 @@ public enum Operations {
                                     unread_count: Swift.Double? = nil,
                                     subscriber_count: Swift.Double? = nil,
                                     is_starred_by_me: Swift.Bool? = nil,
-                                    preview: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload? = nil
+                                    preview: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload? = nil,
+                                    next_step: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload? = nil
                                 ) {
                                     self.id = id
                                     self.workspaceId = workspaceId
@@ -71382,6 +73970,7 @@ public enum Operations {
                                     self.subscriber_count = subscriber_count
                                     self.is_starred_by_me = is_starred_by_me
                                     self.preview = preview
+                                    self.next_step = next_step
                                 }
                                 public enum CodingKeys: String, CodingKey {
                                     case id
@@ -71404,6 +73993,7 @@ public enum Operations {
                                     case subscriber_count
                                     case is_starred_by_me
                                     case preview
+                                    case next_step
                                 }
                             }
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/object`.
@@ -71475,6 +74065,10 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
                                         public var destructive: Swift.Bool?
+                                        /// Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/default_on_silence`.
+                                        public var default_on_silence: Swift.Bool?
                                         /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
@@ -71538,6 +74132,7 @@ public enum Operations {
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///   - default_on_silence: Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                                         public init(
@@ -71545,6 +74140,7 @@ public enum Operations {
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
                                             destructive: Swift.Bool? = nil,
+                                            default_on_silence: Swift.Bool? = nil,
                                             set_status: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
                                             delete_agent: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                                         ) {
@@ -71552,6 +74148,7 @@ public enum Operations {
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
+                                            self.default_on_silence = default_on_silence
                                             self.set_status = set_status
                                             self.delete_agent = delete_agent
                                         }
@@ -71560,6 +74157,7 @@ public enum Operations {
                                             case consequences
                                             case recommended
                                             case destructive
+                                            case default_on_silence
                                             case set_status
                                             case delete_agent
                                         }
@@ -72247,6 +74845,8 @@ public enum Operations {
                                 ///
                                 /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/decision`.
                                 public var decision: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload?
+                                /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention/session_id`.
+                                public var session_id: Swift.String?
                                 /// Creates a new `latest_mentionPayload`.
                                 ///
                                 /// - Parameters:
@@ -72256,13 +74856,15 @@ public enum Operations {
                                 ///   - content:
                                 ///   - attention:
                                 ///   - decision: Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
+                                ///   - session_id:
                                 public init(
                                     event_id: Swift.Double,
                                     actor_id: Swift.String? = nil,
                                     created_at: Swift.String,
                                     content: Swift.String,
                                     attention: Swift.Double? = nil,
-                                    decision: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload? = nil
+                                    decision: Operations.get_sol_api_sol_for_hyphen_you.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload? = nil,
+                                    session_id: Swift.String? = nil
                                 ) {
                                     self.event_id = event_id
                                     self.actor_id = actor_id
@@ -72270,6 +74872,7 @@ public enum Operations {
                                     self.content = content
                                     self.attention = attention
                                     self.decision = decision
+                                    self.session_id = session_id
                                 }
                                 public enum CodingKeys: String, CodingKey {
                                     case event_id
@@ -72278,6 +74881,7 @@ public enum Operations {
                                     case content
                                     case attention
                                     case decision
+                                    case session_id
                                 }
                             }
                             /// - Remark: Generated from `#/paths/api/for-you/GET/responses/200/content/json/itemsPayload/latest_mention`.
@@ -75387,6 +77991,122 @@ public enum Operations {
                                 }
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/preview`.
                                 public var preview: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload?
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step`.
+                                public struct next_stepPayload: Codable, Hashable, Sendable {
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/id`.
+                                    public var id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/object_id`.
+                                    public var object_id: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/action`.
+                                    public var action: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/owner_id`.
+                                    public var owner_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/due_at`.
+                                    public var due_at: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/status`.
+                                    @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                        case open = "open"
+                                        case blocked = "blocked"
+                                        case done = "done"
+                                        case skipped = "skipped"
+                                    }
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/status`.
+                                    public var status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload.statusPayload
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_on_object_id`.
+                                    public var blocked_on_object_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_on_actor_id`.
+                                    public var blocked_on_actor_id: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_on_decision_comment_id`.
+                                    public var blocked_on_decision_comment_id: Swift.Double?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/blocked_reason`.
+                                    public var blocked_reason: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/evidence`.
+                                    public var evidence: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/wake_count`.
+                                    public var wake_count: Swift.Double
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/created_by`.
+                                    public var created_by: Swift.String?
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/created_at`.
+                                    public var created_at: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/updated_at`.
+                                    public var updated_at: Swift.String
+                                    /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step/closed_at`.
+                                    public var closed_at: Swift.String?
+                                    /// Creates a new `next_stepPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - id:
+                                    ///   - object_id:
+                                    ///   - action:
+                                    ///   - owner_id:
+                                    ///   - due_at:
+                                    ///   - status:
+                                    ///   - blocked_on_object_id:
+                                    ///   - blocked_on_actor_id:
+                                    ///   - blocked_on_decision_comment_id:
+                                    ///   - blocked_reason:
+                                    ///   - evidence:
+                                    ///   - wake_count:
+                                    ///   - created_by:
+                                    ///   - created_at:
+                                    ///   - updated_at:
+                                    ///   - closed_at:
+                                    public init(
+                                        id: Swift.String,
+                                        object_id: Swift.String,
+                                        action: Swift.String,
+                                        owner_id: Swift.String? = nil,
+                                        due_at: Swift.String,
+                                        status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload.statusPayload,
+                                        blocked_on_object_id: Swift.String? = nil,
+                                        blocked_on_actor_id: Swift.String? = nil,
+                                        blocked_on_decision_comment_id: Swift.Double? = nil,
+                                        blocked_reason: Swift.String? = nil,
+                                        evidence: Swift.String? = nil,
+                                        wake_count: Swift.Double,
+                                        created_by: Swift.String? = nil,
+                                        created_at: Swift.String,
+                                        updated_at: Swift.String,
+                                        closed_at: Swift.String? = nil
+                                    ) {
+                                        self.id = id
+                                        self.object_id = object_id
+                                        self.action = action
+                                        self.owner_id = owner_id
+                                        self.due_at = due_at
+                                        self.status = status
+                                        self.blocked_on_object_id = blocked_on_object_id
+                                        self.blocked_on_actor_id = blocked_on_actor_id
+                                        self.blocked_on_decision_comment_id = blocked_on_decision_comment_id
+                                        self.blocked_reason = blocked_reason
+                                        self.evidence = evidence
+                                        self.wake_count = wake_count
+                                        self.created_by = created_by
+                                        self.created_at = created_at
+                                        self.updated_at = updated_at
+                                        self.closed_at = closed_at
+                                    }
+                                    public enum CodingKeys: String, CodingKey {
+                                        case id
+                                        case object_id
+                                        case action
+                                        case owner_id
+                                        case due_at
+                                        case status
+                                        case blocked_on_object_id
+                                        case blocked_on_actor_id
+                                        case blocked_on_decision_comment_id
+                                        case blocked_reason
+                                        case evidence
+                                        case wake_count
+                                        case created_by
+                                        case created_at
+                                        case updated_at
+                                        case closed_at
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object/next_step`.
+                                public var next_step: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload?
                                 /// Creates a new `objectPayload`.
                                 ///
                                 /// - Parameters:
@@ -75410,6 +78130,7 @@ public enum Operations {
                                 ///   - subscriber_count:
                                 ///   - is_starred_by_me:
                                 ///   - preview:
+                                ///   - next_step:
                                 public init(
                                     id: Swift.String,
                                     workspaceId: Swift.String,
@@ -75430,7 +78151,8 @@ public enum Operations {
                                     unread_count: Swift.Double? = nil,
                                     subscriber_count: Swift.Double? = nil,
                                     is_starred_by_me: Swift.Bool? = nil,
-                                    preview: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload? = nil
+                                    preview: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.previewPayload? = nil,
+                                    next_step: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.objectPayload.next_stepPayload? = nil
                                 ) {
                                     self.id = id
                                     self.workspaceId = workspaceId
@@ -75452,6 +78174,7 @@ public enum Operations {
                                     self.subscriber_count = subscriber_count
                                     self.is_starred_by_me = is_starred_by_me
                                     self.preview = preview
+                                    self.next_step = next_step
                                 }
                                 public enum CodingKeys: String, CodingKey {
                                     case id
@@ -75474,6 +78197,7 @@ public enum Operations {
                                     case subscriber_count
                                     case is_starred_by_me
                                     case preview
+                                    case next_step
                                 }
                             }
                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/object`.
@@ -75545,6 +78269,10 @@ public enum Operations {
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/destructive`.
                                         public var destructive: Swift.Bool?
+                                        /// Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.
+                                        ///
+                                        /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/default_on_silence`.
+                                        public var default_on_silence: Swift.Bool?
                                         /// Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         ///
                                         /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision/optionsPayload/set_status`.
@@ -75608,6 +78336,7 @@ public enum Operations {
                                         ///   - consequences: 2-3 lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Put the guardrails here ("Nothing is published without your go"). Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.
                                         ///   - recommended: Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.
                                         ///   - destructive: Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.
+                                        ///   - default_on_silence: Set true on the one option that happens if nobody answers by expires_at. Needs expires_at. At the deadline you are woken once with "no answer, default is <label>" and you carry on with that option; the card shows the person this line, so they know what happens if they do nothing. Only for a reversible option you could take without asking. Refused on a card that has a destructive option, a delete_agent option, a draft or a set_status option on the default. Leave it off otherwise.
                                         ///   - set_status: Use on the option that moves an object to a new status ("Go" on a card asking to flip a bet to active). Tapping it makes the change as the person, only if the object is still in the status it had when you posted the card; if it has moved on, nothing changes and the person is told. Do not also flip the status yourself. All set_status options on one card must name the same object. The card drops from For You once that object leaves the status it had when posted.
                                         ///   - delete_agent: Use on the option that approves deleting another agent ("Delete Scout"), and mark it destructive. A person tapping it records their approval and nothing is deleted yet: the reply wakes you, and you then call delete_agent with the same id. The approval is for you only, for that one agent, and lapses after 24 hours. Without a tap, delete_agent is refused. All delete_agent options on one card must name the same agent. You cannot ask to delete yourself or a system agent.
                                         public init(
@@ -75615,6 +78344,7 @@ public enum Operations {
                                             consequences: [Swift.String],
                                             recommended: Swift.Bool? = nil,
                                             destructive: Swift.Bool? = nil,
+                                            default_on_silence: Swift.Bool? = nil,
                                             set_status: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.set_statusPayload? = nil,
                                             delete_agent: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload.optionsPayloadPayload.delete_agentPayload? = nil
                                         ) {
@@ -75622,6 +78352,7 @@ public enum Operations {
                                             self.consequences = consequences
                                             self.recommended = recommended
                                             self.destructive = destructive
+                                            self.default_on_silence = default_on_silence
                                             self.set_status = set_status
                                             self.delete_agent = delete_agent
                                         }
@@ -75630,6 +78361,7 @@ public enum Operations {
                                             case consequences
                                             case recommended
                                             case destructive
+                                            case default_on_silence
                                             case set_status
                                             case delete_agent
                                         }
@@ -76317,6 +79049,8 @@ public enum Operations {
                                 ///
                                 /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/decision`.
                                 public var decision: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload?
+                                /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention/session_id`.
+                                public var session_id: Swift.String?
                                 /// Creates a new `latest_mentionPayload`.
                                 ///
                                 /// - Parameters:
@@ -76326,13 +79060,15 @@ public enum Operations {
                                 ///   - content:
                                 ///   - attention:
                                 ///   - decision: Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.
+                                ///   - session_id:
                                 public init(
                                     event_id: Swift.Double,
                                     actor_id: Swift.String? = nil,
                                     created_at: Swift.String,
                                     content: Swift.String,
                                     attention: Swift.Double? = nil,
-                                    decision: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload? = nil
+                                    decision: Operations.get_sol_api_sol_subscriptions_sol_unread.Output.Ok.Body.jsonPayload.itemsPayloadPayload.latest_mentionPayload.decisionPayload? = nil,
+                                    session_id: Swift.String? = nil
                                 ) {
                                     self.event_id = event_id
                                     self.actor_id = actor_id
@@ -76340,6 +79076,7 @@ public enum Operations {
                                     self.content = content
                                     self.attention = attention
                                     self.decision = decision
+                                    self.session_id = session_id
                                 }
                                 public enum CodingKeys: String, CodingKey {
                                     case event_id
@@ -76348,6 +79085,7 @@ public enum Operations {
                                     case content
                                     case attention
                                     case decision
+                                    case session_id
                                 }
                             }
                             /// - Remark: Generated from `#/paths/api/subscriptions/unread/GET/responses/200/content/json/itemsPayload/latest_mention`.
@@ -80475,6 +83213,10 @@ public enum Operations {
                     }
                     /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/encoding`.
                     public var encoding: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.encodingPayload?
+                    /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/conversation_id`.
+                    public var conversation_id: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/files/POST/requestBody/json/object_id`.
+                    public var object_id: Swift.String?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -80485,6 +83227,8 @@ public enum Operations {
                     ///   - mime_type:
                     ///   - content:
                     ///   - encoding:
+                    ///   - conversation_id:
+                    ///   - object_id:
                     public init(
                         name: Swift.String,
                         description: Swift.String? = nil,
@@ -80492,7 +83236,9 @@ public enum Operations {
                         tags: [Swift.String]? = nil,
                         mime_type: Swift.String,
                         content: Swift.String,
-                        encoding: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.encodingPayload? = nil
+                        encoding: Operations.post_sol_api_sol_files.Input.Body.jsonPayload.encodingPayload? = nil,
+                        conversation_id: Swift.String? = nil,
+                        object_id: Swift.String? = nil
                     ) {
                         self.name = name
                         self.description = description
@@ -80501,6 +83247,8 @@ public enum Operations {
                         self.mime_type = mime_type
                         self.content = content
                         self.encoding = encoding
+                        self.conversation_id = conversation_id
+                        self.object_id = object_id
                     }
                     public enum CodingKeys: String, CodingKey {
                         case name
@@ -80510,6 +83258,8 @@ public enum Operations {
                         case mime_type
                         case content
                         case encoding
+                        case conversation_id
+                        case object_id
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/files/POST/requestBody/content/application\/json`.

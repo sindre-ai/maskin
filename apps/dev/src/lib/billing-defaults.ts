@@ -6,12 +6,14 @@
  * the same numbers.
  *
  * `scripts/verify-billing-cap-literals.mjs` runs in CI to enforce the contract
- * — bump the literals here and the script will fail until
+ * — bump the kroner amounts or the rate in `packages/shared/src/plan-pricing.ts`
+ * and the script will fail until
  * `apps/web/src/__tests__/components/settings/billing-section.test.tsx` is
- * updated too. `.env.example` only carries the trial override; pro and team
- * caps come from the literals, not env.
+ * updated too. `.env.example` only carries the trial override; the paid caps
+ * come from the literals, not env.
  */
 
+import { INCLUDED_USAGE_DKK, dkkToUsdCents } from '@maskin/shared'
 import { logger } from './logger'
 
 /**
@@ -85,31 +87,40 @@ export function parsePositiveIntEnv(
 	return clamped
 }
 
+export type MaskinCapPlan = keyof typeof INCLUDED_USAGE_DKK
+
 /**
- * Fallback hard caps for paid plans when `billing.hard_cap_usd_cents` hasn't
+ * Fallback hard caps for each plan when `billing.hard_cap_usd_cents` hasn't
  * been populated yet (delayed Stripe webhook, partial state after a webhook
- * failure), in USD cents. Mirrored in the frontend billing tests — change here
- * and the CI `verify-billing-cap-literals` step will fail until they are updated.
+ * failure), in USD cents. Derived from the kroner amounts and the one fixed
+ * rate in `@maskin/shared` (`plan-pricing.ts`).
  *
- * Each paid plan's included-usage cap equals its monthly price in dollars —
- * $49 for Pro (raised from $20 in Sep 2026, matching the Stripe price change)
- * and $200 for Team. The trial has no price to key off; its
- * $10 is the product's stated free-trial allowance. Switching to a dollar cap
- * (instead of a token count) is what lets different agents run different models
- * with different $/token ratios without the cap silently over- or
- * under-counting usage.
+ * Switching to a dollar cap (instead of a token count) is what lets different
+ * agents run different models with different $/token ratios without the cap
+ * silently over- or under-counting usage.
  */
-export const TRIAL_HARD_CAP_DEFAULT_USD_CENTS = 1_000
-export const PRO_HARD_CAP_DEFAULT_USD_CENTS = 4_900
-export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
+export const TRIAL_HARD_CAP_DEFAULT_USD_CENTS = dkkToUsdCents(INCLUDED_USAGE_DKK.trial)
+export const STARTER_HARD_CAP_DEFAULT_USD_CENTS = dkkToUsdCents(INCLUDED_USAGE_DKK.starter)
+export const PRO_HARD_CAP_DEFAULT_USD_CENTS = dkkToUsdCents(INCLUDED_USAGE_DKK.pro)
+export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = dkkToUsdCents(INCLUDED_USAGE_DKK.team)
+export const ULTRA_HARD_CAP_DEFAULT_USD_CENTS = dkkToUsdCents(INCLUDED_USAGE_DKK.ultra)
+
+/**
+ * Caps of the old dollar plans (Pro $49, Team $200), written only while a
+ * subscription is still on one of the old dollar prices. The one paying
+ * customer is moved to a kroner price by hand; until then a webhook for their
+ * old price must not quietly cut $49 of included usage down to 50 kroner.
+ */
+export const LEGACY_USD_PRO_HARD_CAP_USD_CENTS = 4_900
+export const LEGACY_USD_TEAM_HARD_CAP_USD_CENTS = 20_000
 
 /** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
- * Resolves the included-usage cap (USD cents) for a plan tier. Pro and team
+ * Resolves the included-usage cap (USD cents) for a plan tier. Paid plans
  * always return the literals above; only the trial cap can be overridden by env
- * (`MASKIN_TRIAL_HARD_CAP_USD_CENTS`). Pro and team used to read
+ * (`MASKIN_TRIAL_HARD_CAP_USD_CENTS`). The paid plans used to read
  * `MASKIN_PRO_HARD_CAP_USD_CENTS` / `MASKIN_TEAM_HARD_CAP_USD_CENTS` too, and a
  * stale prod env value kept paying Pro workspaces capped at $20 of their $49.
  *
@@ -118,7 +129,7 @@ export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
  * *display* path (`routes/billing.ts`'s `/usage`). They were separate
  * functions, and the enforcement side simply returned `null` — unlimited — for
  * a paid plan whose Stripe webhook hadn't yet written `hard_cap_usd_cents`,
- * so a pro/team workspace in that window could spend without bound while the
+ * so a paid workspace in that window could spend without bound while the
  * usage page showed it capped. One resolver means the number a customer is
  * shown is the number that actually stops them.
  *
@@ -127,14 +138,18 @@ export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
  * Maskin plan entirely (`MASKIN_PLAN_ROUTED_PLANS` in lib/llm-routing.ts).
  */
 export function resolvePlanCapCents(
-	plan: 'trial' | 'pro' | 'team' | 'enterprise',
+	plan: MaskinCapPlan | 'enterprise',
 	env: NodeJS.ProcessEnv = process.env,
 ): number {
 	switch (plan) {
+		case 'starter':
+			return STARTER_HARD_CAP_DEFAULT_USD_CENTS
 		case 'pro':
 			return PRO_HARD_CAP_DEFAULT_USD_CENTS
 		case 'team':
 			return TEAM_HARD_CAP_DEFAULT_USD_CENTS
+		case 'ultra':
+			return ULTRA_HARD_CAP_DEFAULT_USD_CENTS
 		default:
 			return (
 				parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ??

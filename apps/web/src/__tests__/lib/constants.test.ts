@@ -67,8 +67,14 @@ describe('statusStage', () => {
 	it.each([
 		['done', 'done'],
 		['in_review', 'review'],
+		['live', 'review'],
+		['scored', 'review'],
+		['succeeded', 'done'],
 		['In progress', 'progress'],
 		['active', 'progress'],
+		['define', 'define'],
+		['Define', 'define'],
+		['opportunity', 'todo'],
 		['todo', 'todo'],
 		['backlog', 'todo'],
 		['cancelled', 'cancelled'],
@@ -86,5 +92,10 @@ describe('statusStage', () => {
 	it('treats a custom workspace status as unknown, never as not started', () => {
 		expect(statusStage('waiting_for_legal')).toBe('unknown')
 		expect(statusStage('')).toBe('unknown')
+	})
+
+	it('keeps flow statuses on the plain ring', () => {
+		expect(statusStage('supervised')).toBe('unknown')
+		expect(statusStage('pilot')).toBe('unknown')
 	})
 })

@@ -100,12 +100,23 @@ export function webUrlFor(msg: PushMessage): string {
 	return `/${msg.workspaceId}/notifications`
 }
 
+/**
+ * The path the browser opens, tagged with which notification it came from, so the web app can
+ * count the open (`notification_opened`) once it loads. Ids and a type only.
+ */
+export function webOpenUrlFor(msg: PushMessage): string {
+	const url = new URL(webUrlFor(msg), 'https://app.invalid')
+	url.searchParams.set('notification', msg.notificationId)
+	if (msg.notificationType) url.searchParams.set('notification_type', msg.notificationType)
+	return `${url.pathname}${url.search}`
+}
+
 export function buildWebPushPayload(msg: PushMessage): WebPushPayload {
 	const interruption = msg.interruption ?? (msg.decision ? 'time-sensitive' : 'active')
 	return {
 		title: truncate(msg.title, TITLE_MAX),
 		...(msg.body ? { body: truncate(msg.body, BODY_MAX) } : {}),
-		url: webUrlFor(msg),
+		url: webOpenUrlFor(msg),
 		tag: msg.collapseKey?.trim() || msg.notificationId,
 		silent: interruption === 'passive',
 		requireInteraction: interruption === 'time-sensitive',

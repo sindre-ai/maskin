@@ -2,7 +2,7 @@
 # Runs the must-keep UI tests (docs/must-keep-features.md) against the offline demo server.
 # Starts the demo server on a free port, runs MustKeepTests on an iOS simulator, stops the server.
 #
-#   apps/apple/scripts/run-must-keep.sh                      # all rows
+#   apps/apple/scripts/run-must-keep.sh                      # all rows (MustKeepTests and MustKeepMoreTests)
 #   apps/apple/scripts/run-must-keep.sh MustKeepTests/testMK04_ThreadWithRepliesOpens
 #
 # Env: DEST (simulator, default 'platform=iOS Simulator,name=iPhone 17'),
@@ -11,7 +11,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-only="${1:-MustKeepTests}"
+if [ $# -gt 0 ]; then
+	only=(-only-testing:"MaskinUITests/$1")
+else
+	only=(-only-testing:MaskinUITests/MustKeepTests -only-testing:MaskinUITests/MustKeepMoreTests)
+fi
 dest="${DEST:-platform=iOS Simulator,name=iPhone 17}"
 derived="${DERIVED:-$(mktemp -d)/dd}"
 dump="${MUSTKEEP_DUMP_DIR:-$(mktemp -d)}"
@@ -29,4 +33,4 @@ echo "demo server on :$port, failure evidence in $dump"
 # CODE_SIGNING_ALLOWED=NO: a plain simulator build fails signing the Computer resources bundle.
 TEST_RUNNER_MUSTKEEP_DUMP_DIR="$dump" xcodebuild test -project Maskin.xcodeproj -scheme Maskin \
 	-destination "$dest" -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
-	MASKIN_API_BASE_URL="http://localhost:$port" -only-testing:"MaskinUITests/$only"
+	MASKIN_API_BASE_URL="http://localhost:$port" "${only[@]}"

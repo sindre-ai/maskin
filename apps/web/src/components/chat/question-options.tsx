@@ -6,8 +6,9 @@ import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Check, X } from 'lucide-react'
-import { useId, useState } from 'react'
+import { QUESTION_DETAIL_LINES, splitQuestionText } from '@/lib/question-text-split'
+import { Check, ChevronDown, X } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 interface QuestionOptionsProps {
 	conversationId: string
@@ -57,6 +58,10 @@ export function QuestionOptions({
 	// Free-text reply, for when none of the options fit.
 	const [typing, setTyping] = useState(false)
 	const [typed, setTyped] = useState('')
+	// Opening the box moves the cursor into it; closing it with Esc hands focus back to the button that opened it.
+	const typeButtonRef = useRef<HTMLButtonElement>(null)
+	const typedRef = useRef<HTMLTextAreaElement>(null)
+	const returnFocus = useRef(false)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	// A helper another agent started is not in this chat, so its answer goes to
 	// the session itself, not to the chat's agents.
@@ -65,6 +70,15 @@ export function QuestionOptions({
 	const canWrite = useCanWrite()
 	const isPending = sendMessage.isPending || sendInput.isPending
 	const isError = sendMessage.isError || sendInput.isError
+
+	useEffect(() => {
+		if (typing) {
+			typedRef.current?.focus()
+		} else if (returnFocus.current) {
+			returnFocus.current = false
+			typeButtonRef.current?.focus()
+		}
+	}, [typing])
 
 	if (answered) return null
 
@@ -156,6 +170,7 @@ export function QuestionOptions({
 		<div className="mt-2 flex flex-col gap-3">
 			{question.questions.map((q, index) => {
 				const chosen = picked[index] ?? []
+				const text = splitQuestionText(q.question)
 				return (
 					// Index as key for the same reason the state is index-keyed: headers
 					// are not unique, and the list is a fixed snapshot from one immutable
@@ -163,7 +178,8 @@ export function QuestionOptions({
 					// biome-ignore lint/suspicious/noArrayIndexKey: headers are not unique
 					<fieldset key={index} className="flex flex-col gap-1.5 border-0 p-0">
 						<legend className="eyebrow">{q.header}</legend>
-						<p className="text-[13.5px] leading-[1.5] text-foreground">{q.question}</p>
+						<p className="text-[13.5px] leading-[1.5] text-foreground">{text.lead}</p>
+						{text.detail ? <CutText text={text.detail} lines={QUESTION_DETAIL_LINES} /> : null}
 						<ViewerTooltip className="block">
 							{/* Options that come with a reason are full-width rows (label, then the reason),
 							    so the card says everything the agent wrote; plain options stay chips. */}
@@ -237,6 +253,7 @@ export function QuestionOptions({
 					    available rather than reading as a dead end. */}
 					{typing ? null : (
 						<Button
+							ref={typeButtonRef}
 							type="button"
 							variant="ghost"
 							size="sm"
@@ -267,9 +284,18 @@ export function QuestionOptions({
 			{typing ? (
 				<div className="flex items-end gap-2">
 					<Textarea
+						ref={typedRef}
 						value={typed}
 						onChange={(e) => setTyped(e.target.value)}
 						onKeyDown={(e) => {
+							if (e.key === 'Escape') {
+								// Only close the box; the card or thread around it stays open.
+								e.preventDefault()
+								e.stopPropagation()
+								returnFocus.current = true
+								setTyping(false)
+								return
+							}
 							if (e.key === 'Enter' && !e.shiftKey) {
 								e.preventDefault()
 								submitTyped()
@@ -292,6 +318,70 @@ export function QuestionOptions({
 			) : null}
 			{isError ? (
 				<p className="text-[10.5px] text-destructive">Couldn't send that. Try again.</p>
+			) : null}
+		</div>
+	)
+}
+
+/**
+ * Running text cut after `lines` lines, with Show all / Show less when there is more. Text that
+ * fits shows in full with no button. The cut is the browser's own clamp, and whether it cut
+ * anything is read from the laid-out text, so no character count stands in for the layout.
+ */
+function CutText({ text, lines }: { text: string; lines: number }) {
+	const [expanded, setExpanded] = useState(false)
+	const [isCut, setIsCut] = useState(false)
+	const ref = useRef<HTMLParagraphElement>(null)
+
+	// Only measured while clamped, so once opened the button stays for Show less.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new text needs measuring again
+	useLayoutEffect(() => {
+		const el = ref.current
+		if (expanded || !el) return
+		const measure = () => setIsCut(el.scrollHeight > el.clientHeight + 1)
+		measure()
+		if (typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(measure)
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [expanded, text])
+
+	return (
+		<div className="flex flex-col items-start">
+			<p
+				ref={ref}
+				data-question-detail=""
+				data-cut={!expanded}
+				className="w-full whitespace-pre-wrap break-words text-[13px] leading-[1.5] text-foreground"
+				style={
+					expanded
+						? undefined
+						: {
+								display: '-webkit-box',
+								WebkitBoxOrient: 'vertical',
+								WebkitLineClamp: lines,
+								overflow: 'hidden',
+							}
+				}
+			>
+				{text}
+			</p>
+			{isCut ? (
+				<Button
+					type="button"
+					variant="link"
+					size="sm"
+					className="h-auto gap-1 px-0 py-1 text-xs"
+					aria-expanded={expanded}
+					onClick={() => setExpanded((open) => !open)}
+				>
+					{expanded ? 'Show less' : 'Show all'}
+					<ChevronDown
+						size={12}
+						aria-hidden
+						className={cn('transition-transform', expanded && 'rotate-180')}
+					/>
+				</Button>
 			) : null}
 		</div>
 	)

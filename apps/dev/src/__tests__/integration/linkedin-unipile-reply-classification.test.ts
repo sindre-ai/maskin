@@ -179,7 +179,7 @@ async function insertContact(
 ) {
 	const row = await insertObject(db, overrides.workspaceId ?? workspaceId, getTestActorId(), {
 		type: 'contact',
-		status: overrides.status ?? 'messaged',
+		status: overrides.status ?? 'initial_contact',
 		metadata: linkedinUrl === null ? {} : { linkedin_url: linkedinUrl },
 		driver: overrides.driver ?? null,
 	})
@@ -225,7 +225,7 @@ describe('known contact', () => {
 			direction_source: 'is_sender',
 			sender_public_identifier: 'jane-doe',
 			contact_id: contact.id,
-			contact_status: 'messaged',
+			contact_status: 'initial_contact',
 			contact_driver_id: driver.id,
 		})
 		expect(JSON.stringify(row?.data)).not.toContain('secret message text')

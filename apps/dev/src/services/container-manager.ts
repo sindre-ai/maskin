@@ -47,6 +47,49 @@ export interface StreamJsonUserMessage {
 	}
 }
 
+/** An image to put in front of the agent with a turn, as the screenshot of a handed-back computer. */
+export interface TurnImage {
+	/** image/jpeg, image/png, image/webp or image/gif. */
+	mediaType: string
+	/** The bytes, base64 encoded. */
+	data: string
+}
+
+/**
+ * The same user turn with images after the text, in the content-block form the CLI reads. Only
+ * what is written to the CLI: the copy kept in the session log stays a plain string, because the
+ * log readers tell a turn the person started from a tool result by that string.
+ */
+export function userTurnWithImages(
+	payload: StreamJsonUserMessage,
+	images: TurnImage[],
+): StreamJsonUserBlocksMessage {
+	return {
+		type: 'user',
+		message: {
+			role: 'user',
+			content: [
+				{ type: 'text', text: payload.message.content },
+				...images.map((image) => ({
+					type: 'image' as const,
+					source: { type: 'base64' as const, media_type: image.mediaType, data: image.data },
+				})),
+			],
+		},
+	}
+}
+
+export interface StreamJsonUserBlocksMessage {
+	type: 'user'
+	message: {
+		role: 'user'
+		content: Array<
+			| { type: 'text'; text: string }
+			| { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+		>
+	}
+}
+
 /**
  * Tracks a session's stdin stream alongside the container id it was attached
  * to, so `write()` can re-attach after an unexpected error/end.
@@ -192,7 +235,7 @@ export class ContainerManager {
 		// reads that body as container stdin: about 1 attach in 10. Left alone it
 		// lands in front of the first line we write, the CLI fails with "Error
 		// parsing streaming input line ... SyntaxError" and exits, and a session
-		// whose only input was that line (a helper started with create_session)
+		// whose only input was that line (a helper started with create_sub_chat)
 		// dies. One newline right after attaching ends any leaked bytes as a line of
 		// their own, which the CLI skips, and is a blank line it ignores otherwise.
 		// (Attaching without the body was tried: against a real daemon it never
@@ -233,7 +276,7 @@ export class ContainerManager {
 	 */
 	async write(
 		sessionId: string,
-		payload: StreamJsonUserMessage | StreamJsonSetModelRequest,
+		payload: StreamJsonUserMessage | StreamJsonUserBlocksMessage | StreamJsonSetModelRequest,
 	): Promise<void> {
 		const handle = this.stdinStreams.get(sessionId)
 		if (!handle) {

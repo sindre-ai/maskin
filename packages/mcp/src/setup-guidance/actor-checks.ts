@@ -103,7 +103,7 @@ function automationWired(actor: ActorInput): SetupCheck | null {
 		fix: {
 			tool: 'create_trigger',
 			args_hint: `target_actor_id: "${actor.id}" + a cron/event/reminder config (or add a step targeting this actor via create_loop/update_loop)`,
-			why: 'Without a trigger or loop, this agent only ever runs when explicitly invoked via create_session.',
+			why: 'Without a trigger or loop, this agent only ever runs when explicitly invoked via create_sub_chat.',
 		},
 	}
 }

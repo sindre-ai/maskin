@@ -1,0 +1,98 @@
+name: Agent host diagnostic (read-only)
+
+# One-off, manual only. Reads the agent-server host to answer why workspace
+# desktops (agent computers) were found wiped on 10 Nov 2026. Changes nothing:
+# no restarts, no file writes, no msb mutations. Delete this file once the
+# question is answered.
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Journal window start (UTC)'
+        required: false
+        default: '2026-11-10 00:00:00'
+      until:
+        description: 'Journal window end (UTC)'
+        required: false
+        default: '2026-11-11 06:00:00'
+
+concurrency:
+  group: agent-host-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: read journal, kernel log and DESKTOP_ settings
+        uses: appleboy/ssh-action@v1
+        env:
+          SINCE: ${{ inputs.since }}
+          UNTIL: ${{ inputs.until }}
+        with:
+          host: ${{ secrets.AGENT_SERVER_HOST }}
+          username: ${{ secrets.AGENT_SERVER_USER }}
+          key: ${{ secrets.AGENT_SERVER_SSH_KEY }}
+          envs: SINCE,UNTIL
+          command_timeout: 5m
+          script: |
+            # No -e: one failing read must not hide the others.
+            set -uo pipefail
+            J="journalctl --utc --no-pager"
+
+            echo "== host clock and boots =="
+            date -u
+            uptime
+            $J --list-boots | tail -n 10
+            echo
+            echo "== journal retention (does it cover the window?) =="
+            $J --disk-usage
+            $J -u maskin-agent-server -n 1 --reverse -o short-iso | head -n 1
+            $J -u maskin-agent-server --since "2020-01-01" -n 1 -o short-iso | head -n 1
+            echo
+
+            echo "== agent-server unit: starts, restarts =="
+            systemctl show maskin-agent-server -p ActiveEnterTimestamp -p NRestarts -p KillMode -p MainPID
+            $J -u maskin-agent-server --since "$SINCE" --until "$UNTIL" -o short-iso \
+              | grep -E "Started |Stopped |Stopping |Main process exited|Failed with result|reconcile" | tail -n 60
+            echo
+
+            echo "== 'workspace desktop registered but not running' =="
+            $J -u maskin-agent-server --since "$SINCE" --until "$UNTIL" -o short-iso \
+              | grep -F "registered but not running" | tail -n 60
+            echo "(count in window:)"
+            $J -u maskin-agent-server --since "$SINCE" --until "$UNTIL" -o short-iso \
+              | grep -cF "registered but not running"
+            echo
+
+            echo "== desktop provision, remove, suspend, restore lines =="
+            $J -u maskin-agent-server --since "$SINCE" --until "$UNTIL" -o short-iso \
+              | grep -iE "desktop" | grep -iE "provision|remov|suspend|restor|snapshot|delete|stopp|exit|fail|error" | tail -n 80
+            echo
+
+            echo "== kernel: OOM kills and VM stops =="
+            $J -k --since "$SINCE" --until "$UNTIL" -o short-iso \
+              | grep -iE "out of memory|oom-kill|oom_reaper|killed process|invoked oom" | tail -n 40
+            echo
+            echo "== OOM lines from any unit =="
+            $J --since "$SINCE" --until "$UNTIL" -o short-iso \
+              | grep -iE "out of memory|oom-kill|killed process" | tail -n 40
+            echo
+
+            echo "== host reboot or shutdown markers =="
+            last -x -F reboot shutdown 2>/dev/null | head -n 10
+            echo
+
+            echo "== DESKTOP_ settings (only these keys, values are not secret) =="
+            grep -E '^(DESKTOP_[A-Z_]*|SESSION_MAX_DURATION|WARM_POOL_REFRESH_MINUTES)=' \
+              /opt/maskin/apps/agent-server/.env || echo "(none set, code defaults apply)"
+            echo
+
+            echo "== host memory, disk, load now =="
+            free -m
+            df -h / /agent 2>/dev/null
+            cat /proc/loadavg
+            echo
+            echo "== msb sandboxes now (names and status only) =="
+            /root/.microsandbox/bin/msb list 2>&1 | head -n 40 || true

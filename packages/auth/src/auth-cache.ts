@@ -97,7 +97,12 @@ export class TtlPromiseCache<T> {
 }
 
 export interface AuthCaches {
-	apiKeys: TtlPromiseCache<{ actorId: string; type: string; keyKind?: ApiKeyKind } | null>
+	apiKeys: TtlPromiseCache<{
+		actorId: string
+		type: string
+		keyKind?: ApiKeyKind
+		sessionId?: string | null
+	} | null>
 	// Role of the actor in the workspace, or null for a non-member. The ank_ and mat_ branches
 	// share this cache under the same key, so both must store the role.
 	memberships: TtlPromiseCache<string | null>

@@ -5,16 +5,32 @@ export const LOOP_PILL_STYLES: Record<
 	{ label: string; dot: string; text: string }
 > = {
 	draft: { label: 'Draft', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
-	paused: { label: 'Paused', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
-	learning: { label: 'Learning', dot: 'bg-success', text: 'text-foreground' },
+	pilot: { label: 'Pilot', dot: 'bg-success', text: 'text-foreground' },
 	supervised: { label: 'Supervised', dot: 'bg-success', text: 'text-foreground' },
-	fully_autonomous: { label: 'Fully autonomous', dot: 'bg-success', text: 'text-success' },
+	live: { label: 'Live', dot: 'bg-success', text: 'text-success' },
+	archived: { label: 'Archived', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
+	paused: { label: 'Paused', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
 	waiting_on_you: { label: 'Waiting on you', dot: 'bg-warning', text: 'text-warning' },
 }
 
 /**
+ * Style lookup that never throws. A pill value the table does not know (a new
+ * status shipped by the server before this build, or stale cached data) shows
+ * its raw text in the muted style instead of crashing the page.
+ */
+export function loopPillStyle(pill: string): { label: string; dot: string; text: string } {
+	return (
+		(LOOP_PILL_STYLES as Record<string, (typeof LOOP_PILL_STYLES)[LoopSummary['pill']]>)[pill] ?? {
+			label: pill,
+			dot: 'bg-muted-foreground',
+			text: 'text-muted-foreground',
+		}
+	)
+}
+
+/**
  * The three "live" rungs of the autonomy ladder — a loop that is actually
- * running work through its triggers. `draft` and `paused` are not live, and
+ * running work through its triggers. `draft`, `paused` and `archived` are not live, and
  * `waiting_on_you` is a per-viewer overlay on a live status rather than a
  * state of the loop itself (see `loopPillSchema` in
  * `packages/shared/src/schemas/loops.ts`).
@@ -24,31 +40,29 @@ export const LOOP_PILL_STYLES: Record<
  * rather than an equality check. Defined once here so the pulsing-dot and
  * colour rules in LoopRow / LoopStats / the loop detail header can't drift.
  */
-const LIVE_LOOP_PILLS = new Set<LoopSummary['pill']>(['learning', 'supervised', 'fully_autonomous'])
+const LIVE_LOOP_PILLS = new Set<LoopSummary['pill']>(['pilot', 'supervised', 'live'])
 
 export function isLiveLoopPill(pill: LoopSummary['pill']): boolean {
 	return LIVE_LOOP_PILLS.has(pill)
 }
 
 /**
- * Composite "no credits" pill overlay — rendered next to a `paused` loop's
- * state label when the workspace credit balance is empty. Not a member of the
+ * Composite "paused, upgrade" pill overlay — rendered next to a `paused` loop's
+ * state label when the workspace is out of usage. Not a member of the
  * `LoopSummary.pill` enum on purpose: the loop's stored status stays `paused`
- * and the wallet-empty signal comes from workspace billing (`credit_balance_cents`
- * on `BillingUsageResponse`), so the overlay is derived at render time rather
- * than pushed onto the read schema. Amber tokens match the `waiting_on_you`
- * pill family (see `LOOP_PILL_STYLES` above) so paused-by-credits and
- * needs-your-attention share one warning vocabulary.
+ * and the out-of-usage signal comes from workspace billing, so the overlay is
+ * derived at render time rather than pushed onto the read schema. Amber tokens
+ * match the `waiting_on_you` pill family (see `LOOP_PILL_STYLES` above) so
+ * paused-by-usage and needs-your-attention share one warning vocabulary.
+ *
+ * Top-up is closed, so the pill says "Upgrade" like the left-nav trial card and
+ * opens the same place (Billing). Same words with the percent flag on or off.
  */
-export const NO_CREDITS_PILL = {
-	/** Verbatim per SPEC — desktop copy. */
-	label: 'NO CREDITS',
-	/** Verbatim per SPEC — mobile copy at ≤ 640px. */
-	mobileLabel: 'NO CR.',
-	/** Read out on both viewports so the abbreviation never reaches assistive tech. */
-	ariaLabel: 'Paused — no credits',
-	/** Tooltip copy verbatim per SPEC — surfaces the "why" and the fix in one line. */
-	tooltip: 'Paused — the credit balance is empty. Top up in Billing.',
+export const UPGRADE_PILL = {
+	label: 'Upgrade',
+	mobileLabel: 'Upgrade',
+	ariaLabel: 'Paused. Upgrade your plan.',
+	tooltip: 'Paused. Upgrade your plan in Billing.',
 } as const
 
 /**

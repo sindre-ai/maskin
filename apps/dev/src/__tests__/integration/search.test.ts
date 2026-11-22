@@ -26,6 +26,7 @@ import { jsonGet } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: searchRoutes } = await import('../../routes/search')
+const { directPairKey } = await import('../../services/direct-chat')
 const { SEARCH_SOURCES, runSearch } = await import('../../services/search')
 
 // The actor seeded in global-setup's beforeAll.
@@ -334,6 +335,144 @@ describe('GET /api/search against real Postgres', () => {
 			const res = await search({ q: 'relaunch' })
 
 			expect(res.results.map((r) => r.id)).toEqual([titled.id, mentioned.id])
+		})
+
+		it('ranks a chat found by a participant name above chats that only hold the letters', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			const direct = await seedChat('', [actorId, cpo.id])
+			await say(direct.id, actorId, 'morning')
+			const inWord = await seedChat('Ascpo review', [actorId, otherUserId])
+			await say(inWord.id, otherUserId, 'nothing here')
+			await tick()
+			// The word-only chat is the newest one.
+			await say(inWord.id, otherUserId, 'still nothing')
+
+			const res = await search({ q: 'cpo', types: ['chat'] })
+
+			expect(res.results.map((r) => r.id)).toEqual([direct.id, inWord.id])
+		})
+
+		it('puts an unread chat before a read one of equal score', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			const unread = await seedChat('', [actorId, cpo.id])
+			await say(unread.id, cpo.id, 'a note for you')
+			const read = await seedChat('', [actorId, cpo.id])
+			await say(read.id, actorId, 'my own message')
+			await tick()
+			// The read chat is the newest one, so only the unread rule can put the other first.
+			await say(read.id, actorId, 'one more of mine')
+
+			const res = await search({ q: 'cpo', types: ['chat'] })
+
+			expect(res.results.map((r) => r.id)).toEqual([unread.id, read.id])
+		})
+
+		it('puts the best match first whatever its kind, above chats that hold the letters inside a word', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			const direct = await seedChat('', [actorId, cpo.id])
+			await say(direct.id, actorId, 'morning')
+			const inWord = await seedChat('Ascpo review', [actorId, otherUserId])
+			await say(inWord.id, otherUserId, 'nothing here')
+			await tick()
+			// The in-word chat is the newest one, and the chats group comes before agents.
+			await say(inWord.id, otherUserId, 'still nothing')
+
+			const res = await search({ q: 'cpo' })
+
+			expect(res.results.map((r) => r.id)).toEqual([cpo.id, direct.id, inWord.id])
+		})
+
+		it('ranks the start of a word above the same letters inside a word, across groups', async () => {
+			const cco = await insertActor(db, { name: 'CCO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cco.id)
+			const accounting = await seedChat('Accounting', [actorId])
+			await say(accounting.id, actorId, 'books')
+			await seedObjects('task', 'todo', 1, () => 'Accounting cleanup')
+			const ccoPlan = await seedChat('CCO plan', [actorId])
+			await say(ccoPlan.id, actorId, 'plan')
+			await tick()
+			// The in-word chat is the newest one.
+			await say(accounting.id, actorId, 'more books')
+
+			const res = await search({ q: 'cco' })
+
+			expect(res.results.map((r) => r.title)).toEqual([
+				'CCO',
+				'CCO plan',
+				'Accounting',
+				'Accounting cleanup',
+			])
+		})
+
+		it('ranks a word start above letters inside a word within one group', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Reaccounting of fees and other long titles')
+			await seedObjects('task', 'todo', 1, () => 'Account review of fees and other long titles')
+
+			const res = await search({ q: 'acc' })
+
+			expect(res.results.map((r) => r.title)).toEqual([
+				'Account review of fees and other long titles',
+				'Reaccounting of fees and other long titles',
+			])
+		})
+
+		it('ranks open items above done ones and archived last when the match is the same', async () => {
+			// The done and archived ones are the newest, so only the status rule can put the open ones first.
+			const make = (status: string, minutesAgo: number) =>
+				buildObject({
+					workspaceId,
+					createdBy: actorId,
+					type: 'task',
+					status,
+					title: 'Quarterly report',
+					updatedAt: new Date(Date.now() - minutesAgo * 60_000),
+				})
+			const needsYou = make('in_review', 4)
+			const inProgress = make('in_progress', 3)
+			const done = make('done', 2)
+			const archived = make('discarded', 1)
+			await db.insert(objects).values([archived, done, inProgress, needsYou])
+
+			const res = await search({
+				q: 'quarterly report',
+				statuses: ['needs_you', 'in_progress', 'new', 'done', 'archived'],
+			})
+
+			expect(res.results.map((r) => r.id)).toEqual([
+				needsYou.id,
+				inProgress.id,
+				done.id,
+				archived.id,
+			])
+		})
+
+		it('lets a better title match beat an open status', async () => {
+			await seedObjects('task', 'in_progress', 1, () => 'Review of the quarterly numbers')
+			await seedObjects('task', 'done', 1, () => 'Quarterly review')
+
+			const res = await search({ q: 'quarterly' })
+
+			// Both hit a whole word, but the shorter title scores higher; status only breaks ties.
+			expect(res.results.map((r) => r.title)).toEqual([
+				'Quarterly review',
+				'Review of the quarterly numbers',
+			])
+		})
+
+		it('shares the rows across groups with per_group, and fills the room when a group is short', async () => {
+			const cpo = await insertActor(db, { name: 'CPO', type: 'agent' })
+			await ensureWorkspaceMember(db, workspaceId, cpo.id)
+			for (let i = 0; i < 4; i++) await seedChat(`Chat ${i}`, [actorId, cpo.id])
+
+			const shared = await search({ q: 'cpo', limit: 4, per_group: 3 })
+			// The agent named CPO is the best match, so it leads; the chats are capped at three.
+			expect(shared.results.map((r) => r.group)).toEqual(['agents', 'chats', 'chats', 'chats'])
+
+			const filled = await search({ q: 'cpo', types: ['chat'], limit: 4, per_group: 3 })
+			expect(filled.results).toHaveLength(4)
 		})
 
 		it('reads LIKE wildcards in a word as plain characters inside messages', async () => {
@@ -647,7 +786,9 @@ describe('GET /api/search against real Postgres', () => {
 			.update(objects)
 			.set({ content: 'mentions kappa once' })
 			.where(eq(objects.title, 'unrelated'))
-		await seedObjects('task', 'todo', 1, () => 'kappa task')
+		// A read chat is in the done status group, so the task is done too: the group order is only
+		// seen when the match and the status group are the same.
+		await seedObjects('task', 'done', 1, () => 'kappa task')
 		await seedChat('kappa chat', [actorId])
 		const res = await search({ q: 'kappa' })
 		expect(res.results.map((r) => r.group)).toEqual(['chats', 'objects', 'objects'])
@@ -783,10 +924,119 @@ describe('GET /api/search against real Postgres', () => {
 			expect(onlyPeople.total).toBe(1)
 		})
 
-		it('lists people before objects under relevance sort', async () => {
-			await seedObjects('task', 'todo', 1, () => 'Magnus task')
+		it('lists a person before an object that only has the name inside a longer title', async () => {
+			await seedObjects('task', 'todo', 1, () => 'Magnus Nodegard follow-up task')
 			const res = await search({ q: 'magnus' })
 			expect(res.results.map((r) => r.group)).toEqual(['people', 'objects'])
+		})
+	})
+
+	describe('launcher: a teammate first', () => {
+		let magnusId: string
+
+		beforeEach(async () => {
+			const magnus = await insertActor(db, { name: 'Magnus Nodegard', email: 'magnus@omega.test' })
+			magnusId = magnus.id
+			await ensureWorkspaceMember(db, workspaceId, magnusId)
+		})
+
+		const launcher = (q = 'magnus') => search({ q, limit: 6, per_group: 3 })
+
+		it('puts the direct message first, above chats titled with the name and past the per-group cap', async () => {
+			for (let i = 0; i < 4; i++) await seedChat(`Magnus sync ${i}`, [actorId, otherUserId])
+			const dm = await seedChat('Magnus', [actorId, magnusId], {
+				directPairKey: directPairKey(actorId, magnusId),
+			})
+			await say(dm.id, magnusId, 'See you at ten')
+			await say(dm.id, actorId, 'Booked the room')
+
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({
+				id: dm.id,
+				group: 'chats',
+				type: 'direct_message',
+				title: 'Magnus Nodegard',
+				snippet: 'You: Booked the room',
+			})
+			expect(res.results[0]?.updatedAt).not.toBeNull()
+			// The direct message takes no chat's place: all four titled chats still follow it (the room
+			// the cap leaves is filled), and nobody shows twice.
+			expect(res.results.map((r) => r.type)).toEqual([
+				'direct_message',
+				'chat',
+				'chat',
+				'chat',
+				'chat',
+			])
+			expect(res.results.filter((r) => r.id === dm.id)).toHaveLength(1)
+			expect(res.results.some((r) => r.id === magnusId)).toBe(false)
+		})
+
+		it("shows the teammate's own last message without the You prefix", async () => {
+			const dm = await seedChat('Magnus', [actorId, magnusId], {
+				directPairKey: directPairKey(actorId, magnusId),
+			})
+			await say(dm.id, magnusId, 'See you at ten')
+
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({ type: 'direct_message', snippet: 'See you at ten' })
+		})
+
+		it('offers Start a chat when there is no direct message, as one person row', async () => {
+			const res = await launcher()
+			expect(res.results).toHaveLength(1)
+			expect(res.results[0]).toMatchObject({
+				id: magnusId,
+				group: 'people',
+				type: 'start_chat',
+				title: 'Magnus Nodegard',
+			})
+		})
+
+		it('does not take a topical chat with the same two people for the direct message', async () => {
+			await seedChat('Magnus and me', [actorId, magnusId])
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({ id: magnusId, type: 'start_chat' })
+			expect(res.results[1]).toMatchObject({ group: 'chats', type: 'chat' })
+		})
+
+		it('does not take a direct message that a third person has joined', async () => {
+			const dm = await seedChat('Magnus', [actorId, magnusId, otherUserId], {
+				directPairKey: directPairKey(actorId, magnusId),
+			})
+			const res = await launcher()
+			expect(res.results[0]).toMatchObject({ id: magnusId, type: 'start_chat' })
+			expect(res.results.find((r) => r.id === dm.id)?.type).toBe('chat')
+		})
+
+		it('needs the name to match at the start of a word', async () => {
+			const res = await launcher('agnus')
+			expect(res.results.every((r) => r.type !== 'start_chat' && r.type !== 'direct_message')).toBe(
+				true,
+			)
+		})
+
+		it('leaves the caller out of their own results', async () => {
+			const res = await search({ q: 'magnus', limit: 6, per_group: 3 }, magnusId)
+			expect(res.results.some((r) => r.type === 'start_chat')).toBe(false)
+		})
+
+		it('lists CRM contacts last', async () => {
+			await seedObjects('contact', 'active', 1, () => 'Magnus Hansen')
+			await seedObjects('bet', 'active', 1, () => 'Magnus rollout')
+			await seedChat('Magnus sync', [actorId, otherUserId])
+
+			const res = await launcher()
+			const types = res.results.map((r) => r.type)
+			expect(types[types.length - 1]).toBe('contact')
+			expect(types.indexOf('bet')).toBeLessThan(types.indexOf('contact'))
+		})
+
+		it('only applies to the launcher, not to the search page or a filtered search', async () => {
+			const page = await search({ q: 'magnus' })
+			expect(page.results.map((r) => r.type)).toEqual(['person'])
+			const filtered = await search({ q: 'magnus', limit: 6, per_group: 3, types: ['person'] })
+			expect(filtered.results.map((r) => r.type)).toEqual(['person'])
 		})
 	})
 

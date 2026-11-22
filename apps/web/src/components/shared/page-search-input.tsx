@@ -19,7 +19,8 @@ import { useEffect, useRef, useState } from 'react'
  *
  * `debounceMs` holds typing back from `onChange` for pages whose search is a
  * server filter (Items), while the field itself stays responsive. A change of
- * `value` from outside (a removed filter pill) replaces the text.
+ * `value` from outside (a removed filter pill) replaces the text. Esc clears the text and
+ * leaves the field, so the list is not left filtered.
  */
 export function PageSearchInput({
 	value,
@@ -64,6 +65,13 @@ export function PageSearchInput({
 		setOpen(true)
 	}
 
+	// Closing the takeover removes the focused input, which would drop the caret to
+	// the page body. Hand focus back to the icon button that opened it.
+	function closeNarrow() {
+		setOpen(false)
+		iconRef.current?.focus()
+	}
+
 	usePageSearchShortcut(() => {
 		// Wide: the field itself is on screen. Narrow: open the inline field (or, if it
 		// is already open, put the caret back in it).
@@ -101,11 +109,14 @@ export function PageSearchInput({
 				value={text}
 				onChange={(e) => handleChange(e.target.value)}
 				onKeyDown={(e) => {
-					if (e.key === 'Escape') setOpen(false)
+					if (e.key === 'Escape') {
+						handleChange('')
+						closeNarrow()
+					}
 				}}
 				placeholder={label}
 				aria-label={label}
-				className="h-8 rounded-full border-transparent bg-muted pl-9"
+				className="h-8 rounded-full bg-muted pl-9"
 			/>
 		</div>
 	)
@@ -116,7 +127,7 @@ export function PageSearchInput({
 			    collapsed; the 32px clip box is what animates. */}
 			<div
 				className={cn(
-					'relative hidden h-8 shrink-0 cursor-text overflow-hidden rounded-full bg-muted transition-[width] duration-300 ease-out xl:block',
+					'relative hidden h-8 shrink-0 cursor-text overflow-hidden rounded-full border border-control bg-muted transition-[width] duration-300 ease-out xl:block',
 					wideOpen || text ? 'w-56' : 'w-8 cursor-pointer',
 					className,
 				)}
@@ -134,11 +145,14 @@ export function PageSearchInput({
 					onFocus={() => setWideOpen(true)}
 					onBlur={() => setWideOpen(false)}
 					onKeyDown={(e) => {
-						if (e.key === 'Escape') e.currentTarget.blur()
+						if (e.key === 'Escape') {
+							handleChange('')
+							e.currentTarget.blur()
+						}
 					}}
 					placeholder={label}
 					aria-label={label}
-					className="h-8 w-56 rounded-full border-transparent bg-transparent pl-9"
+					className="-mt-px -ml-px h-8 w-56 rounded-full border-transparent bg-transparent pl-9"
 				/>
 			</div>
 			<Button
@@ -150,7 +164,7 @@ export function PageSearchInput({
 				ref={iconRef}
 				onClick={(e) => openCollapsed(e.currentTarget.closest('header'))}
 				className={cn(
-					'relative size-8 shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted xl:hidden',
+					'touch-hit relative size-8 shrink-0 rounded-full border border-control bg-muted text-muted-foreground hover:bg-muted xl:hidden',
 					text && 'text-foreground',
 				)}
 			>
@@ -173,8 +187,8 @@ export function PageSearchInput({
 						variant="ghost"
 						size="icon"
 						aria-label="Close search"
-						onClick={() => setOpen(false)}
-						className="size-[30px] shrink-0 rounded-lg text-muted-foreground"
+						onClick={closeNarrow}
+						className="touch-hit relative size-[30px] shrink-0 rounded-lg text-muted-foreground"
 					>
 						<X aria-hidden size={15} />
 					</Button>

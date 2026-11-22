@@ -48,3 +48,16 @@ struct LoopDetailTabTests {
 		#expect(view == results)
 	}
 }
+
+extension LoopDetailTabTests {
+	@Test("the open view stays open when the views list changes, and falls back when it goes")
+	func selectionSurvives() {
+		let before = LoopDetailTab.tabs(views: [results, health], hasBriefings: false)
+		let open = before[2]
+		// A briefing joining the bar does not move which tab is open.
+		let grown = LoopDetailTab.tabs(views: [results, health], hasBriefings: true)
+		#expect(grown.contains(open))
+		let gone = LoopDetailTab.tabs(views: [results], hasBriefings: false)
+		#expect(!gone.contains(open))
+	}
+}

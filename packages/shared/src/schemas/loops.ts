@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LOOP_STATUSES, loopTargetSchema } from './objects'
+import { LOOP_STATUSES, loopTargetViewSchema } from './objects'
 
 /**
  * Response schema for `GET /api/loops` — the list-view read shape T3 renders
@@ -8,11 +8,11 @@ import { LOOP_STATUSES, loopTargetSchema } from './objects'
  * bet/loops-first-class names each derivation and its source.
  *
  * `pill` composes the object's stored lifecycle status with a per-viewer
- * `waiting_on_viewer` flag so the frontend can render e.g. "Learning" vs
+ * `waiting_on_viewer` flag so the frontend can render e.g. "Pilot" vs
  * "Waiting on you" from a single field without re-implementing the composite
  * signal client-side. `waiting_on_you` only ever overrides the three "live"
- * statuses (`learning` | `supervised` | `fully_autonomous`) — `draft` and
- * `paused` are not "live" and always render as themselves regardless of
+ * statuses (`pilot` | `supervised` | `live`) — `draft`, `paused` and
+ * `archived` are not running and always render as themselves regardless of
  * unread activity. Fields intentionally match the design spec attached to
  * the parent bet — status pill, per-loop stats, agent-avatar chips.
  */
@@ -79,7 +79,7 @@ export const loopSummarySchema = z.object({
 	 * wire: it derives on render from `actual` / `target` (+ optional
 	 * `pace_policy` per target).
 	 */
-	targets: z.array(loopTargetSchema).nullable(),
+	targets: z.array(loopTargetViewSchema).nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

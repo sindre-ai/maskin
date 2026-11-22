@@ -118,7 +118,7 @@ describe('SessionManager.startSession — rows waiting in the dispatch queue (In
 	})
 })
 
-// A helper started from a chat with create_session sits at status 'queued' when
+// A helper started from a chat with create_sub_chat sits at status 'queued' when
 // the workspace session budget is full. Chat reports said such a helper died
 // after about 10 minutes in the queue while a trigger-started one lasted an
 // hour. Real Postgres because the assertion is on the persisted row across
@@ -154,7 +154,7 @@ describe('Chat-started helper waiting for a workspace slot (Integration)', () =>
 
 		let sessionId: string
 		try {
-			// The config create_session builds for a helper started from a chat
+			// The config create_sub_chat builds for a helper started from a chat
 			// (routes/sessions.ts): interactive, ends on its result, no conversation_id.
 			const helper = await manager.createSession(workspaceId, {
 				actorId: agent.id,

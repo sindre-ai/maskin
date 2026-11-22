@@ -61,6 +61,8 @@ import type {
 	DailyBudgetResponse,
 	NotificationPreferencesResponse,
 	ObjectPreview,
+	SendPermissionKind,
+	SendPermissionMode,
 	SessionStatsRow,
 	TeachRequest,
 	TeachResponse,
@@ -129,6 +131,8 @@ type RequestOptions = {
 	signal?: AbortSignal
 	/** Keep the message of a structured 502/503/504 from our own API instead of the generic service text. */
 	keepServerErrorMessage?: boolean
+	/** Lets the request finish after the page is gone (tab closed, app backgrounded). */
+	keepalive?: boolean
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -140,6 +144,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		credentials,
 		signal,
 		keepServerErrorMessage,
+		keepalive,
 	} = opts
 	const apiKey = getApiKey()
 
@@ -171,6 +176,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			body: body !== undefined ? JSON.stringify(body) : undefined,
 			...(credentials ? { credentials } : {}),
 			...(signal ? { signal } : {}),
+			...(keepalive ? { keepalive } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -265,6 +271,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	}
 
 	reportServerOk()
+	// 204 No Content has no body to parse; `res.json()` would throw on it and a call
+	// that worked would look failed.
+	if (res.status === 204) return undefined as T
 	return res.json()
 }
 
@@ -615,6 +624,16 @@ export const api = {
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
 		unstar: (id: string, workspaceId: string) =>
 			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
+		// Ends the job's go-ahead. 404 when it has none (already taken back).
+		takeBackGoAhead: (id: string, workspaceId: string) =>
+			request<GoAhead>(`/objects/${id}/go-ahead`, { method: 'DELETE', workspaceId }),
+		// A person's reading of one done-when line. Refused for an agent.
+		setDoneWhenLine: (id: string, lineId: string, state: DoneWhenState, workspaceId: string) =>
+			request<DoneWhen>(`/objects/${id}/done-when/lines/${lineId}`, {
+				method: 'PATCH',
+				body: { state },
+				workspaceId,
+			}),
 	},
 
 	account: {
@@ -629,6 +648,10 @@ export const api = {
 	auth: {
 		login: (data: LoginInput) =>
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
+		forgotPassword: (email: string) =>
+			request<{ ok: true }>('/auth/forgot-password', { method: 'POST', body: { email } }),
+		resetPassword: (data: { token: string; password: string }) =>
+			request<{ ok: true }>('/auth/reset-password', { method: 'POST', body: data }),
 	},
 
 	// Signing a keyboard-less device (Apple TV) in: the person types the code the TV shows. These
@@ -853,6 +876,20 @@ export const api = {
 				workspaceId,
 			}),
 	},
+	sendPermissions: {
+		get: (workspaceId: string) =>
+			request<SendPermissionsView>('/send-permissions', { workspaceId }),
+		/** `agentId` null is the workspace default; `mode` null removes an agent's own setting. */
+		set: (
+			workspaceId: string,
+			body: { agent_id: string | null; kind: SendPermissionKind; mode: SendPermissionMode | null },
+		) =>
+			request<{ agent_id: string | null; kind: string; mode: string | null }>('/send-permissions', {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+	},
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
@@ -973,6 +1010,19 @@ export const api = {
 				workspaceId,
 			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
+		/** The workspace's own sign-in app for a tool: its app id and whether one is saved, never the secret. */
+		oauthApp: (workspaceId: string, provider: string) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, { workspaceId }),
+		saveOAuthApp: (
+			workspaceId: string,
+			provider: string,
+			body: { clientId: string; clientSecret: string },
+		) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
 		connect: (
 			workspaceId: string,
 			provider: string,
@@ -1210,6 +1260,13 @@ export const api = {
 				workspaceId,
 				headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
 			}),
+		/** `PATCH /events/:id`: change the text of a comment you wrote. */
+		update: (workspaceId: string, eventId: number, content: string) =>
+			request<EventResponse>(`/events/${eventId}`, {
+				method: 'PATCH',
+				body: { content },
+				workspaceId,
+			}),
 	},
 
 	imports: {
@@ -1313,6 +1370,29 @@ export const api = {
 			}),
 		usage: (workspaceId: string) =>
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		trial: {
+			setup: (workspaceId: string) =>
+				request<TrialSetupResponse>('/billing/trial/setup', { method: 'POST', workspaceId }),
+			start: (workspaceId: string, setupIntentId: string) =>
+				request<TrialStartResponse>('/billing/trial/start', {
+					method: 'POST',
+					body: { setup_intent_id: setupIntentId },
+					workspaceId,
+				}),
+			// Looks only; nothing is used up until startWithPromo.
+			checkPromo: (workspaceId: string, code: string) =>
+				request<TrialPromoCheckResponse>('/billing/trial/promo/check', {
+					method: 'POST',
+					body: { code },
+					workspaceId,
+				}),
+			startWithPromo: (workspaceId: string, code: string) =>
+				request<TrialStartResponse>('/billing/trial/start', {
+					method: 'POST',
+					body: { promo_code: code },
+					workspaceId,
+				}),
+		},
 		cancel: (workspaceId: string) =>
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 		dailyBudget: (workspaceId: string) =>
@@ -1728,11 +1808,12 @@ export const api = {
 		},
 		get: (id: string, workspaceId: string) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
-		create: (workspaceId: string, data: CreateConversationInput) =>
+		create: (workspaceId: string, data: CreateConversationInput, opts?: { keepalive?: boolean }) =>
 			request<ConversationDetailResponse>('/conversations', {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
 			request<ConversationDetailResponse>(`/conversations/${id}`, {
@@ -1755,11 +1836,17 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
 		},
-		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+		postMessage: (
+			id: string,
+			workspaceId: string,
+			data: PostMessageInput,
+			opts?: { keepalive?: boolean },
+		) =>
 			request<MessageResponse>(`/conversations/${id}/messages`, {
 				method: 'POST',
 				body: data,
 				workspaceId,
+				...opts,
 			}),
 		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
 			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
@@ -2012,11 +2099,11 @@ export interface ClaudeOAuthImportInput {
 	nickname?: string
 }
 
-export type BillingPlan = 'trial' | 'pro' | 'team' | 'enterprise'
+export type BillingPlan = 'trial' | 'starter' | 'pro' | 'team' | 'ultra' | 'enterprise'
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
-	plan: 'pro' | 'team'
+	plan: 'starter' | 'pro' | 'team' | 'ultra'
 	success_url: string
 	cancel_url: string
 }
@@ -2038,6 +2125,23 @@ export interface LinkedInIdentityAddonLine {
 	monthly_total_usd_cents: number
 }
 
+export interface TrialSetupResponse {
+	client_secret: string
+	publishable_key: string
+}
+
+export interface TrialPromoCheckResponse {
+	valid: boolean
+	// Days the trial lasts with this code; null when it is not valid.
+	trial_days: number | null
+}
+
+export interface TrialStartResponse {
+	trial_state: 'started'
+	// Unix seconds.
+	trial_ends_at: number | null
+}
+
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
@@ -2050,8 +2154,8 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
-	// False when the credit top-up Price isn't configured on the server; the
-	// "Buy usage credits" entry points are hidden in that case.
+	// Always false now that the top-up is closed; the "Buy usage credits" entry
+	// points are hidden on false.
 	credit_topup_available: boolean
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the workspace has no
@@ -2059,9 +2163,76 @@ export interface BillingUsageResponse {
 	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
 	// are billed as distinct lines.
 	linkedin_identity_addon: LinkedInIdentityAddonLine | null
+	// Card-at-sign-up trial: null on every workspace that did not go through the card step.
+	trial_state?: 'awaiting_card' | 'started' | null
 }
 
 // Types derived from backend response schemas
+/** The open or blocked next step on an object, as the single-object read returns it. */
+export interface NextStep {
+	id: string
+	object_id: string
+	action: string
+	owner_id: string | null
+	due_at: string
+	status: 'open' | 'blocked'
+	blocked_on_object_id: string | null
+	blocked_on_actor_id: string | null
+	blocked_on_decision_comment_id: number | null
+	blocked_reason: string | null
+	created_at: string
+	updated_at: string
+}
+
+/** A person's yes to keep going on a job without asking for each step, as the detail read returns it. */
+export interface GoAhead {
+	id: string
+	object_id: string
+	granted_by: string
+	granted_by_name: string
+	via: 'chat' | 'card'
+	message_id: number | null
+	granted_at: string
+}
+
+export type DoneWhenChecker = 'code' | 'checker' | 'person'
+export type DoneWhenState = 'true' | 'false' | 'cannot_tell' | 'not_checked'
+
+/** What an agent proposes on a decision card: lines a person approves before work starts. */
+export interface DoneWhenBlock {
+	questions?: string[]
+	lines: Array<{
+		text: string
+		checked_by: DoneWhenChecker
+		needs_yes?: boolean
+		reading?: string
+		comparison?: string
+	}>
+}
+
+/** A job's done-when list as the detail read returns it: the approved list, else the draft. */
+export interface DoneWhen {
+	object_id: string
+	status: 'draft' | 'approved'
+	version: number
+	approved_by: string | null
+	approved_by_name: string | null
+	approved_at: string | null
+	lines: Array<{
+		id: string
+		position: number
+		text: string
+		checked_by: DoneWhenChecker
+		needs_yes: boolean
+		reading: string | null
+		comparison: string | null
+		state: DoneWhenState
+		state_set_at: string | null
+	}>
+	true_count: number
+	total: number
+}
+
 export interface ObjectResponse {
 	id: string
 	workspaceId: string
@@ -2095,6 +2266,12 @@ export interface ObjectResponse {
 	// Detail endpoint only: present when `metadata.kind` is something an integration
 	// delivers (an email, a LinkedIn message). Computed on read, never stored.
 	preview?: ObjectPreview | null
+	// Detail endpoint only: the open or blocked next step, null when there is none.
+	next_step?: NextStep | null
+	// Detail endpoint only: the job's live go-ahead, null when there is none or the job is closed.
+	go_ahead?: GoAhead | null
+	// Detail endpoint only: the job's done-when list, null when it has none.
+	done_when?: DoneWhen | null
 }
 
 export interface StarToggleResponse {
@@ -2141,7 +2318,12 @@ export interface UnreadItem {
 	// shows when there is no source comment to lead with.
 	// notification_id is what Dismiss names for it; absent for a decision card, which is dismissed
 	// by its comment instead.
-	curated?: { headline: string; rationale: string | null; notification_id?: string | null }
+	curated?: {
+		headline: string
+		rationale: string | null
+		notification_id?: string | null
+		session_id?: string | null
+	}
 }
 
 export interface LatestMentionDecisionOption {
@@ -2152,6 +2334,10 @@ export interface LatestMentionDecisionOption {
 	destructive?: boolean
 	/** Tapping this option changes the status of an object (the one the card is on by default). */
 	set_status?: { status: string; object_id?: string }
+	/** The option the agent carries out if nobody answers by the card's `expires_at`. */
+	default_on_silence?: boolean
+	/** Tapping this option approves the done-when list on the card, as the person who tapped. */
+	approve_done_when?: boolean
 }
 
 /**
@@ -2178,9 +2364,13 @@ export interface LatestMentionDecision {
 	summary: string
 	ask?: string
 	options: LatestMentionDecisionOption[]
+	/** When the ask runs out. With `default_on_silence` on an option, what happens then. */
+	expires_at?: string
 	draft?: LatestMentionDecisionDraft
 	/** One card, several messages: each shows as its own preview with Send and Skip. */
 	drafts?: LatestMentionDecisionDraft[]
+	/** The done-when list the agent proposes: questions on top, then the tagged lines. */
+	done_when?: DoneWhenBlock
 }
 
 export interface LatestMention {
@@ -2189,6 +2379,8 @@ export interface LatestMention {
 	created_at: string
 	// The whole comment body, not a preview.
 	content: string
+	// The run that wrote the comment; null when a person wrote it. Analytics only.
+	session_id?: string | null
 	attention: number | null
 	// Present only when the agent asked for a structured decision. The card
 	// renders its options as the buttons the reader taps.
@@ -2281,6 +2473,8 @@ export interface UpdateObjectInput {
 	driver?: string | null
 	/** A status change made from a chat card: the server tells the agent behind it. */
 	chat?: ChatCardRef
+	/** Apply only if the object is still in this status; if it moved on, nothing is written and the answer is a 409. */
+	expected_status?: string
 }
 
 /** The chat a card sits in and the agent whose message holds it. */
@@ -2349,6 +2543,8 @@ export interface CreateActorInput {
 	// Agents only: the workspace the new agent is born into (the caller must be a
 	// member). Humans sign up without it.
 	workspace_id?: string
+	// Humans only: this client shows the card step after sign-up.
+	card_step?: boolean
 }
 
 export interface UpdateActorInput {
@@ -2393,6 +2589,10 @@ export interface WorkspaceWithRole extends WorkspaceResponse {
 	isDefault: boolean
 	/** Whether the caller is on our own team. Only used to mark analytics events. */
 	isTeam: boolean
+	/** Whether this workspace is one of ours. Only used to mark analytics events. */
+	internal: boolean
+	/** Whether this workspace has an active paid plan. Only used to mark analytics events. */
+	paying: boolean
 }
 
 export interface UpdateWorkspaceInput {
@@ -2517,7 +2717,7 @@ export interface CreateTriggerInput {
 	type: 'cron' | 'event' | 'reminder'
 	config: Record<string, unknown>
 	action_prompt: string
-	target_actor_id: string
+	target_actor_id?: string
 	enabled?: boolean
 }
 
@@ -2582,6 +2782,26 @@ export interface IntegrationResponse {
 		actorId: string
 		conversationId: string
 		expiresAt: string | null
+	}>
+}
+
+/** Where a send setting came from: the agent's own, the workspace default, or the starting table. */
+export type SendPermissionSource = 'agent' | 'workspace' | 'starting'
+
+export interface SendPermissionSetting {
+	mode: SendPermissionMode
+	source: SendPermissionSource
+}
+
+/** GET /api/send-permissions: the workspace default and each agent's resulting mode per kind. */
+export interface SendPermissionsView {
+	kinds: SendPermissionKind[]
+	modes: SendPermissionMode[]
+	workspace_default: Record<SendPermissionKind, SendPermissionSetting>
+	agents: Array<{
+		agent_id: string
+		name: string
+		settings: Record<SendPermissionKind, SendPermissionSetting>
 	}>
 }
 
@@ -2689,12 +2909,22 @@ export interface ProviderEventDefinition {
 	label: string
 }
 
+export interface OAuthAppStatus {
+	configured: boolean
+	clientId?: string
+	updatedAt?: string
+	/** The URL the vendor's app must list as its callback. */
+	callbackUrl: string
+}
+
 export interface ProviderInfo {
 	name: string
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
+	customerApp?: boolean
 	mcp?: {
 		envKey: string
 		autoInject: boolean
@@ -2913,6 +3143,8 @@ export interface ConversationListItemResponse {
 	workspaceId: string
 	title: string
 	createdBy: string
+	/** Labels for grouping chats, for example a team name. Shared by every participant. */
+	tags?: string[]
 	/** Set on the direct message (DM) of a pair, null on every topical chat. The list tells the two apart by this alone. */
 	directPairKey?: string | null
 	lastMessageAt: string | null
@@ -2928,6 +3160,28 @@ export interface ConversationListItemResponse {
 	participants: ConversationParticipantResponse[]
 	/** Agents with an open turn in this chat right now — a chat session stays running between turns. */
 	working_actor_ids: string[]
+	/** An agent in this chat waits on the person (a session of this chat is waiting for input).
+	 *  Absent from a server that predates the new chat list. */
+	needs_you?: boolean
+	/** Agents working in this chat, each with the session to open. Absent on an older server. */
+	working?: ChatListWorking[]
+	/** The caller's own Later flag. Cleared by the server when a new message arrives. */
+	later?: boolean
+	/** The last turn failed. `last_person_message_id` is the person's last message, the one Retry re-runs. */
+	error?: ChatListError | null
+}
+
+export interface ChatListWorking {
+	agent_id: string
+	session_id: string
+}
+
+export type ChatListErrorReason = 'usage_limit' | 'other' | 'connection'
+
+export interface ChatListError {
+	reason: ChatListErrorReason
+	/** Null when the person never wrote in the chat: there is nothing to retry. */
+	last_person_message_id: number | null
 }
 
 export interface ConversationListResponse {
@@ -2996,6 +3250,8 @@ export interface MessageFinalOutput {
 	 * Mirrors messageFinalOutputSchema in packages/shared.
 	 */
 	error_kind?: 'transient' | 'permanent'
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail?: string
 	/** Replays spent before giving up on a transient failure. */
 	retries?: number
 	/**
@@ -3344,6 +3600,8 @@ export interface UpdateConversationInput {
 export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
+	/** The caller's own Later flag: hides the chat until a new message arrives. */
+	later?: boolean
 	last_read_message_id?: number
 	mark_unread?: boolean
 }

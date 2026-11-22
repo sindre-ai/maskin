@@ -30,6 +30,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'human signup stays open, the caller has no workspace yet; the agent branch is gated in the handler (a viewer naming a workspace gets 403)',
 	],
 	['POST', '/api/auth/login', 'pre-auth credential exchange'],
+	['POST', '/api/auth/forgot-password', 'signed out by nature; always answers the same 200'],
+	[
+		'POST',
+		'/api/auth/reset-password',
+		'signed out by nature; the emailed one-time token is the credential',
+	],
 	[
 		'POST',
 		'/api/email/stop',
@@ -100,6 +106,7 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/integrations/google-drive/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-meet/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/google-search-console/mcp', 'always answers 405, no handler'],
+	['DELETE', '/api/integrations/microsoft/mcp', 'always answers 405, no handler'],
 	['DELETE', '/api/integrations/slack/mcp', 'always answers 405, no handler'],
 	// Per-actor push registration: it writes the caller's own device row and touches no
 	// workspace data, and a read-only viewer still wants their own notifications.
@@ -150,6 +157,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/integrations/resend/dns-precheck',
 		'looks up public DNS records for a typed domain, touches no workspace data',
 	],
+	[
+		'POST',
+		'/api/pilot-gate/check',
+		'asks whether the calling agent session may run one outbound call; a call from a person or without a session is never held, and the card it may post is the refusal itself',
+	],
 	// Group E: personal state a viewer may keep.
 	[
 		'PATCH',
@@ -190,6 +202,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'Group E, a viewer is served the day’s cached brief or deterministic prose; only a writer triggers a model call and the cache write',
 	],
 	['POST', '/api/telemetry/mcp', 'Group E, telemetry aggregates'],
+	[
+		'POST',
+		'/api/telemetry/client',
+		'Group E, telemetry: product analytics from the caller’s own phone, no workspace data written; a viewer’s usage counts too, and the workspace share-usage setting applies in the handler',
+	],
 	[
 		'POST',
 		'/api/account/delete',
@@ -236,6 +253,7 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'/api/integrations/google-search-console/mcp',
 		'MCP endpoint, tools read as the workspace',
 	],
+	['POST', '/api/integrations/microsoft/mcp', 'MCP endpoint, tools read as the workspace'],
 	['POST', '/api/integrations/slack/mcp', 'MCP endpoint, tools post as the workspace bot'],
 	[
 		'PUT',
@@ -248,6 +266,16 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 		'MCP gateway, forwards tool calls with the provider token',
 	],
 	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
+	[
+		'PUT',
+		'/api/integrations/:provider/app',
+		'human workspace admin or owner only, checked in the handler (a viewer gets 403)',
+	],
+	[
+		'DELETE',
+		'/api/integrations/:provider/app',
+		'human workspace admin or owner only, checked in the handler (a viewer gets 403)',
+	],
 	[
 		'POST',
 		'/api/custom-mcp-servers/:id/gateway',

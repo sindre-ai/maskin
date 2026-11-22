@@ -139,4 +139,83 @@ test.describe('LLM API keys — settings screen', () => {
 		const row = await workspaceRow(account.apiKey, account.workspaceId)
 		expect(row.llm_configured).toMatchObject({ custom_llm: true })
 	})
+
+	test('Enter saves a replacement key; Esc leaves replace mode and focuses Replace', async ({
+		page,
+		account,
+	}) => {
+		await grantEnterprise(account.apiKey, account.workspaceId)
+		await saveAnthropicKey(account.apiKey, account.workspaceId, SEEDED_KEY)
+
+		await page.goto(`/${account.workspaceId}/settings/keys`)
+		const saved = page.getByTestId('llm-key-saved-anthropic')
+		await expect(saved).toBeVisible({ timeout: 30_000 })
+
+		// Esc backs out without saving and puts focus back on Replace.
+		await saved.getByRole('button', { name: 'Replace' }).click()
+		const input = page.getByLabel('Anthropic API key')
+		await input.fill(REPLACEMENT_KEY)
+		await input.press('Escape')
+		await expect(page.getByTestId('llm-key-saved-anthropic')).toContainText('ends in 1111')
+		await expect(
+			page.getByTestId('llm-key-saved-anthropic').getByRole('button', { name: 'Replace' }),
+		).toBeFocused()
+
+		// Enter saves the typed key.
+		await page
+			.getByTestId('llm-key-saved-anthropic')
+			.getByRole('button', { name: 'Replace' })
+			.click()
+		const again = page.getByLabel('Anthropic API key')
+		await expect(again).toHaveValue('')
+		await again.fill(REPLACEMENT_KEY)
+		await again.press('Enter')
+		await expect(page.getByTestId('llm-key-saved-anthropic')).toContainText('ends in 2222')
+		const row = await workspaceRow(account.apiKey, account.workspaceId)
+		expect(row.llm_key_hints).toMatchObject({ anthropic: '2222' })
+	})
+
+	test('Enter in the custom endpoint fields saves; Esc leaves replace mode', async ({
+		page,
+		account,
+	}) => {
+		await grantEnterprise(account.apiKey, account.workspaceId)
+		const seeded = await fetch(`${BASE}/api/workspaces/${account.workspaceId}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.apiKey}` },
+			body: JSON.stringify({
+				settings: {
+					custom_llm: {
+						enabled: false,
+						base_url: 'https://llm.example.test',
+						api_key: 'fake-e2e-custom-key-3333',
+						model: 'model-a',
+					},
+				},
+			}),
+		})
+		expect(seeded.ok).toBe(true)
+
+		await page.goto(`/${account.workspaceId}/settings/keys`)
+		const saved = page.getByTestId('custom-llm-key-saved')
+		await expect(saved).toBeVisible({ timeout: 30_000 })
+
+		await saved.getByRole('button', { name: 'Replace' }).click()
+		const keyInput = page.getByLabel('Custom endpoint API key')
+		await keyInput.fill('fake-e2e-custom-key-4444')
+		await keyInput.press('Escape')
+		await expect(page.getByTestId('custom-llm-key-saved')).toContainText('ends in 3333')
+		await expect(
+			page.getByTestId('custom-llm-key-saved').getByRole('button', { name: 'Replace' }),
+		).toBeFocused()
+
+		const model = page.getByPlaceholder('deepseek/deepseek-v4-flash')
+		await model.fill('model-b')
+		await model.press('Enter')
+		await expect
+			.poll(async () => (await workspaceRow(account.apiKey, account.workspaceId)).settings, {
+				timeout: 15_000,
+			})
+			.toMatchObject({ custom_llm: { model: 'model-b' } })
+	})
 })

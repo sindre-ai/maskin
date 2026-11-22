@@ -131,7 +131,7 @@ function LoopBuilderPage() {
 				// same as marketplace installs and bootstrap-seeded loops. The
 				// pre-#1396 'running' status no longer exists and POST /api/objects
 				// rejects it with a 400.
-				status: 'learning',
+				status: 'pilot',
 				// safeMetadataSchema only accepts primitives/arrays — store the plan
 				// snapshot as a JSON string so the created loop carries the exact
 				// preview (object types + state chain, triggers, agents, stop point).

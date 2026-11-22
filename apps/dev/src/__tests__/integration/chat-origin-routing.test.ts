@@ -318,7 +318,7 @@ describe('origin stamp on spawned sessions', () => {
 		return (row?.config ?? {}) as { origin_conversation_id?: string }
 	}
 
-	it('a helper started through create_session from a chat session carries the chat', async () => {
+	it('a helper started through create_sub_chat from a chat session carries the chat', async () => {
 		const f = await seed()
 		const config = await spawn(f, f.agent.id, f.chatSession.id)
 		expect(config.origin_conversation_id).toBe(f.chat.id)

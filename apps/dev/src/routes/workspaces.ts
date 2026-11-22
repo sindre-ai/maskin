@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { evictMembership, evictOAuthTokens, getOAuthPin } from '@maskin/auth'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
@@ -17,8 +17,9 @@ import {
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { isPayingWorkspace } from '../lib/analytics/paying-workspace'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isTeamActor } from '../lib/analytics/team-member'
+import { isInternalWorkspace, isTeamActor } from '../lib/analytics/team-member'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -37,6 +38,7 @@ import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-ki
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
+import { newWorkspaceNeedsCard } from '../lib/trial-card'
 import type { WorkspaceSettings } from '../lib/types'
 import {
 	isWorkspaceHumanAdminOrOwner,
@@ -56,8 +58,11 @@ import {
 import { loadForYouCounts, loadUnreadChatCounts } from '../lib/workspace-counts'
 import { workspaceDeletionPreview } from '../lib/workspace-deletion'
 import {
+	type WorkspacePurgeResult,
+	describePurgeFailure,
 	evictPurgedWorkspace,
 	purgeWorkspace,
+	purgeWorkspaceInBatches,
 	purgeWorkspaceStorage,
 	stopPurgedSessions,
 } from '../lib/workspace-purge'
@@ -109,14 +114,19 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	// Whether the caller is on our own team, for marking browser analytics events.
 	// A fact about the caller, so every row carries the same value.
 	isTeam: z.boolean(),
+	// Whether this workspace is one of ours, and whether it has an active paid
+	// plan, for marking browser analytics events. Derived here because the billing
+	// settings are hidden from plain members.
+	internal: z.boolean(),
+	paying: z.boolean(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
  * Shape a workspace row for a response: swap the raw `enterprise_granted`
- * column for the derived `enterprise` status callers actually care about (the
- * column OR an enterprise billing owner). Every single-row workspace response
+ * column for the derived `enterprise` status callers actually care about (today
+ * the same value, kept behind `isEnterprise()` so it has one definition). Every single-row workspace response
  * goes through this, so a route can't leak the raw grant flag or disagree with
  * the list route about who is enterprise.
  *
@@ -159,7 +169,8 @@ const createWorkspaceRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Actor has reached their workspace-ownership cap for their plan tier',
+			description:
+				'Caller is an agent (workspaces are created by people), or the actor has reached their workspace-ownership cap for their plan tier',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		500: {
@@ -170,6 +181,12 @@ const createWorkspaceRoute = createRoute({
 })
 
 app.openapi(createWorkspaceRoute, async (c) => {
+	// Workspaces are created by people. Every create seeds a default roster and a
+	// welcome session at Maskin's cost, so an agent key never gets that far.
+	if (c.get('actorType') === 'agent') {
+		return c.json(createApiError('FORBIDDEN', 'Only people can create workspaces'), 403)
+	}
+
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
@@ -205,6 +222,9 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			name: body.name,
 			ownerActorId: actorId,
 			settings: body.settings,
+			// Same card step as sign-up (bet "A card to start a 7-day trial"), so a second workspace
+			// is not a way round it.
+			awaitingCard: await newWorkspaceNeedsCard(db, actorId, c.get('actorType')),
 		})
 	} catch (err) {
 		// Returned here rather than thrown to `createApp`'s `onError`: this
@@ -302,14 +322,16 @@ app.openapi(listWorkspacesRoute, async (c) => {
 			),
 		)
 
-	// Report the *effective* entitlement, not the raw column — an enterprise
-	// billing owner is entitled on every workspace they own without a
-	// per-workspace grant. This list is the only place the frontend reads the
-	// flag from, so it gates the whole settings UI.
+	// Report the derived `enterprise` status via `isEnterprise()`, not the raw
+	// column. This list is the only place the frontend reads the flag from, so
+	// it gates the whole settings UI.
 	const callerIsHuman = c.get('actorType') !== 'agent'
 	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
 		...workspaceForCaller(row, callerIsHuman && (row.role === 'owner' || row.role === 'admin')),
 		enterprise: isEnterprise({ ...row, enterpriseGranted }),
+		// Read from the raw row: the billing settings are hidden from plain members.
+		internal: isInternalWorkspace(row.id),
+		paying: isPayingWorkspace(row.settings),
 	}))
 
 	// Member counts come from a second grouped query, not a correlated subquery:
@@ -499,7 +521,7 @@ const updateWorkspaceRoute = createRoute({
 		},
 		403: {
 			description:
-				'Caller is not a human workspace admin or owner (for name, llm_keys or custom_llm), or the workspace is not entitled to BYO LLM credentials',
+				'Caller is not a human workspace admin or owner (for name, llm_keys, custom_llm or agent_daily_budget), or the workspace is not entitled to BYO LLM credentials',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -534,12 +556,18 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		: { settings: undefined, changed: false }
 	let patchSettings = pickedSettings
 	const changesName = body.name !== undefined && body.name !== existing.name
+	// The per-agent daily budget caps what agents may spend, so an agent or a member must not be able
+	// to raise its own limit. Same rule as above: a value equal to the stored one is not a change.
+	const changesAgentBudget =
+		body.settings !== undefined &&
+		'agent_daily_budget' in body.settings &&
+		!isDeepStrictEqual(body.settings.agent_daily_budget, existingSettings.agent_daily_budget)
 	const callerIsHumanAdminOrOwner = await isWorkspaceHumanAdminOrOwner(db, actorId, id)
-	if ((changesName || changesLlm) && !callerIsHumanAdminOrOwner) {
+	if ((changesName || changesLlm || changesAgentBudget) && !callerIsHumanAdminOrOwner) {
 		return c.json(
 			createApiError(
 				'FORBIDDEN',
-				'Only a workspace admin or owner can change the workspace name or LLM credentials',
+				'Only a workspace admin or owner can change the workspace name, LLM credentials or the agent daily budget',
 			),
 			403,
 		)
@@ -1591,6 +1619,10 @@ const deleteWorkspaceRoute = createRoute({
 			description: 'A paid plan is still live; cancel it first',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description: 'Removing the workspace failed; nothing was deleted',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -1607,7 +1639,9 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	const outcome = await db.transaction(async (tx) => {
+	// The checks run twice: first on their own, so a refusal costs nothing, and again in the
+	// transaction that finishes the purge, in case a plan or the name changed in between.
+	const guard = async (tx: Transaction) => {
 		// Lock first: the checks below and the purge must see one consistent workspace, and a
 		// concurrent transfer, plan change or member add waits for this to finish.
 		const [locked] = await tx
@@ -1626,10 +1660,37 @@ app.openapi(deleteWorkspaceRoute, (async (c) => {
 		if (blocker?.code === 'not_billing_owner') return { kind: 'forbidden' as const }
 		if (confirmName !== facts.workspaceName) return { kind: 'name_mismatch' as const }
 		if (blocker) return { kind: 'blocked' as const, message: blocker.message }
+		return { kind: 'ok' as const, name: facts.workspaceName }
+	}
 
-		const result = await purgeWorkspace(tx, workspaceId)
-		return { kind: 'deleted' as const, result, name: facts.workspaceName }
-	})
+	type Outcome =
+		| Exclude<Awaited<ReturnType<typeof guard>>, { kind: 'ok' }>
+		| { kind: 'deleted'; result: WorkspacePurgeResult; name: string }
+
+	let outcome: Outcome
+	let partial = false
+	try {
+		const first = await db.transaction(guard)
+		if (first.kind !== 'ok') {
+			outcome = first
+		} else {
+			// The bulky rows go in small statements first, so the transaction below stays short. A
+			// workspace with 100k+ events ran past the query timeout as one transaction.
+			partial = true
+			const bulk = await purgeWorkspaceInBatches(db, workspaceId)
+			outcome = await db.transaction(async (tx): Promise<Outcome> => {
+				const again = await guard(tx)
+				if (again.kind !== 'ok') return again
+				const result = await purgeWorkspace(tx, workspaceId)
+				result.storageKeys.push(...bulk.storageKeys)
+				return { kind: 'deleted', result, name: again.name }
+			})
+		}
+	} catch (err) {
+		const failure = describePurgeFailure(err, { partial })
+		logger.error('workspace: delete failed', { workspaceId, actorId, partial, ...failure.log })
+		return c.json(createApiError('INTERNAL_ERROR', failure.message), 500)
+	}
 
 	switch (outcome.kind) {
 		case 'not_found':

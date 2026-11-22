@@ -16,10 +16,12 @@ public struct LinkedObject: Equatable, Sendable {
 	public var priority: String?
 	public var ownerID: String?
 	public var updatedAt: Date?
+	/// The whole text, for the card that edits it. Nil when the object has none.
+	public var content: String?
 
 	public init(
 		target: LinkedTarget, type: String, kindLabel: String, title: String?, summary: String? = nil, status: String,
-		priority: String? = nil, ownerID: String? = nil, updatedAt: Date? = nil
+		priority: String? = nil, ownerID: String? = nil, updatedAt: Date? = nil, content: String? = nil
 	) {
 		self.target = target
 		self.type = type
@@ -30,6 +32,7 @@ public struct LinkedObject: Equatable, Sendable {
 		self.priority = priority
 		self.ownerID = ownerID
 		self.updatedAt = updatedAt
+		self.content = content
 	}
 
 	public init(object: WorkObject, kindLabel: String) {
@@ -39,7 +42,25 @@ public struct LinkedObject: Equatable, Sendable {
 			target: LinkedTarget(kind: .object, uuid: object.id), type: object.type, kindLabel: kindLabel,
 			title: title.isEmpty ? nil : title, summary: Self.summary(from: object.content),
 			status: object.status, priority: priority.isEmpty ? nil : priority, ownerID: object.driverId,
-			updatedAt: object.updatedAt)
+			updatedAt: object.updatedAt, content: object.content)
+	}
+
+	/// Types that are people or organisations to point at, not text to read or change.
+	static let referenceOnlyTypes: Set<String> = ["contact", "company"]
+
+	/// Whether the card shows the text and lets a person change it and move the status: any object
+	/// with text except a contact or company (the web's `showsTextCard`).
+	public var isEditable: Bool {
+		!Self.referenceOnlyTypes.contains(type) && content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+	}
+
+	/// Tasks open with their text showing; any other object starts folded (the web's `expanded`).
+	public var startsOpen: Bool { type == "task" }
+
+	/// The phase after `status` in the workspace's own order, if there is one.
+	public static func nextStatus(after status: String, in order: [String]) -> String? {
+		guard let index = order.firstIndex(of: status), order.indices.contains(index + 1) else { return nil }
+		return order[index + 1]
 	}
 
 	/// The title, or "Untitled".

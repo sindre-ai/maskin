@@ -1,4 +1,4 @@
-import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
+import { getActorInitials, getActorPlateStyle } from '@/components/shared/actor-avatar'
 import { cn } from '@/lib/cn'
 import {
 	KIND_LABEL_BASE,
@@ -32,10 +32,10 @@ export function MarketplaceDetailHeader({
 		<div className="flex flex-col gap-4">
 			<div className="flex flex-wrap items-center gap-4">
 				<span
+					style={getActorPlateStyle(name)}
 					className={cn(
-						'grid size-[52px] shrink-0 place-items-center rounded-2xl font-bold',
+						'grid size-[52px] shrink-0 place-items-center font-bold',
 						initials.length === 3 ? 'text-[15px]' : 'text-lg',
-						getActorAvatarPaletteClass(name),
 					)}
 					aria-hidden="true"
 				>

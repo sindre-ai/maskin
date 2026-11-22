@@ -28,6 +28,9 @@ public struct ChatActor: Identifiable, Hashable, Sendable {
 	public var agentState: AgentState
 	public var summary: String?
 	public var isSystem: Bool
+	/// An integration account (GitHub, Gmail, Google Calendar ...): actor type "system". The API does
+	/// not flag these `isSystem`, and they are never someone to add to a chat.
+	public var isIntegration: Bool
 	/// The agent's own one-tap openers, already normalised (`StarterPrompts.normalize`). Empty for
 	/// people and for an agent that set none.
 	public var starterPrompts: [String]
@@ -36,13 +39,52 @@ public struct ChatActor: Identifiable, Hashable, Sendable {
 
 	public init(
 		participant: ChatParticipant, agentState: AgentState = .idle, summary: String? = nil,
-		isSystem: Bool = false, starterPrompts: [String] = []
+		isSystem: Bool = false, isIntegration: Bool = false, starterPrompts: [String] = []
 	) {
 		self.participant = participant
 		self.agentState = agentState
 		self.summary = summary
 		self.isSystem = isSystem
+		self.isIntegration = isIntegration
 		self.starterPrompts = starterPrompts
+	}
+}
+
+/// Why a chat's last turn stopped. The list row says it in red under the title.
+public enum ChatStopReason: String, Hashable, Sendable, Codable {
+	case usageLimit = "usage_limit"
+	case connection
+	case other
+
+	/// Reads the server's open string; anything unknown is `other`.
+	public init(serverValue: String?) { self = serverValue.flatMap(Self.init(rawValue:)) ?? .other }
+
+	/// The preview line of a stopped chat, verbatim from the chat list addendum.
+	public var line: String {
+		switch self {
+		case .usageLimit: "Stopped. Usage limit reached."
+		case .connection: "Stopped. Connection dropped."
+		case .other: "Stopped. Something went wrong."
+		}
+	}
+
+	/// What a screen reader says for the marker.
+	public var accessibilityLabel: String {
+		switch self {
+		case .usageLimit: "Stopped, usage limit reached"
+		case .connection: "Stopped, connection dropped"
+		case .other: "Stopped, something went wrong"
+		}
+	}
+}
+
+/// An agent running in a chat right now, with the session that belongs to that chat.
+public struct ChatWorkingAgent: Hashable, Sendable, Codable {
+	public var agentID: String
+	public var sessionID: String
+	public init(agentID: String, sessionID: String) {
+		self.agentID = agentID
+		self.sessionID = sessionID
 	}
 }
 
@@ -66,13 +108,34 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public var participants: [ChatParticipant]
 	/// The caller's read cursor (detail responses only).
 	public var lastReadMessageID: Int?
+	/// An agent in this chat waits for the person (list responses only). Read from the session that
+	/// belongs to this chat, not from the agent's global state.
+	public var needsYou: Bool
+	/// Agents running in this chat, each with its session (list responses only).
+	public var working: [ChatWorkingAgent]
+	/// The caller put this chat on Later: it is out of All until a new message arrives. Per person.
+	public var later: Bool
+	/// Set when the last turn failed. A new reason replaces the old one when a retry fails again.
+	public var stopReason: ChatStopReason?
+	/// The newest message from a person, which Retry runs again. Set with `stopReason`.
+	public var retryMessageID: Int?
+	/// Tags on the chat, for Group by Tag.
+	public var tags: [String]
 
 	public init(
 		id: String, title: String, lastMessageAt: Date? = nil, createdAt: Date? = nil,
 		pinned: Bool = false, archived: Bool = false, unreadCount: Int = 0, snippet: String? = nil,
 		snippetActorName: String? = nil, snippetActorID: String? = nil, directPairKey: String? = nil,
-		participants: [ChatParticipant] = [], lastReadMessageID: Int? = nil
+		participants: [ChatParticipant] = [], lastReadMessageID: Int? = nil, needsYou: Bool = false,
+		working: [ChatWorkingAgent] = [], later: Bool = false, stopReason: ChatStopReason? = nil,
+		retryMessageID: Int? = nil, retryAgentID: String? = nil, tags: [String] = []
 	) {
+		self.needsYou = needsYou
+		self.working = working
+		self.later = later
+		self.stopReason = stopReason
+		self.retryMessageID = retryMessageID
+		self.tags = tags
 		self.id = id
 		self.title = title
 		self.lastMessageAt = lastMessageAt
@@ -90,6 +153,8 @@ public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 
 	/// The date the list sorts and groups by.
 	public var activityDate: Date? { lastMessageAt ?? createdAt }
+	/// A stopped chat can run its last person message again.
+	public var canRetry: Bool { stopReason != nil && retryMessageID != nil }
 	public var isUnread: Bool { unreadCount > 0 }
 	/// The pair's direct message, as opposed to a topical chat with the same two people.
 	public var isDirect: Bool { directPairKey != nil }
@@ -364,5 +429,9 @@ public enum ChatLimits {
 	public static let maxSessionsPage = 100
 	public static let maxMessageLength = 8000
 	public static let maxAttachments = 10
-	public static let maxFileBytes = 10 * 1024 * 1024
+	/// The largest file the app accepts (5 GiB, `MAX_LARGE_FILE_SIZE_BYTES`). Over the JSON route's own
+	/// cap (`FileUploadLimits`) a file goes to storage in parts.
+	public static let maxFileBytes = FileUploadLimits.maxLargeFileBytes
+	/// The most a message's text can be as an attached .txt: that upload is base64 JSON.
+	public static let maxTextFileBytes = FileUploadLimits.maxJSONBytes
 }

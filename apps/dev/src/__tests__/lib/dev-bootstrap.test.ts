@@ -5,15 +5,29 @@ import {
 	seedMarketplaceIfEmpty,
 	seedMarketplaceLoops,
 } from '../../lib/dev-bootstrap'
+import { CUSTOMER_VOICE_LOOP } from '../../lib/marketplace-loops/customer-voice-loop'
 import {
 	DISCOVERY_ACTOR_IDS,
 	DISCOVERY_LOOP,
 	DISCOVERY_TRIGGER_IDS,
+	DISCOVERY_VIEW_IDS,
 } from '../../lib/marketplace-loops/discovery-loop'
+import { KNOWLEDGE_WIKI_LOOP } from '../../lib/marketplace-loops/knowledge-wiki-loop'
 import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop'
+import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
+import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
+import { PRODUCT_USAGE_LOOP } from '../../lib/marketplace-loops/product-usage-loop'
 import { createTestContext } from '../setup'
 
-const ALL_PACKAGES = [MARKET_WATCH_LOOP, DISCOVERY_LOOP]
+const ALL_PACKAGES = [
+	MARKET_WATCH_LOOP,
+	DISCOVERY_LOOP,
+	MEETING_LOOP,
+	PRODUCT_RELEASE_LOOP,
+	CUSTOMER_VOICE_LOOP,
+	KNOWLEDGE_WIKI_LOOP,
+	PRODUCT_USAGE_LOOP,
+]
 
 function matchingMarketplaceRows() {
 	return ALL_PACKAGES.map((loop, i) => ({
@@ -258,7 +272,7 @@ describe('seedMarketplaceIfEmpty', () => {
 		expect(new Set(slugs).size).toBe(ALL_PACKAGES.length)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
-		// Market Watch is seeded first, Product Discovery second — assert the
+		// Market Watch is seeded first, Product Discovery second, Meeting Loop third — assert the
 		// discovery actor/trigger counts match its bundle.
 		const discoveryItems = itemInserts[1] as Array<{ itemType: string; sourceItemId: string }>
 		expect(discoveryItems.filter((i) => i.itemType === 'actor').length).toBe(
@@ -266,6 +280,9 @@ describe('seedMarketplaceIfEmpty', () => {
 		)
 		expect(discoveryItems.filter((i) => i.itemType === 'trigger').length).toBe(
 			DISCOVERY_TRIGGER_IDS.length,
+		)
+		expect(discoveryItems.filter((i) => i.itemType === 'view').length).toBe(
+			DISCOVERY_VIEW_IDS.length,
 		)
 	})
 })

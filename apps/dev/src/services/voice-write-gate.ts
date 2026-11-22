@@ -279,15 +279,13 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'post_conversation_message',
 	'create_notification',
 	// Starts work
-	'create_session',
-	// Deprecated alias of create_session (packages/mcp/src/tool-aliases.ts): same effect, same hold.
-	'run_agent',
 	'resume_session',
 	'send_session_message',
 	'create_trigger',
 	'update_trigger',
 	'create_loop',
 	'update_loop',
+	'create_sub_chat',
 	// Runs a command, changes access or credentials, creates or edits actors
 	'desktop_run',
 	'connect_integration',
@@ -305,6 +303,9 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 	'desktop_click',
 	'desktop_drag',
 	'desktop_put_file',
+	'desktop_attach_file',
+	'desktop_apply_settings',
+	'desktop_save_file',
 	// Opens a port of the desktop to the outside
 	'desktop_expose_port',
 	'update_workspace',
@@ -322,6 +323,9 @@ const RISKY_TOOLS: ReadonlySet<string> = new Set([
 export const ORDINARY_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'create_objects',
 	'update_objects',
+	'set_next_step',
+	'schedule_next_step',
+	'update_next_step',
 	'create_comment',
 	'mark_read',
 	// An edge between two objects; deleting one is delete_relationship, which is held.

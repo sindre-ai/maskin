@@ -1,8 +1,9 @@
+import { DoneWhenCardLines } from '@/components/objects/done-when-lines'
 import { DecisionOptions } from '@/components/shared/decision-option-card'
 import { useCreateComment } from '@/hooks/use-events'
-import { trackForyouCardAction } from '@/lib/analytics'
+import { secondsSince, trackForyouCardAction } from '@/lib/analytics'
 import type { EventResponse } from '@/lib/api'
-import { decisionOfEvent } from '@/lib/comment-decision'
+import { decisionOfEvent, defaultOnSilenceLine } from '@/lib/comment-decision'
 import { actionIdFromLabel } from '@/lib/foryou-card-kind'
 import { Check } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
@@ -64,7 +65,14 @@ export function CommentDecisionBlock({
 	const choose = useCallback(
 		(option: { id: string; label: string }) => {
 			if (pendingId) return
-			trackForyouCardAction({ card_kind: 'decision', card_id: objectId, action_id: option.id })
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: objectId,
+				action_id: option.id,
+				seconds_to_action: secondsSince(event.createdAt),
+				session_id:
+					typeof event.data?.authorSessionId === 'string' ? event.data.authorSessionId : null,
+			})
 			setPendingId(option.id)
 			createComment.mutate(
 				{
@@ -79,7 +87,7 @@ export function CommentDecisionBlock({
 				{ onSettled: () => setPendingId(null) },
 			)
 		},
-		[createComment, event.id, objectId, pendingId],
+		[createComment, event, objectId, pendingId],
 	)
 
 	if (!decision || options.length === 0) return null
@@ -102,7 +110,13 @@ export function CommentDecisionBlock({
 					{decision.ask}
 				</p>
 			)}
-			<DecisionOptions options={options} pendingId={pendingId} onChoose={choose} />
+			{decision.done_when && <DoneWhenCardLines block={decision.done_when} />}
+			<DecisionOptions
+				options={options}
+				pendingId={pendingId}
+				onChoose={choose}
+				defaultLine={defaultOnSilenceLine(decision)}
+			/>
 		</div>
 	)
 }

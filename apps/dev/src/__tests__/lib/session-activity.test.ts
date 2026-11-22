@@ -48,10 +48,10 @@ describe('buildSessionActivity', () => {
 		const rows = [
 			userTurn(10),
 			assistant({ type: 'thinking', thinking: '', signature: 'sig' }),
-			assistant({ type: 'tool_use', id: 't1', name: 'mcp__maskin__create_session', input: {} }),
+			assistant({ type: 'tool_use', id: 't1', name: 'mcp__maskin__create_sub_chat', input: {} }),
 		]
 		const labels = buildSessionActivity(rows)[0]?.steps.map((s) => s.label)
-		expect(labels).toEqual(['Thinking…', 'Create session'])
+		expect(labels).toEqual(['Thinking…', 'Create sub chat'])
 	})
 
 	it('marks failed tool results, error results and stderr', () => {

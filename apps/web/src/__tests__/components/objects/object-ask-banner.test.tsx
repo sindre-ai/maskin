@@ -20,6 +20,25 @@ describe('ObjectAskBanner', () => {
 		expect(onAnswerClick).toHaveBeenCalledTimes(1)
 	})
 
+	describe('line variant', () => {
+		it('reads "<name> asks:" with the question and an Answer button', async () => {
+			const user = userEvent.setup()
+			const onAnswerClick = vi.fn()
+			render(
+				<ObjectAskBanner
+					variant="line"
+					question="Save straight away?"
+					actorName="Strategist"
+					onAnswerClick={onAnswerClick}
+				/>,
+			)
+			expect(screen.getByText('Strategist asks:')).toBeInTheDocument()
+			expect(screen.getByText('Save straight away?')).toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: 'Answer' }))
+			expect(onAnswerClick).toHaveBeenCalledTimes(1)
+		})
+	})
+
 	describe('when the question is cut off', () => {
 		// scrollWidth and clientWidth live on Element.prototype, so there is no own
 		// descriptor on HTMLElement.prototype: the stub is removed again, not restored.

@@ -12,7 +12,7 @@ import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
-// The merge-gate smoke for Part 1: a create_session call that goes through the
+// The merge-gate smoke for Part 1: a create_sub_chat call that goes through the
 // real HTTP /mcp route, the real MCP server, the real REST route and the real
 // auth middleware ends with sessions.spawned_by_session_id equal to the
 // caller's session id. Before the transport fix the header never left apps/dev.
@@ -32,7 +32,7 @@ function stubStorage(): StorageProvider {
 	}
 }
 
-describe('create_session through HTTP /mcp (integration)', () => {
+describe('create_sub_chat through HTTP /mcp (integration)', () => {
 	let manager: SessionManager
 	let server: ReturnType<typeof serve>
 	let baseUrl: string
@@ -117,7 +117,7 @@ describe('create_session through HTTP /mcp (integration)', () => {
 				id: 1,
 				method: 'tools/call',
 				params: {
-					name: 'create_session',
+					name: 'create_sub_chat',
 					arguments: {
 						actor_id: target.id,
 						action_prompt: 'please help',

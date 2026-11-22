@@ -1,9 +1,22 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	files,
+	messages,
+	objects,
+	sessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
-import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
+import {
+	createCommentSchema,
+	eventQuerySchema,
+	updateCommentSchema,
+	validateDecisionProse,
+} from '@maskin/shared'
+import { and, asc, desc, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import {
 	findAgentDeletionViolations,
@@ -13,12 +26,21 @@ import {
 import { isActorHumanPaused } from '../lib/agent-pause'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { CLIENT_SOURCE_HEADER } from '../lib/analytics/knowledge-events'
+import { maybeTrackOnboardingResearchAnswered } from '../lib/analytics/onboarding-events'
 import {
 	claimCommentResponder,
 	releaseCommentResponderClaim,
 } from '../lib/comment-responder-claims'
 import { postComment } from '../lib/comments'
+import {
+	DoneWhenError,
+	approveDraftDoneWhen,
+	hasApprovedDoneWhen,
+	resolveDoneWhenTap,
+	writeDraftDoneWhen,
+} from '../lib/done-when'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { approvedSendHashFor } from '../lib/integrations/providers/gmail/approval-hash'
 import { logger } from '../lib/logger'
 import { recordObjectApproval } from '../lib/object-delivery'
@@ -28,8 +50,10 @@ import {
 	eventResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { findAnswerForAgent, recordFlowCallAnswer, resolveFlowCallTap } from '../lib/pilot-hold'
 import { resolveReplyApprovals } from '../lib/reply-approvals'
 import { serializeArray } from '../lib/serialize'
+import { canReadSession } from '../lib/session-access'
 import { applyStatusTap, prepareStatusActions, resolveStatusTap } from '../lib/status-actions'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 import {
@@ -41,10 +65,7 @@ import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
-import {
-	isAgentMentionFreeComment,
-	isCommentFallbackDriverEligible,
-} from '../services/trigger-runner'
+import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 import { commentPromptHeadline } from '../services/workspace-briefing'
 
 type Env = {
@@ -93,11 +114,20 @@ app.get('/', async (c) => {
 
 	return streamSSE(c, async (stream) => {
 		const callerId = c.get('actorId')
+		const workspaceRole = c.get('workspaceRole')
+
+		// Session events follow the same read rule as the session pages and logs.
+		// Fails closed: a session that is gone, or in another workspace, is skipped.
+		const callerCanReadSession = async (sessionId: string): Promise<boolean> => {
+			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			if (!session || session.workspaceId !== workspaceId) return false
+			return canReadSession(db, session, callerId, workspaceRole)
+		}
 
 		// Every frame goes through this serialized chain. It exists for the
-		// `session.state_changed` frame below: resolving it needs a DB read, but
-		// the live bridge callback is synchronous, so a fire-and-forget await
-		// there would let two events' frames interleave and land out of order.
+		// session gate and the `session.state_changed` frame below: both need a DB
+		// read, but the live bridge callback is synchronous, so a fire-and-forget
+		// await there would let two events' frames interleave and land out of order.
 		// Chaining also guarantees the generic frame is on the wire before the
 		// delegation-strip frame for the same event.
 		let chain: Promise<void> = Promise.resolve()
@@ -109,6 +139,9 @@ app.get('/', async (c) => {
 		): Promise<void> => {
 			chain = chain
 				.then(async () => {
+					// Nothing about a session the caller cannot read goes on the wire,
+					// neither the generic frame nor the delegation-strip frame.
+					if (sessionEntityId && !(await callerCanReadSession(sessionEntityId))) return
 					await stream.writeSSE({ id, event: action, data: JSON.stringify(payload) })
 					if (!sessionEntityId) return
 					// Entitlement gate on the emission path: `loadSessionStateChangeFrame`
@@ -135,11 +168,22 @@ app.get('/', async (c) => {
 		// Replay missed events if Last-Event-ID is provided
 		const parsedId = Number(lastEventId)
 		if (lastEventId && !Number.isNaN(parsedId)) {
+			// The workspace is bounded by >= and <= (same rows as =) and ordered by
+			// (workspace_id, id). With a plain equality Postgres treats the order as just "by
+			// id", picks the primary key and walks every other workspace's rows from an old
+			// cursor onward, throwing them away (migration 0166 adds the index that avoids
+			// it, but the planner only uses it for this shape). The 100 row cap is unchanged.
 			const missed = await db
 				.select()
 				.from(events)
-				.where(and(eq(events.workspaceId, workspaceId), gt(events.id, parsedId)))
-				.orderBy(asc(events.id))
+				.where(
+					and(
+						gte(events.workspaceId, workspaceId),
+						lte(events.workspaceId, workspaceId),
+						gt(events.id, parsedId),
+					),
+				)
+				.orderBy(asc(events.workspaceId), asc(events.id))
 				.limit(100)
 
 			for (const event of missed) {
@@ -305,6 +349,14 @@ app.openapi(createCommentRoute, (async (c) => {
 	let decision = body.decision
 	if (body.decision) {
 		const violations = validateDecisionProse(body.decision)
+		const defaultIndex = body.decision.options.findIndex((option) => option.default_on_silence)
+		if (defaultIndex >= 0 && !isFlagEnabledForWorkspace(workspaceId, FLAGS.DECISION_DEFAULT)) {
+			violations.push({
+				path: `options.${defaultIndex}.default_on_silence`,
+				message:
+					'A default on silence is not switched on in this workspace. Drop default_on_silence and wait for the answer, or schedule your own check for the deadline.',
+			})
+		}
 		// A card that asks to change a status needs a button that does it, or it outlives the
 		// change. Checked here because it needs the object's status names.
 		const statusCheck =
@@ -313,6 +365,15 @@ app.openapi(createCommentRoute, (async (c) => {
 				: undefined
 		if (statusCheck && 'decision' in statusCheck) decision = statusCheck.decision
 		violations.push(...(statusCheck && 'violations' in statusCheck ? statusCheck.violations : []))
+		// An approved done-when list can no longer be rewritten by an agent: it raises a normal card
+		// with its reason instead.
+		if (body.decision.done_when && (await hasApprovedDoneWhen(db, body.entity_id))) {
+			violations.push({
+				path: 'done_when',
+				message:
+					'This job already has an approved done-when list, and only a person can change it. If a line is wrong, post a card with a decision and your reason, and no done_when block.',
+			})
+		}
 		// A delete_agent option names an agent that must exist here. Checked here for the same reason.
 		if (violations.length === 0) {
 			violations.push(
@@ -442,6 +503,29 @@ app.openapi(createCommentRoute, (async (c) => {
 			})
 		: null
 
+	// A person answering a pilot hold card approves or rejects that exact call. It only records the
+	// answer; the agent repeats its call after it is woken by this reply.
+	const flowCallTap = mayApprove
+		? await resolveFlowCallTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+
+	// A person tapping Approve on a done-when card approves the draft as themselves, in the same
+	// transaction as their reply. Only a person's own client counts, as above.
+	const doneWhenTap = mayApprove
+		? await resolveDoneWhenTap(db, {
+				workspaceId,
+				entityId: body.entity_id,
+				parentEventId: body.parent_event_id,
+				content: body.content,
+			})
+		: null
+	const doneWhenDraft = decision?.done_when
+
 	const post = (writer: typeof db) =>
 		postComment(writer, {
 			workspaceId,
@@ -458,49 +542,90 @@ app.openapi(createCommentRoute, (async (c) => {
 			approvedSendHash,
 		})
 	const delivery = routing?.delivery
-	const { comment, unresolvedMentions } =
-		replyApprovals.length === 0 && !delivery && !statusTap && !deletionTap
-			? await post(db)
-			: await db.transaction(async (tx) => {
-					if (deletionTap) {
-						await recordAgentDeletionApproval(tx, {
-							workspaceId,
-							approverId: actorId,
-							tap: deletionTap,
-						})
-					}
-					if (statusTap) {
-						statusAction = await applyStatusTap(tx, {
-							tap: statusTap,
-							workspaceId,
-							actorId,
-							sessionId: c.get('maskinSessionId'),
-						})
-					}
-					for (const approval of replyApprovals) {
-						await recordObjectApproval(tx, {
-							workspaceId,
-							actorId,
-							objectId: approval.objectId,
-							objectType: approval.objectType,
-							preview: approval.preview,
-							via: 'reply',
-							replyToEventId: approval.cardEventId,
-						})
-					}
-					const posted = await post(tx as unknown as typeof db)
-					if (delivery) {
-						await deliverRoutedComment(tx, {
-							delivery,
-							workspaceId,
-							commenterId: actorId,
-							object: { id: body.entity_id, title: object.title ?? '', type: object.type },
-							commentEventId: posted.comment.id,
-							body: body.content,
-						})
-					}
-					return posted
-				})
+	let result: Awaited<ReturnType<typeof post>>
+	try {
+		result =
+			replyApprovals.length === 0 &&
+			!delivery &&
+			!statusTap &&
+			!deletionTap &&
+			!flowCallTap &&
+			!doneWhenTap &&
+			!doneWhenDraft
+				? await post(db)
+				: await db.transaction(async (tx) => {
+						if (deletionTap) {
+							await recordAgentDeletionApproval(tx, {
+								workspaceId,
+								approverId: actorId,
+								tap: deletionTap,
+							})
+						}
+						if (flowCallTap) {
+							await recordFlowCallAnswer(tx, {
+								workspaceId,
+								approverId: actorId,
+								tap: flowCallTap,
+							})
+						}
+						if (doneWhenTap) {
+							await approveDraftDoneWhen(tx, {
+								objectId: doneWhenTap.objectId,
+								actorId,
+								cardEventId: doneWhenTap.cardEventId,
+							})
+						}
+						if (statusTap) {
+							statusAction = await applyStatusTap(tx, {
+								tap: statusTap,
+								workspaceId,
+								actorId,
+								sessionId: c.get('maskinSessionId'),
+							})
+						}
+						for (const approval of replyApprovals) {
+							await recordObjectApproval(tx, {
+								workspaceId,
+								actorId,
+								objectId: approval.objectId,
+								objectType: approval.objectType,
+								preview: approval.preview,
+								via: 'reply',
+								replyToEventId: approval.cardEventId,
+							})
+						}
+						const posted = await post(tx as unknown as typeof db)
+						// The draft carries the id of the card that proposes it, so it is written after the card.
+						if (doneWhenDraft) {
+							await writeDraftDoneWhen(tx, {
+								workspaceId,
+								objectId: body.entity_id,
+								actorId,
+								cardEventId: Number(posted.comment.id),
+								block: doneWhenDraft,
+							})
+						}
+						if (delivery) {
+							await deliverRoutedComment(tx, {
+								delivery,
+								workspaceId,
+								commenterId: actorId,
+								object: { id: body.entity_id, title: object.title ?? '', type: object.type },
+								commentEventId: posted.comment.id,
+								body: body.content,
+							})
+						}
+						return posted
+					})
+	} catch (err) {
+		// A tap on a card the agent has since replaced approves nothing and says so.
+		if (err instanceof DoneWhenError) {
+			const status = err.code === 'FORBIDDEN' ? 403 : err.code === 'NOT_FOUND' ? 404 : 400
+			return c.json(createApiError(err.code, err.message), status as never)
+		}
+		throw err
+	}
+	const { comment, unresolvedMentions } = result
 
 	// Auto-subscribe the thread OP when this is a reply, so they're notified of
 	// all follow-up messages — Slack participant model. Skip when the OP is the
@@ -550,15 +675,10 @@ app.openapi(createCommentRoute, (async (c) => {
 	// here so the thread-reply auto-spawn doesn't double up on the same agent
 	// for the same comment.
 	//
-	// An agent's mention-free reply is low-attention and wakes nobody here, the
-	// same rule the dispatcher applies to cases 2 and 3.
-	if (
-		parentEventId !== undefined &&
-		!isAgentMentionFreeComment({
-			actorType: c.get('actorType'),
-			mentionCount: storedMentions?.length ?? 0,
-		})
-	) {
+	// An agent's reply wakes nobody here. Agents @mention whoever they need, and the
+	// `CommentDispatcher` wakes those; waking every other participant too started sessions
+	// for replies that were addressed to someone else or only said 'noted, no ask'.
+	if (parentEventId !== undefined && c.get('actorType') !== 'agent') {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, storedMentions)
 		// The `CommentDispatcher` fallback ladder dispatches the object's driver
 		// for any mention-free comment. When it will dispatch this driver, exclude
@@ -623,6 +743,16 @@ app.openapi(createCommentRoute, (async (c) => {
 		)
 	}
 
+	if (actorType === 'human' && parentEventId !== undefined) {
+		void maybeTrackOnboardingResearchAnswered(db, {
+			workspaceId,
+			actorId,
+			objectId: body.entity_id,
+			parentEventId,
+			content: body.content,
+		})
+	}
+
 	const serialized = serializeArray([comment])[0] as z.infer<typeof createCommentResponseSchema>
 
 	// Tell the caller when a mention resolved to nothing. Agents posting over
@@ -644,6 +774,100 @@ app.openapi(createCommentRoute, (async (c) => {
 
 	return c.json(serialized, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
+
+// PATCH /api/events/:id - Edit the text of a comment you wrote
+const updateCommentRoute = createRoute({
+	method: 'patch',
+	path: '/{id}',
+	'x-viewer-policy': 'writer',
+	tags: ['events'],
+	summary: 'Edit the text of your own comment on an object',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: updateCommentSchema } } },
+	},
+	responses: {
+		200: {
+			description: 'Comment updated',
+			content: { 'application/json': { schema: eventResponseSchema } },
+		},
+		400: {
+			description: 'Invalid request, or a comment that cannot be edited',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Only the author can edit a comment',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Comment not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateCommentRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	assertWorkspaceWriterRole(c.get('workspaceRole'))
+	const { id } = c.req.valid('param')
+	const { content } = c.req.valid('json')
+
+	const [existing] = await db
+		.select()
+		.from(events)
+		.where(
+			and(
+				eq(events.id, id),
+				eq(events.workspaceId, workspaceId),
+				eq(events.action, 'commented'),
+				eq(events.entityType, 'object'),
+			),
+		)
+		.limit(1)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	if (existing.actorId !== actorId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the author can edit this comment'),
+			403 as never,
+		)
+	}
+
+	const data = (existing.data ?? {}) as Record<string, unknown>
+	// A decision card is a set of buttons a person already tapped or may tap; its words are fixed.
+	if (data.decision) {
+		return c.json(createApiError('BAD_REQUEST', 'A decision card cannot be edited'), 400 as never)
+	}
+
+	// Only the words and the edit time change. The row is updated in place, never re-inserted, so
+	// the insert-time dispatch (mentions, agent sessions, notifications) cannot run again, and
+	// the stored mentions, attachments and parent stay exactly as they were.
+	const editedAt = new Date()
+	const [updated] = await db
+		.update(events)
+		.set({ data: { ...data, content, editedAt: editedAt.toISOString() } })
+		.where(eq(events.id, id))
+		.returning()
+	if (!updated) return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+
+	// The same comment shown in the object's chat follows the edit. Best effort: the comment is
+	// the record, the chat message is its mirror.
+	try {
+		await db
+			.update(messages)
+			.set({ content, editedAt })
+			.where(sql`(${messages.metadata}->>'comment_event_id') = ${String(id)}`)
+	} catch (err) {
+		logger.warn('Failed to carry a comment edit into the object chat', {
+			commentEventId: id,
+			error: String(err),
+		})
+	}
+
+	return c.json(serializeArray([updated])[0] as z.infer<typeof eventResponseSchema>, 200)
+}) as RouteHandler<typeof updateCommentRoute, Env>)
 
 type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }
 
@@ -896,16 +1120,31 @@ async function spawnThreadReplySessions(ctx: {
 			})
 			continue
 		}
+		// A person's answer on a pilot hold card this agent's call was refused with: say what to
+		// do next, so the agent repeats the call (or stops) and does not read it as optional.
+		const heldCallAnswer = await findAnswerForAgent(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			entityId: ctx.objectId,
+			cardEventId: ctx.threadRootEventId,
+			agentId,
+		}).catch(() => null)
 		startSession({
 			workspaceId: ctx.workspaceId,
 			actorId: agentId,
 			callerKind: 'trigger',
-			actionPrompt: buildThreadReplyPrompt({
-				objectId: ctx.objectId,
-				commenterActorId: ctx.actorId,
-				content: ctx.newCommentContent,
-				threadRootEventId: ctx.threadRootEventId,
-			}),
+			actionPrompt: heldCallAnswer
+				? buildHeldCallAnswerPrompt({
+						objectId: ctx.objectId,
+						commenterActorId: ctx.actorId,
+						threadRootEventId: ctx.threadRootEventId,
+						...heldCallAnswer,
+					})
+				: buildThreadReplyPrompt({
+						objectId: ctx.objectId,
+						commenterActorId: ctx.actorId,
+						content: ctx.newCommentContent,
+						threadRootEventId: ctx.threadRootEventId,
+					}),
 			config: {
 				// Who asked: launch puts the sender line above the prompt, so the stored
 				// prompt (and the session's title) starts with what the work is.
@@ -933,6 +1172,32 @@ async function spawnThreadReplySessions(ctx: {
 			})
 		})
 	}
+}
+
+function buildHeldCallAnswerPrompt(ctx: {
+	objectId: string
+	commenterActorId: string
+	threadRootEventId: number
+	answer: 'approve' | 'reject'
+	tool: string
+}): string {
+	const step = ctx.tool.replace(/_/g, ' ')
+	return [
+		commentPromptHeadline(
+			ctx.answer === 'approve'
+				? 'A person approved your held call'
+				: 'A person rejected your held call',
+			ctx.answer === 'approve' ? 'Approve' : 'Reject',
+		),
+		'',
+		ctx.answer === 'approve'
+			? `A flow in pilot held your call to ${ctx.tool} and a person approved that exact call. This is not optional: repeat the same ${ctx.tool} call now, with the same arguments, and it goes through once. Then carry on with the work you were doing. If you change any argument it needs a new approval.`
+			: `A flow in pilot held your call to ${ctx.tool} and a person rejected that exact call (${step}). Do not repeat it or look for another way to do it. Carry on with the rest of your work, or say in a short reply what you could not do.`,
+		'',
+		`Object ID: ${ctx.objectId}`,
+		`Thread root comment event ID: ${ctx.threadRootEventId}`,
+		`Answered by actor ID: ${ctx.commenterActorId}`,
+	].join('\n')
 }
 
 function buildThreadReplyPrompt(ctx: {

@@ -290,8 +290,9 @@ describe('Subscriptions Routes', () => {
 	})
 
 	describe('GET /api/subscriptions/unread', () => {
-		// The route first lists the entities that can have unread (a mentioning comment, then the
-		// onboarding threads) and only then aggregates, so those two selects come off the queue first.
+		// The route first lists the entities that can have unread and only then aggregates, so those
+		// selects come off the queue first: the entities the person was mentioned on, then the
+		// onboarding threads.
 		const candidates = (entityId: string) => [[{ entityId }], []]
 
 		it('returns empty list when nothing unread', async () => {

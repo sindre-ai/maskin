@@ -18,7 +18,9 @@ name: Apple scroll perf (manual)
 # Debug build), times 3. The job limit of 45 minutes is a hang guard.
 #
 # Output per run: the step summary (medians and range per screen, plus the environment) and the
-# `perf-scroll-<run>` artifact (environment.txt, medians.txt, build.log, test.log, server.log).
+# `perf-scroll-<run>` artifact (environment.txt, medians.txt, build.log, test.log and one test-<name>.log
+# per test, mem-<name>.txt memory samples, server.log, and chat-thread-missing.txt/.png if the chat
+# thread was not found).
 
 on:
   workflow_dispatch:
@@ -63,7 +65,7 @@ jobs:
           xcodebuild -version
 
       # The demo server uses only Node built-ins, so no pnpm install.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -146,7 +148,8 @@ jobs:
           # Let the build settle, then log the load the test starts under.
           sleep 30
           echo "load average before test: $(sysctl -n vm.loadavg)" | tee -a "$OUT/environment.txt"
-          scripts/perf-scroll.sh | tee "$OUT/medians.txt"
+          # bash, not ./: this script reaches main through a tool that cannot set the executable bit.
+          bash scripts/perf-scroll.sh | tee "$OUT/medians.txt"
           echo "load average after test: $(sysctl -n vm.loadavg)" | tee -a "$OUT/environment.txt"
 
       - name: Summary

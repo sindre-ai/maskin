@@ -192,6 +192,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -217,6 +218,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		}
@@ -255,6 +257,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -287,6 +290,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -317,6 +321,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -353,6 +358,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -391,6 +397,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -431,6 +438,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -481,6 +489,7 @@ describe('Header', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})
@@ -514,6 +523,7 @@ describe('Header leadingActions', () => {
 			setNewMenuPrimaryOverride: vi.fn(),
 			setNewMenuDisabled: vi.fn(),
 			setHideTitle: vi.fn(),
+			setWrapActions: vi.fn(),
 			setHideBar: vi.fn(),
 			setGutter: vi.fn(),
 		})

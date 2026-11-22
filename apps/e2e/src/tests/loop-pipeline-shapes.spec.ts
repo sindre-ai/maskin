@@ -22,7 +22,7 @@ async function flow(
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title,
-		status: 'learning',
+		status: 'pilot',
 	})
 	const ids: string[] = []
 	for (const step of steps) {
@@ -59,8 +59,9 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const loop = await flow(account, 'Bare flow', [])
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await page.getByRole('tab', { name: 'Setup' }).click()
 
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible({
+			await expect(page.getByRole('heading', { name: 'How it runs' })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expect(page.getByText('This flow runs when you ask.')).toBeVisible()
@@ -78,6 +79,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 				{ agentId: a.id, name: 'Paused sweep', type: 'cron', enabled: false },
 			])
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await page.getByRole('tab', { name: 'Setup' }).click()
 
 			const pipeline = page.getByTestId('loop-pipeline')
 			await expect(pipeline).toBeVisible({ timeout: 15_000 })
@@ -86,7 +88,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			expect(await pageOverflow(page)).toBeLessThanOrEqual(0)
 		})
 
-		test(`many agents scroll inside the card and long names stay inside it @ ${vp.label}`, async ({
+		test(`many triggers wrap inside the card and long names stay inside it @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -106,13 +108,11 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			}
 			const loop = await flow(account, 'Crowded flow', steps)
 			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+			await page.getByRole('tab', { name: 'Setup' }).click()
 
 			const pipeline = page.getByTestId('loop-pipeline')
 			await expect(pipeline).toBeVisible({ timeout: 15_000 })
 			await expect(pipeline.getByRole('switch')).toHaveCount(7)
-			// The card carries the overflow; the page does not.
-			const [scroll, client] = await pipeline.evaluate((el) => [el.scrollWidth, el.clientWidth])
-			expect(scroll).toBeGreaterThan(client)
 			expect(await pageOverflow(page)).toBeLessThanOrEqual(0)
 			// The long name's switch stays inside its own card.
 			const longSwitch = pipeline.getByRole('switch', { name: /A very long trigger name/ })
@@ -120,8 +120,6 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 			const sw = await longSwitch.boundingBox()
 			const box = await pipeline.boundingBox()
 			expect(sw && box && sw.x + sw.width <= box.x + box.width + 1).toBe(true)
-			// Chips never grow past the page either.
-			await expect(page.getByRole('button', { name: /^All steps/ })).toBeVisible()
 		})
 	}
 
@@ -133,6 +131,7 @@ test.describe('Flow page — Pipeline for every shape of flow', () => {
 		const a = await agent(account, 'Relay')
 		const loop = await flow(account, 'Growing flow', [{ agentId: a.id, name: 'First step' }])
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		await page.getByRole('tab', { name: 'Setup' }).click()
 
 		await page.getByRole('button', { name: '+ Add trigger' }).dblclick()
 

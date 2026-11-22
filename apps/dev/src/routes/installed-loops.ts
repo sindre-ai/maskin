@@ -27,6 +27,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import {
 	trackLoopForked,
@@ -36,6 +37,7 @@ import {
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { loopSettingsForInstall, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -59,6 +61,12 @@ import {
 } from '../services/loop-provisioning'
 import { LoopVersionPusher } from '../services/loop-version-pusher'
 import {
+	deleteViewFileBytes,
+	removeInstalledViewFiles,
+	syncLoopViews,
+	toViewItems,
+} from '../services/loop-views-provisioning'
+import {
 	type CapturedLiveSession,
 	captureLiveSessions,
 	stopCapturedSandboxes,
@@ -75,6 +83,7 @@ type Env = {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		storageProvider: StorageProvider
 		sessionManager: SessionManager
 	}
 }
@@ -229,9 +238,9 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 // in packages/db/src/schema.ts. `metadata.trigger_ids` is seeded with every
 // trigger this install provisions so `GET /api/loops` picks up the right
 // agents (it derives `agentIds` from each trigger's `targetActorId`).
-// `entry_condition` / `close_condition` are deliberately left unset — a
-// marketplace install has no authored pipeline definition, only the running
-// process.
+// The loop object also gets the entry condition, close condition, tags and
+// starter targets the marketplace loop ships (`loop_settings`), so the loop page
+// matches the publisher's. A loop that ships none leaves them unset.
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
@@ -294,12 +303,12 @@ app.openapi(installLoopRoute, async (c) => {
 		.limit(1)
 
 	if (!loop) {
-		return c.json(createApiError('NOT_FOUND', 'Marketplace loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Marketplace flow not found'), 404)
 	}
 
 	// A retired loop is no longer offered; existing installs of it keep working.
 	if (loop.retiredAt) {
-		return c.json(createApiError('NOT_FOUND', 'Marketplace loop is no longer available'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Marketplace flow is no longer available'), 404)
 	}
 
 	const items = await db
@@ -318,7 +327,7 @@ app.openapi(installLoopRoute, async (c) => {
 		)
 		.limit(1)
 	if (existing[0]) {
-		return c.json(createApiError('CONFLICT', 'Loop is already installed in this workspace'), 409)
+		return c.json(createApiError('CONFLICT', 'Flow is already installed in this workspace'), 409)
 	}
 
 	const provisioned = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
@@ -538,14 +547,15 @@ app.openapi(installLoopRoute, async (c) => {
 					title: loop.name,
 					content: loop.description,
 					// Marketplace templates are pre-vetted, but the loop is still new to
-					// this workspace's data — start it at `learning` rather than
-					// `fully_autonomous` so its first runs get a look before it's fully
+					// this workspace's data — start it at `pilot` rather than
+					// `live` so its first runs get a look before it's fully
 					// trusted here.
-					status: 'learning',
+					status: 'pilot',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,
 						trigger_ids: provisionedTriggerIds,
+						...loopSettingsForInstall(readLoopSettings(loop.loopSettings)),
 					},
 				})
 				.returning()
@@ -555,6 +565,20 @@ app.openapi(installLoopRoute, async (c) => {
 				.update(installedLoops)
 				.set({ objectId: loopObject.id })
 				.where(eq(installedLoops.id, installRow.id))
+
+			// The loop's custom views: each becomes a new page in this workspace and
+			// a tab on the loop object. Needs the loop object's id, so it runs here.
+			const viewItems = toViewItems(items)
+			if (viewItems.length > 0) {
+				await syncLoopViews({
+					db: tx,
+					storage: c.get('storageProvider'),
+					workspaceId,
+					loopObjectId: loopObject.id,
+					actorId,
+					items: viewItems,
+				})
+			}
 
 			await recordEvent(tx, {
 				workspaceId,
@@ -740,7 +764,7 @@ app.openapi(forkLoopRoute, async (c) => {
 	const [install] = await db.select().from(installedLoops).where(eq(installedLoops.id, id)).limit(1)
 
 	if (!install) {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 
 	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
@@ -942,7 +966,7 @@ app.openapi(updateInstalledLoopRoute, async (c) => {
 		.where(eq(installedLoops.id, id))
 		.limit(1)
 	if (!install) {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
 		return c.json(createApiError('FORBIDDEN', 'You are not a member of the install workspace'), 403)
@@ -950,7 +974,12 @@ app.openapi(updateInstalledLoopRoute, async (c) => {
 
 	let result: Awaited<ReturnType<LoopVersionPusher['updateInstallNow']>>
 	try {
-		result = await new LoopVersionPusher(db, agentStorage).updateInstallNow(id, actorId)
+		result = await new LoopVersionPusher(
+			db,
+			agentStorage,
+			undefined,
+			c.get('storageProvider'),
+		).updateInstallNow(id, actorId)
 	} catch (err) {
 		logger.error('Installed loop update now failed', {
 			installedLoopId: id,
@@ -964,13 +993,13 @@ app.openapi(updateInstalledLoopRoute, async (c) => {
 	}
 
 	if (result.status === 'not_found') {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 	if (result.status === 'forked') {
 		return c.json(
 			createApiError(
 				'CONFLICT',
-				'This loop was forked, so your workspace owns it and it does not follow the catalog. There is nothing to update.',
+				'This flow was forked, so your workspace owns it and it does not follow the catalog. There is nothing to update.',
 			),
 			409,
 		)
@@ -1101,7 +1130,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	const [install] = await db.select().from(installedLoops).where(eq(installedLoops.id, id)).limit(1)
 
 	if (!install) {
-		return c.json(createApiError('NOT_FOUND', 'Installed loop not found'), 404)
+		return c.json(createApiError('NOT_FOUND', 'Installed flow not found'), 404)
 	}
 
 	if (!(await isWorkspaceWriter(db, actorId, install.workspaceId))) {
@@ -1116,6 +1145,9 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// failed post-commit delete is inert — see workspace-skills.ts's DELETE route).
 	let removedSkillIds: string[] = []
 	let removedLoopObject = false
+	// Ids of the view files the install created, whose stored bytes are deleted
+	// after the tx commits (like the skills above).
+	let removedViewFileIds: string[] = []
 	// Live sessions belonging to the agents this uninstall deletes. Captured
 	// inside the tx (only there is the kept-vs-deleted actor split known) and
 	// stopped after it commits — see session-cleanup.ts. Without this their
@@ -1362,6 +1394,19 @@ app.openapi(uninstallLoopRoute, async (c) => {
 		// leaving an orphaned edge (comments/events are an audit log and are
 		// left in place, same as everywhere else objects are deleted).
 		if (!keepProvisionedItems && install.objectId) {
+			// The pages the install created for the loop's custom views go with the
+			// loop object that carries their tabs. Views a person added themselves
+			// are not in the install's record and stay.
+			const [loopObject] = await tx
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, install.objectId))
+				.limit(1)
+			removedViewFileIds = await removeInstalledViewFiles({
+				db: tx,
+				workspaceId: install.workspaceId,
+				metadata: loopObject?.metadata,
+			})
 			await tx
 				.delete(relationships)
 				.where(
@@ -1405,6 +1450,21 @@ app.openapi(uninstallLoopRoute, async (c) => {
 		createWorkspaceDesktopService(db),
 	)
 
+	// The tx has committed, so a failure here cannot undo the delete: log it and
+	// carry on with the other agents. The actor ids are only known inside the tx,
+	// which is why this is not done up front the way DELETE /actors/:id does it.
+	for (const deletedActorId of deletedActorIds) {
+		try {
+			await agentStorage.deleteAllAgentFiles(deletedActorId, install.workspaceId)
+		} catch (err) {
+			logger.error('Failed to delete agent files from storage (orphan objects left)', {
+				workspaceId: install.workspaceId,
+				actorId: deletedActorId,
+				error: String(err),
+			})
+		}
+	}
+
 	for (const skillId of removedSkillIds) {
 		try {
 			await agentStorage.deleteWorkspaceSkill(install.workspaceId, skillId)
@@ -1416,6 +1476,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			})
 		}
 	}
+
+	await deleteViewFileBytes(c.get('storageProvider'), install.workspaceId, removedViewFileIds)
 
 	logger.info('Installed loop removed', {
 		installedLoopId: install.id,

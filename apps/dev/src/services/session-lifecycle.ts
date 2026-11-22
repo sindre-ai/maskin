@@ -28,14 +28,18 @@ import {
 } from '../lib/analytics/ai-generation-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { evictBillingUsage } from '../lib/billing-usage-cache'
+import { unclassifiedFingerprint } from '../lib/credit-classifier'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { getSessionContextSize } from '../lib/session-context-size'
 import { MAX_RETRY_ATTEMPTS } from '../lib/subscription-limit-reset'
 import { assertInWorkspace } from '../lib/workspace-scope'
 import { postRetryNotice } from './chat-retry-notice'
 import { recordSessionAdmission } from './daily-budget-events'
 import { returnDeferredHelpers, returnToSender } from './helper-return'
+import { alertOwnersOncePerDay } from './run-death-alerts'
+import { admitSessionStart } from './self-start-limits'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
 // ── Types (spec §14.1) ────────────────────────────────────────────────────
@@ -225,16 +229,40 @@ export async function startSession(
 
 	const createdBy = input.createdBy ?? input.actorId
 
+	// The gate on work agents start for themselves: labels why the session started and refuses a
+	// self-started one over a cap, in back-off or over the agent's daily budget (throws
+	// SessionNotAdmittedError before any row exists). Work that is not urgent while the workspace's
+	// daily target is used up comes back with `hold` and is parked below. A session a person
+	// started always passes.
+	const admission = await admitSessionStart(db, {
+		workspaceId: input.workspaceId,
+		actorId: input.actorId,
+		callerKind: input.callerKind,
+		config: input.config,
+		triggerType: input.triggerType,
+		retryOf: input.retryOf,
+		hasChat: belongsToChat(input),
+		createdBy,
+		initiatedFromObjectId: input.initiatedFromObjectId,
+		humanFacing: isHumanFacing(input),
+	})
+
 	const params: CreateSessionParams = {
 		actorId: input.actorId,
 		actionPrompt: input.actionPrompt ?? '',
-		config: withBackgroundDefaults(input),
+		config: {
+			...withStartReason(withBackgroundDefaults(input), admission.reason, belongsToChat(input)),
+			// Set on the row when it is made, so a held session never counts against the workspace
+			// start limit, not even for the moment before it is parked.
+			...(admission.hold ? { held: admission.hold } : {}),
+		},
 		triggerId: input.triggerId,
 		triggerType: input.triggerType,
 		triggerSource: input.triggerSource,
 		sourceCommentEventId: input.sourceCommentEventId,
 		createdBy,
-		autoStart: input.autoStart,
+		// A held session is parked below instead of started; the rest start as the caller asked.
+		autoStart: admission.hold ? false : input.autoStart,
 		sourceSessionId: input.parentSessionId,
 		spawnedBySessionId: input.spawnedBySessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
@@ -244,9 +272,25 @@ export async function startSession(
 
 	const session = await sessionManager.createSession(input.workspaceId, params)
 
-	// Daily budget 1a: one admission event per start, the baseline 1b is judged against. Every
-	// decision is 'admitted' until the gate exists. Best effort and not awaited: reporting must not
-	// slow the start path. recordSessionAdmission never throws, so there is nothing to catch here.
+	// Held at the daily limit: park the row, or start it as usual when it cannot be parked (no
+	// dispatch queue, or the queue write failed): a gate that cannot hold must not stop work.
+	const held =
+		admission.hold !== undefined &&
+		(await sessionManager.holdSession(session.id, new Date(admission.hold.until)))
+	if (admission.hold && !held) {
+		await releaseHeldMark(db, session.id)
+		if (input.autoStart !== false) {
+			sessionManager
+				.startSession(session.id)
+				.catch((err) =>
+					logger.error('Session start failed', { sessionId: session.id, error: String(err) }),
+				)
+		}
+	}
+
+	// Daily budget: one admission event per start (admitted, or deferred when the session is held),
+	// the record 1b is judged against. Best effort and not awaited: reporting must not slow the
+	// start path. recordSessionAdmission never throws, so there is nothing to catch here.
 	void recordSessionAdmission(db, {
 		sessionId: session.id,
 		workspaceId: input.workspaceId,
@@ -254,6 +298,11 @@ export async function startSession(
 		triggerId: input.triggerId ?? null,
 		callerKind: input.callerKind,
 		humanFacing: isHumanFacing(input),
+		startReason: admission.reason,
+		selfStarted: admission.selfStarted,
+		importance: admission.importance,
+		decision: held ? 'deferred' : 'admitted',
+		heldUntil: held ? admission.hold?.until : undefined,
 	})
 
 	// Commit-8 lifecycle fields set on the fresh row. session_state='queued'
@@ -313,6 +362,38 @@ export async function startSession(
 	}
 
 	return handle
+}
+
+/** The session could not be held after all: take the mark off so it counts and starts as normal. */
+async function releaseHeldMark(db: Database, sessionId: string): Promise<void> {
+	await db
+		.update(sessions)
+		.set({ config: sql`${sessions.config} - 'held'` })
+		.where(eq(sessions.id, sessionId))
+		.catch((err) =>
+			logger.warn('Failed to clear the held mark on a session that was not held', {
+				sessionId,
+				error: String(err),
+			}),
+		)
+}
+
+function belongsToChat(input: StartSessionInput): boolean {
+	const config = input.config as { conversation?: unknown } | undefined
+	return !!input.conversationId || !!config?.conversation
+}
+
+/**
+ * Stamps why the session started. A session that belongs to a chat keeps its config as given: it is
+ * person-started by definition, and the chat responder owns that config.
+ */
+function withStartReason(
+	config: SessionConfig | undefined,
+	reason: string,
+	hasChat: boolean,
+): SessionConfig | undefined {
+	if (hasChat) return config
+	return { ...config, start_reason: reason }
 }
 
 /** Human-facing work: a chat turn, or anything that belongs to a conversation. */
@@ -804,6 +885,8 @@ export async function emitCompletion(
 	const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : null
 	const triggerSource = typeof config.trigger_source === 'string' ? config.trigger_source : null
 
+	const contextSize = getSessionContextSize(session.id)
+
 	await capturePosthogEvent('agent_session_completed', session.workspaceId, {
 		session_id: session.id,
 		actor_id: session.actorId,
@@ -813,7 +896,16 @@ export async function emitCompletion(
 		host,
 		outcome: mapKindToOutcomeProp(outcome.kind),
 		classification: outcome.classification,
-		stop_reason: outcome.reason ?? null,
+		// A full or failing window is its own end cause, so the first sibling bet's thrashing
+		// count and this bet's failure count can read it: context_full, compaction_failed.
+		stop_reason: contextSize?.endCause ?? outcome.reason ?? null,
+		// The size of the window at the last model call of the last turn, and the window the
+		// session reports. Left off when the session showed neither (PostHog reads them as absent).
+		last_turn_window_tokens: contextSize?.lastTurnWindowTokens,
+		// assistant_usage is the model's own reading, log_estimate a rough count of log lines
+		// (DeepSeek writes zero usage), so the two can be told apart in the baseline.
+		size_source: contextSize?.sizeSource,
+		context_window_tokens: contextSize?.contextWindowTokens,
 		exit_code: outcome.exitCode ?? null,
 		duration_ms: durationMs,
 		input_tokens: totals.inputTokens ?? 0,
@@ -1132,6 +1224,26 @@ export async function settleSession(
 			workspaceId: row.workspaceId,
 			actorId: row.actorId,
 			retryAt: outcome.retryAt,
+		})
+	}
+
+	// A death nothing recognised reaches the workspace owners: one card per cause per day, however
+	// many runs die the same way. The reason is already saved on the row, so a failed alert
+	// (swallowed inside) loses nothing but the card.
+	if (flipped && outcome.kind === 'fail' && outcome.failureReason?.reason_code === 'unclassified') {
+		const verbatim = outcome.failureReason.verbatim_output
+		logger.warn('Session ended with an unclassified exit', {
+			sessionId,
+			workspaceId: row.workspaceId,
+			exitCode: outcome.exitCode,
+			verbatim,
+		})
+		await alertOwnersOncePerDay(deps.db, {
+			workspaceId: row.workspaceId,
+			causeKey: `unclassified:${unclassifiedFingerprint(verbatim)}`,
+			headline: 'A run ended with an error nobody recognised',
+			rationale: `It was not retried. Last line it printed: ${verbatim ?? '(nothing)'}. You get one note per cause per day; later runs that end the same way today are not repeated.`,
+			sessionId,
 		})
 	}
 

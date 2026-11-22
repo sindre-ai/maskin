@@ -1,7 +1,7 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ConversationDetailResponse, MessageResponse, MessagesListResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import React from 'react'
@@ -271,6 +271,38 @@ describe('ThreadHeader — v4 actions', () => {
 		})
 	})
 
+	describe('Copy link', () => {
+		it('copies the chat URL and toasts the same confirmation as the participants popover', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			const writeText = vi.fn().mockResolvedValue(undefined)
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				configurable: true,
+			})
+			renderHeader()
+
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }))
+
+			await waitFor(() => expect(writeText).toHaveBeenCalledWith(window.location.href))
+			await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Link copied'))
+		})
+
+		it('toasts an error when the clipboard write fails', async () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+				configurable: true,
+			})
+			renderHeader()
+
+			await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+			await userEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }))
+
+			await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Could not copy link'))
+		})
+	})
+
 	describe('Mark as unread', () => {
 		it('resets the read cursor via mark_unread, toasts and fires analytics', async () => {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
@@ -288,6 +320,34 @@ describe('ThreadHeader — v4 actions', () => {
 			const [, options] = mockUpdateMe.mock.calls[0] as [unknown, { onSuccess: () => void }]
 			options.onSuccess()
 			expect(mockToastSuccess).toHaveBeenCalledWith('Marked as unread')
+		})
+	})
+
+	describe('Rename conversation', () => {
+		async function startRename() {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			renderHeader()
+			await userEvent.click(screen.getByRole('button', { name: /^Rename conversation:/ }))
+			return screen.getByRole('textbox', { name: 'Conversation title' })
+		}
+
+		it('returns focus to the title button on Enter', async () => {
+			const input = await startRename()
+			await userEvent.type(input, ' two{Enter}')
+			expect(screen.queryByRole('textbox', { name: 'Conversation title' })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /^Rename conversation:/ })).toHaveFocus()
+		})
+
+		it('returns focus to the title button on Escape', async () => {
+			const input = await startRename()
+			await userEvent.type(input, 'x{Escape}')
+			expect(screen.getByRole('button', { name: /^Rename conversation:/ })).toHaveFocus()
+		})
+
+		it('keeps editing on the Enter that confirms an IME candidate', async () => {
+			const input = await startRename()
+			fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+			expect(screen.getByRole('textbox', { name: 'Conversation title' })).toBeInTheDocument()
 		})
 	})
 

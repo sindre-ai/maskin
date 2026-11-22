@@ -45,10 +45,7 @@ export function MessageThreadPill({
 						id={p.actorId}
 						name={p.actorName}
 						type={p.actorType}
-						className={cn(
-							'h-5 w-5 rounded-md text-[8px] ring-2 ring-background',
-							index > 0 && '-ml-1.5',
-						)}
+						className={cn('h-5 w-5 ring-2 ring-background', index > 0 && '-ml-1.5')}
 					/>
 				))}
 			</span>

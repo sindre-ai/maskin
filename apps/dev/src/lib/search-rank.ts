@@ -19,7 +19,20 @@ export const TITLE_COVERAGE_SCALE = 100
 // coverage bonus but never an extra matched token.
 export const TITLE_PHRASE_PREFIX_BONUS = 500
 
+// A participant name that hits is worth TITLE_HIT_WEIGHT, the same as a title hit, so a chat
+// found by who is in it is not buried under chats that merely hold the letters. A whole-word
+// name match ("cpo" in "CPO" or "Ask CPO") and a name word that starts with the token earn
+// these on top, the same tiers as TeamLayout.searchTier on iOS. Both stay below
+// TITLE_HIT_WEIGHT so they never outrank an extra matched token.
+export const NAME_WHOLE_WORD_BONUS = 400
+export const NAME_WORD_PREFIX_BONUS = 200
+
 /** `%token%` with LIKE wildcards in the token escaped. */
 export function tokenIlikePattern(token: string): string {
 	return `%${token.replace(/[%_\\]/g, '\\$&')}%`
+}
+
+/** `token` with regex metacharacters escaped, for the name-word patterns of a participant list. */
+export function tokenRegexEscape(token: string): string {
+	return token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

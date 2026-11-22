@@ -9,9 +9,8 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import { and, asc, desc, eq, gt, inArray, ne } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProbeFn, ProbeResult } from '../../lib/capabilities/probe'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { runCapabilityDigest } from '../../services/capability-digest'
 import { CapabilityScanner } from '../../services/capability-scanner'
 import { directPairKey } from '../../services/direct-chat'
@@ -32,7 +31,6 @@ vi.mock('../../services/session-lifecycle', async (importOriginal) => ({
 
 const BUILTIN = 'maskin:builtin'
 const DAY_MS = 24 * 60 * 60 * 1000
-const FLAG = 'agent-proactive-1-1'
 
 describe('capability digest (integration)', () => {
 	let workspaceId: string
@@ -45,7 +43,6 @@ describe('capability digest (integration)', () => {
 	let slackId: string
 	let answers: Map<string, ProbeResult>
 	let probe: ProbeFn
-	let previousWorkspaceFeatures: string | undefined
 
 	const slackKey = () => `integration:slack:${slackId}`
 
@@ -190,21 +187,13 @@ describe('capability digest (integration)', () => {
 		})
 	}
 
-	/** The notes are behind agent-proactive-1-1, so every test but the flag ones turns it on here. */
-	function setWorkspaceFlags(entries: string[]) {
-		process.env.FF_WORKSPACE_FEATURES = entries.join(',')
-		_resetFeatureFlagConfig()
-	}
-
 	beforeEach(async () => {
 		spies.createLLMAdapter.mockClear()
 		spies.startSession.mockClear()
-		previousWorkspaceFeatures = process.env.FF_WORKSPACE_FEATURES
 
 		ownerId = getTestActorId()
 		const ws = await insertWorkspace(db, ownerId)
 		workspaceId = ws.id
-		setWorkspaceFlags([`${workspaceId}:${FLAG}`])
 		cosId = (await insertActor(db, { type: 'agent', name: 'Chief of Staff' })).id
 		salesRepId = (await insertActor(db, { type: 'agent', name: 'Sales Rep' })).id
 		researcherId = (await insertActor(db, { type: 'agent', name: 'Researcher' })).id
@@ -238,73 +227,6 @@ describe('capability digest (integration)', () => {
 		})
 	})
 
-	afterEach(() => {
-		if (previousWorkspaceFeatures === undefined) {
-			Reflect.deleteProperty(process.env, 'FF_WORKSPACE_FEATURES')
-		} else {
-			process.env.FF_WORKSPACE_FEATURES = previousWorkspaceFeatures
-		}
-		_resetFeatureFlagConfig()
-	})
-
-	describe('agent-proactive-1-1 flag', () => {
-		async function newToolFound() {
-			await scanner().tick() // baseline
-			answers.set(
-				BUILTIN,
-				tools({ create_objects: 'h-create', get_objects: 'h-get', send_chat: 'h-c' }),
-			)
-			await scanner().tick()
-		}
-
-		it('with no entry for the flag, nothing is sent; the finding waits and goes out once it is on', async () => {
-			setWorkspaceFlags([])
-			const chatId = await chatFor(ownerId)
-
-			await newToolFound()
-			expect(await eventsFor('capability_changed')).toHaveLength(1)
-			expect(await notesIn(chatId)).toHaveLength(0)
-			expect(await eventsFor('capability_digest_sent')).toHaveLength(0)
-			expect(await eventsFor('capability_note_skipped')).toHaveLength(0)
-			expect(await runCapabilityDigest(db, workspaceId)).toEqual({
-				sent: 0,
-				skipped: { flag_off: 1 },
-			})
-
-			setWorkspaceFlags([`${workspaceId}:${FLAG}`])
-			const summary = await runCapabilityDigest(db, workspaceId)
-			expect(summary.sent).toBe(1)
-			const notes = await notesIn(chatId)
-			expect(notes).toHaveLength(1)
-			expect(notes[0]?.content).toContain('send_chat')
-		})
-
-		it('an entry for another workspace does not turn it on here', async () => {
-			const other = await insertWorkspace(db, ownerId)
-			setWorkspaceFlags([`${other.id}:${FLAG}`])
-			const chatId = await chatFor(ownerId)
-
-			await newToolFound()
-			expect(await notesIn(chatId)).toHaveLength(0)
-			expect(await runCapabilityDigest(db, workspaceId)).toEqual({
-				sent: 0,
-				skipped: { flag_off: 1 },
-			})
-		})
-
-		it('an entry for this workspace sends here and leaves a neighbour without the entry off', async () => {
-			const neighbour = await insertWorkspace(db, ownerId)
-			const chatId = await chatFor(ownerId)
-
-			await newToolFound()
-			expect(await notesIn(chatId)).toHaveLength(1)
-			expect(await runCapabilityDigest(db, neighbour.id)).toEqual({
-				sent: 0,
-				skipped: { flag_off: 1 },
-			})
-		})
-	})
-
 	describe('end to end', () => {
 		it('a new tool on a held source becomes one note from Chief of Staff, unread, and moves the cursor', async () => {
 			const chatId = await chatFor(ownerId)
@@ -322,10 +244,9 @@ describe('capability digest (integration)', () => {
 
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(1)
-			expect(notes[0]?.content).toContain(
-				'Hey Integration, quick check on what your agents can do.',
-			)
-			expect(notes[0]?.content).toContain('New this week: Maskin has 1 new tool (send_chat), and ')
+			expect(notes[0]?.content).toContain('Hey Integration, here is what your agents can now do.')
+			expect(notes[0]?.content).toContain(' can now send chat in Maskin.')
+			expect(notes[0]?.content).not.toMatch(/[a-z]+_[a-z]+/)
 			expect(notes[0]?.metadata).toMatchObject({
 				delivery: { kind: 'proactive', reason: 'capability_note', version: 1 },
 			})
@@ -420,8 +341,8 @@ describe('capability digest (integration)', () => {
 			await scanner().tick()
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(2)
-			expect(notes[1]?.content).toContain('tool_two')
-			expect(notes[1]?.content).not.toContain('tool_one')
+			expect(notes[1]?.content).toContain('tool two')
+			expect(notes[1]?.content).not.toContain('tool one')
 			expect(await eventsFor('capability_digest_sent')).toHaveLength(2)
 		})
 
@@ -518,7 +439,7 @@ describe('capability digest (integration)', () => {
 			await scanner().tick()
 			const notes = await notesIn(chatId)
 			expect(notes).toHaveLength(2)
-			expect(notes[1]?.content).toContain('tool_two')
+			expect(notes[1]?.content).toContain('tool two')
 			expect(await eventsFor('capability_digest_sent')).toHaveLength(2)
 		})
 
@@ -537,7 +458,7 @@ describe('capability digest (integration)', () => {
 			expect(await notesIn(ownerChat)).toHaveLength(1)
 			const adminNotes = await notesIn(adminChat)
 			expect(adminNotes).toHaveLength(2)
-			expect(adminNotes[1]?.content).toContain('tool_two')
+			expect(adminNotes[1]?.content).toContain('tool two')
 			const reasons = (await skippedFor(ownerId)).map((e) => (e.data as { reason: string }).reason)
 			expect(reasons).toEqual(['opted_out'])
 		})
@@ -610,7 +531,7 @@ describe('capability digest (integration)', () => {
 			await db.update(integrations).set({ config: {} }).where(eq(integrations.id, slackId))
 			await runCapabilityDigest(db, workspaceId)
 			const [note] = await notesIn(chatId)
-			expect(note?.content).toContain('Slack has 1 new tool (slack_react)')
+			expect(note?.content).toContain('can now react in Slack.')
 		})
 
 		it('reconnect and not-attached items go to owners and admins only, and carry no secrets', async () => {
@@ -661,14 +582,14 @@ describe('capability digest (integration)', () => {
 			for (const chat of [ownerChat, adminChat]) {
 				const [note] = await notesIn(chat)
 				expect(note?.content).toContain(
-					'Needs you: Slack wants a reconnect before the new write scope works.',
+					'Needs you: Slack needs a reconnect before your agents can use the new write access.',
 				)
 				expect(note?.content).toContain(
 					'Also: Google Meet is connected but none of your agents can use it yet. An admin decides whether any agent gets it.',
 				)
 			}
 			const [memberNote] = await notesIn(memberChat)
-			expect(memberNote?.content).toContain('Maskin has 1 new tool (send_chat)')
+			expect(memberNote?.content).toContain('can now send chat in Maskin.')
 			expect(memberNote?.content).not.toContain('Needs you')
 			expect(memberNote?.content).not.toContain('Google Meet')
 			expect(memberNote?.content).not.toContain('Slack')

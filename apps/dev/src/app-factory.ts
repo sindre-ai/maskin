@@ -16,7 +16,7 @@ import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { buildAppleAppSiteAssociation } from './lib/apple-app-site-association'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { createHealthHandler } from './lib/health'
-import { PlanCapExceededError } from './lib/llm-routing'
+import { PlanCapExceededError, TrialNotStartedError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { redactLogLine } from './lib/redact-path'
 import { requestTiming } from './lib/request-timing'
@@ -30,6 +30,7 @@ import {
 import { dbLoadShed, isExempt as isLoadSheddingExempt } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import { inFlightCap } from './middleware/in-flight-cap'
+import { listReadCache } from './middleware/list-read-cache'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -77,6 +78,8 @@ import integrationsGrantsRoutes from './routes/integrations-grants'
 import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
+import integrationsMicrosoftMcpRoutes from './routes/integrations-microsoft-mcp'
+import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
@@ -95,7 +98,13 @@ import oauthClientMetadataRoutes from './routes/oauth-client-metadata'
 import oauthDiscoveryRoutes from './routes/oauth-discovery'
 import oauthTokenRoutes from './routes/oauth-token'
 import objectApprovalsRoutes from './routes/object-approvals'
+import objectDoneWhenRoutes from './routes/object-done-when'
+import objectGoAheadRoutes from './routes/object-go-ahead'
+import objectNextStepRoutes from './routes/object-next-step'
+import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
+import openaiAppsChallengeRoutes from './routes/openai-apps-challenge'
+import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
@@ -106,6 +115,7 @@ import sessionsRoutes from './routes/sessions'
 import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
+import telemetryClientRoutes from './routes/telemetry-client'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import transcriptionsRoutes from './routes/transcriptions'
 import triggersRoutes from './routes/triggers'
@@ -127,6 +137,8 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		/** The session a session key was minted for; null for any other key. Set by auth. */
+		apiKeySessionId?: string | null
 		/**
 		 * The originating session's id, when the request carried a well-formed
 		 * `X-Maskin-Session-Id` header (S2 writer hook). Undefined for human
@@ -213,6 +225,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	options.onNodeWebSocket?.(nodeWebSocket)
 
 	app.onError((err, c) => {
+		if (err instanceof TrialNotStartedError) {
+			logger.warn('Trial not started', { plan: err.plan })
+			return c.json(
+				{ error: { code: ApiErrorCode.TRIAL_NOT_STARTED, message: err.message, plan: err.plan } },
+				402,
+			)
+		}
 		if (err instanceof PlanCapExceededError) {
 			logger.warn('Plan cap exceeded', {
 				plan: err.plan,
@@ -391,6 +410,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - /api/health, /api/openapi.json: public discovery endpoints
 	//   - POST /api/actors: signup bootstrap, mints the first API key
 	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - POST /api/auth/forgot-password and /reset-password: signed out by nature. Both are rate
+	//     limited per IP inside the handler; the emailed one-time token is the credential.
 	//   - POST /api/device-auth/start and /token: a keyboard-less device (Apple TV) asking to be
 	//     signed in. Both are rate limited per IP inside the handler; the sign-in itself only
 	//     completes after a signed-in person approves the code (/preview, /approve, /deny, which
@@ -427,6 +448,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// Profile pictures load through <img>, which cannot send an API key. Image bytes only, and only with the current ?v= (routes/actor-avatar.ts).
 		if (method === 'GET' && /^\/api\/actors\/[0-9a-f-]{36}\/avatar$/i.test(path)) return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
+		if (
+			method === 'POST' &&
+			(path === '/api/auth/forgot-password' || path === '/api/auth/reset-password')
+		) {
+			return next()
+		}
 		if (
 			method === 'POST' &&
 			(path === '/api/device-auth/start' || path === '/api/device-auth/token')
@@ -520,7 +547,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	// After auth, so the cache is only read for a proven member. Per-person, a few seconds long.
+	app.use('/api/*', listReadCache())
+
 	app.route('/api/objects', objectApprovalsRoutes)
+	app.route('/api/objects', objectDoneWhenRoutes)
+	app.route('/api/objects', objectOutcomeRoutes)
+	app.route('/api/objects', objectGoAheadRoutes)
+	app.route('/api/objects', objectNextStepRoutes)
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
@@ -568,9 +602,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// generic /api/integrations/{provider}/... routes never see these paths.
 	app.route('/api/integrations/google-drive', integrationsGoogleDriveRoutes)
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
+	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsOAuthAppRoutes)
 	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
@@ -582,6 +618,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
+	// Pilot flows hold outbound steps: the MCP server and the GitHub relay ask here before one runs.
+	app.route('/api/pilot-gate', pilotGateRoutes)
 	app.route('/api/guardrails', guardrailsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
@@ -626,6 +664,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// of /api, and refused for Claude's own (mat_) tokens.
 	app.route('/api/oauth', oauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
+	app.route('/api/telemetry', telemetryClientRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/saved-views', savedViewsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
@@ -656,6 +695,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
+
+	// Domain proof for the ChatGPT app listing. 404 until OPENAI_APPS_CHALLENGE is set.
+	app.route('/', openaiAppsChallengeRoutes)
 
 	// Client ID Metadata Document for Vercel's MCP sign-in. Public, and before the SPA fallthrough for
 	// the same reason as the discovery documents above.

@@ -216,7 +216,9 @@ Update one or more existing objects and/or create relationships between existing
 | `updates` | `array` | no† | Objects to update. Defaults to `[]`. |
 | `updates[].id` | `uuid` | yes | Target object. |
 | `updates[].title` | `string` | no | New title. |
-| `updates[].content` | `string` | no | New markdown body. |
+| `updates[].content` | `string` | no | New markdown body (the whole body). |
+| `updates[].append` | `string` | no | Text added to the end of the stored body, exactly as sent. Not together with `content` or `replace`. |
+| `updates[].replace` | `object` | no | `{ find, with, all? }`. Swaps one exact piece of the stored body for new text. If `find` is not in the body, or is in it more than once and `all` is not `true`, nothing is written and the error says which. Not together with `content` or `append`. |
 | `updates[].status` | `string` | no | New status. Must be valid for the object's type in this workspace. |
 | `updates[].metadata` | `object` | no | Key/value patch. **Shallow-merged** — see below. |
 | `updates[].driver` | `uuid \| null` | no | Set a new driver, or pass `null` to clear the driver. |
@@ -229,6 +231,26 @@ Update one or more existing objects and/or create relationships between existing
 | `workspace_id` | `uuid` | no | Workspace to write to. Defaults to `DEFAULT_WORKSPACE_ID`. |
 
 † At least one of `updates` or `edges` must be provided.
+
+### Editing part of a long body
+
+`content` replaces the whole body, so changing two lines of a 200,000 character page means sending all of it back. Use `append` or `replace` instead and the server edits the stored body itself, inside the same row lock as every other write to that object. Two edits from two sessions at the same moment both land.
+
+```json
+{
+  "tool": "update_objects",
+  "arguments": {
+    "updates": [
+      {
+        "id": "<knowledge-uuid>",
+        "replace": { "find": "Status: draft", "with": "Status: approved" }
+      }
+    ]
+  }
+}
+```
+
+Sending `content` with `append` or `replace` on one entry, or `append` with `replace`, is refused. A refused edit writes nothing.
 
 ### Metadata patch semantics — shallow merge
 
@@ -339,4 +361,4 @@ Response: `{ "deleted": true }` on success, `404` if the object doesn't exist or
 - [bets.md](./bets.md) — the `bet` object type: shaped, time-boxed outcomes and their lifecycle statuses.
 - [tasks.md](./tasks.md) — the `task` object type: units of work under a bet, driver handoff, and review flow.
 - [relationships.md](./relationships.md) — the edge types (`breaks_into`, `informs`, `blocks`, `relates_to`, `duplicates`) referenced in `create_objects.edges` and `update_objects.edges`.
-- [mcp-tools.md](./mcp-tools.md) — the full Maskin MCP tool catalog, including `list_objects`, `search_objects`, `get_workspace_schema`, and the file / comment / relationship tools referenced from this page.
+- [mcp-tools.md](./mcp-tools.md) — the full Maskin MCP tool catalog, including `list_objects` (which also searches, with `q`), `get_workspace_schema`, and the file / comment / relationship tools referenced from this page.

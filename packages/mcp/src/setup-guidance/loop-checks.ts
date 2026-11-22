@@ -105,7 +105,7 @@ function conditionsSet(loop: LoopInput): SetupCheck | null {
 	return {
 		name: 'conditions_set',
 		status: 'warn',
-		message: `Loop is missing ${missing.join(' and ')} — the intent of the loop is not written down.`,
+		message: `Flow is missing ${missing.join(' and ')} — the intent of the flow is not written down.`,
 		fix: {
 			tool: 'update_objects',
 			args_hint: 'set metadata.entry_condition and metadata.close_condition on the loop object',

@@ -12,6 +12,7 @@ import {
 	setCapturingEnabled,
 	setWorkspaceGroup,
 	signupSourceFrom,
+	siteAreaForPath,
 	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
@@ -39,6 +40,8 @@ describe('posthog helper', () => {
 			actor_id: 'a1',
 			actor_type: 'human',
 			is_team: false,
+			internal: false,
+			paying: false,
 		})
 
 		// posthog-js is safe to call before init (it buffers), and the module-local
@@ -58,6 +61,8 @@ describe('posthog helper', () => {
 			actor_id: 'a1',
 			actor_type: 'agent',
 			is_team: false,
+			internal: false,
+			paying: false,
 		})
 
 		expect(regSpy).toHaveBeenCalledTimes(1)
@@ -66,6 +71,8 @@ describe('posthog helper', () => {
 			actor_id: 'a1',
 			actor_type: 'agent',
 			is_team: false,
+			internal: false,
+			paying: false,
 		})
 	})
 
@@ -277,7 +284,11 @@ describe('posthog helper', () => {
 				person_profiles: 'identified_only',
 				capture_pageview: true,
 				capture_pageleave: false,
-				capture_performance: false,
+				capture_performance: {
+					network_timing: false,
+					web_vitals: true,
+					web_vitals_allowed_metrics: ['LCP', 'INP'],
+				},
 				autocapture: false,
 				before_send: beforeSend,
 			})
@@ -411,11 +422,47 @@ describe('firstTouchFromPosthog', () => {
 })
 
 describe('withSharedProperties', () => {
-	it('adds surface web and defaults actor_type to human', () => {
+	const siteAreaOf = (properties: Record<string, unknown>) => {
+		const out = withSharedProperties({ event: 'x', properties })
+		return (out?.properties as { site_area?: unknown } | undefined)?.site_area
+	}
+
+	it('adds surface web and defaults actor_type to human, internal and paying to false', () => {
 		expect(withSharedProperties({ event: 'x', properties: { a: 1 } })).toEqual({
 			event: 'x',
-			properties: { a: 1, actor_type: 'human', surface: 'web' },
+			properties: {
+				a: 1,
+				actor_type: 'human',
+				internal: false,
+				paying: false,
+				surface: 'web',
+				site_area: 'landing',
+			},
 		})
+	})
+
+	it('tags the area from the path posthog-js stamped on the event', () => {
+		const area = (path: string) => siteAreaOf({ $pathname: path })
+		expect(area('/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/chats')).toBe('app')
+		expect(area('/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e')).toBe('app')
+		expect(area('/workspaces')).toBe('app')
+		expect(area('/')).toBe('landing')
+		expect(area('/login')).toBe('landing')
+		expect(area('/signup')).toBe('landing')
+	})
+
+	it('falls back to the page path when the event carries none', () => {
+		window.history.pushState({}, '', '/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/loops')
+		expect(siteAreaOf({})).toBe('app')
+		window.history.pushState({}, '', '/')
+	})
+
+	it('keeps the internal and paying values the workspace mount registered', () => {
+		const out = withSharedProperties({
+			event: 'x',
+			properties: { internal: true, paying: true },
+		})
+		expect(out?.properties).toMatchObject({ internal: true, paying: true })
 	})
 
 	it('adds feature_area for an event that belongs to a product area', () => {
@@ -445,5 +492,24 @@ describe('withSharedProperties', () => {
 
 	it('passes a dropped event through', () => {
 		expect(withSharedProperties(null)).toBeNull()
+	})
+})
+
+describe('siteAreaForPath', () => {
+	it.each([
+		['/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e/objects/abc', 'app'],
+		['/start-trial/7f0c2a64-1b1e-4c1c-9d2e-3a5f6b7c8d9e', 'app'],
+		['/invite', 'app'],
+		['/oauth/authorize', 'app'],
+		['/', 'landing'],
+		['/da/', 'landing'],
+		['/docs/mcp', 'landing'],
+		['/marketplace', 'landing'],
+		['/login', 'landing'],
+		['/signup', 'landing'],
+		['/forgot-password', 'landing'],
+		['/workspaces-and-more', 'landing'],
+	])('%s is %s', (path, area) => {
+		expect(siteAreaForPath(path)).toBe(area)
 	})
 })

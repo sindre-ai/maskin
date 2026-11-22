@@ -1,6 +1,8 @@
 import { AskPanel } from '@/components/asks/ask-panel'
 import { FilesList } from '@/components/files/files-list'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
+import { LoopViewTab } from '@/components/loops/loop-view-tab'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { getStaticColumns } from '@/components/objects/data-table/columns'
@@ -17,6 +19,7 @@ import {
 import { DisplayPanel, type DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { ItemsMoreMenu } from '@/components/objects/items-more-menu'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
@@ -28,6 +31,9 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useExistingViews } from '@/hooks/use-existing-views'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useItemsListViews } from '@/hooks/use-items-list-views'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -77,6 +83,7 @@ import {
 	updatedBucketWindow,
 } from '@/lib/objects-updated-buckets'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
+import { viewTabs as toViewTabs } from '@/lib/page-views'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -173,6 +180,8 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 // unlike a status or driver pin, they mean the same thing on day one as they
 // do on day one hundred, so they are safe to pre-place in the chip row.
 const FILES_TAB_VALUE = 'file'
+// The tab for the list itself, ahead of any custom view tabs.
+const LIST_TAB = 'list'
 const DEFAULT_GROUP_BY = 'status'
 const DEFAULT_PINNED_FILTERS = ['quick:waiting', 'quick:starred', 'quick:fresh']
 
@@ -202,6 +211,19 @@ function ObjectsRoute() {
 	// Files are not objects: the Files tab swaps the object list for the workspace's
 	// files, so every object query below stands down while it is open.
 	const filesTab = typeFilter === FILES_TAB_VALUE
+	// Custom views on this list show as tabs next to the list itself (behind the same flag as the
+	// Create view menu item). The tab is kept as a string; a view that is gone falls back to the list.
+	const viewTabsOn = useFeatureFlag('create-view-with-agent') && !filesTab
+	const listViews = useItemsListViews(typeFilter, viewTabsOn)
+	const [listTab, setListTab] = useState(LIST_TAB)
+	// Views belong to one type, so switching the type chip goes back to the list.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: typeFilter is the trigger, not a value read
+	useEffect(() => {
+		setListTab(LIST_TAB)
+	}, [typeFilter])
+	const allViewTabs = useMemo(() => toViewTabs(listViews.views), [listViews.views])
+	const viewTabs = useExistingViews(workspaceId, allViewTabs)
+	const activeView = viewTabs.find((v) => v.value === listTab)
 	// `none` is the URL's way of saying "explicitly ungrouped".
 	// Nothing saved and no display intent in the URL: the list opens grouped by
 	// Status. Held in state, never written to the URL, so the first render does
@@ -1926,6 +1948,7 @@ function ObjectsRoute() {
 							debounceMs={250}
 						/>
 						{!filesTab && <DisplayPanel {...displayPanelProps} />}
+						{!filesTab && <ItemsMoreMenu filters={filterModel} />}
 					</>
 				}
 				scrollLocked
@@ -1952,8 +1975,22 @@ function ObjectsRoute() {
 				</div>
 			)}
 
-			{filesTab ? (
-				// Object filters and Display do not apply to files — only the tab strip stays.
+			{viewTabs.length > 0 && (
+				<div className="mb-3 flex-none">
+					<LoopDetailTabs
+						ariaLabel="List views"
+						tabs={[
+							{ value: LIST_TAB, label: 'List' },
+							...viewTabs.map((v) => ({ value: v.value, label: v.name })),
+						]}
+						value={activeView?.value ?? LIST_TAB}
+						onChange={setListTab}
+					/>
+				</div>
+			)}
+
+			{filesTab || activeView ? (
+				// Object filters and Display do not apply to files or to a view — only the tab strip stays.
 				<div className="flex min-h-8 flex-none items-center gap-2 overflow-x-auto pb-3">
 					{typeTabs}
 				</div>
@@ -1968,7 +2005,27 @@ function ObjectsRoute() {
 				defaultObjectSubtype={filesTab ? undefined : typeFilter}
 			/>
 
-			{filesTab ? (
+			{activeView ? (
+				<div className="min-h-0 flex-1 overflow-y-auto pb-4">
+					<LoopViewTab
+						key={activeView.value}
+						workspaceId={workspaceId}
+						fileId={activeView.fileId}
+						name={activeView.name}
+						onRename={
+							listViews.canWrite ? (name) => listViews.rename(activeView.fileId, name) : undefined
+						}
+						onRemove={
+							listViews.canWrite
+								? async () => {
+										if (await listViews.remove(activeView.fileId)) setListTab(LIST_TAB)
+									}
+								: undefined
+						}
+						busy={listViews.busy}
+					/>
+				</div>
+			) : filesTab ? (
 				<FilesList workspaceId={workspaceId} q={q} />
 			) : effectiveView === 'board' && typeFilter ? (
 				<div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-4">
@@ -2030,7 +2087,7 @@ function ObjectsRoute() {
 				/>
 			)}
 			<BulkActionBar
-				selectedCount={filesTab ? 0 : selectedIds.length}
+				selectedCount={filesTab || activeView ? 0 : selectedIds.length}
 				totalCount={selectableObjects.length}
 				onSelectAll={handleSelectAll}
 				onAskAgent={handleAskAgent}

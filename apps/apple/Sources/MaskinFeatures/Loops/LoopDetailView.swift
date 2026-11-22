@@ -3,8 +3,8 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop (v19): status and stage, then the Overview, any custom views, Performance, Briefings,
-/// Items, Activity and Setup tabs, with the flow's composer pinned at the bottom.
+/// One loop (v19): status and stage, then the Overview tab, any custom views, then the Performance,
+/// Briefings, Items, Activity and Setup tabs, with the flow's composer pinned at the bottom.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
 	var install: LoopInstall?
@@ -84,6 +84,12 @@ struct LoopDetailView: View {
 					runtime?.buildInChat("I'd like to change the flow \(store.loop.displayName). ")
 				}
 				Divider().overlay(MaskinSurface.separator)
+				if let runtime, runtime.createViewAgent != nil {
+					manageRow(CreateViewMessage.label, symbol: "rectangle.3.group") {
+						runtime.startCreateView(.flow(id: store.loop.id, name: store.loop.displayName))
+					}
+					Divider().overlay(MaskinSurface.separator)
+				}
 				manageRow("Delete flow", symbol: "trash", destructive: true) { confirmDelete = true }
 			}
 			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card2xl, style: .continuous))
@@ -109,7 +115,8 @@ struct LoopDetailView: View {
 }
 
 /// The loop page's tabs. Each custom view pinned to the loop is a tab of its own, right after
-/// Overview, named by whoever pinned it (same order and names as the web loop page).
+/// Overview so it is on screen on a phone, named by whoever pinned it (same order and names as the
+/// web loop page).
 enum LoopDetailTab: Hashable, Identifiable {
 	case overview, performance, briefings, items, activity, setup
 	/// The index keeps two views that share a name apart.
@@ -139,12 +146,12 @@ enum LoopDetailTab: Hashable, Identifiable {
 		}
 	}
 
-	/// Overview, the loop's views, then the rest. Briefings appears only once the flow has
-	/// published one; no views means no extra tab.
+	/// Overview, the loop's views, then the other fixed tabs. Briefings appears only once the flow
+	/// has published one; no views means no extra tab.
 	static func tabs(views: [LoopView], hasBriefings: Bool) -> [LoopDetailTab] {
 		var tabs: [LoopDetailTab] = [.overview]
 		tabs += views.enumerated().map { .view(index: $0.offset, $0.element) }
-		tabs += [.performance]
+		tabs.append(.performance)
 		if hasBriefings { tabs.append(.briefings) }
 		tabs += [.items, .activity, .setup]
 		return tabs
@@ -195,6 +202,7 @@ struct LoopDetailContent: View {
 			if let problem = store.problem() {
 				LoopProblemBanner(problem: problem, loop: store.loop, directory: store.directory)
 			}
+			if store.failed(.views) { blockError(.views) }
 			FlowTabBar(tabs: tabs, selection: $tab)
 			content
 		}
@@ -368,7 +376,7 @@ struct FlowTabBar: View {
 	}
 }
 
-/// "● Learning · Needs you": the flow's stage, with the warning colour when decisions wait.
+/// "● Pilot · Needs you": the flow's stage, with the warning colour when decisions wait.
 struct LoopStatusPill: View {
 	let loop: LoopSummary
 
@@ -393,7 +401,7 @@ struct LoopStatusPill: View {
 	}
 }
 
-/// UNDER THE HOOD: Learning, Supervised, Autonomous as chips with a one-line explanation. Changing
+/// UNDER THE HOOD: Pilot, Supervised, Live as chips with a one-line explanation. Changing
 /// it moves the Status pill. Hidden while the flow is a draft or paused, since it has no stage then.
 struct LoopStageSection: View {
 	let store: LoopDetailStore
@@ -490,8 +498,7 @@ struct LoopDriverPill: View {
 		Button(action: open) {
 			HStack(spacing: MaskinSpace.s5) {
 				ActorAvatar(name: name, kind: .agent, size: MaskinSpace.s13, seed: id)
-				(Text(name).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
-					+ Text(" drives").foregroundStyle(MaskinColor.ink4))
+				Text(name).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
 					.maskinText(.subhead)
 			}
 			.padding(.leading, MaskinSpace.s4)

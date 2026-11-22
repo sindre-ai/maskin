@@ -6,7 +6,7 @@ import type { RunOutcome, TokenUsage } from './types'
 // header and a fresh uuid goes in X-Maskin-Session-Id, so the server's tool_call
 // and error rows for the run join to that uuid.
 //
-// Why not create_session: on main it takes no model and no config, and a local
+// Why not create_sub_chat: on main it takes no model and no config, and a local
 // staging stack has no agent server to start an agent in. See README.md.
 
 export interface AgentRunInput {

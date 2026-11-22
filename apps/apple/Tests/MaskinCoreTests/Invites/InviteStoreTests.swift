@@ -15,12 +15,21 @@ private final class FakeRemote: InviteRemote, @unchecked Sendable {
 	private let lock = NSLock()
 	var previewResult: Result<InvitePreview, InviteFailure> = .success(samplePreview())
 	var acceptResult: Result<InviteAcceptance, InviteFailure> = .success(InviteAcceptance(workspaceId: "ws-9"))
+	var signUpResult: Result<InviteSignUp, InviteFailure> = .success(
+		InviteSignUp(apiKey: "ank_new", actorId: "actor-1", name: "Ada", email: "ada@example.com", workspaceId: "ws-9"))
 	private var _accepted: [(String, String)] = []
 	var accepted: [(String, String)] { lock.withLock { _accepted } }
+	private var _signUps: [[String?]] = []
+	/// Each sign-up call as [token, email, password, name].
+	var signUps: [[String?]] { lock.withLock { _signUps } }
 	func preview(token: String) async throws -> InvitePreview { try previewResult.get() }
 	func accept(token: String, apiKey: String) async throws -> InviteAcceptance {
 		lock.withLock { _accepted.append((token, apiKey)) }
 		return try acceptResult.get()
+	}
+	func signUpAndAccept(token: String, email: String, password: String, name: String?) async throws -> InviteSignUp {
+		lock.withLock { _signUps.append([token, email, password, name]) }
+		return try signUpResult.get()
 	}
 }
 
@@ -29,8 +38,16 @@ private final class Rig {
 	let remote = FakeRemote()
 	var viewer: InviteViewer? = InviteViewer(apiKey: "ank_x", email: "ada@example.com")
 	var joined: [String] = []
+	var signedUp: [InviteSignUp] = []
+	var storeFails = false
 	lazy var store = InviteStore(
 		token: token, remote: remote, viewer: { [unowned self] in viewer },
+		signedUp: { [unowned self] result in
+			if storeFails { throw URLError(.cannotWriteToFile) }
+			signedUp.append(result)
+			// Storing the sign-in is what makes the person "signed in" for the rest of the app.
+			viewer = InviteViewer(apiKey: result.apiKey, email: result.email)
+		},
 		joined: { [unowned self] id in joined.append(id) })
 }
 
@@ -105,6 +122,64 @@ struct InviteStoreTests {
 		#expect(r.store.phase == .accepted(workspaceId: "ws-9"))
 	}
 
+	@Test("signed out, creating an account joins as the invited email and signs the new person in")
+	func createsAccount() async {
+		let r = Rig()
+		r.viewer = nil
+		await r.store.load()
+		await r.store.createAccountAndJoin(name: "  Ada  ", password: "hunter22!")
+		#expect(r.remote.signUps == [[token, "ada@example.com", "hunter22!", "Ada"]])
+		#expect(r.remote.accepted.isEmpty)
+		#expect(r.signedUp.map(\.apiKey) == ["ank_new"])
+		#expect(r.joined == ["ws-9"])
+		#expect(r.store.phase == .accepted(workspaceId: "ws-9"))
+		#expect(r.store.isFinished)
+	}
+
+	@Test("a blank name is not sent")
+	func blankName() async throws {
+		let r = Rig()
+		r.viewer = nil
+		await r.store.load()
+		await r.store.createAccountAndJoin(name: "   ", password: "hunter22!")
+		let call = try #require(r.remote.signUps.first)
+		#expect(call[3] == nil)
+	}
+
+	@Test("signed in, creating an account does nothing")
+	func noSignUpWhenSignedIn() async {
+		let r = Rig()
+		await r.store.load()
+		await r.store.createAccountAndJoin(name: "Ada", password: "hunter22!")
+		#expect(r.remote.signUps.isEmpty)
+		#expect(r.store.phase == .ready)
+	}
+
+	@Test("an existing account says to sign in and keeps the invite", arguments: [InviteFailure.accountExists, .seatCap, .offline])
+	func signUpFails(failure: InviteFailure) async {
+		let r = Rig()
+		r.viewer = nil
+		await r.store.load()
+		r.remote.signUpResult = .failure(failure)
+		await r.store.createAccountAndJoin(name: "Ada", password: "hunter22!")
+		#expect(r.store.phase == .failed(failure))
+		#expect(r.signedUp.isEmpty)
+		#expect(r.joined.isEmpty)
+		#expect(!r.store.isFinished)
+	}
+
+	@Test("an account made but not stored on this device says so and drops the used invite")
+	func signUpNotStored() async {
+		let r = Rig()
+		r.viewer = nil
+		r.storeFails = true
+		await r.store.load()
+		await r.store.createAccountAndJoin(name: "Ada", password: "hunter22!")
+		#expect(r.store.phase == .failed(.sessionNotSaved))
+		#expect(r.joined.isEmpty)
+		#expect(r.store.isFinished)
+	}
+
 	@Test("a dead invite on load is final and forgets the token")
 	func deadInvite() async {
 		let r = Rig()
@@ -133,6 +208,7 @@ struct InviteFailureTests {
 		#expect(InviteFailure.status(401) == .sessionExpired)
 		#expect(InviteFailure.status(403) == .seatCap)
 		#expect(InviteFailure.status(404) == .notFound)
+		#expect(InviteFailure.status(409) == .accountExists)
 		#expect(InviteFailure.status(410) == .expired)
 		#expect(InviteFailure.status(429) == .rateLimited)
 		#expect(InviteFailure.status(502) == .server(status: 502))
@@ -146,7 +222,7 @@ struct InviteFailureTests {
 
 	@Test("copy is plain: no ids, tokens or status codes")
 	func copy() {
-		for f in [InviteFailure.notFound, .expired, .rateLimited, .seatCap, .sessionExpired, .offline, .server(status: 500), .unreadable] {
+		for f in [InviteFailure.notFound, .expired, .rateLimited, .seatCap, .sessionExpired, .accountExists, .sessionNotSaved, .offline, .server(status: 500), .unreadable] {
 			#expect(!f.message.contains("500"))
 			#expect(!f.message.isEmpty)
 		}
@@ -163,7 +239,8 @@ struct InviteCoordinatorTests {
 		let c = InviteCoordinator(pending: pending) { t in
 			InviteStore(
 				token: t, remote: remote,
-				viewer: { signedIn() ? InviteViewer(apiKey: "k", email: nil) : nil }, joined: { _ in })
+				viewer: { signedIn() ? InviteViewer(apiKey: "k", email: nil) : nil },
+				signedUp: { _ in }, joined: { _ in })
 		}
 		return (c, pending)
 	}

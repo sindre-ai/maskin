@@ -2,8 +2,11 @@ import { z } from '@hono/zod-openapi'
 import {
 	actorListItemSchema,
 	agentStateSchema,
+	doneWhenResponseSchema,
+	goAheadResponseSchema,
 	messagePlanSchema,
 	messageProposedEditSchema,
+	nextStepResponseSchema,
 	objectPreviewSchema,
 	providerMcpInfoSchema,
 	triggerResponseSchema,
@@ -93,6 +96,18 @@ export const objectResponseSchema = z.object({
 	// Present only on the detail endpoint, and only for an object whose
 	// `metadata.kind` an integration declares as deliverable (see lib/object-preview.ts).
 	preview: objectPreviewSchema.nullable().optional(),
+	// Detail endpoint only (list responses omit it): the object's open or blocked next step,
+	// null when it has none. Written through POST/PATCH /objects/{id}/next-step, never a field
+	// of the object itself.
+	next_step: nextStepResponseSchema.nullable().optional(),
+	// Detail endpoint only: the job's live go-ahead (a person's yes to keep going without asking
+	// for each step), null when there is none or the job is closed. Written through
+	// POST/DELETE /objects/{id}/go-ahead, never a field of the object itself.
+	go_ahead: goAheadResponseSchema.nullable().optional(),
+	// Detail endpoint only: the job's done-when list (approved when there is one, else the draft)
+	// with each line's state, null when the job has none. Written through a decision card and
+	// PATCH /objects/{id}/done-when/lines/{lineId}, never a field of the object itself.
+	done_when: doneWhenResponseSchema.nullable().optional(),
 })
 
 export const actorSkillSchema = z.object({
@@ -170,7 +185,7 @@ export const workspaceResponseSchema = z.object({
 		.optional(),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
-	// column OR an enterprise billing owner), not the raw column. Derived, so it
+	// column), not the raw column. Derived, so it
 	// deliberately does not carry the column's name.
 	enterprise: z.boolean(),
 	// Single accountable human payer for this workspace's plan — read-only,
@@ -432,6 +447,23 @@ export const conversationListItemResponseSchema = z.object({
 	// Agents with an open turn in this chat right now (not merely a live session — a chat
 	// session stays running between turns). The list row shows them as working.
 	working_actor_ids: z.array(z.string().uuid()),
+	// The same agents with the session each one is answering in, for the link to that session.
+	working: z.array(z.object({ agent_id: z.string().uuid(), session_id: z.string().uuid() })),
+	// True when the chat waits on the caller: an agent question or request card nobody answered,
+	// or a last turn that failed. Read from this chat's own messages. Never true for a chat the
+	// caller marked Done (archived) or Later.
+	needs_you: z.boolean(),
+	// True while the caller has the chat on Later: set by the caller, ended by the next message.
+	// Only the caller's own mark is ever read.
+	later: z.boolean(),
+	// Set when the chat's last turn failed: why, and the caller's last message in the chat, so
+	// Retry can run the retry route on it (null when the caller never wrote one).
+	error: z
+		.object({
+			reason: z.enum(['usage_limit', 'connection', 'other']),
+			last_person_message_id: z.number().int().nullable(),
+		})
+		.nullable(),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
@@ -441,6 +473,10 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 		snippet_actor_name: true,
 		snippet_is_caller: true,
 		working_actor_ids: true,
+		working: true,
+		needs_you: true,
+		later: true,
+		error: true,
 		directPairKey: true,
 	})
 	.extend({
@@ -450,6 +486,7 @@ export const conversationDetailResponseSchema = conversationListItemResponseSche
 export const conversationParticipantStateResponseSchema = z.object({
 	pinned: z.boolean(),
 	archived: z.boolean(),
+	later: z.boolean(),
 	last_read_message_id: z.number().nullable(),
 })
 

@@ -3,8 +3,9 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { formatFigure } from '@/lib/format-number'
 import { Link } from '@tanstack/react-router'
-import { LOOP_PILL_STYLES, NO_CREDITS_PILL, isLiveLoopPill } from './loop-pill'
+import { UPGRADE_PILL, isLiveLoopPill, loopPillStyle } from './loop-pill'
 import { paceVerdict } from './target-card'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
@@ -44,7 +45,7 @@ export function loopProgress(loop: LoopSummary): {
 	if (!target || !(target.target > 0)) return null
 	const percent = Math.max(0, Math.min(100, (target.actual / target.target) * 100))
 	return {
-		text: `${target.actual} of ${target.target} ${target.label}`.trim(),
+		text: `${formatFigure(target.actual)} of ${formatFigure(target.target)} ${target.label}`.trim(),
 		percent,
 		missed: paceVerdict(target).label === 'Missed',
 	}
@@ -53,7 +54,7 @@ export function loopProgress(loop: LoopSummary): {
 function lastActivityText(loop: LoopSummary): string {
 	// Live but idle: name the rung of the autonomy ladder it sits on
 	// rather than a generic "Running", which no longer exists.
-	return loopActivityLine(loop) ?? LOOP_PILL_STYLES[loop.pill].label
+	return loopActivityLine(loop) ?? loopPillStyle(loop.pill).label
 }
 
 export function LoopRow({
@@ -68,15 +69,15 @@ export function LoopRow({
 	/** How many of this loop's agents have a live session right now — drives the
 	 *  green "busy" line under the stage label (mockup 1536). */
 	busyAgentCount?: number
-	/** Derived from the workspace's `credit_balance_cents`. When true and the loop's `pill` is
-	 *  `paused`, the row renders the NO CREDITS overlay next to the state
-	 *  label — parity with the Objects PAUSED · NO CREDITS pill. */
+	/** True when the workspace is out of usage. When true and the loop's `pill` is
+	 *  `paused`, the row renders the Upgrade overlay next to the state
+	 *  label — parity with the Objects PAUSED · UPGRADE chip. */
 	showNoCreditsPill?: boolean
-	/** Invoked when the NO CREDITS pill is clicked; expected to open the
-	 *  workspace billing top-up drawer (no new route). */
+	/** Invoked when the Upgrade pill is clicked; expected to open Billing,
+	 *  the same place the left-nav Upgrade button goes. */
 	onNoCreditsClick?: () => void
 }) {
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	const agentCards = loop.agentIds
 		.map((id) => actors?.find((a) => a.id === id))
 		.filter((a): a is ActorListItem => Boolean(a))
@@ -156,10 +157,10 @@ export function LoopRow({
 								<button
 									type="button"
 									data-testid="loop-pill-no-credits"
-									aria-label={NO_CREDITS_PILL.ariaLabel}
+									aria-label={UPGRADE_PILL.ariaLabel}
 									onClick={(event) => {
 										// Stop the row-level <Link> from swallowing the click — the
-										// pill's job is to open the billing drawer, not navigate.
+										// pill's job is to open Billing, not the loop.
 										event.preventDefault()
 										event.stopPropagation()
 										onNoCreditsClick?.()
@@ -171,11 +172,11 @@ export function LoopRow({
 									// `text-warning` actually paints amber in both themes.
 									className="inline-flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.05em] text-warning transition-colors hover:bg-warning/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
 								>
-									<span className="hidden sm:inline">{NO_CREDITS_PILL.label}</span>
-									<span className="sm:hidden">{NO_CREDITS_PILL.mobileLabel}</span>
+									<span className="hidden sm:inline">{UPGRADE_PILL.label}</span>
+									<span className="sm:hidden">{UPGRADE_PILL.mobileLabel}</span>
 								</button>
 							</TooltipTrigger>
-							<TooltipContent side="top">{NO_CREDITS_PILL.tooltip}</TooltipContent>
+							<TooltipContent side="top">{UPGRADE_PILL.tooltip}</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
 				)}

@@ -286,6 +286,34 @@ test.describe('Chat message box with formatting', () => {
 		await expect(box).toContainText('https://example.com/docs')
 	})
 
+	test('a pasted link shows as a link without angle brackets once sent', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await box.click()
+		await box.evaluate((el) => {
+			const data = new DataTransfer()
+			data.setData('text/plain', 'https://example.com/docs')
+			el.dispatchEvent(
+				new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+			)
+		})
+		await page.keyboard.press('ControlOrMeta+Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toContain('https://example.com/docs')
+		const link = page.getByRole('link', { name: 'https://example.com/docs' })
+		await expect(link).toBeVisible()
+		await expect(link).toHaveAttribute('href', 'https://example.com/docs')
+		await expect(page.getByText('<https://example.com/docs>')).toHaveCount(0)
+		await page.screenshot({ path: 'test-results/rich-composer-sent-link.png' })
+	})
+
 	test('Show formatting opens a row of buttons that act on the selection', async ({
 		page,
 		account,
@@ -386,6 +414,87 @@ test.describe('Chat message box with formatting', () => {
 			.toBe('tap **bold**')
 	})
 
+	test('typing a colon and two letters lists emoji; Enter picks one instead of sending', async ({
+		page,
+		account,
+	}) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await box.click()
+		await page.keyboard.type('nice :s')
+		await expect(page.getByRole('dialog', { name: 'Insert emoji' })).toHaveCount(0)
+		await page.keyboard.type('mi')
+		const list = page.getByRole('dialog', { name: 'Insert emoji' })
+		await expect(list).toBeVisible()
+		await expect(list.getByRole('option').first()).toHaveAttribute('aria-selected', 'true')
+		await page.screenshot({ path: 'test-results/emoji-picker-desktop.png' })
+		await page.keyboard.press('ArrowDown')
+		await page.keyboard.press('Enter')
+		await expect(list).toHaveCount(0)
+		await expect(box).toContainText('nice 😃')
+		// The Enter only picked: nothing was sent.
+		expect(await lastSent(account.api, conversation.id, account.workspaceId)).toBeUndefined()
+		await page.keyboard.press('Enter')
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('nice 😃')
+	})
+
+	test('a click picks an emoji and Escape keeps the typed text', async ({ page, account }) => {
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await box.click()
+		await page.keyboard.type(':rocket')
+		const list = page.getByRole('dialog', { name: 'Insert emoji' })
+		await expect(list).toBeVisible()
+		await page.keyboard.press('Escape')
+		await expect(list).toHaveCount(0)
+		await expect(box).toContainText(':rocket')
+		await page.keyboard.press('Backspace')
+		await page.keyboard.type('t')
+		await page.keyboard.press('Backspace')
+		await page.keyboard.type('t')
+		await expect(list).toHaveCount(0)
+		await page.keyboard.press('Control+a')
+		await page.keyboard.press('Backspace')
+		await page.keyboard.type(':party')
+		await list.getByRole('option', { name: 'partying face' }).click()
+		await expect(box).toContainText('🥳')
+	})
+
+	test('the emoji list works at phone width', async ({ page, account }) => {
+		await page.setViewportSize({ width: 375, height: 700 })
+		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		const box = page.getByLabel('Message this conversation')
+		await expect(box).toBeVisible({ timeout: 15_000 })
+		await box.click()
+		await page.keyboard.type(':hea')
+		const sheet = page.getByRole('dialog', { name: 'Insert emoji' })
+		await expect(sheet).toBeVisible()
+		const frame = await sheet.boundingBox()
+		expect(frame?.x).toBeGreaterThanOrEqual(0)
+		expect((frame?.x ?? 0) + (frame?.width ?? 0)).toBeLessThanOrEqual(375)
+		// The sheet sits above the line being typed, not over it.
+		const typed = await box.boundingBox()
+		expect((frame?.y ?? 0) + (frame?.height ?? 0)).toBeLessThanOrEqual(typed?.y ?? 0)
+		await page.screenshot({ path: 'test-results/emoji-picker-mobile.png' })
+		await sheet.getByRole('option', { name: 'heart', exact: true }).click()
+		await expect(box).toContainText('❤️')
+		await page.getByRole('button', { name: 'Send message' }).click()
+		await expect
+			.poll(
+				async () => (await lastSent(account.api, conversation.id, account.workspaceId))?.content,
+			)
+			.toBe('❤️')
+	})
+
 	test('the new-chat page has the same box', async ({ page, account }) => {
 		await setUpConversation(account.api, account.workspaceId)
 		await page.goto(`/${account.workspaceId}/chats/new`)
@@ -405,5 +514,7 @@ test.describe('Flag off', () => {
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByLabel('Message this conversation')).toBeVisible({ timeout: 15_000 })
 		await expect(page.locator('.ProseMirror')).toHaveCount(0)
+		await page.getByLabel('Message this conversation').fill(':smi')
+		await expect(page.getByRole('dialog', { name: 'Insert emoji' })).toHaveCount(0)
 	})
 })

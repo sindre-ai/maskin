@@ -8,6 +8,7 @@ import {
 	buildWebPushOptions,
 	buildWebPushPayload,
 	loadWebPushConfig,
+	webOpenUrlFor,
 	webUrlFor,
 } from '../../services/web-push'
 
@@ -82,6 +83,18 @@ describe('buildWebPushPayload', () => {
 		expect(webUrlFor({ ...msg, conversationId: 'c1', threadRootId: -3 })).toBe('/ws-1/chats/c1')
 	})
 
+	it('tags the opened path with the notification id and type, keeping a thread query', () => {
+		const withType = { ...msg, notificationType: 'needs_input' }
+		expect(webOpenUrlFor(withType)).toBe(
+			`/ws-1/notifications?notification=${msg.notificationId}&notification_type=needs_input`,
+		)
+		expect(webOpenUrlFor({ ...withType, conversationId: 'c1', threadRootId: 42 })).toBe(
+			`/ws-1/chats/c1?thread=42&notification=${msg.notificationId}&notification_type=needs_input`,
+		)
+		expect(webOpenUrlFor(msg)).toBe(`/ws-1/notifications?notification=${msg.notificationId}`)
+		expect(buildWebPushPayload(withType).url).toBe(webOpenUrlFor(withType))
+	})
+
 	it('uses the notification id as the tag so duplicates collapse', () => {
 		expect(buildWebPushPayload(msg).tag).toBe(msg.notificationId)
 	})
@@ -143,7 +156,10 @@ describe('WebPushSender', () => {
 			endpoint: 'https://fcm.googleapis.com/send/abc',
 			keys: { p256dh: 'p256dhKey', auth: 'authKey' },
 		})
-		expect(JSON.parse(body)).toMatchObject({ title: 'Bet shipped', url: '/ws-1/notifications' })
+		expect(JSON.parse(body)).toMatchObject({
+			title: 'Bet shipped',
+			url: `/ws-1/notifications?notification=${msg.notificationId}`,
+		})
 	})
 
 	it('logs one info line with the push service status per accepted send, never the endpoint or keys', async () => {

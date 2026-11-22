@@ -2,21 +2,34 @@ import type { ResolvedProvider } from './types'
 
 import { config as airtableConfig } from './providers/airtable/config'
 import { config as amplitudeConfig } from './providers/amplitude/config'
+import { config as apolloConfig } from './providers/apollo/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
+import {
+	config as azureDevopsConfig,
+	parseTokenResponse as azureDevopsParseTokenResponse,
+} from './providers/azure-devops/config'
+import { config as calendlyConfig } from './providers/calendly/config'
 import { config as canvaConfig } from './providers/canva/config'
+import { config as clayConfig } from './providers/clay/config'
 import { config as clickupConfig } from './providers/clickup/config'
+import { config as cloudflareConfig } from './providers/cloudflare/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
+import { config as datadogConfig } from './providers/datadog/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
-import { githubAuth } from './providers/github/auth'
+import { config as dineroConfig } from './providers/dinero/config'
 // Import provider configs
+import { config as fathomConfig } from './providers/fathom/config'
+import { config as firefliesConfig } from './providers/fireflies/config'
+import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
 import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
+import { config as gongConfig } from './providers/gong/config'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import { config as googleDriveConfig } from './providers/google-drive/config'
@@ -35,6 +48,8 @@ import {
 } from './providers/google-meet/webhooks'
 import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
 import { startGscBackfill } from './providers/google-search-console/sync'
+import { config as granolaConfig } from './providers/granola/config'
+import { config as hexConfig } from './providers/hex/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -42,11 +57,29 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import { config as makeConfig } from './providers/make/config'
+import {
+	config as microsoftConfig,
+	parseTokenResponse as microsoftParseTokenResponse,
+} from './providers/microsoft/config'
+import { resolveExternalId as microsoftResolveExternalId } from './providers/microsoft/resolve-id'
+import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
+import { config as mondayConfig } from './providers/monday/config'
+import { config as neonConfig } from './providers/neon/config'
+import { config as netlifyConfig } from './providers/netlify/config'
+import { config as newRelicConfig } from './providers/new-relic/config'
 import { config as notionConfig } from './providers/notion/config'
+import { config as numinaConfig } from './providers/numina/config'
+import { config as otterConfig } from './providers/otter/config'
+import { config as outreachConfig } from './providers/outreach/config'
+import { config as pagerdutyConfig } from './providers/pagerduty/config'
+import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as resendConfig } from './providers/resend/config'
+import { config as retoolConfig } from './providers/retool/config'
+import { config as salesforceConfig } from './providers/salesforce/config'
 import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -65,11 +98,15 @@ import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 import { config as stripeConfig } from './providers/stripe/config'
+import { config as supabaseConfig } from './providers/supabase/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
+import { config as unicontaConfig } from './providers/uniconta/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as zapierConfig } from './providers/zapier/config'
+import { config as zoomConfig } from './providers/zoom/config'
+import { config as zoominfoConfig } from './providers/zoominfo/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -176,6 +213,16 @@ providers.set('google-search-console', {
 	postInstall: startGscBackfill,
 })
 
+// microsoft — Teams transcripts. Workspace-scoped like Google Meet. No webhook: the poll job in
+// services/microsoft-sync-scheduler.ts lands the transcripts. `postInstall` puts the standing
+// help line on the Settings tile.
+providers.set('microsoft', {
+	config: microsoftConfig,
+	parseTokenResponse: microsoftParseTokenResponse,
+	resolveExternalId: microsoftResolveExternalId,
+	postInstall: setupMicrosoftInstall,
+})
+
 providers.set('posthog', {
 	config: posthogConfig,
 })
@@ -204,12 +251,21 @@ providers.set('notion', {
 	config: notionConfig,
 })
 
+providers.set('numina', {
+	config: numinaConfig,
+})
+
 providers.set('airtable', {
 	config: airtableConfig,
 })
 
 providers.set('atlassian', {
 	config: atlassianConfig,
+})
+
+providers.set('azure-devops', {
+	config: azureDevopsConfig,
+	parseTokenResponse: azureDevopsParseTokenResponse,
 })
 
 providers.set('amplitude', {
@@ -230,6 +286,110 @@ providers.set('sentry', {
 
 providers.set('zapier', {
 	config: zapierConfig,
+})
+
+providers.set('zoom', {
+	config: zoomConfig,
+})
+
+providers.set('salesforce', {
+	config: salesforceConfig,
+})
+
+providers.set('fireflies', {
+	config: firefliesConfig,
+})
+
+providers.set('granola', {
+	config: granolaConfig,
+})
+
+providers.set('fathom', {
+	config: fathomConfig,
+})
+
+providers.set('otter', {
+	config: otterConfig,
+})
+
+providers.set('cloudflare', {
+	config: cloudflareConfig,
+})
+
+providers.set('supabase', {
+	config: supabaseConfig,
+})
+
+providers.set('neon', {
+	config: neonConfig,
+})
+
+providers.set('planetscale', {
+	config: planetscaleConfig,
+})
+
+providers.set('netlify', {
+	config: netlifyConfig,
+})
+
+providers.set('datadog', {
+	config: datadogConfig,
+})
+
+providers.set('new-relic', {
+	config: newRelicConfig,
+})
+
+providers.set('pagerduty', {
+	config: pagerdutyConfig,
+})
+
+providers.set('retool', {
+	config: retoolConfig,
+})
+
+providers.set('hex', {
+	config: hexConfig,
+})
+
+providers.set('apollo', {
+	config: apolloConfig,
+})
+
+providers.set('zoominfo', {
+	config: zoominfoConfig,
+})
+
+providers.set('outreach', {
+	config: outreachConfig,
+})
+
+providers.set('gong', {
+	config: gongConfig,
+})
+
+providers.set('clay', {
+	config: clayConfig,
+})
+
+providers.set('calendly', {
+	config: calendlyConfig,
+})
+
+providers.set('monday', {
+	config: mondayConfig,
+})
+
+providers.set('make', {
+	config: makeConfig,
+})
+
+providers.set('uniconta', {
+	config: unicontaConfig,
+})
+
+providers.set('dinero', {
+	config: dineroConfig,
 })
 
 providers.set('stripe', {

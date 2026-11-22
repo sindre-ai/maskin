@@ -170,7 +170,7 @@ public struct APILoopsSource: LoopsAPI {
 					body: .json(
 						.init(
 							_type: "loop", title: name, content: content.isEmpty ? nil : content,
-							status: LoopPill.learning.rawValue))))
+							status: LoopPill.pilot.rawValue))))
 		}
 		guard case .created(let created) = output else {
 			throw AutomationError("Couldn't create the flow.")
@@ -256,11 +256,12 @@ public struct APILoopsSource: LoopsAPI {
 		var target: Double
 		var ownerActorId: String?
 		var pace_policy: String?
+		var manual: Bool?
 
 		var model: LoopTarget {
 			LoopTarget(
 				label: label, source: source, actual: actual, target: target, ownerID: ownerActorId,
-				isStrict: pace_policy == "strict")
+				isStrict: pace_policy == "strict", isManual: manual)
 		}
 	}
 

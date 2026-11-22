@@ -1,4 +1,4 @@
-// Shared constants for the Market & Competitor Watch loop marketplace bundle.
+// Shared constants for the Competitor watch loop marketplace bundle.
 //
 // The bundle contains the Market Researcher, Market Strategist and Briefing
 // Owner, plus every trigger and skill attached to them. Unlike the bundles
@@ -19,14 +19,25 @@ import {
 	MARKET_WATCH_LOOP_VERSION,
 } from '@maskin/shared'
 import { skillIdsForActor, triggerIdsForActor } from './loop-data'
+import type { LoopSettings } from './loop-settings'
 
 export { actorSnapshot, skillSnapshot, triggerSnapshot } from './loop-snapshot'
+
+// What the flow page shows beside the tabs. No targets ship: the flow watches continuously, so
+// there is no number for its agents to keep current.
+const MARKET_WATCH_SETTINGS: LoopSettings = {
+	entryCondition: 'The weekly sweep or the monthly revalidation fires on its schedule.',
+	closeCondition:
+		'The flow keeps watching and has no end state. An insight is done once it is routed: clustered, scored, parked with a reason or discarded. Each sweep leaves the competitor and category picture current.',
+	tags: ['Market'],
+}
 
 export const MARKET_WATCH_LOOP = {
 	slug: MARKET_WATCH_LOOP_SLUG,
 	name: MARKET_WATCH_LOOP_NAME,
 	version: MARKET_WATCH_LOOP_VERSION,
 	useCase: MARKET_WATCH_LOOP_USE_CASE,
+	settings: MARKET_WATCH_SETTINGS,
 	description: MARKET_WATCH_LOOP_DESCRIPTION,
 } as const
 

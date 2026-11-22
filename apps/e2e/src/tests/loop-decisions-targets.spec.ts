@@ -35,7 +35,7 @@ async function seedFlow(
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title: opts.title,
-		status: 'learning',
+		status: 'pilot',
 	})
 	await account.api.updateObject(loop.id, account.workspaceId, {
 		metadata: { trigger_ids: [trigger.id], ...(targets.length > 0 ? { targets } : {}) },
@@ -104,7 +104,7 @@ test.describe('Flow page — Decisions and Targets', () => {
 			await expect(page.getByTestId('loop-decisions-chip')).toHaveText('1 decision needed')
 
 			await page.goto(`/${account.workspaceId}/loops/${none.id}`)
-			await expect(page.getByRole('heading', { name: 'Pipeline' })).toBeVisible({
+			await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible({
 				timeout: 15_000,
 			})
 			await expect(page.getByTestId('loop-decisions-card')).toHaveCount(0)

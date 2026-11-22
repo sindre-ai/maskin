@@ -528,6 +528,12 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_objects: 'create',
 	update_objects: 'update',
 	delete_object: 'delete',
+	set_next_step: 'next_step_set',
+	schedule_next_step: 'next_step_schedule',
+	update_next_step: 'next_step_update',
+	record_go_ahead: 'go_ahead_record',
+	take_back_go_ahead: 'go_ahead_take_back',
+	skip_done_when: 'done_when_skip',
 	create_relationship: 'relationship_create',
 	delete_relationship: 'relationship_delete',
 	// Workspaces + members
@@ -549,6 +555,8 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
 	delete_loop: 'loop_delete',
+	fork_loop: 'loop_fork',
+	install_loop: 'loop_install',
 	set_loop_view: 'loop_view_set',
 	// Comments
 	create_comment: 'comment_create',
@@ -576,7 +584,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	resend_send_email: 'resend_email_send',
 	update_integration_access: 'integration_access_update',
 	// Sessions
-	create_session: 'session_create',
 	create_sub_chat: 'session_create',
 	// For You
 	withdraw_decision_card: 'for_you_withdraw',
@@ -585,7 +592,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	add_chat_participant: 'chat_participant_add',
 	remove_chat_participant: 'chat_participant_remove',
 	stop_chat_agent: 'chat_agent_stop',
-	run_agent: 'session_run',
 	stop_session: 'session_stop',
 	pause_session: 'session_pause',
 	ask_user_question: 'session_ask_user',

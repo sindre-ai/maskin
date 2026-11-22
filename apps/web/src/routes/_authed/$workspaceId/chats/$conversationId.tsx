@@ -1,4 +1,7 @@
 import { LiveCallComposerSlot } from '@/components/agents/live-call-surface'
+import { PlanLimitComposerGate } from '@/components/billing/plan-limit-banner'
+import { usePlanPercentEnabled } from '@/components/billing/plan-percent-context'
+import { ArchivedBar } from '@/components/chat/archived-bar'
 import type { LinkedFocus } from '@/components/chat/linked-pane'
 import { LinkedPanelContext } from '@/components/chat/linked-panel-context'
 import { OverviewPane, type OverviewTab } from '@/components/chat/overview-pane'
@@ -28,6 +31,7 @@ import { useConversationLinked, useResolvedLinkedItems } from '@/hooks/use-conve
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useConversationThreads } from '@/hooks/use-conversation-threads'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useHeightVar } from '@/hooks/use-height-var'
 import { useMarkConversationRead } from '@/hooks/use-mark-conversation-read'
 import { useIsWideDesktopViewport } from '@/hooks/use-mobile'
@@ -79,6 +83,9 @@ function ConversationThreadPage() {
 	const { conversationId } = Route.useParams()
 	const { msg: deepLinkMessageId, thread: openThreadRootId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
+	// New chat list (bet 57d0ac81): this page only adds the "agents are working" line to the thread.
+	const chatListV2 = useFeatureFlag('chat-list-v2')
+	const planPercent = usePlanPercentEnabled()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
@@ -95,6 +102,13 @@ function ConversationThreadPage() {
 		nonce: number
 	} | null>(null)
 	const fillNonceRef = useRef(0)
+	// The up arrow in the empty box asks one bubble to open its edit card. Same nonce idea as above.
+	const [editRequest, setEditRequest] = useState<{ messageId: number; nonce: number } | null>(null)
+	const editNonceRef = useRef(0)
+	const requestEditLast = useCallback((messageId: number) => {
+		editNonceRef.current += 1
+		setEditRequest({ messageId, nonce: editNonceRef.current })
+	}, [])
 	const headerBarRef = useRef<HTMLDivElement>(null)
 	const composerBarRef = useRef<HTMLDivElement>(null)
 	useHeightVar(headerBarRef, '--thread-header-h')
@@ -120,6 +134,7 @@ function ConversationThreadPage() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the trigger, its value is not read
 	useEffect(() => {
 		setFillRequest(null)
+		setEditRequest(null)
 	}, [conversationId])
 	const navigate = useNavigate()
 	// The URL owns the open reply thread (Back and deep links work). Opening pushes; closing
@@ -356,7 +371,7 @@ function ConversationThreadPage() {
 					<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 						{/* The header and the composer float over the transcript, which fills the whole
 						    column and pads itself by their measured heights (see FLOATING_EDGE). */}
-						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 pb-3')}>
+						<div ref={headerBarRef} className={cn(FLOATING_EDGE, 'top-0 bg-background pb-3')}>
 							<ThreadHeader
 								workspaceId={workspaceId}
 								conversationId={conversationId}
@@ -364,6 +379,7 @@ function ConversationThreadPage() {
 								overviewHasNew={overviewHasNew}
 								onToggleOverview={toggleOverview}
 							/>
+							<ArchivedBar workspaceId={workspaceId} conversationId={conversationId} />
 						</div>
 						<ThreadMessages
 							className="pt-[calc(var(--thread-header-h,4.5rem)+18px)] pb-[calc(var(--thread-composer-h,6.75rem)+6px)] scroll-pt-[max(0px,calc(var(--thread-header-h,4.5rem)-54px))] scroll-pb-[calc(var(--thread-composer-h,6.75rem)+6px)]"
@@ -374,6 +390,8 @@ function ConversationThreadPage() {
 							onSendStep={sendStep}
 							sendingStep={sendMessage.isPending}
 							onOpenReplies={openReplies}
+							editRequest={editRequest}
+							showWorkingLine={chatListV2}
 						/>
 						{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
@@ -387,11 +405,14 @@ function ConversationThreadPage() {
 						<div ref={composerBarRef} className={cn(FLOATING_EDGE, 'bottom-0 pt-4')}>
 							<LiveCallComposerSlot />
 							<div className="px-[var(--chat-gut)] pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-								<ThreadComposer
-									workspaceId={workspaceId}
-									conversationId={conversationId}
-									fillRequest={fillRequest}
-								/>
+								<PlanLimitComposerGate workspaceId={workspaceId} enabled={planPercent}>
+									<ThreadComposer
+										workspaceId={workspaceId}
+										conversationId={conversationId}
+										fillRequest={fillRequest}
+										onEditLast={requestEditLast}
+									/>
+								</PlanLimitComposerGate>
 							</div>
 						</div>
 					</div>

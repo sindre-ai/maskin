@@ -50,12 +50,18 @@ public struct ChatsScreen: View {
 private struct ChatsContainer: View {
 	let environment: AppEnvironment
 	@State private var store: ConversationsStore
+	@State private var chatSearch: ChatListSearchModel
 	@State private var showDisplay = false
+	/// The new chat list (flag chat-list-v2). Starts at the last answer and is read again on appear.
+	@State private var chatListV2 = ChatListFlagCache.lastKnown
 	@State private var selection: String?
 	@State private var search = ""
 	@State private var searchPresented = false
 	@State private var newChat: NewChatRequest?
 	@State private var showThreads = false
+	/// iPad: which columns show. Portrait hides the list while a chat is open; the panel button in the thread header toggles it.
+	@State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+	@State private var isPortrait = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.liveMeeting) private var liveMeeting
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -66,6 +72,7 @@ private struct ChatsContainer: View {
 		let id = UUID()
 		var prefill = ""
 		var recipient: ChatParticipant?
+		var entryPoint = "agent_one_shot"
 	}
 
 	init(
@@ -73,18 +80,30 @@ private struct ChatsContainer: View {
 	) {
 		self.environment = environment
 		_requestedConversationId = requestedConversationId
-		_store = State(
-			initialValue: ConversationsStore(
-				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
-				events: environment.events, cache: environment.snapshotCache,
-				preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID)))
+		_chatSearch = State(
+			initialValue: ChatListSearchModel(
+				source: APIChatSearch(
+					baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider,
+					operators: { ChatListFlagCache.lastKnown })))
+		let store = ConversationsStore(
+			api: APIChatsSource(
+				client: environment.client, workspaceID: workspaceID,
+				attention: APIChatAttention(
+					baseURL: environment.baseURL, clientSource: environment.clientSource,
+					credentials: environment.auth.credentialsProvider)),
+			events: environment.events, cache: environment.snapshotCache,
+			preferences: TeamPreferences(actorID: environment.auth.session?.actorId, workspaceID: workspaceID))
+		// The new list reads the attention fields from the first page when the flag was on last time.
+		store.readsAttention = ChatListFlagCache.lastKnown
+		_store = State(initialValue: store)
 	}
 
 	private var session: StoredSession? { environment.auth.session }
 
 	var body: some View {
-		NavigationSplitView {
-			ConversationListView(
+		NavigationSplitView(columnVisibility: $columnVisibility) {
+			listChrome(ConversationListView(
 				store: store, selection: $selection, search: $search,
 				currentActorID: session?.actorId,
 				isLive: environment.events.connection != .failed,
@@ -93,37 +112,46 @@ private struct ChatsContainer: View {
 				onSearchEverywhere: { _ in runtime?.selectedTab = .search },
 				onSuggestion: { text in Task { await startWithChiefOfStaff(text: text) } },
 				onThreads: { showThreads = true },
+				chatSearch: chatSearch,
 				pillPlacement: TeamPillPlacement.resolve(
 					compactWidth: horizontalSizeClass == .compact, regularHeight: verticalSizeClass == .regular),
-				pill: runtime?.teamPill
-			)
-			.shellToolbar(
-				environment: environment, title: "Chats",
-				actions: ShellActions(
-					new: { newChat = NewChatRequest() }, newLabel: "New conversation",
-					displaySymbol: ShellActions.slidersSymbol, displayActive: !store.displayOptions.isDefault,
-					displayToggle: { showDisplay = true },
-					hidesAvatar: true, newAlwaysVisible: true, newIsPrimary: true,
-					search: { searchPresented = true }))
-			.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search chats")
-			.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store) }
-			// iPad spec: the Team column is 430 wide.
-			.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
+				pill: runtime?.teamPill,
+				chatListV2: chatListV2
+			))
 		} detail: {
-			if let selection, let flowID = Self.flowID(from: selection) {
-				FlowRoomHost(environment: environment, store: store, flowID: flowID)
+			Group {
+				if let selection, let flowID = Self.flowID(from: selection) {
+					FlowRoomHost(environment: environment, store: store, flowID: flowID)
+						.id(selection)
+				} else if let selection {
+					ChatThreadHost(
+						environment: environment, conversations: store, conversationID: selection,
+						onLeft: { self.selection = nil }
+					)
 					.id(selection)
-			} else if let selection {
-				ChatThreadHost(
-					environment: environment, conversations: store, conversationID: selection,
-					onLeft: { self.selection = nil }
-				)
-				.id(selection)
-			} else {
-				EmptyState(
-					symbol: "bubble.left.and.bubble.right", title: "Select a conversation",
-					message: "Chat with your team and your agents.")
+				} else {
+					EmptyState(
+						symbol: "bubble.left.and.bubble.right", title: "Select a conversation",
+						message: "Chat with your team and your agents.")
+				}
 			}
+			.modifier(ChatsListToggle(showsButton: showsListToggle, onToggle: toggleList))
+		}
+		.background {
+			GeometryReader { proxy in
+				Color.clear.onChange(of: proxy.size, initial: true) { _, size in
+					isPortrait = ChatsPadLayout.isPortrait(size)
+				}
+			}
+		}
+		.onChange(of: isPortrait, initial: true) {
+			guard ShellIdiom.isPad else { return }
+			columnVisibility = ChatsPadLayout.visibility(portrait: isPortrait, hasSelection: selection != nil)
+		}
+		.onChange(of: selection) {
+			// Landscape keeps whatever the person chose; portrait gives a chat the whole width.
+			guard ShellIdiom.isPad, isPortrait else { return }
+			columnVisibility = ChatsPadLayout.visibility(portrait: true, hasSelection: selection != nil)
 		}
 		.onChange(of: requestedConversationId, initial: true) {
 			ChatsScreen.consume(request: &requestedConversationId, into: &selection)
@@ -144,7 +172,8 @@ private struct ChatsContainer: View {
 			if request.live {
 				Task { await startLive(with: request.agent) }
 			} else {
-				newChat = NewChatRequest(prefill: request.draft, recipient: request.agent)
+				newChat = NewChatRequest(
+					prefill: request.draft, recipient: request.agent, entryPoint: request.entryPoint)
 			}
 		}
 		.onChange(of: runtime?.chatDraft, initial: true) {
@@ -154,6 +183,15 @@ private struct ChatsContainer: View {
 			Task { await startWithChiefOfStaff(text: draft.text) }
 		}
 		.task { await store.start() }
+		.task {
+			let on = await ChatListFlag.isOn(APIFeatureFlags(client: environment.client))
+			ChatListFlagCache.lastKnown = on
+			chatListV2 = on
+			guard store.readsAttention != on else { return }
+			store.readsAttention = on
+			await store.refresh()
+			await store.refreshLater()
+		}
 		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
 			runtime?.teamPill.isCovered = covered
 		}
@@ -168,8 +206,8 @@ private struct ChatsContainer: View {
 		.sheet(item: $newChat) { request in
 			NewChatSheet(
 				store: store, currentActorID: session?.actorId, prefill: request.prefill,
-				initialRecipient: request.recipient,
-				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+				initialRecipient: request.recipient, entryPoint: request.entryPoint,
+				uploader: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 			) { created, live in
 				selection = created.id
 				if live, let lead = created.participants.first(where: { $0.kind == .agent }) {
@@ -182,6 +220,54 @@ private struct ChatsContainer: View {
 			}
 			.presentationDetents([.large])
 		}
+	}
+
+	/// The list column's top. The iPad has one row (search field with Display inside, and the "+")
+	/// and no title; iPhone and Mac keep the title, the pill of actions and the page search.
+	@ViewBuilder
+	private func listChrome(_ list: some View) -> some View {
+		if ShellIdiom.hasRail {
+			list
+				.safeAreaInset(edge: .top, spacing: 0) {
+					ChatsListHeader(
+						search: $search, displayActive: displayActive,
+						onDisplay: { showDisplay = true }, onNew: { newChat = NewChatRequest() })
+				}
+				#if os(iOS)
+					.toolbar(.hidden, for: .navigationBar)
+				#endif
+				.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store, chatListV2: chatListV2) }
+				.navigationSplitViewColumnWidth(
+					min: ChatsPadLayout.portraitListWidth, ideal: ChatsPadLayout.listWidth(portrait: isPortrait),
+					max: 520)
+		} else {
+			list
+				.shellToolbar(
+					environment: environment, title: "Chats",
+					actions: ShellActions(
+						new: { newChat = NewChatRequest() }, newLabel: "New conversation",
+						displaySymbol: ShellActions.slidersSymbol, displayActive: displayActive,
+						displayToggle: { showDisplay = true },
+						hidesAvatar: true, newAlwaysVisible: true, newIsPrimary: true,
+						search: { searchPresented = true }))
+				.pageSearch(text: $search, isPresented: $searchPresented, prompt: "Search chats")
+				.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store, chatListV2: chatListV2) }
+				// iPad spec: the Team column is 430 wide.
+				.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
+		}
+	}
+
+	/// The Display options differ from the defaults.
+	private var displayActive: Bool {
+		chatListV2 ? store.listGroupBy != .date : !store.displayOptions.isDefault
+	}
+
+	/// The panel button shows on an iPad with room for both columns; a collapsed split view keeps
+	/// its own back button.
+	private var showsListToggle: Bool { ShellIdiom.isPad && horizontalSizeClass == .regular }
+
+	private func toggleList() {
+		columnVisibility = ChatsPadLayout.toggled(columnVisibility)
 	}
 
 	/// A flow row's selection key is `flow:<id>`; everything else is a conversation id.
@@ -249,6 +335,28 @@ extension ChatsContainer {
 		} catch {
 			newChat = NewChatRequest(prefill: text)
 		}
+	}
+}
+
+/// The panel button at the left of the thread's header (also with no chat selected) that hides or
+/// shows the list. It replaces the system sidebar toggle, so the two never show together.
+private struct ChatsListToggle: ViewModifier {
+	let showsButton: Bool
+	let onToggle: () -> Void
+
+	func body(content: Content) -> some View {
+		content
+			.toolbar(removing: showsButton ? ToolbarDefaultItemKind.sidebarToggle : nil)
+			.toolbar {
+				if showsButton {
+					ToolbarItem(placement: .shellLeading) {
+						Button(action: onToggle) {
+							Image(systemName: "sidebar.leading")
+						}
+						.accessibilityLabel("Show or hide chat list")
+					}
+				}
+			}
 	}
 }
 
@@ -362,7 +470,10 @@ private struct ThreadHost: View {
 	var body: some View {
 		let chat = holder.chat ?? make()
 		let _ = { holder.chat = chat }()
-		ThreadScreen(store: chat, root: item.root)
+		ThreadScreen(
+			store: chat, root: item.root,
+			uploader: APIChatsSource(
+				client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads))
 			.onDisappear {
 				chat.stop()
 				Task { await conversations.refreshThreads() }
@@ -382,6 +493,8 @@ private struct ChatThreadHost: View {
 	@State private var showParticipants = false
 	/// Opens the People sheet straight on its picker ("Invite people").
 	@State private var inviting = false
+	/// The archived bar's Unarchive worked: the bar goes even if the chat is in neither list.
+	@State private var unarchived = false
 
 	init(
 		environment: AppEnvironment, conversations: ConversationsStore, conversationID: String,
@@ -401,7 +514,7 @@ private struct ChatThreadHost: View {
 	private func make() -> (chat: ChatStore, composer: ChatComposerModel) {
 		let conversationID = conversationID
 		let session = environment.auth.session
-		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "", largeUploads: environment.largeUploads)
 		let chat = ChatStore(
 			conversationID: conversationID, currentActorID: session?.actorId ?? "",
 			currentActorName: session?.name ?? "You", api: source,
@@ -443,6 +556,19 @@ private struct ChatThreadHost: View {
 				inviting = true
 				showParticipants = true
 			})
+			// A chat opened from search can be archived: say so, and offer the way back.
+			.safeAreaInset(edge: .top, spacing: 0) {
+				if !unarchived, (conversations.conversation(id: conversationID)?.archived ?? chat.detail?.archived) == true {
+					ArchivedChatBar {
+						Task {
+							if await conversations.setArchived(conversationID, false) {
+								unarchived = true
+								await conversations.refresh()
+							}
+						}
+					}
+				}
+			}
 			.sheet(isPresented: $showParticipants, onDismiss: { inviting = false }) {
 				PeopleSheet(chat: chat, conversations: conversations, startAdding: inviting, onLeft: onLeft)
 				.presentationDetents([.medium, .large])

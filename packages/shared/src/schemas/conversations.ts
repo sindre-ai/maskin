@@ -63,6 +63,8 @@ export const messageFinalOutputSchema = z.object({
 	 * apps/dev/src/lib/turn-error-classifier.ts.
 	 */
 	error_kind: z.enum(['transient', 'permanent']).optional(),
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail: z.string().max(4000).optional(),
 	/** Replays spent before giving up on a transient failure. */
 	retries: z.number().int().min(0).max(10).optional(),
 	/**
@@ -687,6 +689,14 @@ export const conversationListQuerySchema = z.object({
 	// 'priority' keeps only what the chat rail always lists in full: direct messages, pinned
 	// chats and chats with unread messages. 'recent' is everything else. Omitted = both.
 	scope: z.enum(['priority', 'recent']).optional(),
+	// The default list's listing rules: leave out empty direct messages with agents, chats with
+	// retired agents and topic chats quiet for about 14 days, unless pinned or unread. Nothing is
+	// archived; the chats stay in search and return when a new message arrives.
+	hide_quiet: booleanQueryParam.optional(),
+	// A chat the person put on Later leaves the normal list until a new message arrives. true: only
+	// the chats on Later (the Later filter). false or left out: everything else. Ignored for the
+	// archived list and for a lookup by subject, which still find a chat that is on Later.
+	later: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(30),
 	offset: z.coerce.number().int().min(0).default(0),
 })
@@ -707,10 +717,11 @@ export const postMessageSchema = z
 		thread_root_id: z.number().int().positive().optional(),
 		// With thread_root_id: also show the reply in the main timeline.
 		also_in_channel: z.boolean().optional(),
-		// An agent posting mid-turn lands in the thread of the message that started the turn when
-		// no thread_root_id is given; when that message is top-level, the post starts a thread under
-		// it. true opts out and posts to the main timeline. Ignored when
-		// thread_root_id is given, and for anyone but an agent in its own session for this chat.
+		// An agent posting mid-turn continues the thread the turn's message was written in when
+		// no thread_root_id is given; a turn started by a top-level message posts to the main
+		// timeline, since people start threads and agents do not. true opts out of the thread.
+		// Ignored when thread_root_id is given, and for anyone but an agent in its own session
+		// for this chat.
 		top_level: z.boolean().optional(),
 	})
 	.refine((v) => v.content.length > 0 || hasAttachments(v.metadata), {
@@ -759,16 +770,22 @@ export const updateConversationParticipantStateSchema = z
 		 * stays positive-only.
 		 */
 		mark_unread: z.boolean().optional(),
+		/**
+		 * Put the chat on Later (true) or take it back (false), for the caller only. Later also ends by
+		 * itself when a new message arrives in the chat.
+		 */
+		later: z.boolean().optional(),
 	})
 	.refine(
 		(v) =>
 			v.pinned !== undefined ||
 			v.archived !== undefined ||
 			v.last_read_message_id !== undefined ||
-			v.mark_unread !== undefined,
+			v.mark_unread !== undefined ||
+			v.later !== undefined,
 		{
 			message:
-				'At least one of pinned, archived, last_read_message_id, or mark_unread must be provided',
+				'At least one of pinned, archived, last_read_message_id, mark_unread, or later must be provided',
 		},
 	)
 	.refine((v) => !(v.mark_unread === true && v.last_read_message_id !== undefined), {

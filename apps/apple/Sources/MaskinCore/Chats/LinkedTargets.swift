@@ -394,6 +394,19 @@ public enum LinkedMessageLayout {
 	}
 }
 
+extension LinkedMessageLayout {
+	/// The one card under a message that may edit its object's text and status: the first object it
+	/// links in a sentence, and only when no object is already a card in place above (the web's
+	/// first text card). Nil when there is none.
+	public static func textCardTarget(parts: [LinkedMessagePart], appended: [LinkedTarget]) -> LinkedTarget? {
+		let objectInPlace = parts.contains {
+			if case .card(let target) = $0 { return target.kind == .object }
+			return false
+		}
+		return objectInPlace ? nil : appended.first { $0.kind == .object }
+	}
+}
+
 /// One thing a conversation links to, with the message that linked it last.
 public struct LinkedEntry: Equatable, Sendable, Identifiable {
 	public var target: LinkedTarget

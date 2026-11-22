@@ -69,6 +69,26 @@ describe('Workspaces Routes', () => {
 			expect(calls.inserts).toHaveLength(0)
 		})
 
+		it('returns 403 for an agent caller and writes no workspace, member or session rows', async () => {
+			const { app, calls, sessionManager } = createSessionTestApp(
+				workspacesRoutes,
+				'/api/workspaces',
+				'test-actor-id',
+				'agent',
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('FORBIDDEN')
+			expect(calls.inserts).toHaveLength(0)
+			expect(calls.updates).toHaveLength(0)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
 		it('respects an explicit default_agent_id and does not overwrite it', async () => {
 			const explicitAgentId = randomUUID()
 			// The mock insert returns this row verbatim (unlike real Postgres, it

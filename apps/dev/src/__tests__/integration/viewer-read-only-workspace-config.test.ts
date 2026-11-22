@@ -16,8 +16,10 @@ const { default: integrationsRoutes } = await import('../../routes/integrations'
 const { default: skjaldConnectRoutes } = await import('../../routes/integrations-skjald-connect')
 const { default: slackMcpRoutes } = await import('../../routes/integrations-slack-mcp')
 const { default: gatewayRoutes } = await import('../../routes/integrations-gateway')
+const { default: oauthAppRoutes } = await import('../../routes/integrations-oauth-app')
 const { default: googleMeetMcpRoutes } = await import('../../routes/integrations-google-meet-mcp')
 const { default: deepdotsMcpRoutes } = await import('../../routes/integrations-deepdots-mcp')
+const { default: microsoftMcpRoutes } = await import('../../routes/integrations-microsoft-mcp')
 const { default: googleSearchConsoleMcpRoutes } = await import(
 	'../../routes/integrations-google-search-console-mcp'
 )
@@ -59,10 +61,12 @@ function createApp() {
 	app.route('/api/integrations/linkedin-unipile', linkedinRoutes as never)
 	app.route('/api/integrations/google-meet/mcp', googleMeetMcpRoutes as never)
 	app.route('/api/integrations/deepdots/mcp', deepdotsMcpRoutes as never)
+	app.route('/api/integrations/microsoft/mcp', microsoftMcpRoutes as never)
 	app.route('/api/integrations/google-search-console/mcp', googleSearchConsoleMcpRoutes as never)
 	app.route('/api/integrations', integrationsRoutes as never)
 	app.route('/api/integrations/slack/mcp', slackMcpRoutes as never)
 	app.route('/api/integrations', gatewayRoutes as never)
+	app.route('/api/integrations', oauthAppRoutes as never)
 	app.route('/api/admin/linkedin-unipile', adminLinkedinRoutes as never)
 	app.route('/api/claude-oauth', claudeOauthRoutes as never)
 	app.route('/api/mini-apps', miniAppRegenRoutes as never)
@@ -162,9 +166,12 @@ describe('Viewer role is read-only on workspace configuration (Group B)', () => 
 			['slack mcp', 'POST', `${ig}/slack/mcp`, mcp],
 			['google meet mcp', 'POST', `${ig}/google-meet/mcp`, mcp],
 			['deepdots mcp', 'POST', `${ig}/deepdots/mcp`, mcp],
+			['microsoft mcp', 'POST', `${ig}/microsoft/mcp`, mcp],
 			['google search console mcp', 'POST', `${ig}/google-search-console/mcp`, mcp],
 			['mcp gateway', 'POST', `${ig}/linear/gateway`, mcp],
 			['mcp gateway end', 'DELETE', `${ig}/linear/gateway`, undefined],
+			['oauth app save', 'PUT', `${ig}/salesforce/app`, { clientId: 'id', clientSecret: 's' }],
+			['oauth app remove', 'DELETE', `${ig}/salesforce/app`, undefined],
 			['linkedin refresh', 'POST', '/api/admin/linkedin-unipile/refresh-identities', undefined],
 			['claude oauth disconnect', 'DELETE', '/api/claude-oauth', undefined],
 			['claude nickname', 'PATCH', '/api/claude-oauth/nickname', nickname],

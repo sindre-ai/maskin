@@ -17,7 +17,7 @@ export const MAX_INLINE_FILE_SIZE_BYTES = MAX_VIDEO_FILE_SIZE_BYTES
 // Ceiling for the direct upload path. Raising it later is a one-line change here:
 // storage allows 5 TiB per object and part sizes scale with the file (see
 // `planFileUploadParts`), and `files.size_bytes` is a bigint.
-export const MAX_LARGE_FILE_SIZE_BYTES = 1024 * 1024 * 1024 // 1 GiB
+export const MAX_LARGE_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024 // 5 GiB
 
 const MIN_UPLOAD_PART_BYTES = 16 * 1024 * 1024 // 16 MiB; S3's own minimum is 5 MiB
 const MAX_UPLOAD_PARTS = 10_000 // S3's limit
@@ -198,6 +198,10 @@ export const createFileSchema = z
 		mime_type: mimeTypeSchema,
 		content: z.string(),
 		encoding: fileEncodingSchema.default('utf8'),
+		/** A chat to link the file to. Left out, a session links the file to the chat it runs in. */
+		conversation_id: z.string().uuid().optional(),
+		/** A work item to attach the file to. */
+		object_id: z.string().uuid().optional(),
 	})
 	.superRefine((data, ctx) =>
 		validateContent(data.content, data.encoding, ctx, maxFileSizeBytesFor(data.mime_type)),

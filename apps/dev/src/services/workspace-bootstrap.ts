@@ -24,7 +24,6 @@ import {
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
@@ -592,7 +591,7 @@ export async function bootstrapDefaultAgents(
 					type: 'loop',
 					title: loop.name,
 					content: loop.content,
-					status: 'learning',
+					status: 'pilot',
 					createdBy,
 					metadata: {
 						entry_condition: loop.entryCondition,
@@ -770,8 +769,14 @@ export async function provisionWorkspace(params: {
 	ownerActorId: string
 	/** Raw settings from the request body, if any — parsed and merged here. */
 	settings?: unknown
+	/**
+	 * The sign-up that made this workspace goes through the card step (bet "A card to start a
+	 * 7-day trial"): the workspace starts waiting for a card, so no session starts, and the Chief
+	 * of Staff welcome is held back until the trial starts (`startChiefOfStaffWelcome`).
+	 */
+	awaitingCard?: boolean
 }): Promise<typeof workspaces.$inferSelect | null> {
-	const { db, agentStorage, sessionManager, name, ownerActorId } = params
+	const { db, agentStorage, sessionManager, name, ownerActorId, awaitingCard } = params
 
 	// Every workspace is provisioned on the trial tier — `billing` is written
 	// only by the Stripe webhook and /api/billing/*. POST /api/workspaces
@@ -790,6 +795,8 @@ export async function provisionWorkspace(params: {
 	const settings = sealWorkspaceLlmSecrets(
 		applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules),
 	)
+	// Written here, after the strip above, never taken from the request.
+	if (awaitingCard) settings.billing = { plan: 'trial', trial_state: 'awaiting_card' }
 
 	let chiefOfStaffId: string | undefined
 
@@ -804,7 +811,7 @@ export async function provisionWorkspace(params: {
 		const ownedPlans = await ownedWorkspacePlans(tx, ownerActorId)
 		const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
 		const cap = ownershipCapForTier(effectiveTier)
-		if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(ownerActorId)) {
+		if (cap !== null && ownedPlans.length >= cap) {
 			throw new OwnershipCapExceededError({
 				actorId: ownerActorId,
 				effectiveTier,
@@ -913,26 +920,38 @@ export async function provisionWorkspace(params: {
 	// kickoff — fire the welcome session here instead. It can't be driven by an
 	// `actor.created` event trigger either: the owner's actor row predates every
 	// trigger in this workspace.
-	if (chiefOfStaffId && sessionManager && !shouldSkipOnboardingKickoff()) {
-		const [owner] = await db
-			.select({ name: actors.name, email: actors.email })
-			.from(actors)
-			.where(eq(actors.id, ownerActorId))
-			.limit(1)
-
-		startSession({
-			workspaceId: workspace.id,
-			actorId: chiefOfStaffId,
-			callerKind: 'internal',
-			actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
-			createdBy: ownerActorId,
-			// Welcome kickoff has no originating object.
-			initiatedFromObjectId: null,
-			await: 'none',
-		}).catch((err) =>
-			logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
-		)
+	// A workspace waiting for its card starts no session: the welcome runs once the trial starts.
+	if (chiefOfStaffId && sessionManager && !shouldSkipOnboardingKickoff() && !awaitingCard) {
+		await startChiefOfStaffWelcome(db, workspace.id, ownerActorId, chiefOfStaffId)
 	}
 
 	return workspace
+}
+
+/**
+ * Starts Chief of Staff's welcome session for a new workspace. Fire-and-forget: a failure is
+ * logged, never thrown, because the workspace is already usable without the welcome.
+ */
+export async function startChiefOfStaffWelcome(
+	db: Database,
+	workspaceId: string,
+	ownerActorId: string,
+	chiefOfStaffId: string,
+): Promise<void> {
+	const [owner] = await db
+		.select({ name: actors.name, email: actors.email })
+		.from(actors)
+		.where(eq(actors.id, ownerActorId))
+		.limit(1)
+
+	startSession({
+		workspaceId,
+		actorId: chiefOfStaffId,
+		callerKind: 'internal',
+		actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
+		createdBy: ownerActorId,
+		// Welcome kickoff has no originating object.
+		initiatedFromObjectId: null,
+		await: 'none',
+	}).catch((err) => logger.error('Chief of Staff welcome session failed', { workspaceId, err }))
 }

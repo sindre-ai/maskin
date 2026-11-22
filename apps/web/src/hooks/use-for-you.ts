@@ -28,6 +28,7 @@ export function forYouItemToFeedItem(item: ForYouItem): UnreadItem | null {
 			headline: item.headline,
 			rationale: item.rationale,
 			notification_id: item.notification_id,
+			session_id: item.session_id,
 		},
 	}
 }

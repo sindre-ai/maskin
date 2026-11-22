@@ -24,10 +24,17 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { useActors } from '@/hooks/use-actors'
+import {
+	flattenMessagesOldestFirst,
+	useConversationMessages,
+	useSendMessage,
+} from '@/hooks/use-conversation'
 import { useApproveDraft, useDraftEdit } from '@/hooks/use-draft-editor'
 import { useFiles } from '@/hooks/use-files'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useObject, useUpdateObject } from '@/hooks/use-objects'
+import type { QuestionDraftNote } from '@/hooks/use-question-draft-notes'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { statusLabel } from '@/lib/constants'
 import {
@@ -36,16 +43,33 @@ import {
 	type SettingsTarget,
 	isOtherWorkspace,
 	showsObjectCard,
-	showsTaskCard,
+	showsTextCard,
 } from '@/lib/linked-objects'
 import { describeObjectProperties } from '@/lib/object-properties'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, PanelRight } from 'lucide-react'
-import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
+import {
+	type ReactNode,
+	createContext,
+	useContext,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 
 /** A tap this soon after "Read full draft to approve" opened the text is the same double tap, not a yes. */
 const REVEAL_SETTLE_MS = 500
+
+/**
+ * The person's message when they skip a draft. The card finds it again after a reload by this
+ * text and the draft's id in the message's `context_objects`, so no draft state or API is needed.
+ */
+export const SKIP_DRAFT_TEXT = 'Skip: do not send this draft'
+
+/** What an agent asked in the same message as a draft sits in that draft's card, by draft id, provided around a message that links a draft and also asks a question. */
+export const DraftNotesContext = createContext<ReadonlyMap<string, QuestionDraftNote>>(new Map())
 
 interface PreviewProps {
 	workspaceId: string
@@ -59,6 +83,12 @@ interface PreviewProps {
 	agentId?: string
 	/** A draft edited since an earlier message showed it: the header says Updated. */
 	updated?: boolean
+	/** The card sits beside a loop view, in no chat: status changes and Approve work as the
+	 *  person, no agent is told, a status change is refused if the object has moved on since the
+	 *  card showed it, and an object with no text still draws its header, title and status. */
+	standalone?: boolean
+	/** Called when the person presses a button that changes something, before it is sent. */
+	onAction?: (action: 'status_change' | 'approve') => void
 }
 
 /** One object drawn as a card: what it says, its status, Approve for a draft. Draws any object that has text; callers decide which objects deserve a card (see `hasPreviewCard`). */
@@ -70,6 +100,8 @@ export function LinkedObjectCard({
 	updated = false,
 	defaultExpanded = false,
 	className,
+	standalone = false,
+	onAction,
 }: PreviewProps) {
 	const { data: object } = useObject(objectId)
 	const { workspace } = useWorkspace()
@@ -104,12 +136,27 @@ export function LinkedObjectCard({
 	)
 	const measured = verdict !== null && verdict.hash === draftHash
 	const overflowing = measured && verdict.overflowing
+	// Editing the text needs a chat; a standalone card changes the status and approves only.
+	const inChat = Boolean(conversationId && agentId)
 	const canEditText =
-		Boolean(conversationId && agentId) &&
-		object?.preview?.delivery?.state !== 'sent' &&
-		measured &&
-		!(clamped && overflowing)
+		inChat && object?.preview?.delivery?.state !== 'sent' && measured && !(clamped && overflowing)
 	const editorOpen = Boolean(object?.preview) && canEditText
+	const note = useContext(DraftNotesContext).get(objectId)
+	// Skip is a message to the agent in this chat. Whether it was sent is read back from the chat's
+	// messages, so the card says Skipped again after a reload.
+	const sendMessage = useSendMessage(conversationId ?? '', workspaceId)
+	const { data: chatMessages } = useConversationMessages(conversationId ?? '', workspaceId, {
+		enabled: inChat && Boolean(object?.preview),
+	})
+	const skipped = useMemo(() => {
+		const me = getStoredActor()?.id
+		return flattenMessagesOldestFirst(chatMessages).some(
+			(m) =>
+				m.actorId === me &&
+				m.content === SKIP_DRAFT_TEXT &&
+				m.metadata?.context_objects?.some((o) => o.id === objectId),
+		)
+	}, [chatMessages, objectId])
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the text or the open state changes
 	useLayoutEffect(() => {
@@ -127,14 +174,14 @@ export function LinkedObjectCard({
 	// Nothing for an object that is missing, in another workspace, or has no
 	// text: the link in the message is still there, so the preview only ever adds.
 	const body = object?.content?.trim()
-	if (!object || object.workspaceId !== workspaceId || !body) return null
+	if (!object || object.workspaceId !== workspaceId || (!body && !standalone)) return null
 
 	// The workspace's own statuses for this object's type, never a fixed list.
 	const statuses =
 		(workspace.settings as { statuses?: Record<string, string[]> } | undefined)?.statuses?.[
 			object.type
 		] ?? []
-	const canAct = Boolean(conversationId && agentId)
+	const canAct = inChat || standalone
 	// Sent with an approval or a status change so the server tells the agent behind the card.
 	// Nothing is posted in the chat: the person did not write a message.
 	const chat =
@@ -160,7 +207,7 @@ export function LinkedObjectCard({
 	// What would go out. For most drafts that is the whole text; for one that carries a header
 	// (a LinkedIn post filed with its account and angle) it is the post alone, and that is
 	// what the card shows. Such a text is edited on the object page, where the header is.
-	const shown = preview ? preview.body : body
+	const shown = preview ? preview.body : (body ?? '')
 	// A draft is edited in the shared draft editor (the For You card uses it too); any other
 	// object with text keeps click-to-edit, saved when you click away.
 	const copied = edit ?? shown
@@ -177,7 +224,11 @@ export function LinkedObjectCard({
 	// with what the task holds now before it sends anything.
 	const moveTo = (status: string) => {
 		if (status === object.status) return
-		update.mutate({ id: object.id, data: { status, chat } })
+		onAction?.('status_change')
+		update.mutate({
+			id: object.id,
+			data: { status, chat, ...(standalone ? { expected_status: object.status } : {}) },
+		})
 	}
 
 	// The person's yes to this exact text. The server tells the agent to send it, with the text,
@@ -192,7 +243,20 @@ export function LinkedObjectCard({
 			return
 		}
 		if (Date.now() - revealedAt.current < REVEAL_SETTLE_MS) return
+		onAction?.('approve')
 		approve.mutate({ draft: { object_id: object.id, body: preview.body, preview }, chat })
+	}
+
+	// A hidden nudge, like a card's Done: the agent hears it, the chat does not draw it.
+	const skipDraft = () => {
+		if (skipped || sendMessage.isPending) return
+		sendMessage.mutate({
+			content: SKIP_DRAFT_TEXT,
+			metadata: {
+				hidden_from_chat: true,
+				context_objects: [{ id: object.id, type: object.type, title: object.title?.slice(0, 500) }],
+			},
+		})
 	}
 
 	return (
@@ -307,6 +371,14 @@ export function LinkedObjectCard({
 			</div>
 			{expanded ? (
 				<>
+					{note && preview && (delivery ?? 'draft') === 'draft' && !skipped ? (
+						<div data-linked-card-note="" className="px-3 pt-2">
+							<p className="text-[12.5px] text-foreground">{note.question}</p>
+							{note.reason ? (
+								<p className="text-[12.5px] text-muted-foreground">{note.reason}</p>
+							) : null}
+						</div>
+					) : null}
 					{object.preview ? (
 						<div className="px-3 pt-2">
 							<ObjectPreviewMeta preview={object.preview} />
@@ -331,17 +403,17 @@ export function LinkedObjectCard({
 								canEdit={canEditText}
 								readOnly={(text) => <MarkdownContent content={edit ?? text} size="sm" />}
 							/>
-						) : (
+						) : shown ? (
 							<MarkdownContent
 								content={shown}
 								size="sm"
-								editable={canAct}
+								editable={inChat}
 								editorLabel="Edit the text"
 								onChange={async (value) => {
 									await update.mutateAsync({ id: object.id, data: { content: value } })
 								}}
 							/>
-						)}
+						) : null}
 					</div>
 					{gated || (overflowing && !clamped) ? (
 						<div className="px-3 pt-1">
@@ -377,23 +449,42 @@ export function LinkedObjectCard({
 									<Check size={13} aria-hidden />
 									Approved, waiting for send
 								</span>
+							) : skipped ? (
+								<span className="text-xs text-muted-foreground">Skipped</span>
 							) : (
-								<Button
-									type="button"
-									size="sm"
-									disabled={
-										!canAct || approve.isPending || update.isPending || preview.missing.length > 0
-									}
-									onClick={approveDraft}
-								>
-									{gated ? 'Read full draft to approve' : 'Approve draft'}
-									<ArrowRight size={14} aria-hidden />
-								</Button>
+								<>
+									{inChat ? (
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											disabled={sendMessage.isPending || approve.isPending || update.isPending}
+											onClick={skipDraft}
+										>
+											Skip
+										</Button>
+									) : null}
+									<Button
+										type="button"
+										size="sm"
+										disabled={
+											!canAct ||
+											approve.isPending ||
+											update.isPending ||
+											sendMessage.isPending ||
+											preview.missing.length > 0
+										}
+										onClick={approveDraft}
+									>
+										{gated ? 'Read full draft to approve' : 'Approve draft'}
+										<ArrowRight size={14} aria-hidden />
+									</Button>
+								</>
 							)}
 						</div>
 					) : canAct && nextStatus ? (
 						<div className="flex items-center justify-end gap-2 px-3 pb-3 pt-1">
-							<CopyButton text={shown} label ariaLabel="Copy the text" />
+							{shown ? <CopyButton text={shown} label ariaLabel="Copy the text" /> : null}
 							<Button
 								type="button"
 								size="sm"
@@ -406,7 +497,7 @@ export function LinkedObjectCard({
 						</div>
 					) : (
 						<div className="flex items-center justify-end px-3 pb-3 pt-1">
-							<CopyButton text={shown} label ariaLabel="Copy the text" />
+							{shown ? <CopyButton text={shown} label ariaLabel="Copy the text" /> : null}
 						</div>
 					)}
 				</>
@@ -443,6 +534,7 @@ export function LinkedCardOrLink({
 	inList = false,
 	after = false,
 	updated = false,
+	first = false,
 	draftsAndFiles = true,
 }: {
 	workspaceId: string
@@ -458,6 +550,8 @@ export function LinkedCardOrLink({
 	after?: boolean
 	/** A draft edited since an earlier message showed it. */
 	updated?: boolean
+	/** The first card under a message: an object with text is drawn though its link sits in a sentence. */
+	first?: boolean
 	/** False outside chat: a draft keeps its plain link, with no approval card. */
 	draftsAndFiles?: boolean
 }) {
@@ -512,6 +606,7 @@ export function LinkedCardOrLink({
 			inList={inList}
 			after={after}
 			updated={updated}
+			first={first}
 			draftsAndFiles={draftsAndFiles}
 		/>
 	) : (
@@ -564,6 +659,7 @@ export function renderLinkedCard(
 		inList?: boolean
 		after?: boolean
 		updated?: boolean
+		first?: boolean
 		draftsAndFiles?: boolean
 	},
 ): ReactNode {
@@ -670,6 +766,7 @@ function ObjectCardOrLink({
 	inList,
 	after,
 	updated,
+	first,
 	draftsAndFiles,
 }: {
 	workspaceId: string
@@ -681,6 +778,7 @@ function ObjectCardOrLink({
 	inList: boolean
 	after: boolean
 	updated: boolean
+	first: boolean
 	draftsAndFiles: boolean
 }) {
 	const { data: object } = useObject(objectId)
@@ -699,8 +797,9 @@ function ObjectCardOrLink({
 			/>,
 		)
 	}
-	// A task with text, alone on its own line in chat, is its text; see `showsTaskCard`.
-	if (draftsAndFiles && !after && !inList && showsTaskCard(object, workspaceId)) {
+	// An object with text, alone on its own line in chat, is its text; so is the first one a
+	// sentence links, drawn under the message. See `showsTextCard`.
+	if (draftsAndFiles && !inList && (after ? first : true) && showsTextCard(object, workspaceId)) {
 		return withLabel(
 			label,
 			<LinkedObjectCard

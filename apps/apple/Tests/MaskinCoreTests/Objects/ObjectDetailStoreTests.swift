@@ -46,6 +46,19 @@ struct ObjectDetailStoreTests {
 		#expect(store.timeline[1].kind == .activity("moved status from todo to in progress"))
 	}
 
+	@Test("the origin from the graph reaches the store; none when no session produced it")
+	func origin() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		#expect(store.origin == nil)
+		var graph = Fixtures.graph(for: Fixtures.objects.first { $0.id == "t1" }!)
+		graph.origin = ObjectOrigin(sessionId: "s1", actorId: "forge", chatId: "c1")
+		remote.setGraph(graph)
+		await store.refresh()
+		#expect(store.origin?.sessionId == "s1")
+		#expect(store.origin?.chatId == "c1")
+	}
+
 	@Test("an unresolvable actor reads as Someone, never an id")
 	func unknownActor() async {
 		let (store, _) = makeStore()
@@ -76,6 +89,52 @@ struct ObjectDetailStoreTests {
 		#expect(last.eventId != nil)
 		#expect(store.authorName(for: last) == "You")
 		#expect(remote.commentKeys.count == 1)
+	}
+
+	@Test("your own comment can be edited: new words at once, the server told, the edited mark set")
+	func editOwnComment() async throws {
+		let (store, remote) = makeStore()
+		await store.load()
+		let mine = store.timeline[3]
+		#expect(store.canEdit(mine))
+		await store.editComment(mine, to: "  Great, ship it behind the flag today.  ")
+		let after = store.timeline[3]
+		#expect(after.kind == .comment("Great, ship it behind the flag today."))
+		#expect(after.isEdited)
+		#expect(remote.editedComments.map(\.eventId) == [4])
+		#expect(remote.editedComments.map(\.content) == ["Great, ship it behind the flag today."])
+	}
+
+	@Test("someone else's comment offers no edit and is never sent")
+	func editOthersComment() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		let theirs = store.timeline[2]
+		#expect(!store.canEdit(theirs))
+		await store.editComment(theirs, to: "Mine now")
+		#expect(store.timeline[2].kind == theirs.kind)
+		#expect(remote.editedComments.isEmpty)
+	}
+
+	@Test("a refused edit puts the old words back and says why")
+	func editRefused() async {
+		let (store, remote) = makeStore()
+		await store.load()
+		let mine = store.timeline[3]
+		remote.fail("editComment")
+		await store.editComment(mine, to: "Changed my mind")
+		#expect(store.timeline[3].kind == mine.kind)
+		#expect(!store.timeline[3].isEdited)
+		#expect(store.actionError != nil)
+	}
+
+	@Test("a stored comment with an edit time reads as edited")
+	func storedEditedMark() {
+		let event = ObjectEvent(
+			id: 9, actorId: "me", action: "commented",
+			data: .object(["content": .string("Fixed"), "editedAt": .string("2026-11-20T01:00:00.000Z")]),
+			createdAt: Date())
+		#expect(ObjectDetailStore.item(from: event)?.isEdited == true)
 	}
 
 	@Test("tagged actors ride the comment, and a retry tags the same people")

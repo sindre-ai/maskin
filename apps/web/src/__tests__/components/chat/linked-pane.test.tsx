@@ -98,8 +98,14 @@ describe('LinkedPane', () => {
 		expect(screen.getByText(/from Scout/)).toBeInTheDocument()
 	})
 
-	it('draws a plain object as the same reference card the transcript draws', () => {
-		objects.o2 = { id: 'o2', workspaceId: 'ws', content: 'Some words', preview: null }
+	it('draws a contact with text as the same reference card the transcript draws', () => {
+		objects.o2 = {
+			id: 'o2',
+			type: 'contact',
+			workspaceId: 'ws',
+			content: 'Some words',
+			preview: null,
+		}
 		render(<LinkedPane {...base} items={[item({ id: 'o2' })]} />)
 		expect(screen.getByTestId('reference-card')).toHaveTextContent('o2')
 		expect(screen.getByTestId('reference-card')).toHaveAttribute('data-workspace', 'ws')

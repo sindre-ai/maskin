@@ -12,7 +12,6 @@ import {
 	ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useDisconnectGrant, useOauthGrants } from '@/hooks/use-oauth'
 import { trackEvent } from '@/lib/analytics'
 import type { OauthGrantRow } from '@maskin/shared'
@@ -20,10 +19,7 @@ import { ChevronDown, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
 // The Claude tab of Settings > MCP: the real "Add to Claude" link and the list of Claude connections with
-// Disconnect (docs/reference/mcp-oauth.md). The tab shows when the connector flag is on for the person or when
-// they already have a connection, so the only revoke button never disappears with the flag.
-
-export const MCP_OAUTH_FLAG = 'mcp-oauth-consent'
+// Disconnect (docs/reference/mcp-oauth.md).
 
 /** Claude's own prefilled "add custom connector" form: name and server URL filled in, no key or secret in it. */
 export function buildAddToClaudeUrl(mcpUrl: string): string {
@@ -34,12 +30,10 @@ export function buildAddToClaudeUrl(mcpUrl: string): string {
 	return url.toString()
 }
 
-/** What the tab strip needs: whether to show the Claude tab, and whether it reads Connected. */
-export function useClaudeTab() {
-	const flagOn = useFeatureFlag(MCP_OAUTH_FLAG)
+/** What the tab strip needs: whether the Claude tab reads Connected. */
+export function useClaudeConnected() {
 	const grants = useOauthGrants()
-	const connected = (grants.data?.length ?? 0) > 0
-	return { visible: flagOn || connected, connected }
+	return (grants.data?.length ?? 0) > 0
 }
 
 function formatConnectedDate(iso: string): string {
@@ -170,6 +164,7 @@ function DisconnectDialog({
 	onClose,
 }: { grant: OauthGrantRow | null; onClose: () => void }) {
 	const disconnect = useDisconnectGrant()
+	const name = grant?.client_name ?? 'Claude'
 	const close = () => {
 		disconnect.reset()
 		onClose()
@@ -183,15 +178,15 @@ function DisconnectDialog({
 		>
 			<ResponsiveDialogContent>
 				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>Disconnect Claude?</ResponsiveDialogTitle>
+					<ResponsiveDialogTitle>Disconnect {name}?</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
-						Claude loses access to Maskin right away. Claude may then show "connection expired". You
+						{name} loses access to Maskin right away. {name} may then show "connection expired". You
 						can connect it again any time.
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 				{disconnect.isError && (
 					<p role="alert" className="text-xs text-error">
-						We couldn't disconnect Claude. Try again.
+						We couldn't disconnect {name}. Try again.
 					</p>
 				)}
 				<ResponsiveDialogFooter>
@@ -213,7 +208,6 @@ function DisconnectDialog({
 }
 
 export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
-	const flagOn = useFeatureFlag(MCP_OAUTH_FLAG)
 	const grants = useOauthGrants()
 	const [target, setTarget] = useState<OauthGrantRow | null>(null)
 
@@ -239,27 +233,23 @@ export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
 				</ul>
 				{rows.length > 1 && (
 					<p className="text-xs text-muted-foreground">
-						One row per workspace. Connecting Claude again to the same workspace replaces the old
+						One row per workspace. Connecting the same app again to a workspace replaces the old
 						connection.
 					</p>
 				)}
 				<p className="text-xs text-muted-foreground">
-					Claude acts as you, with your access in the workspace shown. Disconnect to end it right
-					away. Removing Maskin inside Claude may not end access. Disconnect here too.
+					Each app acts as you, with your access in the workspace shown. Disconnect to end it right
+					away. Removing Maskin inside the app may not end access. Disconnect here too.
 				</p>
-				{!flagOn && (
-					<p className="text-xs text-muted-foreground">
-						Adding new Claude connections is switched off for now. Existing ones keep working until
-						you disconnect them.
-					</p>
-				)}
 				<DisconnectDialog grant={target} onClose={() => setTarget(null)} />
 			</div>
 		)
 	}
 
 	return (
-		<div className="space-y-4">
+		// Takes back the panel's padding and puts it on itself, so the manual-add row below can run edge to
+		// edge inside this box instead of sticking out of it (the mobile QA gate flags that as overflow).
+		<div className="-m-4 space-y-4 p-4">
 			{grants.isError && <ClaudeNotice onRetry={() => grants.refetch()} />}
 			<AddToClaude mcpUrl={mcpUrl} />
 		</div>

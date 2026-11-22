@@ -28,3 +28,17 @@ describe('missing-index migrations 0143-0144', () => {
 		expect(row?.indexdef).toContain('spawned_by_message_id IS NOT NULL')
 	})
 })
+
+describe('session foreign key indexes 0160-0162', () => {
+	it.each([
+		['sessions', 'sessions_retried_session_id_idx', 'retried_session_id'],
+		['sessions', 'sessions_retry_of_idx', 'retry_of'],
+		['notifications', 'notifications_session_id_idx', 'session_id'],
+	])('%s.%s exists, is valid, and is partial on IS NOT NULL', async (table, name, column) => {
+		const row = await indexRow(table, name)
+		expect(row).toBeDefined()
+		expect(row?.indisvalid).toBe(true)
+		expect(row?.indexdef).toContain(`(${column})`)
+		expect(row?.indexdef).toContain(`${column} IS NOT NULL`)
+	})
+})

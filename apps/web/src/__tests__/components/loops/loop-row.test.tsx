@@ -1,3 +1,4 @@
+import { PlanPercentProvider } from '@/components/billing/plan-percent-context'
 import { LoopRow, loopProgress } from '@/components/loops/loop-row'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -35,8 +36,8 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
 		content: 'Every customer who gives feedback hears back within 30 days',
-		status: 'learning',
-		pill: 'learning',
+		status: 'pilot',
+		pill: 'pilot',
 		entryCondition: null,
 		closeCondition: null,
 		tags: [],
@@ -68,12 +69,20 @@ function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
 	}
 }
 
+describe('LoopRow with an unknown pill', () => {
+	it('shows the raw status text instead of crashing', () => {
+		const loop = buildLoop({ pill: 'retired' as LoopSummary['pill'] })
+		render(<LoopRow loop={loop} actors={[]} />)
+		expect(screen.getAllByText('retired').length).toBeGreaterThan(0)
+	})
+})
+
 describe('LoopRow', () => {
 	it('renders the state dot, name, one-line outcome, and stage label', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Learning')
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Pilot')
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
@@ -171,19 +180,30 @@ describe('LoopRow', () => {
 		expect(link).toHaveAttribute('href', '/ws-1/loops/loop-1')
 	})
 
-	describe('NO CREDITS pill', () => {
-		it('renders the NO CREDITS overlay alongside PAUSED when the composite flag is on', () => {
+	describe('Upgrade pill', () => {
+		it('renders the Upgrade overlay alongside PAUSED when the composite flag is on', () => {
 			render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} showNoCreditsPill />)
 
-			// The PAUSED state label stays; NO CREDITS sits next to it.
+			// The PAUSED state label stays; Upgrade sits next to it.
 			expect(screen.getByTestId('loop-pill')).toHaveTextContent('Paused')
 			const overlay = screen.getByTestId('loop-pill-no-credits')
 			expect(overlay).toBeInTheDocument()
-			// The visible desktop copy is verbatim per SPEC; NO CR. is present but sm:hidden.
-			expect(overlay.textContent).toContain('NO CREDITS')
-			expect(overlay.textContent).toContain('NO CR.')
-			// A11y — full state name announced regardless of viewport.
-			expect(overlay).toHaveAttribute('aria-label', 'Paused — no credits')
+			expect(overlay.textContent).toContain('Upgrade')
+			expect(overlay.textContent).not.toMatch(/NO CR|top up|credit/i)
+			// A11y: full state announced regardless of viewport.
+			expect(overlay).toHaveAttribute('aria-label', 'Paused. Upgrade your plan.')
+		})
+
+		it('says the same with the percent display on', () => {
+			render(
+				<PlanPercentProvider value>
+					<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} showNoCreditsPill />
+				</PlanPercentProvider>,
+			)
+
+			const overlay = screen.getByTestId('loop-pill-no-credits')
+			expect(overlay.textContent).toContain('Upgrade')
+			expect(overlay.textContent).not.toMatch(/NO CR|top up|credit/i)
 		})
 
 		it('does not render the overlay when the composite flag is off', () => {
@@ -193,7 +213,7 @@ describe('LoopRow', () => {
 		})
 
 		it('does not render the overlay on a non-paused row even when the flag is on', () => {
-			render(<LoopRow loop={buildLoop({ pill: 'learning' })} actors={[]} showNoCreditsPill />)
+			render(<LoopRow loop={buildLoop({ pill: 'pilot' })} actors={[]} showNoCreditsPill />)
 
 			expect(screen.queryByTestId('loop-pill-no-credits')).not.toBeInTheDocument()
 		})

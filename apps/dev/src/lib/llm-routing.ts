@@ -1,7 +1,9 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
-import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { sessions, workspaceAiUsage } from '@maskin/db/schema'
+import { PAID_PLANS, type PaidPlan, type SessionResultFailureReason } from '@maskin/shared'
+import { and, eq, gte, or, sql } from 'drizzle-orm'
+import { notifyPlanLimitReached } from '../services/plan-limit-email'
+import { trackPlanLimitReached } from './analytics/plan-limit-events'
 import {
 	API_KEY_CREDIT_MARK_WINDOW_MS,
 	checkApiKeyCreditMark,
@@ -25,6 +27,7 @@ import {
 	FUNDED_DEFAULT_MODEL,
 	getCatalogModel,
 	tierModel,
+	withContextWindow,
 } from './model-catalog'
 import type { WorkspaceSettings } from './types'
 import { SecretUnreadableError, openSecret } from './workspace-secrets'
@@ -64,7 +67,7 @@ export type LlmRoute =
  * Trial is included so BYO-LLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
-const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
+const MASKIN_PLAN_ROUTED_PLANS = new Set<string>(['trial', ...PAID_PLANS])
 
 /**
  * True when Maskin funds this workspace's LLM usage. Every route that reaches
@@ -307,6 +310,26 @@ export function planUsageConds(workspaceId: string, periodStartMs?: number) {
 	return and(...conds)
 }
 
+/**
+ * The rows of `workspace_ai_usage` that count toward plan usage: spend on the
+ * Maskin-funded account that is not part of a session (transcribe_file). Same
+ * period rule as `planUsageConds`. Every row there is plan spend by definition,
+ * so no route filter is needed.
+ */
+export function aiUsageConds(workspaceId: string, periodStartMs?: number) {
+	const conds = [eq(workspaceAiUsage.workspaceId, workspaceId)]
+	if (periodStartMs !== undefined) {
+		conds.push(gte(workspaceAiUsage.createdAt, new Date(periodStartMs)))
+	}
+	return and(...conds)
+}
+
+/** `numeric` comes back from postgres.js as a string; a bad read must never become NaN cents. */
+export function usdToCents(usd: string | number | null | undefined): number {
+	const cents = Number(usd ?? 0) * 100
+	return Number.isFinite(cents) && cents > 0 ? cents : 0
+}
+
 /** One session's cost in (fractional) USD cents: its reported cost, else the token-rate estimate. */
 export function sessionUsageCents(row: {
 	totalCostUsd: string | null
@@ -352,12 +375,128 @@ export async function getWorkspacePlanUsdCentsUsage(
 
 	let totalCents = 0
 	for (const row of rows) totalCents += sessionUsageCents(row)
+
+	// Spend that has no session (transcribe_file) is summed in the database: a
+	// long-lived workspace can hold many small rows and only the total is needed.
+	const [aiUsage] = await db
+		.select({ total: sql<string>`COALESCE(SUM(${workspaceAiUsage.costUsd}), 0)` })
+		.from(workspaceAiUsage)
+		.where(aiUsageConds(workspaceId, periodStartMs))
+	totalCents += usdToCents(aiUsage?.total)
+
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
 	return ceilCents(totalCents)
 }
 
-export type MaskinPlan = 'trial' | 'pro' | 'team'
+export interface PlanTokenUsage {
+	inputTokens: number
+	outputTokens: number
+	sessionCount: number
+}
+
+/**
+ * Input and output tokens and the session count of the same maskin_plan sessions
+ * `getWorkspacePlanUsdCentsUsage` sums since `periodStartMs`, so a token figure
+ * always sits next to the dollar total it belongs to. Product analytics only:
+ * it is never shown to a customer.
+ */
+export async function getWorkspacePlanTokenUsage(
+	db: Pick<Database, 'select'>,
+	workspaceId: string,
+	periodStartMs?: number,
+): Promise<PlanTokenUsage> {
+	const [row] = await db
+		.select({
+			inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+			outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+			sessionCount: sql<string>`COUNT(*)`,
+		})
+		.from(sessions)
+		.where(planUsageConds(workspaceId, periodStartMs))
+	return {
+		inputTokens: Number(row?.inputTokens ?? 0),
+		outputTokens: Number(row?.outputTokens ?? 0),
+		sessionCount: Number(row?.sessionCount ?? 0),
+	}
+}
+
+export interface PlanUsageWindow {
+	workspaceId: string
+	periodStartMs?: number
+}
+
+export interface PlanUsage extends PlanTokenUsage {
+	usdCents: number
+}
+
+// How many workspaces one grouped read covers, so the OR of period conditions stays small.
+const PLAN_USAGE_CHUNK = 200
+
+/**
+ * The plan usage of many workspaces in two grouped reads (sessions, and spend with no
+ * session) per chunk, not the eight or so per workspace `getWorkspacePlanUsdCentsUsage` and
+ * `getWorkspacePlanTokenUsage` run. Each workspace is measured over its own period with the
+ * same conditions (`planUsageConds`, `aiUsageConds`), the same per-session cost rule
+ * (`sessionUsageCents`, written out in SQL) and the same one rounding on the aggregate as
+ * `getWorkspacePlanUsdCentsUsage`, so the figures equal the usage page's. A workspace with no
+ * rows is absent from the result. Product analytics only.
+ */
+export async function getPlanUsageForWorkspaces(
+	db: Pick<Database, 'select'>,
+	windows: PlanUsageWindow[],
+): Promise<Map<string, PlanUsage>> {
+	const out = new Map<string, PlanUsage>()
+	for (let i = 0; i < windows.length; i += PLAN_USAGE_CHUNK) {
+		const chunk = windows.slice(i, i + PLAN_USAGE_CHUNK)
+		const sessionConds = or(...chunk.map((w) => planUsageConds(w.workspaceId, w.periodStartMs)))
+		const aiConds = or(...chunk.map((w) => aiUsageConds(w.workspaceId, w.periodStartMs)))
+		const [sessionRows, aiRows] = await Promise.all([
+			db
+				.select({
+					workspaceId: sessions.workspaceId,
+					// Per session: its reported cost, else the token-rate estimate (sessionUsageCents).
+					cents: sql<string>`COALESCE(SUM(CASE WHEN ${sessions.totalCostUsd} > 0 THEN ${sessions.totalCostUsd} * 100 ELSE (COALESCE(${sessions.inputTokens}, 0) + COALESCE(${sessions.outputTokens}, 0))::numeric / ${LEGACY_TOKENS_PER_USD_CENT} END), 0)`,
+					inputTokens: sql<string>`COALESCE(SUM(${sessions.inputTokens}), 0)`,
+					outputTokens: sql<string>`COALESCE(SUM(${sessions.outputTokens}), 0)`,
+					sessionCount: sql<string>`COUNT(*)`,
+				})
+				.from(sessions)
+				.where(sessionConds)
+				.groupBy(sessions.workspaceId),
+			db
+				.select({
+					workspaceId: workspaceAiUsage.workspaceId,
+					total: sql<string>`COALESCE(SUM(${workspaceAiUsage.costUsd}), 0)`,
+				})
+				.from(workspaceAiUsage)
+				.where(aiConds)
+				.groupBy(workspaceAiUsage.workspaceId),
+		])
+		const cents = new Map<string, number>()
+		for (const row of sessionRows) {
+			cents.set(row.workspaceId, Number(row.cents))
+			out.set(row.workspaceId, {
+				usdCents: 0,
+				inputTokens: Number(row.inputTokens),
+				outputTokens: Number(row.outputTokens),
+				sessionCount: Number(row.sessionCount),
+			})
+		}
+		for (const row of aiRows) {
+			cents.set(row.workspaceId, (cents.get(row.workspaceId) ?? 0) + usdToCents(row.total))
+			if (!out.has(row.workspaceId)) {
+				out.set(row.workspaceId, { usdCents: 0, inputTokens: 0, outputTokens: 0, sessionCount: 0 })
+			}
+		}
+		for (const [workspaceId, usage] of out) {
+			if (cents.has(workspaceId)) usage.usdCents = ceilCents(cents.get(workspaceId) ?? 0)
+		}
+	}
+	return out
+}
+
+export type MaskinPlan = 'trial' | PaidPlan
 
 interface PlanCapContext {
 	plan: MaskinPlan
@@ -388,14 +527,33 @@ export class PlanCapExceededError extends Error {
 	readonly periodEnd: number | null
 
 	constructor(ctx: PlanCapContext) {
-		super(
-			`${ctx.plan} plan cap exceeded: $${(ctx.used / 100).toFixed(2)} of $${(ctx.cap / 100).toFixed(2)} used this period.`,
-		)
+		super(`The ${ctx.plan} plan is used up for this period.`)
 		this.name = 'PlanCapExceededError'
 		this.plan = ctx.plan
 		this.used = ctx.used
 		this.cap = ctx.cap
 		this.periodEnd = ctx.periodEnd
+	}
+}
+
+/** How long a paused automation waits before it asks again while a workspace has no card yet. */
+const TRIAL_NOT_STARTED_RETRY_MS = 5 * 60_000
+
+/**
+ * A workspace that signed up through the card step has not put a card down, so nothing runs
+ * (bet "A card to start a 7-day trial", task T2). Surfaces as HTTP 402 with
+ * `{ code: 'TRIAL_NOT_STARTED' }`, and the client offers "Add card".
+ *
+ * It extends PlanCapExceededError on purpose: every place that already treats a plan cap as the
+ * workspace working as designed (not a Sentry error, automations paused rather than failed)
+ * treats this the same way. `used` and `cap` are 0, and `periodEnd` is a few minutes out so a
+ * paused automation asks again soon after the card is down instead of waiting out an hour.
+ */
+export class TrialNotStartedError extends PlanCapExceededError {
+	constructor() {
+		super({ plan: 'trial', used: 0, cap: 0, periodEnd: Date.now() + TRIAL_NOT_STARTED_RETRY_MS })
+		this.name = 'TrialNotStartedError'
+		this.message = 'Your trial has not started. Add a card to begin your 7 days.'
 	}
 }
 
@@ -423,7 +581,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
-function effectivePeriodEnd(
+export function effectivePeriodEnd(
 	periodStartMs: number | undefined,
 	periodEndMs: number | undefined,
 ): number | null {
@@ -502,6 +660,11 @@ export async function checkPlanCap(params: {
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 	if (params.enterprise) return
 
+	// Signed up through the card step and no card yet: nothing runs until the trial has started.
+	if (plan === 'trial' && billing?.trial_state === 'awaiting_card') {
+		throw new TrialNotStartedError()
+	}
+
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 	if (cap === null) return
@@ -518,11 +681,26 @@ export async function checkPlanCap(params: {
 	if (used < cap) return
 	if (canUseCreditBalance(maskinPlan, billing)) return
 
+	const periodEnd = effectivePeriodEnd(periodStartMs, periodEndMs)
+	void trackPlanLimitReached({
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
+		usedCents: used,
+		capCents: cap,
+		readTokens: () => getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs),
+	})
+	void notifyPlanLimitReached({
+		db: params.db,
+		workspaceId: params.workspaceId,
+		plan: maskinPlan,
+		periodEnd,
+	})
 	throw new PlanCapExceededError({
 		plan: maskinPlan,
 		used,
 		cap,
-		periodEnd: effectivePeriodEnd(periodStartMs, periodEndMs),
+		periodEnd,
 	})
 }
 
@@ -550,7 +728,9 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 		// Force-clear ANTHROPIC_API_KEY so Claude Code uses ANTHROPIC_AUTH_TOKEN's
 		// bearer-token path instead of x-api-key (Morph guide caveat).
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: model,
+		// A model with a known 1M window gets the CLI's "[1m]" marker, or the CLI
+		// assumes 200k for it (see withContextWindow).
+		ANTHROPIC_MODEL: withContextWindow(model),
 		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 	}
 }
@@ -662,7 +842,7 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: model,
+		ANTHROPIC_MODEL: withContextWindow(model),
 		ANTHROPIC_SMALL_FAST_MODEL: smallModel,
 		// The CLI's WebSearch is a server-side Anthropic tool that OpenRouter
 		// does not run: the call dies with "search was cut off" and the turn ends
@@ -780,6 +960,13 @@ export async function resolveLlmRoute(params: {
 	 * production callers omit it.
 	 */
 	env?: NodeJS.ProcessEnv
+	/**
+	 * A retry of a run that died on a Claude limit. When the subscription route yields nothing it
+	 * throws instead of falling through to the custom endpoint, the workspace API key or the
+	 * funded plan: waiting for the reset is the point of the retry, and a key that was never
+	 * the run's route may have no credit. Has no effect when no subscription is connected.
+	 */
+	subscriptionOnly?: boolean
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe, pinned } = params
 
@@ -793,6 +980,8 @@ export async function resolveLlmRoute(params: {
 	 * strands a recoverable session or burns five retries on a dead one.
 	 */
 	let oauthFailureTransient = false
+	/** What the resolver reported when a configured slot yielded nothing usable. */
+	const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
 
 	/** Set when route #4's key was left out because it is marked out of credit. */
 	let apiKeyOutOfCredit = false
@@ -827,8 +1016,6 @@ export async function resolveLlmRoute(params: {
 		//    unless MASKIN_CLAUDE_FAILOVER_ENABLED=false disables it — the flag
 		//    defaults to on and is a runtime kill-switch, not an opt-in.
 		try {
-			/** Set by the resolver when a configured slot yields nothing usable. */
-			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
 			// On (only when the env is the literal "true"): the platform refreshes at
 			// launch with a session-sized buffer and the container never sees the
 			// refresh token. Off (default): today's behaviour exactly (10 minute
@@ -924,6 +1111,21 @@ export async function resolveLlmRoute(params: {
 			})
 		}
 
+		if (params.subscriptionOnly && oauthFailure) {
+			// Limited logins come back at the reset, so say when. Anything else (revoked, unreachable)
+			// is reported as the credential error it is; either way the run stays off routes 3 to 5.
+			if (unusableRef.current?.reason === 'quota_exhausted') {
+				throw new SubscriptionStillLimitedError(
+					`Every connected Claude subscription is at its limit: ${oauthFailure}`,
+					unusableRef.current.retryAt ?? null,
+				)
+			}
+			throw new LlmCredentialsUnavailableError(
+				`Not retried on another route, the run died on a Claude limit and its subscription is unusable: ${oauthFailure}`,
+				oauthFailureTransient,
+			)
+		}
+
 		// Routes 3 and 4 read stored secrets, which are sealed at rest. A value
 		// that cannot be opened ends the lookup here: carrying on to a later
 		// route would quietly run the session on credentials the workspace did
@@ -935,7 +1137,7 @@ export async function resolveLlmRoute(params: {
 				return {
 					route: LLM_ROUTE_CUSTOM,
 					envVars: customEnv,
-					modelName: customEnv.ANTHROPIC_MODEL,
+					modelName: customEnv.ANTHROPIC_MODEL?.replace(/\[1m\]$/i, ''),
 					modelSource: 'workspace',
 				}
 			}
@@ -1131,6 +1333,34 @@ export class LlmCredentialsUnavailableError extends Error {
 						: LlmCredentialsUnavailableError.humanMessage,
 			http_status: null,
 			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * A retry of a run that died on a Claude limit found every subscription login still limited.
+ * Not a credential problem: it reports the limit again, with the reset time when the probe gave
+ * one, so the retry scheduler queues the run again for then instead of starting it on the API key.
+ */
+export class SubscriptionStillLimitedError extends LlmCredentialsUnavailableError {
+	/** ISO-8601 time a login may accept requests again, or null when the probe gave none. */
+	readonly resetAt: string | null
+
+	constructor(detail: string, resetAt: string | null) {
+		super(detail, false)
+		this.name = 'SubscriptionStillLimitedError'
+		this.resetAt = resetAt
+	}
+
+	toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'anthropic',
+			reason_code: 'session_limit',
+			human_message:
+				'Every connected Claude subscription is still at its limit, so this run was not started on another route. It starts again by itself once a subscription is available.',
+			http_status: null,
+			reset_at: this.resetAt,
 			verbatim_output: this.detail,
 		}
 	}
@@ -1439,7 +1669,7 @@ export function resolveChatCredentials(params: {
 	// `billing` undefined when the workspace never had a billing block, so an
 	// entitled workspace can be BYO in every meaningful sense while its plan
 	// still reads as the `trial` default. `isEnterprise()` (the
-	// `enterprise_granted` column OR an enterprise billing owner) is what catches
+	// `enterprise_granted` column) is what catches
 	// that case, and mirrors the `enterprise` param `resolveLlmRoute` takes.
 	if (!isMaskinPlanRouted(wsSettings.billing)) return null
 	if (isEnterprise(workspace)) return null

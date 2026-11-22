@@ -3,7 +3,8 @@ import Foundation
 /// Slack-style `:name:` emoji. Typing `:tad` offers matches; a complete `:tada:` becomes the emoji
 /// when the message is sent.
 public enum EmojiShortcodes {
-	/// Name and emoji, most-used first: the first rows are also the quick picker's grid.
+	/// Name and emoji, most-used first: the first rows are also the quick picker's grid. The `:` list
+	/// offers `catalog` instead (the web names); these names still expand when typed out in full.
 	public static let table: [(name: String, emoji: String)] = [
 		("+1", "👍"), ("heart", "❤️"), ("joy", "😂"), ("tada", "🎉"), ("eyes", "👀"), ("fire", "🔥"),
 		("pray", "🙏"), ("rocket", "🚀"), ("white_check_mark", "✅"), ("100", "💯"), ("clap", "👏"),
@@ -39,20 +40,34 @@ public enum EmojiShortcodes {
 		return table.prefix(48).map(\.emoji).filter { seen.insert($0).inserted }
 	}
 
+	/// The web names first, so `:cake:` is the emoji the list offers for it, then the older names.
 	private static let lookup: [String: String] = Dictionary(
-		table.map { ($0.name, $0.emoji) }, uniquingKeysWith: { first, _ in first })
+		catalog.map { ($0.name, $0.emoji) } + table.map { ($0.name, $0.emoji) }, uniquingKeysWith: { first, _ in first })
 
 	public static func emoji(named name: String) -> String? { lookup[name.lowercased()] }
 
-	/// Matches for what has been typed after the colon: names that start with it first, then names that
-	/// contain it; no more than `limit`, one per emoji.
+	/// Fewest characters after the colon before the list opens, as on the web.
+	public static let minQueryLength = 2
+
+	/// Matches for what has been typed after the colon, in the web's order: names that start with it,
+	/// then names that contain it, then names found through a search word ("lol" finds "joy"); no
+	/// more than `limit`.
 	public static func suggestions(for query: String, limit: Int = 8) -> [(name: String, emoji: String)] {
-		let q = query.lowercased()
-		guard !q.isEmpty else { return [] }
-		let starts = table.filter { $0.name.hasPrefix(q) }
-		let contains = table.filter { !$0.name.hasPrefix(q) && $0.name.contains(q) }
-		var seen = Set<String>()
-		return (starts + contains).filter { seen.insert($0.emoji).inserted }.prefix(limit).map { $0 }
+		let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+		guard q.count >= minQueryLength else { return [] }
+		var starts: [(name: String, emoji: String)] = []
+		var contains: [(name: String, emoji: String)] = []
+		var byAlias: [(name: String, emoji: String)] = []
+		for item in catalog {
+			if item.name.hasPrefix(q) {
+				starts.append((item.name, item.emoji))
+			} else if item.name.contains(q) {
+				contains.append((item.name, item.emoji))
+			} else if item.aliases.contains(where: { $0.contains(q) }) {
+				byAlias.append((item.name, item.emoji))
+			}
+		}
+		return Array((starts + contains + byAlias).prefix(limit))
 	}
 
 	private static let complete = try! NSRegularExpression(pattern: #"(?<![\w:]):([a-z0-9_+-]{1,32}):(?![\w:])"#)

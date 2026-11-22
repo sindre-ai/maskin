@@ -46,6 +46,7 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { maskArgs } from '../lib/actor-tools-redaction'
+import { withHandedFiles } from '../lib/conversation-file-links'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { accessCovers, levelNotAllowed } from '../lib/integrations/access-level'
@@ -92,6 +93,7 @@ import { wakeAgentFromCard } from '../services/chat-card-wake'
 import { humanParticipants, notifyAgentQuestion } from '../services/chat-notifications'
 import { returnsToChatByDefault } from '../services/chat-origin-routing'
 import { resolveAskTargetHuman } from '../services/chief-of-staff-chat'
+import { computerHandbackForCard } from '../services/computer-handback'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { findOrCreateDirectChat } from '../services/direct-chat'
 import { findDirectChatQuestion } from '../services/direct-chat-question'
@@ -205,7 +207,7 @@ app.openapi(createSessionRoute, (async (c) => {
 	// analytics (parent bet's Chief of Staff thinness query) can attribute
 	// every session to the agent that received the owner's first turn without
 	// requiring an additive column migration.
-	// Also record who asked (create_session lands here), so launch can
+	// Also record who asked (create_sub_chat lands here), so launch can
 	// tell the helper who sent it without rewriting the stored action prompt.
 	const baseConfig = {
 		...body.config,
@@ -280,7 +282,11 @@ app.openapi(createSessionRoute, (async (c) => {
 		workspaceId,
 		actorId: body.actor_id,
 		callerKind: 'rest',
-		actionPrompt: body.action_prompt,
+		actionPrompt: await withHandedFiles(db, {
+			workspaceId,
+			actionPrompt: body.action_prompt,
+			fileIds: body.file_ids,
+		}),
 		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
@@ -760,7 +766,7 @@ app.openapi(getSessionRoute, (async (c) => {
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
 /**
- * The flag arrived after the helper ended (create_session with wait: true sets it at poll timeout, and
+ * The flag arrived after the helper ended (create_sub_chat sets it when its wait ends early, and
  * the helper can finish in the gap). Nothing else will fire the return, so do it
  * here. If the end-of-session return already ran and was skipped only because the
  * sender was live, give the one-shot claim back so the flag gets its turn.
@@ -797,7 +803,7 @@ async function returnIfAlreadyEnded(
 const updateSessionSchema = z
 	.object({
 		current_activity: z.string().max(500).nullable().optional(),
-		// create_session (wait: true) sets this when its poll times out: "send me the result later".
+		// create_sub_chat sets this when its wait ends early: "send me the result later".
 		// It only ever turns the flag on.
 		notify_on_complete: z.literal(true).optional(),
 	})
@@ -1223,17 +1229,43 @@ app.openapi(inputSessionRoute, (async (c) => {
 	})
 	if (secretRefusal) return c.json(secretRefusal, 400)
 
+	// A helper's Done on its computer card: the turn starts with a screenshot taken now, so the
+	// helper does not have to remember to look. Only for the card the helper is waiting on.
+	const awaiting = (session.config as { awaiting?: { message_id?: unknown } } | null)?.awaiting
+	const handback =
+		askConversationId &&
+		awaiting &&
+		body.card_answer?.outcome === 'done' &&
+		body.card_answer.message_id === awaiting.message_id
+			? await computerHandbackForCard(db, {
+					workspaceId,
+					conversationId: askConversationId,
+					cardMessageId: body.card_answer.message_id,
+					agentId: session.actorId,
+				}).catch((err: unknown) => {
+					logger.warn('Could not check the input for a computer handback', {
+						session_id: id,
+						error: String(err),
+					})
+					return null
+				})
+			: null
+
 	try {
 		await sessionManager.writeInput(
 			id,
 			{
 				type: 'user',
-				message: { role: 'user', content: body.content },
+				message: {
+					role: 'user',
+					content: handback ? `${body.content}\n\n${handback.note}` : body.content,
+				},
 			},
 			body.attachments,
 			undefined,
 			// Who typed it, so the run can be read back with each message credited to its author.
 			{ maskin_actor_id: actorId },
+			handback?.images,
 		)
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
@@ -1244,7 +1276,6 @@ app.openapi(inputSessionRoute, (async (c) => {
 	// reply in the chat so the question there reads as answered. Inserted
 	// directly rather than through POST /messages — that would wake the chat's
 	// own agents with an answer meant for someone else.
-	const awaiting = (session.config as { awaiting?: { message_id?: unknown } } | null)?.awaiting
 	if (askConversationId && awaiting) {
 		await db
 			.update(sessions)

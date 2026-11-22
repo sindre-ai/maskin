@@ -111,6 +111,17 @@ describe('WorkspaceDesktopRegistry suspend and wake', () => {
 			() => false,
 		)
 
+	it('reports whether idle snapshots are on, after how long, and the image a new computer gets', () => {
+		const { msb } = makeSnapshotMsb()
+
+		expect(makeRegistry(msb).hostInfo()).toEqual({
+			snapshots: { enabled: true, idle_minutes: 10 },
+			new_computer_image: 'd',
+		})
+		const off = new WorkspaceDesktopRegistry({ msb, image: 'd', stateFile, fetchImpl })
+		expect(off.hostInfo().snapshots).toEqual({ enabled: false, idle_minutes: null })
+	})
+
 	it('starts the desktop with `msb run -d`, not create + exec, so a full snapshot is allowed', async () => {
 		const { msb, calls, execs } = makeSnapshotMsb()
 

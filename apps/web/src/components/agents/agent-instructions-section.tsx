@@ -169,7 +169,7 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 						name={agent.name}
 						type={agent.type}
 						size="md"
-						className="h-10 w-10 rounded-xl"
+						className="h-10 w-10"
 						id={agent.id}
 					/>
 					<div className="flex min-w-0 flex-1 flex-col">

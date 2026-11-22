@@ -135,14 +135,18 @@ describe('removal ledger', () => {
 		}
 	})
 
-	it('records run_agent: removed 12 Oct 2026, sweep date 2026-10-15, restored as an alias', () => {
-		const entry = REMOVAL_LEDGER.find((e) => e.tool === 'run_agent')
+	it('records run_agent and create_session as deleted outright on 2026-11-11, with no alias', () => {
+		for (const tool of ['run_agent', 'create_session']) {
+			const entry = REMOVAL_LEDGER.find((e) => e.tool === tool && e.path === undefined)
+			expect(entry, tool).toBeDefined()
+			expect(entry?.removed, tool).toBe('2026-11-11')
+			expect(entry?.decision, tool).toContain('create_sub_chat')
+		}
+	})
+
+	it('records the removed wait parameter of create_sub_chat', () => {
+		const entry = REMOVAL_LEDGER.find((e) => e.tool === 'create_sub_chat' && e.path === 'wait')
 		expect(entry).toBeDefined()
-		expect(entry?.removed).toBe('2026-10-12')
-		expect(entry?.sweepDate).toBe('2026-10-15')
-		expect(entry?.path).toBeUndefined()
-		expect(entry?.decision).toContain('PR 1986')
-		expect(entry?.decision).toContain('alias of create_session')
-		expect(entry?.decision).toContain('D5')
+		expect(entry?.removed).toBe('2026-11-11')
 	})
 })

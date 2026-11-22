@@ -59,7 +59,7 @@ const EXPECTED_READ_TOOL_NAMES = [
 	'list_integration_providers',
 	'list_extensions',
 	'list_for_you',
-	'get_started',
+	'list_marketplace',
 ]
 
 // Pure reads that are not in READ_TOOL_NAMES; they keep re-throwing on error.
@@ -74,13 +74,14 @@ const READS_OUTSIDE_READ_TOOL_NAMES = [
 	'list_notifications',
 	'list_keychain_credentials',
 	'desktop_list_ports',
+	'desktop_settings',
 	'query_data',
 	'list_file_tags',
 	'get_trigger',
 ]
 
-// get_started is in READ_TOOL_NAMES but its confirm path installs a loop.
-const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES = ['get_started']
+// Tools in READ_TOOL_NAMES that are not read-only. None today: install_loop split off list_marketplace.
+const NOT_READ_ONLY_DESPITE_READ_TOOL_NAMES: string[] = []
 
 // Tool names the default templates legitimately tell agents to call that live
 // on another MCP server, so they are never in the Maskin tool list.
@@ -312,12 +313,12 @@ describe('MCP surface pin', () => {
 			expect([...READ_ONLY_TOOLS].sort()).toEqual(expected)
 		})
 
-		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_session, mark_read or get_started', () => {
+		it('no MUTATION_TOOL_KINDS tool is read-only, nor create_sub_chat, mark_read or install_loop', () => {
 			const readOnly = (name: string) => TOOL_ANNOTATIONS[name]?.readOnlyHint
 			for (const name of Object.keys(MUTATION_TOOL_KINDS)) {
 				expect(readOnly(name), `${name} is a mutation but readOnlyHint is true`).toBe(false)
 			}
-			for (const name of ['create_session', 'mark_read', 'get_started']) {
+			for (const name of ['create_sub_chat', 'mark_read', 'install_loop']) {
 				expect(readOnly(name), `${name} must not be read-only`).toBe(false)
 			}
 		})
@@ -355,12 +356,10 @@ describe('MCP surface pin', () => {
 			expect(actual).toEqual(expected)
 		})
 
-		it('openWorldHint is true for create_session and its alias run_agent, the integration tools and the tools that send or read mail only', () => {
+		it('openWorldHint is true for create_sub_chat and create_chat, the integration tools and the tools that send or read mail only', () => {
 			const expected = [
-				'create_session',
 				'create_sub_chat',
 				'create_chat',
-				'run_agent',
 				'list_integrations',
 				'list_integration_providers',
 				'connect_integration',

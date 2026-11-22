@@ -16,6 +16,10 @@ vi.mock('../../services/session-lifecycle', () => ({
 	})),
 }))
 
+vi.mock('../../services/run-death-alerts', () => ({
+	alertOwnersOncePerDay: vi.fn(async () => true),
+}))
+
 vi.mock('../../lib/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -25,6 +29,9 @@ vi.mock('../../lib/logger', () => ({
 	},
 }))
 
+import { logger } from '../../lib/logger'
+import { alertOwnersOncePerDay } from '../../services/run-death-alerts'
+import { BACKOFF_BASE_MS, SessionNotAdmittedError } from '../../services/self-start-limits'
 import { startSession } from '../../services/session-lifecycle'
 
 interface FakeUpdateBuilder {
@@ -124,6 +131,39 @@ describe('SessionRetryScheduler', () => {
 		expect(inserts.some((r) => r.action === 'session_retry_scheduled')).toBe(true)
 	})
 
+	it.each(['session_limit', 'weekly_limit', 'opus_limit', 'max_plan_rate_limit'])(
+		'marks the rerun of a %s failure as subscription only',
+		async (reasonCode) => {
+			const { db } = fakeDb([
+				buildDueRow({
+					config: { llm_route: 'claude_oauth' },
+					result: { failure_reason: { provider: 'anthropic', reason_code: reasonCode } },
+				}),
+			])
+			const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+			await scheduler.tick(NOW)
+
+			const call = vi.mocked(startSession).mock.calls[0][0]
+			expect(call.config).toEqual({ llm_route: 'claude_oauth', retry_subscription_only: true })
+		},
+	)
+
+	it('leaves the config alone for a rerun of any other failure', async () => {
+		const { db } = fakeDb([
+			buildDueRow({
+				config: { llm_route: 'claude_oauth' },
+				result: { failure_reason: { provider: 'anthropic', reason_code: 'credit_balance_low' } },
+			}),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const call = vi.mocked(startSession).mock.calls[0][0]
+		expect(call.config).toEqual({ llm_route: 'claude_oauth' })
+	})
+
 	it('hands the rerun to whoever handed the original work over', async () => {
 		const { db } = fakeDb([
 			buildDueRow({ spawnedBySessionId: 'session-sender', spawnedByMessageId: 17903 }),
@@ -145,6 +185,110 @@ describe('SessionRetryScheduler', () => {
 
 		expect(startSession).not.toHaveBeenCalled()
 		expect(inserts.some((r) => r.action === 'session_retry_capped')).toBe(true)
+	})
+
+	it('tells the owners at the cap, with the Claude limit wording when the run died on a limit', async () => {
+		const { db } = fakeDb([
+			buildDueRow({
+				attemptNumber: MAX_RETRY_ATTEMPTS,
+				result: {
+					failure_reason: {
+						provider: 'anthropic',
+						reason_code: 'weekly_limit',
+						human_message: 'Claude weekly limit reached',
+						http_status: null,
+						reset_at: null,
+						verbatim_output: null,
+					},
+				},
+			}),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		expect(alertOwnersOncePerDay).toHaveBeenCalledTimes(1)
+		expect(vi.mocked(alertOwnersOncePerDay).mock.calls[0][1]).toMatchObject({
+			workspaceId: 'ws-00000000-0000-0000-0000-000000000001',
+			causeKey: 'retry_cap:actor-00000000-0000-0000-0000-000000000001',
+			headline: `Gave up waiting on Claude's limit after ${MAX_RETRY_ATTEMPTS} starts`,
+		})
+	})
+
+	it('uses the neutral wording at the cap when the run did not die on a limit', async () => {
+		const { db } = fakeDb([buildDueRow({ attemptNumber: MAX_RETRY_ATTEMPTS })])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		expect(vi.mocked(alertOwnersOncePerDay).mock.calls[0][1].headline).toBe(
+			`Gave up retrying after ${MAX_RETRY_ATTEMPTS} starts`,
+		)
+	})
+
+	it('puts retry_at back when the retry fails to start, so the next tick finds it', async () => {
+		const dueRow = buildDueRow()
+		const { db, updates } = fakeDb([dueRow])
+		vi.mocked(startSession).mockRejectedValueOnce(new Error('wake hold'))
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		// First the claim clears it, then the failed start restores the original time.
+		const retryAtWrites = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt)
+		expect(retryAtWrites).toEqual([null, dueRow.retryAt])
+		// No retry started, so nothing was linked and no attempt was spent.
+		expect(updates.some((u) => 'retriedSessionId' in u)).toBe(false)
+		expect(updates.some((u) => 'attemptNumber' in u)).toBe(false)
+	})
+
+	it('does not log an error when the gate refuses the retry, and waits until it would admit it', async () => {
+		const dueRow = buildDueRow()
+		const { db, updates } = fakeDb([dueRow])
+		const retryAt = new Date(NOW.getTime() + 2 * 60 * 60_000)
+		vi.mocked(startSession).mockRejectedValueOnce(
+			new SessionNotAdmittedError(
+				'no_change_backoff',
+				'deferred',
+				'retry',
+				retryAt,
+				'Not started yet',
+			),
+		)
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		// Only the retry-start message: this fake db also makes the put-back and the task
+		// restarter sweep log their own unrelated errors.
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'SessionRetryScheduler failed to start retry session',
+			expect.anything(),
+		)
+		const retryAtWrites = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt)
+		expect(retryAtWrites).toEqual([null, retryAt])
+	})
+
+	it('looks again in an hour when the gate refuses without a time', async () => {
+		const dueRow = buildDueRow()
+		const { db, updates } = fakeDb([dueRow])
+		vi.mocked(startSession).mockRejectedValueOnce(
+			new SessionNotAdmittedError('no_change_decision', 'blocked', 'retry', null, 'Not started'),
+		)
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		const before = Date.now()
+		await scheduler.tick(NOW)
+
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'SessionRetryScheduler failed to start retry session',
+			expect.anything(),
+		)
+		const writes = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt as Date | null)
+		expect(writes[0]).toBeNull()
+		const restored = writes[1] as Date
+		expect(restored.getTime()).toBeGreaterThanOrEqual(before + BACKOFF_BASE_MS)
+		expect(restored.getTime()).toBeLessThanOrEqual(Date.now() + BACKOFF_BASE_MS)
 	})
 
 	it('honours the FEATURE_RETRY_SCHEDULER=0 killswitch', async () => {

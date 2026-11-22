@@ -18,7 +18,16 @@ export interface OAuth2Config {
 	extraAuthParams?: Record<string, string>
 	/** Extra params added to token exchange request body */
 	extraTokenParams?: Record<string, string>
-	/** Env var name for OAuth client ID */
+	/**
+	 * The vendor lets only a customer's own admin create the sign-in app. Settings then asks the
+	 * workspace to paste that app's id and secret before Connect, and every sign-in and refresh
+	 * for the workspace uses it. Without it, a workspace's saved app is never read.
+	 */
+	customerApp?: boolean
+	/**
+	 * Env var name for OAuth client ID. Server-wide app. A workspace's own app (customerApp) wins
+	 * over it when one is saved.
+	 */
 	clientIdEnv: string
 	/** Env var name for OAuth client secret. Leave out when tokenAuthMethod is 'none'. */
 	clientSecretEnv?: string
@@ -128,6 +137,12 @@ export interface McpConfig {
 	 * providers carry a `server` is what holds that line.
 	 */
 	server?: McpServerSpec
+	/**
+	 * Extra headers the gateway sends upstream when the calling agent's access is Read, so a
+	 * server with its own read-only switch is held to it as well as to the gateway's refusal of
+	 * write tools. Only read by the gateway; ignored for a provider that is not in GATEWAY_PROVIDERS.
+	 */
+	readOnlyHeaders?: Record<string, string>
 	/**
 	 * How an agent's `tools.mcpServers.<key>` entry for this provider is
 	 * recognised. Omit for the common case: one shared entry that is exactly
