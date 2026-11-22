@@ -85,6 +85,7 @@ import { processDriveWebhook } from '../lib/integrations/providers/google-drive/
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { MEETING_NOTES_PROVIDERS } from '../lib/integrations/providers/meeting-notes'
 import { MICROSOFT_PROVIDER } from '../lib/integrations/providers/microsoft/config'
+import { OWN_APP_PROVIDERS, appIdIsSet } from '../lib/integrations/providers/own-app'
 import { checkPostHogFirstData } from '../lib/integrations/providers/posthog/first-data-check'
 import { parsePostHogProjectId } from '../lib/integrations/providers/posthog/project-pin'
 import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
@@ -314,11 +315,25 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	]),
 	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
 	[DINERO_PROVIDER, FLAGS.DINERO],
+	...OWN_APP_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.OWN_APP_INTEGRATIONS]),
 ])
+
+const OWN_APP_NAMES: ReadonlySet<string> = new Set(OWN_APP_PROVIDERS)
+
+/**
+ * A provider that signs in through an app Maskin owns at the vendor is offered only once the server
+ * has that app's id. Before that a connect would fail at the vendor, so it is hidden and refused.
+ */
+const providerAppReady = (providerName: string): boolean => {
+	if (!OWN_APP_NAMES.has(providerName)) return true
+	const { auth } = getProvider(providerName).config
+	return auth.type !== 'oauth2' || appIdIsSet(auth.config.clientIdEnv)
+}
 
 export const providerVisible = (providerName: string, actorId: string | undefined): boolean => {
 	const flag = FLAGGED_PROVIDERS.get(providerName)
-	return !flag || (!!actorId && isFlagEnabled(actorId, flag))
+	if (flag && !(actorId && isFlagEnabled(actorId, flag))) return false
+	return providerAppReady(providerName)
 }
 
 app.openapi(listProvidersRoute, (async (c) => {

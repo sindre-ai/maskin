@@ -65,6 +65,16 @@ const CATALOG: Record<string, CatalogEntry> = {
 	calendly: { category: 'Email & calendar', domain: 'calendly.com' },
 	monday: { category: 'Docs & data', domain: 'monday.com' },
 	make: { category: 'Docs & data', domain: 'make.com' },
+	hubspot: { category: 'Sales & payments', domain: 'hubspot.com' },
+	asana: { category: 'Docs & data', domain: 'asana.com' },
+	docusign: { category: 'Docs & data', domain: 'docusign.com' },
+	figma: { category: 'Docs & data', domain: 'figma.com' },
+	dropbox: { category: 'Docs & data', domain: 'dropbox.com' },
+	intercom: { category: 'Chat & social', domain: 'intercom.com' },
+	pipedrive: { category: 'Sales & payments', domain: 'pipedrive.com' },
+	ramp: { category: 'Sales & payments', domain: 'ramp.com' },
+	squarespace: { category: 'Docs & data', domain: 'squarespace.com' },
+	xero: { category: 'Sales & payments', domain: 'xero.com' },
 }
 
 /** A provider the catalog does not know yet is still listed, under Docs & data. */
