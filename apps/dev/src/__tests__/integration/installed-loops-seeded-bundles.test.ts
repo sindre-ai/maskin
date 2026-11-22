@@ -173,11 +173,13 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 			expect(tabs).toEqual(
 				slug === 'product-discovery-loop'
 					? ['Radar', 'Learning', 'Briefing', 'Opportunities', 'Opportunity shortlist', 'Pipeline']
-					: slug === 'customer-voice-loop' || slug === 'product-usage-loop'
+					: slug === 'customer-voice-loop'
 						? ['Results']
-						: slug === 'knowledge-wiki-loop'
-							? ['Results', 'Strategic context']
-							: [],
+						: slug === 'product-usage-loop'
+							? ['Results', 'Lifecycle']
+							: slug === 'knowledge-wiki-loop'
+								? ['Results', 'Strategic context']
+								: [],
 			)
 		})
 	}

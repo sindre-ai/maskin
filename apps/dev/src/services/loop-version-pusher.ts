@@ -30,6 +30,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { loopIdentityPatch } from '../lib/marketplace-loops/loop-identity'
 import { loopSettingsPatch, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { LLM_CONFIG_ALLOWLIST, dropLegacyBrowserFlag } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
@@ -858,6 +859,35 @@ export class LoopVersionPusher {
 								metadata: sql`coalesce(${objects.metadata}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
 								updatedAt: new Date(),
 							})
+							.where(eq(objects.id, install.objectId))
+					}
+				}
+			}
+
+			// The flow's own name and description. The agents look the flow up by name and read its
+			// Setup section, so a renamed bundle renames installs still on the old name, and installs
+			// without the section get it. An edited name or description is kept; see loopIdentityPatch.
+			if (install.objectId) {
+				const [source] = await tx
+					.select({
+						slug: marketplaceLoops.slug,
+						name: marketplaceLoops.name,
+						description: marketplaceLoops.description,
+					})
+					.from(marketplaceLoops)
+					.where(eq(marketplaceLoops.id, install.sourceLoopId))
+					.limit(1)
+				const [flow] = await tx
+					.select({ title: objects.title, content: objects.content })
+					.from(objects)
+					.where(eq(objects.id, install.objectId))
+					.limit(1)
+				if (source && flow) {
+					const patch = loopIdentityPatch(source, flow)
+					if (patch.title !== undefined || patch.content !== undefined) {
+						await tx
+							.update(objects)
+							.set({ ...patch, updatedAt: new Date() })
 							.where(eq(objects.id, install.objectId))
 					}
 				}
