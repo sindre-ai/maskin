@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { trackIntegrationToolCalled } from '../../../analytics/integration-events'
+import { flowSlugOfSession, trackReceiptDraftBooked } from '../../../analytics/receipt-events'
 import { logger } from '../../../logger'
 import { IntegrationAuthRevokedError } from '../../errors'
 import { getCredential } from '../../lookup'
@@ -65,6 +66,8 @@ export interface DineroMcpContext {
 	fetchImpl?: typeof fetch
 	/** Overridable in tests. */
 	trackToolCalled?: typeof trackIntegrationToolCalled
+	/** Counts one saved draft as receipt_draft_booked. Overridable in tests. */
+	countDraft?: (ctx: DineroMcpContext) => Promise<void>
 }
 
 async function defaultAuth(
@@ -93,6 +96,32 @@ async function defaultAuth(
 		getProvider(DINERO_PROVIDER),
 	)
 	return { token, organizationId }
+}
+
+/**
+ * One receipt_draft_booked per draft Dinero confirmed as a draft: counts and ids only. The vendor
+ * MCP the gateway counts for is not this tool, so the count is made here. Best-effort: a failure
+ * to count never changes what the agent is told.
+ */
+async function countSavedDraft(ctx: DineroMcpContext): Promise<void> {
+	try {
+		const flowSlug = await flowSlugOfSession(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+			sessionId: ctx.sessionId ?? undefined,
+		})
+		await trackReceiptDraftBooked({
+			flowSlug,
+			connector: DINERO_PROVIDER,
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+		})
+	} catch (err) {
+		logger.warn('Could not count a Dinero draft', {
+			workspaceId: ctx.workspaceId,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+	}
 }
 
 function textResult(payload: unknown, isError = false) {
@@ -641,6 +670,7 @@ export function createDineroMcpServer(
 						`Dinero saved the voucher (${voucher.voucher_guid}) but reports its status as "${voucher.status}", not Draft. Do not save more. Tell a person to check it in Dinero.`,
 					)
 				}
+				await (ctx.countDraft ?? countSavedDraft)(ctx)
 				return success(voucher)
 			}),
 	)

@@ -69,6 +69,7 @@ async function connect(
 		opts.fetchImpl ?? vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => json([]))
 	const getAuth = vi.fn(async () => ({ token: TOKEN, organizationId: 42 }))
 	const trackToolCalled = vi.fn(async () => undefined)
+	const countDraft = vi.fn(async () => undefined)
 	const ctx: DineroMcpContext = {
 		db: {} as Database,
 		workspaceId: 'ws-1',
@@ -78,6 +79,7 @@ async function connect(
 		getAuth,
 		fetchImpl: fetchImpl as unknown as typeof fetch,
 		trackToolCalled,
+		countDraft,
 		...overrides,
 	}
 	const server = createDineroMcpServer(
@@ -98,7 +100,7 @@ async function connect(
 	const client = new Client({ name: 'c', version: '0.0.0' })
 	const [a, b] = InMemoryTransport.createLinkedPair()
 	await Promise.all([server.connect(a), client.connect(b)])
-	return { client, fetchImpl, getAuth, trackToolCalled }
+	return { client, fetchImpl, getAuth, trackToolCalled, countDraft }
 }
 
 function payload(result: Awaited<ReturnType<Client['callTool']>>) {
@@ -218,7 +220,7 @@ describe('dinero_save_draft_purchase_voucher', () => {
 		const fetchImpl = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) =>
 			json(draftVoucher()),
 		)
-		const { client } = await connect({}, { fetchImpl })
+		const { client, countDraft } = await connect({}, { fetchImpl })
 		const res = await client.callTool({ name: WRITE, arguments: cashDraft })
 
 		expect(fetchImpl).toHaveBeenCalledOnce()
@@ -239,6 +241,8 @@ describe('dinero_save_draft_purchase_voucher', () => {
 			is_draft: true,
 		})
 		expect(JSON.stringify(res)).not.toContain(TOKEN)
+		// One saved draft is counted once.
+		expect(countDraft).toHaveBeenCalledOnce()
 	})
 
 	it('uploads the receipt first and attaches it to the draft', async () => {
@@ -300,10 +304,11 @@ describe('dinero_save_draft_purchase_voucher', () => {
 
 	it('stops and says so when Dinero reports anything but Draft', async () => {
 		const fetchImpl = vi.fn(async () => json(draftVoucher('Paid')))
-		const { client, trackToolCalled } = await connect({}, { fetchImpl })
+		const { client, trackToolCalled, countDraft } = await connect({}, { fetchImpl })
 		const res = await client.callTool({ name: WRITE, arguments: cashDraft })
 		expect(res.isError).toBe(true)
 		expect(payload(res).error.code).toBe('NOT_A_DRAFT')
+		expect(countDraft).not.toHaveBeenCalled()
 		expect(trackToolCalled).toHaveBeenCalledWith(
 			expect.objectContaining({ outcome: 'error', errorCode: 'NOT_A_DRAFT' }),
 		)
@@ -321,9 +326,10 @@ describe('dinero_save_draft_purchase_voucher', () => {
 				400,
 			),
 		)
-		const { client } = await connect({}, { fetchImpl })
+		const { client, countDraft } = await connect({}, { fetchImpl })
 		const res = await client.callTool({ name: WRITE, arguments: cashDraft })
 		expect(payload(res).error.code).toBe('INVALID_INPUT')
+		expect(countDraft).not.toHaveBeenCalled()
 		expect(payload(res).error.message).toContain('Lines: Account 1 is not a purchase account')
 	})
 
