@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { MasterKeyProvider } from '@maskin/auth/kms'
-import { events, credentialAccessLog, integrations } from '@maskin/db/schema'
+import { events, credentialAccessLog, integrations, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -248,7 +248,26 @@ describe('the app routes', () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		const body = { clientId: CLIENT_ID, clientSecret: SECRET }
 		expect((await appFor(ws.id, 'viewer').request('PUT', '/salesforce/app', body)).status).toBe(403)
+		// The admin check reads the member row, not the role on the request, so demote the row.
+		await db
+			.update(workspaceMembers)
+			.set({ role: 'member' })
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, ws.id),
+					eq(workspaceMembers.actorId, getTestActorId()),
+				),
+			)
 		expect((await appFor(ws.id, 'member').request('PUT', '/salesforce/app', body)).status).toBe(403)
+		await db
+			.update(workspaceMembers)
+			.set({ role: 'owner' })
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, ws.id),
+					eq(workspaceMembers.actorId, getTestActorId()),
+				),
+			)
 		expect(
 			(await appFor(ws.id, 'owner', 'agent').request('PUT', '/salesforce/app', body)).status,
 		).toBe(403)
