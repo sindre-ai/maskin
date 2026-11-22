@@ -484,4 +484,17 @@ final class MustKeepMoreTests: XCTestCase {
 		let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'PostHog'")).firstMatch
 		expectExists(row, "PostHog is in the Connected list", dump: "mk17-connected", timeout: 15)
 	}
+
+	// MARK: MK-20 The profile sheet starts with Switch workspace
+
+	/// For you → Account → the first row is Switch workspace with the current workspace's name; tapping it opens the
+	/// workspace picker. On an iPad in portrait this is the only way to change workspace (no sidebar).
+	func testMK20_ProfileSheetSwitchWorkspaceRow() throws {
+		openProfile()
+		let row = app.buttons["Switch workspace"].firstMatch
+		expectExists(row, "the profile sheet offers Switch workspace", dump: "mk20-row", timeout: 5)
+		XCTAssertEqual(row.value as? String, "Northwind", "the row names the current workspace")
+		row.tap()
+		expectExists(app.staticTexts["Workspaces"], "Switch workspace opens the workspace picker", dump: "mk20-picker", timeout: 10)
+	}
 }

@@ -37,3 +37,18 @@ struct ChatsPadLayoutTests {
 		#expect(ChatsPadLayout.toggled(.automatic) == .detailOnly)
 	}
 }
+
+@Suite("Where the account avatar shows")
+struct ShellAvatarPlacementTests {
+	@Test("with no rail the screen always draws the avatar")
+	func noRail() {
+		#expect(ShellIdiom.barShowsAvatar(hasRail: false, portrait: true))
+		#expect(ShellIdiom.barShowsAvatar(hasRail: false, portrait: false))
+	}
+
+	@Test("with a rail the screen draws it in portrait only")
+	func rail() {
+		#expect(ShellIdiom.barShowsAvatar(hasRail: true, portrait: true))
+		#expect(!ShellIdiom.barShowsAvatar(hasRail: true, portrait: false))
+	}
+}

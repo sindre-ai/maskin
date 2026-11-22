@@ -248,9 +248,18 @@ private struct AdaptiveTabs: View {
 	@Bindable var runtime: AppRuntime
 	let badges: ShellBadges
 	@State private var showWorkspaces = false
+	@State private var isPortrait = false
 
 	var body: some View {
 		shell
+			.environment(\.shellIsPortrait, isPortrait)
+			.background {
+				GeometryReader { proxy in
+					Color.clear.onChange(of: proxy.size, initial: true) { _, size in
+						isPortrait = ChatsPadLayout.isPortrait(size)
+					}
+				}
+			}
 			.sheet(isPresented: $showWorkspaces) {
 				WorkspaceSwitcher(environment: environment)
 					.presentationDetents([.medium, .large])

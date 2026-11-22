@@ -231,7 +231,9 @@ private struct ChatsContainer: View {
 				.safeAreaInset(edge: .top, spacing: 0) {
 					ChatsListHeader(
 						search: $search, displayActive: displayActive,
-						onDisplay: { showDisplay = true }, onNew: { newChat = NewChatRequest() })
+						onDisplay: { showDisplay = true }, onNew: { newChat = NewChatRequest() },
+						onAccount: showsAccountAvatar ? { runtime?.showProfile = true } : nil,
+						accountName: session?.name ?? "", accountActorID: session?.actorId)
 				}
 				#if os(iOS)
 					.toolbar(.hidden, for: .navigationBar)
@@ -255,6 +257,11 @@ private struct ChatsContainer: View {
 				// iPad spec: the Team column is 430 wide.
 				.navigationSplitViewColumnWidth(min: 360, ideal: 430, max: 520)
 		}
+	}
+
+	/// Portrait has no sidebar to hold the account, so the list header carries the avatar.
+	private var showsAccountAvatar: Bool {
+		runtime != nil && session != nil && ShellIdiom.barShowsAvatar(hasRail: ShellIdiom.hasRail, portrait: isPortrait)
 	}
 
 	/// The Display options differ from the defaults.
