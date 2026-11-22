@@ -25,16 +25,6 @@ enum ChatsPadLayout {
 		if regularWidth { return .all }
 		return portrait && hasSelection ? .detailOnly : .all
 	}
-
-	/// What the panel button does: hide the list when it shows, show it when it is hidden.
-	static func toggled(_ current: NavigationSplitViewVisibility) -> NavigationSplitViewVisibility {
-		current == .detailOnly ? .all : .detailOnly
-	}
-
-	/// The panel button only exists where the list can be hidden: landscape at regular width.
-	static func showsListToggle(isPad: Bool, regularWidth: Bool, portrait: Bool) -> Bool {
-		isPad && regularWidth && !portrait
-	}
 }
 
 /// The one row at the top of the iPad Chats list: a search field with Display inside it, and the

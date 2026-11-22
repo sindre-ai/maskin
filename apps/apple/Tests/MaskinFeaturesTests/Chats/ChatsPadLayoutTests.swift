@@ -34,19 +34,4 @@ struct ChatsPadLayoutTests {
 		#expect(ChatsPadLayout.visibility(portrait: true, hasSelection: false, regularWidth: false) == .all)
 		#expect(ChatsPadLayout.visibility(portrait: false, hasSelection: true, regularWidth: false) == .all)
 	}
-
-	@Test("the panel button flips between list hidden and list shown")
-	func toggle() {
-		#expect(ChatsPadLayout.toggled(.all) == .detailOnly)
-		#expect(ChatsPadLayout.toggled(.detailOnly) == .all)
-		#expect(ChatsPadLayout.toggled(.automatic) == .detailOnly)
-	}
-
-	@Test("the panel button shows on an iPad in landscape at regular width, and nowhere else")
-	func panelButton() {
-		#expect(ChatsPadLayout.showsListToggle(isPad: true, regularWidth: true, portrait: false))
-		#expect(!ChatsPadLayout.showsListToggle(isPad: true, regularWidth: true, portrait: true))
-		#expect(!ChatsPadLayout.showsListToggle(isPad: true, regularWidth: false, portrait: false))
-		#expect(!ChatsPadLayout.showsListToggle(isPad: false, regularWidth: true, portrait: false))
-	}
 }
