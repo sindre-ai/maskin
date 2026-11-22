@@ -24,6 +24,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'airtable',
 			'amplitude',
 			'apollo',
+			'asana',
 			'atlassian',
 			'attio',
 			'azure-devops',
@@ -35,13 +36,18 @@ describe('GATEWAY_PROVIDERS', () => {
 			'cloudflare',
 			'datadog',
 			'dinero',
+			'docusign',
+			'dropbox',
 			'fathom',
+			'figma',
 			'fireflies',
 			'gmail',
 			'gong',
 			'google-calendar',
 			'granola',
 			'hex',
+			'hubspot',
+			'intercom',
 			'lattice',
 			'linear',
 			'make',
@@ -56,18 +62,22 @@ describe('GATEWAY_PROVIDERS', () => {
 			'otter',
 			'outreach',
 			'pagerduty',
+			'pipedrive',
 			'planetscale',
 			'posthog',
+			'ramp',
 			'resend',
 			'retool',
 			'salesforce',
 			'sentry',
+			'squarespace',
 			'stripe',
 			'supabase',
 			'ubersuggest',
 			'uniconta',
 			'vercel',
 			'webflow',
+			'xero',
 			'zapier',
 			'zoom',
 			'zoominfo',
@@ -87,6 +97,11 @@ describe('gatewayServerSpec', () => {
 		expect(spec.url).toBe('${MASKIN_API_URL}/api/integrations/linear/gateway')
 		expect(spec.headers.Authorization).toBe('Bearer ${MASKIN_API_KEY}')
 		expect(JSON.stringify(spec)).not.toContain('LINEAR_TOKEN')
+	})
+
+	it('names the calling session so an Allow in this chat can be found', () => {
+		const spec = gatewayServerSpec('google-calendar') as { headers: Record<string, string> }
+		expect(spec.headers['X-Maskin-Session-Id']).toBe('${SESSION_ID}')
 	})
 })
 

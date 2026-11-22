@@ -3,6 +3,7 @@ import type { ResolvedProvider } from './types'
 import { config as airtableConfig } from './providers/airtable/config'
 import { config as amplitudeConfig } from './providers/amplitude/config'
 import { config as apolloConfig } from './providers/apollo/config'
+import { config as asanaConfig } from './providers/asana/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import {
@@ -20,8 +21,11 @@ import { config as datadogConfig } from './providers/datadog/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
 import { config as dineroConfig } from './providers/dinero/config'
+import { config as docusignConfig } from './providers/docusign/config'
+import { config as dropboxConfig } from './providers/dropbox/config'
 // Import provider configs
 import { config as fathomConfig } from './providers/fathom/config'
+import { config as figmaConfig } from './providers/figma/config'
 import { config as firefliesConfig } from './providers/fireflies/config'
 import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
@@ -51,6 +55,8 @@ import { config as googleSearchConsoleConfig } from './providers/google-search-c
 import { startGscBackfill } from './providers/google-search-console/sync'
 import { config as granolaConfig } from './providers/granola/config'
 import { config as hexConfig } from './providers/hex/config'
+import { config as hubspotConfig } from './providers/hubspot/config'
+import { config as intercomConfig } from './providers/intercom/config'
 import { config as latticeConfig } from './providers/lattice/config'
 import {
 	config as linearConfig,
@@ -77,8 +83,10 @@ import { config as numinaConfig } from './providers/numina/config'
 import { config as otterConfig } from './providers/otter/config'
 import { config as outreachConfig } from './providers/outreach/config'
 import { config as pagerdutyConfig } from './providers/pagerduty/config'
+import { config as pipedriveConfig } from './providers/pipedrive/config'
 import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as rampConfig } from './providers/ramp/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as retoolConfig } from './providers/retool/config'
 import { config as salesforceConfig } from './providers/salesforce/config'
@@ -99,6 +107,7 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { config as squarespaceConfig } from './providers/squarespace/config'
 import { config as stripeConfig } from './providers/stripe/config'
 import { config as supabaseConfig } from './providers/supabase/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
@@ -106,6 +115,7 @@ import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 import { config as unicontaConfig } from './providers/uniconta/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
+import { config as xeroConfig } from './providers/xero/config'
 import { config as zapierConfig } from './providers/zapier/config'
 import { config as zoomConfig } from './providers/zoom/config'
 import { config as zoominfoConfig } from './providers/zoominfo/config'
@@ -400,6 +410,46 @@ providers.set('uniconta', {
 
 providers.set('dinero', {
 	config: dineroConfig,
+})
+
+providers.set('hubspot', {
+	config: hubspotConfig,
+})
+
+providers.set('asana', {
+	config: asanaConfig,
+})
+
+providers.set('docusign', {
+	config: docusignConfig,
+})
+
+providers.set('figma', {
+	config: figmaConfig,
+})
+
+providers.set('dropbox', {
+	config: dropboxConfig,
+})
+
+providers.set('intercom', {
+	config: intercomConfig,
+})
+
+providers.set('pipedrive', {
+	config: pipedriveConfig,
+})
+
+providers.set('ramp', {
+	config: rampConfig,
+})
+
+providers.set('squarespace', {
+	config: squarespaceConfig,
+})
+
+providers.set('xero', {
+	config: xeroConfig,
 })
 
 providers.set('stripe', {
