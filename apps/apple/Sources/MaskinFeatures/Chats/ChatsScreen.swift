@@ -165,7 +165,11 @@ private struct ChatsContainer: View {
 		// sheet of ours is up. Leaving Chats from that bar closes the chat.
 		.onChange(of: barBesideList, initial: true) { runtime?.chatOpenBesideList = barBesideList }
 		.onChange(of: runtime?.selectedTab) {
-			guard ShellIdiom.isPad, isPortrait, runtime?.selectedTab != .chats else { return }
+			// Only where the bottom bar replaces the rail. Slide Over and a one-third split are portrait
+			// at compact width, keep the rail, and keep their open chat when the tab changes.
+			guard ShellIdiom.isPad, horizontalSizeClass == .regular, isPortrait,
+				runtime?.selectedTab != .chats
+			else { return }
 			selection = nil
 		}
 		.hidesPadBar(newChat != nil || showDisplay || showThreads)
