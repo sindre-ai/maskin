@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { _resetUnreadCandidateCache } from '../../lib/unread-candidates'
 import { buildObject, buildSubscription } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -292,14 +291,9 @@ describe('Subscriptions Routes', () => {
 
 	describe('GET /api/subscriptions/unread', () => {
 		// The route first lists the entities that can have unread and only then aggregates, so those
-		// selects come off the queue first. With nothing cached for the person that is, in order: the
-		// newest event id, the onboarding threads, the scan of every mention, the newest event id again
-		// and the scan of mentions since the first one.
-		const candidates = (entityId: string) => [[{ id: 100 }], [], [{ entityId }], [{ id: 100 }], []]
-
-		beforeEach(() => {
-			_resetUnreadCandidateCache()
-		})
+		// selects come off the queue first: the entities the person was mentioned on, then the
+		// onboarding threads.
+		const candidates = (entityId: string) => [[{ entityId }], []]
 
 		it('returns empty list when nothing unread', async () => {
 			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
