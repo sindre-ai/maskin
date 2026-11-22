@@ -72,14 +72,16 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// Install step from the spec: the owner's own Dinero integration keys saved once in the connection
-	// form, no browser sign-in and no server address, and a check on every first run.
+	// Install step from the spec: the owner's own Dinero integration keys saved once in the Connect
+	// Dinero form under Integrations, no browser sign-in and no server address, and a check on every
+	// first run.
 	it('tells the owner how to connect Dinero and what the first run checks', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
 		expect(check).toMatch(/client ID, the client secret and the API key/)
 		expect(check).toMatch(/Pro or Total plan/)
 		expect(check).toMatch(/one company/)
+		expect(check).toMatch(/under Integrations, in the Connect Dinero form/)
 		expect(check).toMatch(/no browser sign-in and no server address/)
 		expect(check).toMatch(/read and write access/)
 		expect(check).toMatch(/at the start of every job/i)
