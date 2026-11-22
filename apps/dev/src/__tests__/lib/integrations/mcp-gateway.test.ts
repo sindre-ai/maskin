@@ -33,6 +33,7 @@ describe('GATEWAY_PROVIDERS', () => {
 			'clickup',
 			'cloudflare',
 			'datadog',
+			'dinero',
 			'fathom',
 			'fireflies',
 			'gmail',

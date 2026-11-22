@@ -18,6 +18,7 @@ import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { config as datadogConfig } from './providers/datadog/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
+import { config as dineroConfig } from './providers/dinero/config'
 // Import provider configs
 import { config as fathomConfig } from './providers/fathom/config'
 import { config as firefliesConfig } from './providers/fireflies/config'
@@ -380,6 +381,10 @@ providers.set('make', {
 
 providers.set('uniconta', {
 	config: unicontaConfig,
+})
+
+providers.set('dinero', {
+	config: dineroConfig,
 })
 
 providers.set('stripe', {

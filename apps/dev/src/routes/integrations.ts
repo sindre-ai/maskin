@@ -62,6 +62,7 @@ import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integra
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
 import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
+import { DINERO_PROVIDER } from '../lib/integrations/providers/dinero/config'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
@@ -310,6 +311,7 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 		FLAGS.SALES_AUTOMATION_INTEGRATIONS,
 	]),
 	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
+	[DINERO_PROVIDER, FLAGS.DINERO],
 ])
 
 export const providerVisible = (providerName: string, actorId: string | undefined): boolean => {

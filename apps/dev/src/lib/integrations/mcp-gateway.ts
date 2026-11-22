@@ -46,6 +46,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'clickup',
 	'cloudflare',
 	'datadog',
+	'dinero',
 	'fathom',
 	'fireflies',
 	'gmail',
