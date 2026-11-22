@@ -16,6 +16,19 @@ const SALESFORCE = {
 	events: [],
 	customerApp: true,
 }
+const LOOKER = {
+	name: 'looker',
+	displayName: 'Looker',
+	authType: 'oauth2',
+	events: [],
+	customerApp: true,
+	customerAppPublic: true,
+	customerValue: {
+		label: 'Looker address',
+		placeholder: 'yourcompany.cloud.looker.com',
+		help: 'The address of your Looker instance.',
+	},
+}
 const CALLBACK = 'https://api.example.com/api/integrations/salesforce/callback'
 
 async function stubSalesforce(page: import('@playwright/test').Page, saved: { value: boolean }) {
@@ -106,6 +119,51 @@ test.describe('Settings — Integrations own sign-in app form', () => {
 			await expect(dialog.getByText('Change the Salesforce app')).toBeVisible()
 			await expect(dialog.getByLabel('App secret')).toHaveValue('')
 			await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled()
+		})
+	}
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`a tool at its own address asks for the address and no secret at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await page.route(
+				(url) => url.pathname === '/api/integrations/providers',
+				async (route) => {
+					const response = await route.fetch()
+					const providers = (await response.json()) as unknown[]
+					await route.fulfill({ response, json: [...providers, LOOKER] })
+				},
+			)
+			const puts: unknown[] = []
+			await page.route(
+				(url) => url.pathname === '/api/integrations/looker/app',
+				async (route) => {
+					if (route.request().method() === 'PUT') puts.push(route.request().postDataJSON())
+					await route.fulfill({ json: { configured: false, callbackUrl: CALLBACK } })
+				},
+			)
+			await page.route(
+				(url) => url.pathname === '/api/integrations/looker/connect',
+				async (route) => route.fulfill({ json: { install_url: '/signed-in-at-looker' } }),
+			)
+			await page.goto(`/${account.workspaceId}/settings/integrations`)
+			await openDiscover(page)
+			await page.getByPlaceholder(/Search integrations/).fill('Looker')
+
+			await page.getByRole('button', { name: 'Connect', exact: true }).click()
+			const dialog = page.getByRole('dialog')
+			await expect(dialog.getByText('Connect Looker')).toBeVisible()
+			await expect(dialog.getByLabel('App secret')).toHaveCount(0)
+			const save = dialog.getByRole('button', { name: 'Save and connect' })
+			await dialog.getByLabel('App ID').fill('client-guid')
+			await expect(save).toBeDisabled()
+			await dialog.getByLabel('Looker address').fill('acme.cloud.looker.com')
+			await save.click()
+			await expect
+				.poll(() => puts)
+				.toEqual([{ clientId: 'client-guid', value: 'acme.cloud.looker.com' }])
 		})
 	}
 })

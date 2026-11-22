@@ -101,7 +101,7 @@ export function useOAuthApp(
 export function useSaveOAuthApp(workspaceId: string, provider: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (input: { clientId: string; clientSecret: string }) =>
+		mutationFn: (input: { clientId: string; clientSecret?: string; value?: string }) =>
 			api.integrations.saveOAuthApp(workspaceId, provider, input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })

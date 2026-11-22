@@ -10,6 +10,7 @@ import {
 	config as azureDevopsConfig,
 	parseTokenResponse as azureDevopsParseTokenResponse,
 } from './providers/azure-devops/config'
+import { config as boxConfig } from './providers/box/config'
 import { config as calendlyConfig } from './providers/calendly/config'
 import { config as canvaConfig } from './providers/canva/config'
 import { config as clayConfig } from './providers/clay/config'
@@ -56,6 +57,7 @@ import { config as granolaConfig } from './providers/granola/config'
 import { config as hexConfig } from './providers/hex/config'
 import { config as hubspotConfig } from './providers/hubspot/config'
 import { config as intercomConfig } from './providers/intercom/config'
+import { config as latticeConfig } from './providers/lattice/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -63,6 +65,7 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import { config as lookerConfig } from './providers/looker/config'
 import { config as makeConfig } from './providers/make/config'
 import {
 	config as microsoftConfig,
@@ -84,6 +87,7 @@ import { config as pagerdutyConfig } from './providers/pagerduty/config'
 import { config as pipedriveConfig } from './providers/pipedrive/config'
 import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as powerBiConfig } from './providers/power-bi/config'
 import { config as rampConfig } from './providers/ramp/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as retoolConfig } from './providers/retool/config'
@@ -115,6 +119,7 @@ import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as xeroConfig } from './providers/xero/config'
 import { config as zapierConfig } from './providers/zapier/config'
+import { config as zendeskConfig } from './providers/zendesk/config'
 import { config as zoomConfig } from './providers/zoom/config'
 import { config as zoominfoConfig } from './providers/zoominfo/config'
 
@@ -304,6 +309,26 @@ providers.set('zoom', {
 
 providers.set('salesforce', {
 	config: salesforceConfig,
+})
+
+providers.set('box', {
+	config: boxConfig,
+})
+
+providers.set('lattice', {
+	config: latticeConfig,
+})
+
+providers.set('looker', {
+	config: lookerConfig,
+})
+
+providers.set('power-bi', {
+	config: powerBiConfig,
+})
+
+providers.set('zendesk', {
+	config: zendeskConfig,
 })
 
 providers.set('fireflies', {

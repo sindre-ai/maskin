@@ -252,13 +252,21 @@ export function OwnAppDialog({
 	const [confirmingRemove, setConfirmingRemove] = useState(false)
 	const [clientId, setClientId] = useState('')
 	const [clientSecret, setClientSecret] = useState('')
+	const [value, setValue] = useState('')
 	const [copied, setCopied] = useState(false)
+	// A public client has no secret. A tool at a per-customer address has one more box.
+	const needsSecret = !provider.customerAppPublic
+	const valueField = provider.customerValue
+	const valueToSend = value.trim() || app?.value || ''
+	const ready =
+		!!clientId.trim() && (!needsSecret || !!clientSecret) && (!valueField || !!valueToSend)
 	const replacing = !!app?.configured
 	const pending = save.isPending || connect.isPending
 
 	const close = () => {
 		setClientId('')
 		setClientSecret('')
+		setValue('')
 		setConfirmingRemove(false)
 		save.reset()
 		remove.reset()
@@ -273,9 +281,13 @@ export function OwnAppDialog({
 		})
 	}
 	const handleSave = () => {
-		if (!canWrite || !clientId.trim() || !clientSecret) return
+		if (!canWrite || !ready) return
 		save.mutate(
-			{ clientId: clientId.trim(), clientSecret },
+			{
+				clientId: clientId.trim(),
+				...(needsSecret && { clientSecret }),
+				...(valueField && { value: valueToSend }),
+			},
 			{
 				onSuccess: () => {
 					if (connected) {
@@ -313,8 +325,9 @@ export function OwnAppDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{provider.displayName} lets only your own admin create the app that signs in. Create it
-						in your {provider.displayName} account, then paste its id and secret here. The secret is
-						stored encrypted and is never shown again.
+						in your {provider.displayName} account, then paste its id
+						{needsSecret ? ' and secret' : ''} here.
+						{needsSecret ? ' The secret is stored encrypted and is never shown again.' : ''}
 						{replacing && connected
 							? ' If you change to a different app, reconnect afterwards.'
 							: ''}
@@ -355,17 +368,32 @@ export function OwnAppDialog({
 							placeholder={app?.clientId ?? 'Consumer key'}
 						/>
 					</div>
-					<div className="space-y-2">
-						<Label htmlFor="own-app-secret">App secret</Label>
-						<Input
-							id="own-app-secret"
-							type="password"
-							autoComplete="new-password"
-							value={clientSecret}
-							onChange={(e) => setClientSecret(e.target.value)}
-							placeholder={replacing ? 'Paste the secret again to replace it' : 'Consumer secret'}
-						/>
-					</div>
+					{needsSecret && (
+						<div className="space-y-2">
+							<Label htmlFor="own-app-secret">App secret</Label>
+							<Input
+								id="own-app-secret"
+								type="password"
+								autoComplete="new-password"
+								value={clientSecret}
+								onChange={(e) => setClientSecret(e.target.value)}
+								placeholder={replacing ? 'Paste the secret again to replace it' : 'Consumer secret'}
+							/>
+						</div>
+					)}
+					{valueField && (
+						<div className="space-y-2">
+							<Label htmlFor="own-app-value">{valueField.label}</Label>
+							<Input
+								id="own-app-value"
+								autoComplete="off"
+								value={value}
+								onChange={(e) => setValue(e.target.value)}
+								placeholder={app?.value ?? valueField.placeholder}
+							/>
+							{valueField.help && <p className="text-xs text-text-secondary">{valueField.help}</p>}
+						</div>
+					)}
 					{error && (
 						<p role="alert" className="text-sm text-destructive">
 							{error.message}
@@ -415,10 +443,7 @@ export function OwnAppDialog({
 							<Button type="button" variant="ghost" onClick={close}>
 								Cancel
 							</Button>
-							<Button
-								type="submit"
-								disabled={!clientId.trim() || !clientSecret || pending || !canWrite}
-							>
+							<Button type="submit" disabled={!ready || pending || !canWrite}>
 								{pending ? 'Saving…' : connected || replacing ? 'Save' : 'Save and connect'}
 							</Button>
 						</div>

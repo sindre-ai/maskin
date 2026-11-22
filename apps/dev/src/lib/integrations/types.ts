@@ -1,5 +1,22 @@
 // ── Auth configs ────────────────────────────────────────────────────────────
 
+/**
+ * One extra value a customer types next to their app id, for a tool that lives at a different
+ * address for every customer (a Looker instance, a Microsoft tenant). Stored in the same row as the
+ * app id, not secret. The tool's sign-in, token, revoke and server addresses carry {value} where it
+ * goes. Checked as a plain host name or tenant id before it is saved and before each use.
+ */
+export interface CustomerValueConfig {
+	/** The field's label in Settings, for example "Looker instance address". */
+	label: string
+	placeholder: string
+	help?: string
+	/** host: a public host name. tenant: a Microsoft tenant id (GUID) or its domain. */
+	kind: 'host' | 'tenant'
+	/** host only: the vendor's own domains. A host that does not end in one of them is refused. */
+	hostSuffixes?: string[]
+}
+
 export interface OAuth2Config {
 	authorizationUrl: string
 	tokenUrl: string
@@ -24,6 +41,12 @@ export interface OAuth2Config {
 	 * for the workspace uses it. Without it, a workspace's saved app is never read.
 	 */
 	customerApp?: boolean
+	/**
+	 * With customerApp: the tool also lives at an address that differs per customer. Settings asks
+	 * for it with the app id, and {value} in this config's URLs and in mcp.server.url is replaced by
+	 * it. With tokenAuthMethod 'none' the app has no secret and the form does not ask for one.
+	 */
+	customerValue?: CustomerValueConfig
 	/**
 	 * Env var name for OAuth client ID. Server-wide app. A workspace's own app (customerApp) wins
 	 * over it when one is saved.

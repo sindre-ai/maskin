@@ -8,7 +8,7 @@ const connectMutate = vi.fn()
 const saveMutate = vi.fn()
 const removeMutate = vi.fn()
 let removeError: Error | null = null
-let savedApp: { configured: boolean; clientId?: string; callbackUrl: string } = {
+let savedApp: { configured: boolean; clientId?: string; value?: string; callbackUrl: string } = {
 	configured: false,
 	callbackUrl: 'https://api.example.com/api/integrations/salesforce/callback',
 }
@@ -46,6 +46,19 @@ const salesforce: ProviderInfo = {
 	authType: 'oauth2',
 	events: [],
 	customerApp: true,
+}
+const looker: ProviderInfo = {
+	name: 'looker',
+	displayName: 'Looker',
+	authType: 'oauth2',
+	events: [],
+	customerApp: true,
+	customerAppPublic: true,
+	customerValue: {
+		label: 'Looker address',
+		placeholder: 'yourcompany.cloud.looker.com',
+		help: 'The address of your Looker instance.',
+	},
 }
 const linear: ProviderInfo = {
 	name: 'linear',
@@ -141,6 +154,34 @@ describe('Connect for a tool that wants the customer own app', () => {
 		renderRow(salesforce)
 		await userEvent.click(screen.getByRole('button', { name: 'Change app' }))
 		expect(await screen.findByRole('alert')).toHaveTextContent('Disconnect Salesforce first')
+	})
+
+	it('asks for the tool address and no secret when the tool is a public client at its own address', async () => {
+		renderRow(looker)
+		await userEvent.click(screen.getByRole('button', { name: 'Connect' }))
+		const save = await screen.findByRole('button', { name: 'Save and connect' })
+		expect(screen.queryByLabelText('App secret')).not.toBeInTheDocument()
+		expect(save).toBeDisabled()
+		await userEvent.type(screen.getByLabelText('App ID'), 'client-guid')
+		expect(save).toBeDisabled()
+		await userEvent.type(screen.getByLabelText('Looker address'), ' acme.cloud.looker.com ')
+		await userEvent.click(save)
+		expect(saveMutate).toHaveBeenCalledWith(
+			{ clientId: 'client-guid', value: 'acme.cloud.looker.com' },
+			expect.any(Object),
+		)
+	})
+
+	it('keeps the saved address when only the app id is replaced', async () => {
+		savedApp = { ...savedApp, configured: true, clientId: 'old', value: 'acme.cloud.looker.com' }
+		renderRow(looker)
+		await userEvent.click(screen.getByRole('button', { name: 'Change app' }))
+		await userEvent.type(await screen.findByLabelText('App ID'), 'new-guid')
+		await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+		expect(saveMutate).toHaveBeenCalledWith(
+			{ clientId: 'new-guid', value: 'acme.cloud.looker.com' },
+			expect.any(Object),
+		)
 	})
 
 	it('leaves every other tool alone: Connect signs in and nothing asks for an app', async () => {

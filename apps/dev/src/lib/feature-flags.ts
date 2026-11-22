@@ -212,6 +212,15 @@ export const FLAGS = {
 	 */
 	SALESFORCE: 'salesforce',
 	/**
+	 * Gates the tools that sign in with a customer's own app and were added after Salesforce: Box and
+	 * Lattice (task [Add the other eleven customer-app tools](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/126e9c17-63d3-4b0f-86fb-c8918a901b94)).
+	 * Actor-scoped, read by the integrations routes: off means the tools are missing from
+	 * GET /api/integrations/providers and their connect and app calls are refused, so Settings
+	 * shows nothing new. Retire once a real admin has connected each through the form and the
+	 * providers are on for everyone.
+	 */
+	CUSTOMER_APP_TOOLS: 'customer-app-tools',
+	/**
 	 * Gates the four meeting-notes integrations Fireflies, Granola, Fathom and Otter (task
 	 * [Add four meeting-notes integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/7bfb4736-6c21-4cc9-9a19-2e6f8f4d35d6)).
 	 * Actor-scoped, read by the integrations routes: off means the four are missing from

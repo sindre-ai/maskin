@@ -14,21 +14,32 @@ export const OAUTH_APP_MODE = 'oauth_app'
 /** Source on the audit row an app write leaves. */
 export const OAUTH_APP_SOURCE = 'oauth_app_form'
 
+const PUBLIC_CLIENT_MARKER = 'public-client'
+
 export interface OAuthApp {
 	clientId: string
+	/** Empty for a public client, which has no secret. */
 	clientSecret: string
+	/** The customer's own address or tenant (OAuth2Config.customerValue). Not secret. */
+	value?: string
 }
 
 export interface OAuthAppStatus {
 	configured: boolean
 	/** Not secret: it is on the sign-in URL the browser follows. */
 	clientId?: string
+	/** The customer's own address or tenant, for a tool that has one. Not secret. */
+	value?: string
 	updatedAt?: string
 }
 
 interface AppConfig {
 	client_id?: string
 	for_provider?: string
+	/** Set when the app is a public client: no secret was saved. */
+	public?: boolean
+	/** The customer's own address or tenant. */
+	value?: string
 }
 
 function appWhere(workspaceId: string, provider: string) {
@@ -52,10 +63,12 @@ export async function getOAuthAppStatus(
 		.where(and(appWhere(workspaceId, provider), eq(integrations.status, 'active')))
 		.limit(1)
 	if (!row) return { configured: false }
-	const clientId = (row.config as AppConfig | null)?.client_id
+	const appConfig = row.config as AppConfig | null
+	const clientId = appConfig?.client_id
 	return {
 		configured: true,
 		...(clientId && { clientId }),
+		...(appConfig?.value && { value: appConfig.value }),
 		...(row.updatedAt && { updatedAt: row.updatedAt.toISOString() }),
 	}
 }
@@ -79,10 +92,14 @@ export async function loadOAuthApp(
 		.from(integrations)
 		.where(and(appWhere(workspaceId, provider), eq(integrations.status, 'active')))
 		.limit(1)
-	const clientId = (row?.config as AppConfig | null)?.client_id
-	if (!row?.credentials || !row.dekCiphertext || !clientId) return null
+	const appConfig = row?.config as AppConfig | null
+	const clientId = appConfig?.client_id
+	if (!row || !clientId) return null
+	const value = appConfig?.value
+	if (appConfig?.public) return { clientId, clientSecret: '', ...(value && { value }) }
+	if (!row.credentials || !row.dekCiphertext) return null
 	const clientSecret = await decryptEnvelope(kms, workspaceId, row.credentials, row.dekCiphertext)
-	return { clientId, clientSecret }
+	return { clientId, clientSecret, ...(value && { value }) }
 }
 
 /** A different app id was pasted while the tool is connected: its token belongs to the old app. */
@@ -121,8 +138,10 @@ export interface SaveOAuthAppInput {
 	provider: string
 	displayName: string
 	clientId: string
-	/** Consumed here and never stored in the clear, logged or put on an event. */
-	clientSecret: string
+	/** Consumed here and never stored in the clear, logged or put on an event. Null for a public client. */
+	clientSecret: string | null
+	/** The customer's own address or tenant, already checked by the caller. Saved in the row's config. */
+	value?: string
 }
 
 /**
@@ -143,9 +162,16 @@ export async function saveOAuthApp(
 	const { workspaceId, actorId, provider } = input
 	// The app id is not secret, but it rides the same value rule: it ends up in a URL and a form body.
 	assertValidCredentialValue(input.clientId)
-	assertValidCredentialValue(input.clientSecret)
-	const config: AppConfig = { client_id: input.clientId, for_provider: provider }
-	const sealed = await encryptEnvelope(kms, workspaceId, input.clientSecret)
+	const config: AppConfig = {
+		client_id: input.clientId,
+		for_provider: provider,
+		...(input.clientSecret === null && { public: true }),
+		...(input.value && { value: input.value }),
+	}
+	if (input.clientSecret !== null) assertValidCredentialValue(input.clientSecret)
+	// An active row must hold credentials (database rule), so a public client seals a fixed marker
+	// instead of a secret. It is never read: the config's public flag short-circuits the lookup.
+	const sealed = await encryptEnvelope(kms, workspaceId, input.clientSecret ?? PUBLIC_CLIENT_MARKER)
 
 	return db.transaction(async (tx) => {
 		// One app per tool per workspace. The unique index does not cover a NULL actor, so serialise here.
@@ -161,8 +187,13 @@ export async function saveOAuthApp(
 
 		let integrationId: string
 		if (existing) {
-			const savedId = (existing.config as AppConfig | null)?.client_id
-			if (savedId && savedId !== input.clientId && (await isConnected(tx, workspaceId, provider))) {
+			// A token was issued to the saved app at the saved address: a different id or address
+			// would strand it.
+			const saved = existing.config as AppConfig | null
+			const changed =
+				(!!saved?.client_id && saved.client_id !== input.clientId) ||
+				(!!saved?.value && saved.value !== input.value)
+			if (changed && (await isConnected(tx, workspaceId, provider))) {
 				throw new OAuthAppInUseError()
 			}
 			integrationId = existing.id

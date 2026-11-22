@@ -4,6 +4,7 @@ import { providerParamsSchema } from '@maskin/shared'
 import type { Context } from 'hono'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { CredentialValueError } from '../lib/integrations/credential-value'
+import { CustomerValueError, validateCustomerValue } from '../lib/integrations/customer-value'
 import {
 	OAuthAppInUseError,
 	deleteOAuthApp,
@@ -11,6 +12,7 @@ import {
 	saveOAuthApp,
 } from '../lib/integrations/oauth-app'
 import { getProvider } from '../lib/integrations/registry'
+import type { OAuth2Config } from '../lib/integrations/types'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -28,7 +30,10 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const putBodySchema = z
 	.object({
 		clientId: z.string().trim().min(1).max(1024),
-		clientSecret: z.string().min(1).max(1024),
+		// Left out for a public client (PKCE, no secret), required for every other tool.
+		clientSecret: z.string().min(1).max(1024).optional(),
+		// The customer's own address or tenant, for a tool that has one. Checked again below.
+		value: z.string().trim().min(1).max(253).optional(),
 	})
 	.strict()
 
@@ -50,7 +55,7 @@ const appRouteResponses = {
 }
 
 type Guard =
-	| { ok: true; displayName: string }
+	| { ok: true; displayName: string; oauth: OAuth2Config }
 	| {
 			ok: false
 			status: 400 | 403 | 404
@@ -106,7 +111,7 @@ async function guard(
 			message: 'Only a workspace admin or owner can change the sign-in app',
 		}
 	}
-	return { ok: true, displayName }
+	return { ok: true, displayName, oauth: auth.config }
 }
 
 async function statusBody(c: Context<Env>, db: Database, workspaceId: string, provider: string) {
@@ -177,6 +182,37 @@ app.openapi(putAppRoute, (async (c) => {
 	const parsed = await readSecretBody(c, putBodySchema)
 	if (!parsed.ok) return c.json(createApiError('BAD_REQUEST', parsed.message), 400)
 
+	// What the tool's setup says it takes: a secret unless it is a public client, and a value only
+	// where it has one. Anything else is refused rather than stored and ignored.
+	const publicClient = guarded.oauth.tokenAuthMethod === 'none'
+	const secret = parsed.data.clientSecret
+	if (publicClient && secret !== undefined) {
+		return c.json(
+			createApiError('BAD_REQUEST', `${guarded.displayName} does not use an app secret`),
+			400,
+		)
+	}
+	if (!publicClient && secret === undefined) {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid fields: clientSecret'), 400)
+	}
+	const valueSpec = guarded.oauth.customerValue
+	let value: string | undefined
+	if (valueSpec) {
+		try {
+			value = validateCustomerValue(valueSpec, parsed.data.value)
+		} catch (err) {
+			if (err instanceof CustomerValueError) {
+				return c.json(createApiError(err.code, err.message), err.status)
+			}
+			throw err
+		}
+	} else if (parsed.data.value !== undefined) {
+		return c.json(
+			createApiError('BAD_REQUEST', `${guarded.displayName} does not take an address`),
+			400,
+		)
+	}
+
 	try {
 		await saveOAuthApp(db, getKmsProvider(), {
 			workspaceId,
@@ -184,7 +220,8 @@ app.openapi(putAppRoute, (async (c) => {
 			provider,
 			displayName: `${guarded.displayName} app`,
 			clientId: parsed.data.clientId,
-			clientSecret: parsed.data.clientSecret,
+			clientSecret: secret ?? null,
+			value,
 		})
 	} catch (err) {
 		if (err instanceof CredentialValueError) {
@@ -194,7 +231,7 @@ app.openapi(putAppRoute, (async (c) => {
 			return c.json(
 				createApiError(
 					'CONFLICT',
-					`Disconnect ${guarded.displayName} first: it is signed in with the saved app, so a different app id would strand it. The same app id with a new secret is fine`,
+					`Disconnect ${guarded.displayName} first: it is signed in with the saved app, so a different app id or address would strand it. The same app id and address with a new secret is fine`,
 				),
 				409,
 			)

@@ -1016,7 +1016,7 @@ export const api = {
 		saveOAuthApp: (
 			workspaceId: string,
 			provider: string,
-			body: { clientId: string; clientSecret: string },
+			body: { clientId: string; clientSecret?: string; value?: string },
 		) =>
 			request<OAuthAppStatus>(`/integrations/${provider}/app`, {
 				method: 'PUT',
@@ -2916,6 +2916,8 @@ export interface ProviderEventDefinition {
 export interface OAuthAppStatus {
 	configured: boolean
 	clientId?: string
+	/** The customer's own address or tenant, for a tool that has one. Not secret. */
+	value?: string
 	updatedAt?: string
 	/** The URL the vendor's app must list as its callback. */
 	callbackUrl: string
@@ -2929,6 +2931,10 @@ export interface ProviderInfo {
 	externalIdDisplay?: 'email' | 'installation'
 	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
 	customerApp?: boolean
+	/** With customerApp: the app has no secret (a public client), so the form does not ask for one. */
+	customerAppPublic?: boolean
+	/** With customerApp: the tool lives at an address that differs per customer, asked for in the form. */
+	customerValue?: { label: string; placeholder: string; help?: string }
 	mcp?: {
 		envKey: string
 		autoInject: boolean
