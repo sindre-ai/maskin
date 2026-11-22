@@ -41,7 +41,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
-import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
+import {
+	EXTENSION_TOOL_ANNOTATIONS,
+	READ_ONLY_TOOLS,
+	TOOL_ANNOTATIONS,
+	extensionToolTitle,
+} from './annotations.js'
 import { addCopenhagenTimesToResponse } from './copenhagen-times.js'
 import {
 	CURSOR_MAX_OFFSET,
@@ -3874,8 +3879,9 @@ export function createMcpServer(config: McpConfig) {
 		handlers.set(name, wrappedHandler)
 
 		// Title and annotations come from the table in annotations.ts, so every
-		// tool gets them here and nowhere else. Extension tools have no row and
-		// pass through unannotated.
+		// platform tool gets them here. Extension tools have no row: they carry
+		// their own title and annotations from the loop that registers them, and
+		// pass through here untouched.
 		const annotation = TOOL_ANNOTATIONS[name]
 		const annotatedDefinition = annotation
 			? {
@@ -10940,8 +10946,10 @@ ${claudeCredsBlock}`,
 					server,
 					`${ext.id}_${tool.name}`,
 					{
+						title: extensionToolTitle(tool.name),
 						description: `[${ext.name}] ${tool.description}`,
 						inputSchema: tool.inputSchema.shape,
+						annotations: { ...EXTENSION_TOOL_ANNOTATIONS },
 						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 					},
 					async (args) => {

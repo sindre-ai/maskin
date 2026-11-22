@@ -7,7 +7,9 @@
  * enforcement.
  *
  * Extension tools are registered as `${ext.id}_${tool.name}` at runtime. They are
- * dynamic, have no entry here, and are not annotated.
+ * dynamic and have no row here, on purpose: a row would make assertNotHeldByPilot
+ * (server.ts) treat them as classified. They get the title and annotations from
+ * extensionToolTitle and EXTENSION_TOOL_ANNOTATIONS at the end of this file instead.
  *
  * This table is deliberately separate from READ_TOOL_NAMES (read-error.ts) and
  * MUTATION_TOOL_KINDS (telemetry.ts). READ_TOOL_NAMES also decides whether a
@@ -256,3 +258,27 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotationEntry>> = O
 		]),
 	),
 )
+
+/**
+ * Plain title for an extension tool, from its own name: "create_contact" is "Create contact".
+ * The extension id prefix is left off, the same way the platform rows above read.
+ */
+export function extensionToolTitle(toolName: string): string {
+	const words = toolName.split(/[_\-\s]+/).filter(Boolean)
+	if (words.length === 0) return toolName
+	return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
+}
+
+/**
+ * Annotations every extension tool carries. Unmarked means write everywhere else in our code, so
+ * the default is the changes-data label: not read-only, and destructiveHint true, which is the hint
+ * Claude's directory asks for on a tool that modifies data. Nothing an extension says about itself
+ * lowers it.
+ */
+export const EXTENSION_TOOL_ANNOTATIONS: Readonly<Omit<ToolAnnotationEntry, 'title'>> =
+	Object.freeze({
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: false,
+	})
