@@ -11,10 +11,11 @@ describe('youtube provider config', () => {
 		expect(config.displayName).toBe('YouTube')
 	})
 
-	it('requests read, email and openid only by default', () => {
+	it('requests read, analytics read, email and openid only by default', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('expected oauth2 auth type')
 		expect(config.auth.config.scopes).toEqual([
 			'https://www.googleapis.com/auth/youtube.readonly',
+			'https://www.googleapis.com/auth/yt-analytics.readonly',
 			'https://www.googleapis.com/auth/userinfo.email',
 			'openid',
 		])
@@ -24,12 +25,14 @@ describe('youtube provider config', () => {
 		const readOnly = youtubeScopes({})
 		expect(youtubeScopes({ YOUTUBE_WRITE_SCOPES_ENABLED: 'false' })).toEqual(readOnly)
 		expect(youtubeScopes({ YOUTUBE_WRITE_SCOPES_ENABLED: '1' })).toEqual(readOnly)
-		expect(readOnly).toHaveLength(3)
+		expect(readOnly).toHaveLength(4)
+		expect(readOnly.join(' ')).not.toContain('monetary')
 	})
 
 	it('adds the three write scopes when the write setting is on', () => {
 		expect(youtubeScopes({ YOUTUBE_WRITE_SCOPES_ENABLED: 'true' })).toEqual([
 			'https://www.googleapis.com/auth/youtube.readonly',
+			'https://www.googleapis.com/auth/yt-analytics.readonly',
 			'https://www.googleapis.com/auth/youtube.force-ssl',
 			'https://www.googleapis.com/auth/youtube',
 			'https://www.googleapis.com/auth/youtube.upload',

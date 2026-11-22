@@ -2,6 +2,7 @@ import type { ProviderConfig } from '../../types'
 
 const READ_SCOPES = [
 	'https://www.googleapis.com/auth/youtube.readonly',
+	'https://www.googleapis.com/auth/yt-analytics.readonly',
 	'https://www.googleapis.com/auth/userinfo.email',
 	'openid',
 ]
@@ -15,7 +16,7 @@ const WRITE_SCOPES = [
 /** Read only unless YOUTUBE_WRITE_SCOPES_ENABLED is "true" (default off). */
 export function youtubeScopes(env: Record<string, string | undefined> = process.env): string[] {
 	if (env.YOUTUBE_WRITE_SCOPES_ENABLED !== 'true') return [...READ_SCOPES]
-	return [...READ_SCOPES.slice(0, 1), ...WRITE_SCOPES, ...READ_SCOPES.slice(1)]
+	return [...READ_SCOPES.slice(0, 2), ...WRITE_SCOPES, ...READ_SCOPES.slice(2)]
 }
 
 /**
@@ -31,14 +32,15 @@ export function youtubeScopes(env: Record<string, string | undefined> = process.
  *  - `include_granted_scopes` is absent. The token then carries only YouTube scopes, and a
  *    revoke does not drag the person's other Google scopes with it.
  *  - Scopes (policy item P5: request the minimum). A new connection asks for read only:
- *    youtube.readonly, userinfo.email and openid. Google's first verification round covers read
+ *    youtube.readonly, yt-analytics.readonly (user activity metrics for youtube__get_analytics, no
+ *    revenue), userinfo.email and openid. Google's first verification round covers read
  *    only, so the write scopes are added only when YOUTUBE_WRITE_SCOPES_ENABLED is "true"
  *    (default off). With it on, a connection also asks for youtube.force-ssl and youtube (the
  *    write tools: comments, playlists and video edits need force-ssl; videos.rate and
  *    thumbnails.set need youtube) and youtube.upload (uploads, always private, a second approval
  *    to publish). Writes only run after a person approves. A connection made without them must
  *    reconnect once the setting is on, and an approved write on a read-only connection ends as
- *    failed with Google's http_403 code. No yt-analytics.readonly until the analytics tool is built.
+ *    failed with Google's http_403 code.
  *
  * No webhook, postInstall or watch hooks: reads are on demand.
  */
