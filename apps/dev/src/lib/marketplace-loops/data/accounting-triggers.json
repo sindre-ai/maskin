@@ -1,0 +1,15 @@
+{
+	"36c77886-c349-442b-84ed-005cb4c2e5b2": {
+		"id": "36c77886-c349-442b-84ed-005cb4c2e5b2",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Weekly connection check (Mon 06:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 6 * * 1",
+			"skip_when_idle": true
+		},
+		"actionPrompt": "Run the weekly connection check for the flow named Accounting (find it with list_loops). Load the skill accounting-connection-check and run the check described under the weekly check, without any receipt. If the connection works, say nothing and end the session. If it fails, post one short comment on the flow object with the line that fits the failure and what the owner must do, mentioning the workspace owner. Never try to fix it by calling any other tool.",
+		"targetActorId": "2efeee74-29d6-4ef6-854a-e8c05cecfe9b",
+		"enabled": true
+	}
+}
