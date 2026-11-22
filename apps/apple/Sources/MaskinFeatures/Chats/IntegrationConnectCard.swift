@@ -55,7 +55,7 @@ struct IntegrationConnectCard: View {
 			}
 		}
 		.task { await prepare() }
-		.ownAppSheet(store: store) { prompt in
+		.ownAppSheet(store: store, providerID: request.provider) { prompt in
 			runtime.flatMap { SettingsServices(environment: $0.environment).ownAppStore(prompt: prompt) }
 		}
 		.sheet(item: $keyForm) { form in

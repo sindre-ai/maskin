@@ -102,6 +102,7 @@ public final class OwnAppStore: Identifiable {
 		defer { isLoading = false }
 		do {
 			status = try await api.status(provider: prompt.providerID)
+			error = nil
 		} catch {
 			// The form still works without the callback address; say why it is missing.
 			self.error = (error as? SettingsError)?.message ?? "Couldn't load the app."
