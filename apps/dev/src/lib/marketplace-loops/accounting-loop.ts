@@ -2,8 +2,9 @@
 //
 // The bundle contains the Bookkeeper, plus every trigger and skill attached to it. Its snapshot
 // data is written to be workspace-neutral and lives in data/accounting-*.json. The Dinero
-// connection is not shipped: the installer saves their own Dinero keys after install, by the
-// steps in the accounting-connection-check skill.
+// connection is not shipped: the installer picks their system from the list in the accounting-systems
+// skill and, for Dinero, saves their own keys after install, by the steps in the
+// accounting-connection-check skill.
 //
 // Exported so the seed config and its tests can share the exact same shape.
 // Snapshot helpers live in ./loop-snapshot; snapshot data in ./loop-data.
@@ -23,9 +24,9 @@ import type { LoopSettings } from './loop-settings'
 // actual current under a fixed label.
 const ACCOUNTING_LOOP_SETTINGS: LoopSettings = {
 	entryCondition:
-		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected.",
+		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and an accounting system is connected.",
 	closeCondition:
-		'The receipt is saved as a draft voucher in Dinero, or it is on the adviser list with the reason. Nothing is booked, changed or deleted by the flow.',
+		'The receipt is saved as a draft voucher in the accounting system, or it is on the adviser list with the reason. Nothing is booked, changed or deleted by the flow.',
 	tags: ['Finance'],
 }
 
