@@ -12,8 +12,10 @@ vi.mock('../../lib/feature-flags', async (importOriginal) => ({
 }))
 
 import { createApiError } from '../../lib/errors'
+import { resolveAgentAccess } from '../../lib/integrations/agent-access'
 import { verifyCredentialAccessChain } from '../../lib/integrations/credential-audit'
 import {
+	OAuthAppInUseError,
 	deleteOAuthApp,
 	getOAuthAppStatus,
 	loadOAuthApp,
@@ -131,6 +133,35 @@ describe('a workspace saves its own sign-in app', () => {
 			.where(eq(credentialAccessLog.integrationId, first.integrationId))
 		expect(log.map((l) => l.action).sort()).toEqual(['create', 'rotated'])
 		expect(await verifyCredentialAccessChain(db, ws.id)).toMatchObject({ ok: true })
+	})
+
+	it('refuses a new app id while connected, but takes a new secret for the same id', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		await save(ws.id)
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'salesforce',
+			status: 'active',
+			externalId: 'oauth-def',
+			credentials: 'x',
+			createdBy: getTestActorId(),
+		})
+		await expect(save(ws.id, { clientId: 'other-id' })).rejects.toBeInstanceOf(OAuthAppInUseError)
+		await save(ws.id, { clientSecret: 'rotated-secret' })
+		expect(await loadOAuthApp(db, kms, ws.id, 'salesforce')).toEqual({
+			clientId: CLIENT_ID,
+			clientSecret: 'rotated-secret',
+		})
+	})
+
+	it('gives nobody access to the app row, whatever the default', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const { integrationId } = await save(ws.id)
+		await db
+			.update(integrations)
+			.set({ defaultAgentAccess: 'read' })
+			.where(eq(integrations.id, integrationId))
+		expect(await resolveAgentAccess(db, ws.id, integrationId, getTestActorId())).toBe('none')
 	})
 
 	it("never hands one workspace another workspace's app", async () => {

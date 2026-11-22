@@ -1,5 +1,5 @@
 import type { KmsProvider } from '@maskin/auth/kms'
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { decryptEnvelope, encryptEnvelope } from '../crypto'
@@ -9,7 +9,7 @@ import { assertValidCredentialValue } from './credential-value'
 
 /** Provider id of a row that holds a workspace's own sign-in app. The tool it is for is the externalId. */
 export const OAUTH_APP_PROVIDER = 'oauth-app'
-/** Mode of those rows. Kept apart from the Keychain modes so no agent grant or Keychain list touches them. */
+/** Mode of those rows. Lists skip them and resolveAgentAccess answers 'none' for them, so no grant can open the secret. */
 export const OAUTH_APP_MODE = 'oauth_app'
 /** Source on the audit row an app write leaves. */
 export const OAUTH_APP_SOURCE = 'oauth_app_form'
@@ -85,6 +85,35 @@ export async function loadOAuthApp(
 	return { clientId, clientSecret }
 }
 
+/** A different app id was pasted while the tool is connected: its token belongs to the old app. */
+export class OAuthAppInUseError extends Error {
+	constructor() {
+		super('The tool is connected with the saved app')
+		this.name = 'OAuthAppInUseError'
+	}
+}
+
+/** Whether the tool itself is connected in this workspace (not the app row). */
+async function isConnected(
+	db: Database | Transaction,
+	workspaceId: string,
+	provider: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, provider),
+				eq(integrations.providerMode, 'registered'),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+	return !!row
+}
+
 export interface SaveOAuthAppInput {
 	workspaceId: string
 	/** The person pasting the app. */
@@ -100,7 +129,9 @@ export interface SaveOAuthAppInput {
  * Saves the app a customer's admin pasted, or replaces it. The secret goes through the
  * same envelope as a pasted API key (its own data key, wrapped by the master key) and every
  * write leaves a row in the credential audit chain. The app id sits in the row's config.
- * Saving again keeps the row, so the next sign-in and refresh read the new values.
+ * Saving again keeps the row, so the next sign-in and refresh read the new values. A new app id
+ * is refused (OAuthAppInUseError) while the tool is connected, because its token was issued to the
+ * old app; the same id with a new secret is fine.
  *
  * Encrypts before the transaction opens, so no key call happens while the audit chain lock is held.
  */
@@ -122,7 +153,7 @@ export async function saveOAuthApp(
 			sql`SELECT pg_advisory_xact_lock(hashtextextended(${`oauth-app:${workspaceId}:${provider}`}::text, 0))`,
 		)
 		const [existing] = await tx
-			.select({ id: integrations.id })
+			.select({ id: integrations.id, config: integrations.config })
 			.from(integrations)
 			.where(appWhere(workspaceId, provider))
 			.for('update')
@@ -130,6 +161,10 @@ export async function saveOAuthApp(
 
 		let integrationId: string
 		if (existing) {
+			const savedId = (existing.config as AppConfig | null)?.client_id
+			if (savedId && savedId !== input.clientId && (await isConnected(tx, workspaceId, provider))) {
+				throw new OAuthAppInUseError()
+			}
 			integrationId = existing.id
 			await tx
 				.update(integrations)
@@ -202,18 +237,7 @@ export async function deleteOAuthApp(
 			.for('update')
 			.limit(1)
 		if (!row) return 'not_found' as const
-		const [connected] = await tx
-			.select({ id: integrations.id })
-			.from(integrations)
-			.where(
-				and(
-					eq(integrations.workspaceId, workspaceId),
-					eq(integrations.provider, provider),
-					eq(integrations.providerMode, 'registered'),
-					eq(integrations.status, 'active'),
-				),
-			)
-			.limit(1)
+		const connected = await isConnected(tx, workspaceId, provider)
 		if (connected) return 'in_use' as const
 		// Wipe the secret in place and keep the row: the audit chain points at it.
 		await tx

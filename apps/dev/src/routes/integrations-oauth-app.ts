@@ -3,7 +3,12 @@ import type { Database } from '@maskin/db'
 import type { Context } from 'hono'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { CredentialValueError } from '../lib/integrations/credential-value'
-import { deleteOAuthApp, getOAuthAppStatus, saveOAuthApp } from '../lib/integrations/oauth-app'
+import {
+	OAuthAppInUseError,
+	deleteOAuthApp,
+	getOAuthAppStatus,
+	saveOAuthApp,
+} from '../lib/integrations/oauth-app'
 import { getProvider } from '../lib/integrations/registry'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
@@ -133,6 +138,15 @@ app.put('/:provider/app', async (c) => {
 	} catch (err) {
 		if (err instanceof CredentialValueError) {
 			return c.json(createApiError(err.code, err.message), err.status)
+		}
+		if (err instanceof OAuthAppInUseError) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`Disconnect ${guarded.displayName} first: it is signed in with the saved app, so a different app id would strand it. The same app id with a new secret is fine`,
+				),
+				409,
+			)
 		}
 		// Error name only, never the request: a driver error can carry bound params.
 		logger.error('Saving a sign-in app failed', {
