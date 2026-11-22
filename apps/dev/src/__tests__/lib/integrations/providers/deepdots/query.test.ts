@@ -36,6 +36,18 @@ describe('buildListRequest', () => {
 		expect(filterOf(built('issues', { skip: -3 }).url).skip).toBe(0)
 	})
 
+	it('never asks for more than 50 rows, so limit 50 is sent as 50 (issues and topics 400 on 51)', () => {
+		for (const list of ['issues', 'topics'] as const) {
+			const at50 = built(list, { limit: 50 })
+			expect(filterOf(at50.url).limit).toBe(50)
+			expect(at50.probed).toBe(false)
+			expect(filterOf(built(list, { limit: 5000 }).url).limit).toBe(50)
+			const at49 = built(list, { limit: 49 })
+			expect(filterOf(at49.url).limit).toBe(50)
+			expect(at49.probed).toBe(true)
+		}
+	})
+
 	it('puts since in one condition with one operator', () => {
 		const filter = filterOf(built('issues', { since: '2026-11-01' }).url)
 		expect(filter.where).toEqual({ externalGeneratedAt: { gte: '2026-11-01T00:00:00.000Z' } })
@@ -88,6 +100,15 @@ describe('trimPage', () => {
 			],
 			has_more: true,
 			next_skip: 2,
+		})
+	})
+
+	it('without an extra row, a full page means maybe more and a short page means no more', () => {
+		const rows = [1, 2].map((n) => ({ id: `i${n}` }))
+		expect(trimPage('issues', rows, 2, 0, false)).toMatchObject({ has_more: true, next_skip: 2 })
+		expect(trimPage('issues', rows.slice(0, 1), 2, 0, false)).toMatchObject({
+			has_more: false,
+			next_skip: null,
 		})
 	})
 

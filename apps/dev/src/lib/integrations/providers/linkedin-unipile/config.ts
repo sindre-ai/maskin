@@ -200,9 +200,9 @@ export const config: ProviderConfig = {
 			fields: [
 				{ key: 'account', label: 'Posting as', type: 'text' },
 				{ key: 'scheduled_date', label: 'Scheduled', type: 'text' },
-				// The images posted: workspace file ids of PNG or JPEG files, separated by commas.
-				// A detail line too, so swapping an image withdraws the approval.
-				{ key: 'attachment_file_ids', label: 'Images', type: 'text' },
+				// The media posted: workspace file ids of PNG or JPEG images, or one MP4 or MOV video,
+				// separated by commas. A detail line too, so swapping a file withdraws the approval.
+				{ key: 'attachment_file_ids', label: 'Images or video', type: 'text' },
 			],
 		},
 	],

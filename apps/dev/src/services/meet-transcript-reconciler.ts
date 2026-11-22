@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { integrations, objects } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, or, sql } from 'drizzle-orm'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { writeMeetingMetadata } from '../lib/integrations/providers/google-meet/meeting-metadata'
 import { reconcileMeetingArtefacts } from '../lib/integrations/providers/google-meet/watch'
@@ -14,8 +14,8 @@ const WINDOW_EARLY_MS = 72 * 60 * 60 * 1000 // 72h cutoff before giving up
 
 /**
  * Daily sweep that back-fills transcripts for meetings where the Pub/Sub push
- * was dropped. Scans meeting objects with google_meet_space_name set +
- * transcript_status != 'ready' inside the [now-72h, now-30min] window; runs
+ * was dropped. Scans meeting objects with google_meet_space_name or
+ * google_meet_conference_record_name set + transcript_status != 'ready' inside the [now-72h, now-30min] window; runs
  * the same fan-out path under the workspace's host token. After 72h with
  * nothing arriving, marks the meeting artefact_state='not_recorded' +
  * transcript_status='unavailable' per §6 of the reshape spec.
@@ -59,7 +59,10 @@ export class MeetTranscriptReconciler {
 				.where(
 					and(
 						eq(objects.type, 'meeting'),
-						sql`${objects.metadata}->>'google_meet_space_name' IS NOT NULL`,
+						or(
+							sql`${objects.metadata}->>'google_meet_space_name' IS NOT NULL`,
+							sql`${objects.metadata}->>'google_meet_conference_record_name' IS NOT NULL`,
+						),
 						sql`COALESCE(${objects.metadata}->>'transcript_status', 'pending') <> 'ready'`,
 						sql`(${objects.metadata}->>'meeting_date')::timestamptz <= ${lateThresholdIso}::timestamptz`,
 						sql`(${objects.metadata}->>'meeting_date')::timestamptz >= ${earlyThresholdIso}::timestamptz`,
@@ -71,6 +74,7 @@ export class MeetTranscriptReconciler {
 			for (const meeting of meetings) {
 				const md = (meeting.metadata as Record<string, unknown> | null) ?? {}
 				const spaceName = md.google_meet_space_name as string | undefined
+				const conferenceRecordName = md.google_meet_conference_record_name as string | undefined
 				const meetingDate = md.meeting_date as string | undefined
 				const meetingAge = meetingDate ? now - Date.parse(meetingDate) : 0
 
@@ -83,6 +87,7 @@ export class MeetTranscriptReconciler {
 						meeting.workspaceId,
 						meeting.id,
 						spaceName,
+						conferenceRecordName,
 						this.storage,
 					)
 					if (wrote) {

@@ -64,3 +64,12 @@ export const createCommentSchema = z.object({
 			'Importance for the human, 1-5, ordering their For You feed: 5 critical (urgent decision or blocks work), 4 look today, 3 normal, 2 minor, 1 FYI.',
 		),
 })
+
+// Editing a comment changes what it says and nothing else: mentions, attachments and the
+// parent stay as they were, so an edit never wakes anyone.
+export const updateCommentSchema = z.object({
+	content: z
+		.string()
+		.min(1, 'Comment cannot be empty')
+		.max(COMMENT_MAX_LENGTH, `Comment must be ${COMMENT_MAX_LENGTH} characters or fewer.`),
+})

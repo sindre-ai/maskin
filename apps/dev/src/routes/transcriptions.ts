@@ -4,6 +4,7 @@ import { files, workspaces } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { bodyLimit } from 'hono/body-limit'
+import { trackTranscriptionCompleted } from '../lib/analytics/transcription-events'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { checkPlanCap } from '../lib/llm-routing'
@@ -109,7 +110,8 @@ const postTranscriptionRoute = createRoute({
 
 app.openapi(postTranscriptionRoute, async (c) => {
 	const role = c.get('workspaceRole')
-	if (role === undefined) {
+	const workspaceId = c.req.header('X-Workspace-Id')
+	if (role === undefined || !workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'X-Workspace-Id header is required'), 400)
 	}
 	assertWorkspaceWriterRole(role)
@@ -117,7 +119,19 @@ app.openapi(postTranscriptionRoute, async (c) => {
 	const { audio, language } = c.req.valid('json')
 	const result = await transcribeAudio({ audioBase64: audio, language })
 
-	if (result.ok) return c.json({ text: result.text }, 200)
+	if (result.ok) {
+		// Fire and forget: the transcript is ready, and PostHog must not add
+		// latency to dictation.
+		void trackTranscriptionCompleted({
+			workspaceId,
+			actorId: c.get('actorId'),
+			source: 'chat_dictation',
+			model: result.model,
+			costUsd: result.costUsd ?? 0,
+			audioSeconds: result.audioSeconds ?? 0,
+		})
+		return c.json({ text: result.text }, 200)
+	}
 	if (result.reason === 'not_configured') {
 		return c.json(createApiError('INTERNAL_ERROR', 'Transcription is not configured'), 500)
 	}

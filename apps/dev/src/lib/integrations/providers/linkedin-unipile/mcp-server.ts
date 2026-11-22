@@ -6,7 +6,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
-import { decideSend, deniedMessage } from '../../../send-gate'
+import { decideSend, deniedMessage, pilotIsReason, withPilotReason } from '../../../send-gate'
 import {
 	type ActionFields,
 	type ActionLogContext,
@@ -137,7 +137,7 @@ function jsonResult(payload: unknown) {
 
 /** What a caller gets for passing the removed raw `attachments` to publish_post. */
 const PUBLISH_ATTACHMENTS_REFUSED_MESSAGE =
-	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG files, which the server reads. Nothing was posted.'
+	'publish_post does not take raw attachments. Pass attachment_file_ids instead: workspace file ids of PNG or JPEG images, or one MP4 or MOV video, which the server reads. Nothing was posted.'
 
 const sendObjectIdSchema = z
 	.string()
@@ -152,11 +152,14 @@ const sendObjectIdSchema = z
  * to ask first for the kind. The person approves a draft from its card (editing first if they
  * want) or by saying yes in the chat.
  */
-function heldForApproval(what: string, kind: string): LinkedInActionRefusal {
+function heldForApproval(what: string, kind: string, pilot: boolean): LinkedInActionRefusal {
 	return new LinkedInActionRefusal(
 		'refused_rule',
 		'INVALID_INPUT',
-		`${what} from this agent waits for a person. Put the draft on a task or object (kind ${kind}) and show it to the person: link it in the chat or put it on a decision card. They can edit the text before approving, or just say yes in the chat (then call approve_draft_from_chat). Once it is approved, call this again with only object_id. Nothing was sent.`,
+		withPilotReason(
+			`${what} from this agent waits for a person. Put the draft on a task or object (kind ${kind}) and show it to the person: link it in the chat or put it on a decision card. They can edit the text before approving, or just say yes in the chat (then call approve_draft_from_chat). Once it is approved, call this again with only object_id. Nothing was sent.`,
+			pilot,
+		),
 	)
 }
 
@@ -216,19 +219,23 @@ export function registerLinkedInMcpInstance(
 	 * What this agent's send setting says for one draft kind, read now: send at once, or draft and
 	 * get a person's approval first. A setting of deny refuses the call.
 	 */
+	// Set by sendDecision: whether pilot is why the send in hand waits, for the refusal's wording.
+	let pilotHeld = false
 	const sendDecision = async (
 		kind: string,
 		what: string,
 	): Promise<'send_now' | 'needs_approval'> => {
-		const decision = await decideSend(ctx.db, {
+		const params = {
 			workspaceId: ctx.workspaceId,
 			agentId: ctx.actorId,
 			kind,
 			sessionId: ctx.sessionId,
-		})
+		}
+		const decision = await decideSend(ctx.db, params)
 		if (decision === 'denied') {
 			throw new LinkedInActionRefusal('refused_rule', 'INVALID_INPUT', deniedMessage(what))
 		}
+		pilotHeld = decision === 'needs_approval' && (await pilotIsReason(ctx.db, params))
 		return decision
 	}
 	const logCtx: ActionLogContext = {
@@ -275,7 +282,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'publish_post'),
 			{
 				description: scopedDescription(
-					'Publish a LinkedIn post. Pass text (and optionally attachment_file_ids: workspace file ids of PNG or JPEG files, up to 9, shown as a carousel) and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post draft; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. Video and documents are not supported',
+					'Publish a LinkedIn post. Pass text (and optionally attachment_file_ids: workspace file ids of up to 9 PNG or JPEG images, shown as a carousel, or exactly one MP4 or MOV video of up to 64 MB) and it posts. If this agent is set to ask first, pass only object_id instead: the task or object that holds a linkedin_post draft; it is refused until a person has approved it, again after any edit, and once it has been posted. The server reads the files; never send file bytes. A video post can take about 30 seconds to come back, so wait for the answer and do not call again: the same call is never posted twice. Documents are not supported',
 					cfg,
 				),
 				// Passthrough so a call that still sends the removed `attachments` reaches the handler and
@@ -296,7 +303,7 @@ export function registerLinkedInMcpInstance(
 							.max(9)
 							.optional()
 							.describe(
-								'Optional images for the post: workspace file ids of PNG or JPEG files (max 10 MB each, up to 9, shown as a carousel). The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG or JPEG, or over 10 MB fails with nothing posted. Video and documents are not supported. Not used with object_id (list them on the draft instead).',
+								'Optional media for the post: workspace file ids of either up to 9 PNG or JPEG images (max 10 MB each, shown as a carousel) or exactly one MP4 or MOV video (max 64 MB), never both. Save a video from your computer first (desktop_save_file) to get its file id. The server reads the files; never send file bytes. Example: ["0d3c5b7e-2f4a-4c1e-9a67-1b2c3d4e5f60"]. A file that is not in this workspace, not a PNG, JPEG, MP4 or MOV, or over its size limit fails with nothing posted. Documents are not supported. Not used with object_id (list them on the draft instead).',
 							),
 						can_read: z
 							.string()
@@ -336,7 +343,8 @@ export function registerLinkedInMcpInstance(
 							})
 							return jsonResult(learned(rec, published, { refId: published.post_id }))
 						}
-						if (decision === 'needs_approval') throw heldForApproval('A post', 'linkedin_post')
+						if (decision === 'needs_approval')
+							throw heldForApproval('A post', 'linkedin_post', pilotHeld)
 						if (!args.text) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
@@ -410,7 +418,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, posted, { refId: posted.comment_id }))
 						}
 						if (decision === 'needs_approval')
-							throw heldForApproval('A comment', 'linkedin_comment')
+							throw heldForApproval('A comment', 'linkedin_comment', pilotHeld)
 						if (!args.post_id || !args.text) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
@@ -467,7 +475,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, posted, { refId: posted.comment_id }))
 						}
 						if (decision === 'needs_approval') {
-							throw heldForApproval('A comment reply', 'linkedin_comment_reply')
+							throw heldForApproval('A comment reply', 'linkedin_comment_reply', pilotHeld)
 						}
 						if (!args.comment_id || !args.text) {
 							throw new LinkedInIntegrationError(
@@ -521,7 +529,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, edited, {}))
 						}
 						if (decision === 'needs_approval')
-							throw heldForApproval('A post edit', 'linkedin_post_edit')
+							throw heldForApproval('A post edit', 'linkedin_post_edit', pilotHeld)
 						if (!args.post_id || (args.text === undefined && args.can_comment === undefined)) {
 							throw new LinkedInIntegrationError(
 								'INVALID_INPUT',
@@ -629,7 +637,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 						}
 						if (decision === 'needs_approval')
-							throw heldForApproval('A message', 'linkedin_message')
+							throw heldForApproval('A message', 'linkedin_message', pilotHeld)
 						const sent = await sendLinkedInMessage(opCtx, args)
 						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 					})
@@ -689,7 +697,8 @@ export function registerLinkedInMcpInstance(
 							})
 							return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 						}
-						if (decision === 'needs_approval') throw heldForApproval('A reply', 'linkedin_message')
+						if (decision === 'needs_approval')
+							throw heldForApproval('A reply', 'linkedin_message', pilotHeld)
 						const sent = await replyToLinkedInThread(opCtx, args)
 						return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 					})
@@ -917,7 +926,7 @@ export function registerLinkedInMcpInstance(
 							return jsonResult(learned(rec, sent, { refId: sent.invitation_id }))
 						}
 						if (decision === 'needs_approval') {
-							throw heldForApproval('An invitation', 'linkedin_connection_request')
+							throw heldForApproval('An invitation', 'linkedin_connection_request', pilotHeld)
 						}
 						if (!args.user_id) {
 							throw new LinkedInIntegrationError(
@@ -1128,7 +1137,7 @@ export function registerLinkedInMcpInstance(
 								return jsonResult(learned(rec, sent, { refId: sent.message_id }))
 							}
 							if (decision === 'needs_approval') {
-								throw heldForApproval('An InMail', 'linkedin_inmail')
+								throw heldForApproval('An InMail', 'linkedin_inmail', pilotHeld)
 							}
 							if (!args.recipient_provider_id || !args.body || !args.idempotency_key) {
 								throw new LinkedInIntegrationError(
@@ -1187,7 +1196,7 @@ export function registerLinkedInMcpInstance(
  * caller's workspace has no linkedin-unipile credential or no identities
  * enumerated yet — an agent hitting `tools/list` on an unconnected workspace
  * sees an empty list rather than a 4xx, matching the `github-*` MCP surface's
- * behaviour and letting `get_started`-driven onboarding proceed.
+ * behaviour and letting `list_marketplace`-driven onboarding proceed.
  */
 export function createLinkedInMcpServer(
 	ctx: LinkedInMcpContext,

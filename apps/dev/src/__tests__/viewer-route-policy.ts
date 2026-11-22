@@ -157,6 +157,11 @@ export const OPEN_ROUTES: OpenRoute[] = [
 		'/api/integrations/resend/dns-precheck',
 		'looks up public DNS records for a typed domain, touches no workspace data',
 	],
+	[
+		'POST',
+		'/api/pilot-gate/check',
+		'asks whether the calling agent session may run one outbound call; a call from a person or without a session is never held, and the card it may post is the refusal itself',
+	],
 	// Group E: personal state a viewer may keep.
 	[
 		'PATCH',

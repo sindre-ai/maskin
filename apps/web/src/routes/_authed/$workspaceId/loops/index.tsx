@@ -98,7 +98,14 @@ function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 	component: LoopsRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
+	errorComponent: ({ error, reset }) => (
+		<RouteError
+			error={error}
+			reset={reset}
+			title="This page could not load"
+			message="Something went wrong on our side. Try again, or reload the page."
+		/>
+	),
 })
 
 function LoopsRoute() {

@@ -11,7 +11,8 @@ import { recordEventReturning } from './events/record-event'
  *
  *   approved   a person (never an agent) approved exactly this content hash. The newest
  *              such event wins, so approving again after an edit replaces the old one.
- *   delivered  an integration sent exactly this content hash.
+ *   delivered  an integration sent this object. Shown whatever the hash is now (see
+ *              withDeliveryState).
  *
  * Both events carry `data.content_hash`. A change to the recipients, subject or text
  * changes the hash, which is why an approval needs no "was it edited since?" scan.
@@ -101,14 +102,18 @@ export async function withDeliveryState(
 ): Promise<ObjectPreview> {
 	// File names for display; the hash was computed from the ids and stays as it is.
 	const preview = await withAttachmentNames(db, workspaceId, basePreview)
+	// Any delivery on the object counts, whatever its hash. The hash covers the detail lines
+	// read from metadata (a post's "Scheduled" date is dropped when it goes live), so it can
+	// change after a send without anyone editing the text. A sent object stays sent, which is
+	// also what hasDelivered and assertSendable already enforce.
 	const delivered = await latestEvent(db, workspaceId, objectId, DELIVERED_ACTION, false)
-	if (delivered?.contentHash === preview.content_hash) {
+	if (delivered) {
 		// An agent on Always allow sent this text with no person in between: say so on the card.
 		// It is a detail line added after the hash was computed, so it never changes an approval
 		// and every client that draws details (web, chat, For You, iOS) shows it.
 		const auto = await latestEvent(db, workspaceId, objectId, AUTO_SENT_ACTION, false)
 		const details =
-			auto?.contentHash === preview.content_hash
+			auto && auto.contentHash === delivered.contentHash
 				? [
 						...preview.details,
 						{

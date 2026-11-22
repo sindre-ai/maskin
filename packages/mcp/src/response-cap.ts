@@ -25,7 +25,7 @@
 //   list_unread               → no get-by-id counterpart
 //   list_integrations         → no get-by-id counterpart
 //   list_integration_providers → no get-by-id counterpart
-//   list_extensions           → no get-by-id counterpart (get_started is a
+//   list_extensions           → no get-by-id counterpart (list_marketplace is a
 //                               different operation)
 //
 // `list_actors` / `list_workspaces` / `list_triggers` are omitted deliberately:

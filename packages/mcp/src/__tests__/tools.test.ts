@@ -22,7 +22,7 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 const uuid2 = '660e8400-e29b-41d4-a716-446655440000'
 
 const ALL_TOOL_NAMES = [
-	'get_started',
+	'list_marketplace',
 	'create_objects',
 	'get_objects',
 	'update_objects',
@@ -85,6 +85,8 @@ const ALL_TOOL_NAMES = [
 	'set_loop_view',
 	'query_data',
 	'delete_loop',
+	'fork_loop',
+	'install_loop',
 	'create_sub_chat',
 	'create_chat',
 	'add_chat_participant',
@@ -136,6 +138,7 @@ const ALL_TOOL_NAMES = [
 	'desktop_scroll',
 	'desktop_type',
 	'desktop_key',
+	'desktop_attach_file',
 	'desktop_run',
 	'desktop_put_file',
 	'desktop_apply_settings',

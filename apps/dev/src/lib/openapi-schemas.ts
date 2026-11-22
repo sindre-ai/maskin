@@ -185,7 +185,7 @@ export const workspaceResponseSchema = z.object({
 		.optional(),
 	onboardingEnabled: z.boolean(),
 	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
-	// column OR an enterprise billing owner), not the raw column. Derived, so it
+	// column), not the raw column. Derived, so it
 	// deliberately does not carry the column's name.
 	enterprise: z.boolean(),
 	// Single accountable human payer for this workspace's plan — read-only,

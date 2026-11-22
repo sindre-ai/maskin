@@ -337,29 +337,27 @@ export const LIST_OBJECTS_SORTS = [
 
 export const tools = {
 	// ─── Get Started ─────────────────────────────────────────
-	get_started: {
+	list_marketplace: {
 		description:
-			'THE ONBOARDING TOOL FOR MASKIN. Call this whenever a user asks to set up, configure, initialize, or onboard a Maskin workspace. Lists available marketplace loops and installs one. Flow: (1) call with no args (or just workspace_id) to get a PREVIEW of available loops. (2) Ask the user which loop they want and what to name the workspace. (3) Call again with { loop_id, confirm: true, workspace_name? } to install.',
+			'LIST THE MARKETPLACE LOOPS. Read-only: returns the available marketplace loops with their ids, descriptions and use cases. Call it whenever a user asks to set up, onboard or configure a Maskin workspace, or to browse the marketplace. To install one, ask the user which loop they want (and whether to rename the workspace), then call install_loop with its id.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	install_loop: {
+		description:
+			'Install a marketplace loop into a workspace: provisions its agents, triggers and skills and creates the running Loop. Get the loop_id from list_marketplace and confirm the choice with the user first. Optionally renames the workspace. Returns links to the workspace and the new loop, plus a prompt to connect the Claude subscription when agent sessions cannot run yet. The installed loop is locked to the marketplace version; use fork_loop to customise it.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			loop_id: z
 				.string()
 				.uuid()
-				.optional()
-				.describe(
-					'The marketplace loop ID to install. Get this from the preview list returned when called without confirm.',
-				),
+				.describe('The marketplace loop ID to install. Get it from list_marketplace.'),
 			workspace_name: z
 				.string()
 				.optional()
 				.describe(
-					'Rename the workspace on confirm. Use whatever the user told you — a product name, a team name, anything. Only applied when confirm is true.',
-				),
-			confirm: z
-				.boolean()
-				.optional()
-				.describe(
-					'Set true to install the chosen loop. Without this, the tool returns the list of available loops.',
+					'Rename the workspace before installing. Use whatever the user told you: a product name, a team name, anything.',
 				),
 		}),
 	},
@@ -1827,7 +1825,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use get_started. A STEP is a trigger that fires an agent on an object event or a schedule; add steps inline with `steps` or attach existing triggers with `trigger_ids`. Before adding a step, check with list_actors and list_triggers that the agent's role and system_prompt fit; never default to an unrelated agent, create one with create_actor if none fits. Member objects (any type) are linked by `in_loop` edges. Draft, paused and archived turn every trigger off. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. Add more later with update_loop; read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome. Details: docs/reference/loops.md.",
+			"Create a Loop: a persistent process where agents (and humans) work toward a goal. For a ready-made marketplace loop use list_marketplace. A STEP is a trigger that fires an agent on an object event or a schedule; add steps inline with `steps` or attach existing triggers with `trigger_ids`. Before adding a step, check with list_actors and list_triggers that the agent's role and system_prompt fit; never default to an unrelated agent, create one with create_actor if none fits. Member objects (any type) are linked by `in_loop` edges. Draft, paused and archived turn every trigger off. A loop is CLOSED when one step is a feedback step: an event trigger on the close condition whose agent captures learnings (an insight or knowledge object linked with `informs`), improves the loop or seeds the next object. To put a human on the loop, add a step whose agent @mentions them with create_comment. For custom object types pass `closed_statuses`, or `closed_when` for a metadata value such as loop_stage=live. Add more later with update_loop; read back with list_loops. Every loop needs a driver_id: an agent whose job covers the outcome. Details: docs/reference/loops.md.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			name: z.string().min(1),
@@ -1970,6 +1968,20 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
+		}),
+	},
+
+	fork_loop: {
+		description:
+			"Fork a Loop that was installed from the marketplace, so the workspace owns it. An installed loop is locked: Maskin keeps its agents, triggers and skills in sync with the marketplace version and pushes updates. Forking detaches them, so they become plain workspace resources you can edit with update_actor, update_trigger and update_workspace_skill, and later marketplace updates no longer overwrite your changes. The running loop and its members are untouched. Fork only when a person asks, or when the change cannot be made any other way (a locked loop's agents, triggers and skills are reverted by the next marketplace update). This cannot be undone. `id` is the loop object id from list_loops (or the installed-loop id). A loop that is already forked, or that was not installed from the marketplace, returns an explanation instead of an error.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z
+				.string()
+				.uuid()
+				.describe(
+					'Loop object id (from list_loops) of an installed marketplace loop. The installed-loop id is accepted too.',
+				),
 		}),
 	},
 
@@ -2835,6 +2847,25 @@ export const tools = {
 				.max(20),
 		}),
 	},
+	desktop_attach_file: {
+		description:
+			"Attach a file that is on YOUR computer to a web page's file upload field, with no file chooser: use this instead of clicking the upload button and typing a path. Put the file on the computer first with desktop_put_file and pass the path it returned. It acts on the browser page that is on screen. It picks the file input that has focus, else the only file input on the page (a styled upload button almost always sits on a hidden one). If the page has several, pass a CSS selector such as input[type=file]#photo; if it finds none, or the selector matches nothing, it says so and attaches nothing. The page gets the same input and change events as with a real pick, so its own upload code runs; then submit the form as usual and take a screenshot to confirm. It never clicks or types. If you already opened the chooser by clicking, press Escape to close it first. Does not work for an upload field that the page only creates at the moment you click, or one inside another site's frame: use the chooser then (ctrl+L, type the path, click Open). On a computer made before this existed it says so: run desktop_apply_settings. If it says the debugging port is not reachable, Chromium needs one restart (this closes its open pages). Returns the file name the page now holds. Only your own computer is reachable.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			agent_id: optionalDesktopAgentId,
+			path: z
+				.string()
+				.min(1)
+				.max(4096)
+				.describe('Full path of the file on your computer, as desktop_put_file returned it.'),
+			selector: z
+				.string()
+				.min(1)
+				.max(500)
+				.optional()
+				.describe('CSS selector of the file input, when the page has more than one.'),
+		}),
+	},
 	desktop_run: {
 		description:
 			'Run a shell command inside your computer (the desktop VM), not the host or your sandbox. DISPLAY is set, so GUI programs appear on your screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each cut at 20,000 characters). Default timeout 30s, max 120s. Background anything that should keep running with `&`.',
@@ -2847,7 +2878,7 @@ export const tools = {
 	},
 	desktop_put_file: {
 		description:
-			"Put a workspace file on YOUR computer (the desktop VM) by file id, so a browser there can pick it in a file field. Your computer is a separate machine: a file in your session or the workspace is not on it until you call this. Returns the path, size and sha256 as it landed and free_space_bytes. Default folder ~/Downloads; a same-name file is overwritten. Takes up to two minutes. Earlier desktop_put_file files are cleaned up first: over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, over 1 hour old, oldest first (your own and Chromium downloads stay). If there is still no room the call is refused. To upload in Chromium: click the page's file field, press ctrl+L in the chooser, type the returned full path, then click Open (or press alt+O). Do not press Enter or double click: both close the chooser without choosing the file. Only your own computer is reachable.",
+			"Put a workspace file on YOUR computer (the desktop VM) by file id, so a browser there can pick it in a file field. Your computer is a separate machine: a file in your session or the workspace is not on it until you call this. Returns the path, size and sha256 as it landed and free_space_bytes. Default folder ~/Downloads; a same-name file is overwritten. Takes up to two minutes. Earlier desktop_put_file files are cleaned up first: over 24 hours old always, and, if the disk lacks room for this file plus 1 GB, over 1 hour old, oldest first (your own and Chromium downloads stay). If there is still no room the call is refused. To upload in Chromium, call desktop_attach_file with this path (no chooser). Fallback: click the file field, press ctrl+L in the chooser, type the path, click Open (or alt+O). Do not press Enter or double click: both close the chooser without choosing the file. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,
@@ -2861,7 +2892,7 @@ export const tools = {
 	},
 	desktop_apply_settings: {
 		description:
-			"Bring YOUR computer up to date without deleting it (saved logins and open pages stay). It keeps the image it was created from, so later fixes do not reach it until now. Replaces its control helper when older than the server's (run this when typing a saved password says the computer is an older version) and rewrites a fixed list of user settings files. Nothing else is touched; the browser is not restarted. Returns the settings version, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, e.g. before typing a saved password; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
+			"Bring YOUR computer up to date without deleting it (saved logins and open pages stay). It keeps the image it was created from, so later fixes do not reach it until now. Replaces its control helper when older than the server's (run this when typing a saved password or desktop_attach_file says the computer is an older version) and rewrites a fixed list of user settings files. Nothing else is touched; the browser is not restarted. Returns the settings version, whether anything changed, helper_updated, browser_debug_port_open, and chromium_restart_needed (when true, restart Chromium yourself before relying on the change, e.g. before typing a saved password or attaching a file; it closes open pages). Starts your computer if needed. Only your own computer is reachable.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			agent_id: optionalDesktopAgentId,

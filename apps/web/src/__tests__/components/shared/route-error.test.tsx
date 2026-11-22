@@ -6,9 +6,13 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mockInvalidate = vi.fn()
+const mockInvalidateQueries = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
-	useRouter: () => ({ invalidate: mockInvalidate }),
+	useRouter: () => ({
+		invalidate: mockInvalidate,
+		options: { context: { queryClient: { invalidateQueries: mockInvalidateQueries } } },
+	}),
 }))
 
 vi.mock('@/lib/sentry', () => ({
@@ -26,6 +30,7 @@ afterEach(() => {
 	mockCaptureException.mockClear()
 	mockPushFaroError.mockClear()
 	mockInvalidate.mockClear()
+	mockInvalidateQueries.mockClear()
 })
 
 describe('RouteError', () => {
@@ -45,6 +50,30 @@ describe('RouteError', () => {
 
 		await user.click(screen.getByRole('button', { name: /try again/i }))
 		expect(mockInvalidate).toHaveBeenCalledOnce()
+	})
+
+	it('refetches cached queries and clears the error boundary on Try Again', async () => {
+		const user = userEvent.setup()
+		const reset = vi.fn()
+		render(<RouteError error={new Error('oops')} reset={reset} />)
+
+		await user.click(screen.getByRole('button', { name: /try again/i }))
+		expect(mockInvalidate).toHaveBeenCalledOnce()
+		expect(mockInvalidateQueries).toHaveBeenCalledOnce()
+		expect(reset).toHaveBeenCalledOnce()
+	})
+
+	it('shows the plain message instead of the code error text', () => {
+		render(
+			<RouteError
+				error={new Error("Cannot read properties of undefined (reading 'label')")}
+				title="This page could not load"
+				message="Something went wrong on our side."
+			/>,
+		)
+		expect(screen.getByText('This page could not load')).toBeInTheDocument()
+		expect(screen.getByText('Something went wrong on our side.')).toBeInTheDocument()
+		expect(screen.queryByText(/reading 'label'/)).not.toBeInTheDocument()
 	})
 
 	it('reports the error to Sentry on mount', () => {
