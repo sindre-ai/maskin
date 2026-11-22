@@ -147,13 +147,11 @@ const putAppRoute = createRoute({
 	'x-viewer-policy': 'writer',
 	tags: ['integrations'],
 	summary: "Save or replace a workspace's own sign-in app for a tool (admins and owners only)",
-	request: {
-		params: providerParamsSchema,
-		headers: workspaceIdHeader,
-		// The handler still reads the bytes itself (readSecretBody). The body is declared so the
-		// generated clients can send it; the schema only ever names fields, never echoes a value.
-		body: { required: true, content: { 'application/json': { schema: putBodySchema } } },
-	},
+	// No `request.body` on purpose, as for every route that carries a secret (see
+	// integrations-keychain.ts): the request validator would parse the body into strings and cached
+	// objects that readSecretBody can never zero. The handler reads the raw bytes itself and
+	// putBodySchema guards the shape. The iPhone app sends this PUT by hand for the same reason.
+	request: { params: providerParamsSchema, headers: workspaceIdHeader },
 	responses: {
 		200: {
 			description: 'Saved. The secret is not returned',

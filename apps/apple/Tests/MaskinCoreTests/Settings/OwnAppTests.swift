@@ -343,3 +343,35 @@ struct OwnAppMenuTests {
 		#expect(actions(hasOwnApp: true, toolServer: true) == [.agentAccess, .remove])
 	}
 }
+
+@Suite("APIOwnAppSource")
+struct APIOwnAppSourceTests {
+	/// The route's body schema is strict, so the hand-built PUT carries exactly these two fields.
+	@Test("the save is a PUT with exactly the app id and the secret")
+	func saveRequest() throws {
+		let base = URL(string: "https://api.example.test")!
+		let request = try APIOwnAppSource.saveRequest(
+			baseURL: base, provider: "salesforce", clientId: "3MVG-id", clientSecret: "shh")
+		#expect(request.httpMethod == "PUT")
+		#expect(request.url?.path == "/api/integrations/salesforce/app")
+		let body = try #require(request.httpBody)
+		let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: String])
+		#expect(json == ["clientId": "3MVG-id", "clientSecret": "shh"])
+	}
+
+	@Test("a refusal shows the server's sentence, or a fixed one, and never the request")
+	func failures() {
+		let reason = Data(#"{"error":{"code":"CONFLICT","message":"Disconnect Salesforce first."}}"#.utf8)
+		#expect(APIOwnAppSource.failure(status: 409, body: reason).message == "Disconnect Salesforce first.")
+		#expect(
+			APIOwnAppSource.failure(status: 409, body: Data()).message
+				== "Disconnect the tool first: a different app id would strand it.")
+		#expect(
+			APIOwnAppSource.failure(status: 400, body: Data()).message
+				== "Check the app id and secret and try again.")
+		#expect(
+			APIOwnAppSource.failure(status: 403, body: reason).message
+				== "Only a workspace admin or owner can change the sign-in app.")
+		#expect(APIOwnAppSource.failure(status: 500, body: Data()).message == "Couldn't save the app.")
+	}
+}

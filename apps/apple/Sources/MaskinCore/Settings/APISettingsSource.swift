@@ -6,7 +6,7 @@ import OpenAPIRuntime
 /// inside this file. Error messages are fixed sentences: no response bodies, ids or keys are
 /// interpolated into anything that could be logged or shown.
 public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, IntegrationsAPI,
-	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI, OwnAppAPI
+	APIKeysAPI, SkillsAPI, BillingAPI, SchemaAPI, MCPAPI
 {
 	private let client: Client
 	public let workspaceID: String
@@ -272,7 +272,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 
 	/// A transport failure that means "no connection" becomes `SettingsError.offline`; anything
 	/// else is a fixed sentence (no response bodies or URLs in messages).
-	private static func map(_ error: any Error) -> SettingsError {
+	static func map(_ error: any Error) -> SettingsError {
 		var underlying: any Error = error
 		if let client = error as? ClientError { underlying = client.underlyingError }
 		if let url = underlying as? URLError {
@@ -429,7 +429,7 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 
 	/// The server's own sentence when it sent one: these routes name fields and never echo a value,
 	/// so it is safe to show. Otherwise the fixed sentence.
-	private static func sentence(_ message: String?, fallback: String) -> String {
+	static func sentence(_ message: String?, fallback: String) -> String {
 		let text = message?.trimmingCharacters(in: .whitespacesAndNewlines)
 		return (text?.isEmpty == false) ? text! : fallback
 	}
@@ -447,43 +447,6 @@ public struct APISettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Inte
 					configured: body.configured, clientId: body.clientId, callbackURL: body.callbackUrl)
 			case .forbidden: throw SettingsError("You can't see the sign-in app here.")
 			default: throw SettingsError("Couldn't load the app.")
-			}
-		} catch let error as SettingsError {
-			throw error
-		} catch {
-			throw Self.map(error)
-		}
-	}
-
-	public func save(provider: String, clientId: String, clientSecret: String, idempotencyKey: String)
-		async throws -> OwnAppStatus
-	{
-		do {
-			let output = try await IdempotencyKey.bind(idempotencyKey) {
-				try await client.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
-					.init(
-						path: .init(provider: provider),
-						headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
-						body: .json(.init(clientId: clientId, clientSecret: clientSecret))))
-			}
-			switch output {
-			case .ok(let ok):
-				let body = try ok.body.json
-				return OwnAppStatus(
-					configured: body.configured, clientId: body.clientId, callbackURL: body.callbackUrl)
-			case .badRequest(let response):
-				throw SettingsError(
-					Self.sentence(
-						(try? response.body.json)?.error.message, fallback: "Check the app id and secret and try again."))
-			case .forbidden:
-				throw SettingsError("Only a workspace admin or owner can change the sign-in app.")
-			case .notFound: throw SettingsError("This tool does not take its own sign-in app.")
-			case .conflict(let response):
-				throw SettingsError(
-					Self.sentence(
-						(try? response.body.json)?.error.message,
-						fallback: "Disconnect the tool first: a different app id would strand it."))
-			default: throw SettingsError("Couldn't save the app.")
 			}
 		} catch let error as SettingsError {
 			throw error

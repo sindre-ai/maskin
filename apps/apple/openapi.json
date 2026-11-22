@@ -35189,33 +35189,6 @@
 						"in": "header"
 					}
 				],
-				"requestBody": {
-					"required": true,
-					"content": {
-						"application/json": {
-							"schema": {
-								"type": "object",
-								"properties": {
-									"clientId": {
-										"type": "string",
-										"minLength": 1,
-										"maxLength": 1024
-									},
-									"clientSecret": {
-										"type": "string",
-										"minLength": 1,
-										"maxLength": 1024
-									}
-								},
-								"required": [
-									"clientId",
-									"clientSecret"
-								],
-								"additionalProperties": false
-							}
-						}
-					}
-				},
 				"responses": {
 					"200": {
 						"description": "Saved. The secret is not returned",
