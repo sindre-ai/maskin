@@ -47,6 +47,7 @@ const CATALOG: Record<string, CatalogEntry> = {
 	posthog: { category: 'Analytics', domain: 'posthog.com' },
 	resend: { category: 'Email & calendar', domain: 'resend.com' },
 	retool: { category: 'Docs & data', domain: 'retool.com' },
+	salesforce: { category: 'Sales & payments', domain: 'salesforce.com' },
 	skjald: { category: 'Docs & data' },
 	slack: { category: 'Chat & social', domain: 'slack.com' },
 	stripe: { category: 'Sales & payments', domain: 'stripe.com' },

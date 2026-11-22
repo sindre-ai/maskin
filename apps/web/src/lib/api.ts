@@ -997,6 +997,19 @@ export const api = {
 				workspaceId,
 			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
+		/** The workspace's own sign-in app for a tool: its app id and whether one is saved, never the secret. */
+		oauthApp: (workspaceId: string, provider: string) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, { workspaceId }),
+		saveOAuthApp: (
+			workspaceId: string,
+			provider: string,
+			body: { clientId: string; clientSecret: string },
+		) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
 		connect: (
 			workspaceId: string,
 			provider: string,
@@ -2878,12 +2891,22 @@ export interface ProviderEventDefinition {
 	label: string
 }
 
+export interface OAuthAppStatus {
+	configured: boolean
+	clientId?: string
+	updatedAt?: string
+	/** The URL the vendor's app must list as its callback. */
+	callbackUrl: string
+}
+
 export interface ProviderInfo {
 	name: string
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
+	customerApp?: boolean
 	mcp?: {
 		envKey: string
 		autoInject: boolean

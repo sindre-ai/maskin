@@ -22,7 +22,7 @@ import {
 	webhookConfigSchema,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, ne, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import {
@@ -51,7 +51,8 @@ import {
 	verifyExtensionSignature,
 } from '../lib/integrations/extensions'
 import { ensureExtensionSystemActor, readExtensionSecret } from '../lib/integrations/extensions-db'
-import { OAuth2Handler } from '../lib/integrations/oauth/handler'
+import { OAUTH_APP_MODE, loadOAuthApp } from '../lib/integrations/oauth-app'
+import { OAuth2Handler, type OAuthClientApp } from '../lib/integrations/oauth/handler'
 import { declareNativeConnectBody } from '../lib/integrations/oauth/native-connect-body'
 import { decodeLaunchTicket, encodeLaunchTicket } from '../lib/integrations/oauth/native-launch'
 import { resolveOrigin } from '../lib/integrations/oauth/origins'
@@ -103,6 +104,7 @@ import {
 } from '../lib/integrations/providers/resend/schemas'
 import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
 import { SALES_AUTOMATION_PROVIDERS } from '../lib/integrations/providers/sales-automation'
+import { SALESFORCE_PROVIDER } from '../lib/integrations/providers/salesforce/config'
 import {
 	upsertSkjaldMeeting,
 	upsertSkjaldOutcomeMeeting,
@@ -143,6 +145,7 @@ import type {
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
+import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -192,10 +195,13 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
+	// A saved sign-in app is settings, not a connection: it has its own routes and is never listed here.
 	const results = await db
 		.select()
 		.from(integrations)
-		.where(eq(integrations.workspaceId, workspaceId))
+		.where(
+			and(eq(integrations.workspaceId, workspaceId), ne(integrations.providerMode, OAUTH_APP_MODE)),
+		)
 
 	const grantRows = await db
 		.select({
@@ -290,6 +296,7 @@ const listProvidersRoute = createRoute({
 const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	[AZURE_DEVOPS_PROVIDER, FLAGS.AZURE_DEVOPS],
 	[ZOOM_PROVIDER, FLAGS.ZOOM],
+	[SALESFORCE_PROVIDER, FLAGS.SALESFORCE],
 	...MEETING_NOTES_PROVIDERS.map((name): [string, FlagId] => [
 		name,
 		FLAGS.MEETING_NOTES_INTEGRATIONS,
@@ -305,7 +312,7 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
 ])
 
-const providerVisible = (providerName: string, actorId: string | undefined): boolean => {
+export const providerVisible = (providerName: string, actorId: string | undefined): boolean => {
 	const flag = FLAGGED_PROVIDERS.get(providerName)
 	return !flag || (!!actorId && isFlagEnabled(actorId, flag))
 }
@@ -321,6 +328,9 @@ app.openapi(listProvidersRoute, (async (c) => {
 			authType: p.config.auth.type,
 			events: p.config.events?.definitions ?? [],
 			externalIdDisplay: p.config.externalIdDisplay,
+			// The vendor wants the customer's own sign-in app: Settings asks for its id and secret first.
+			...(p.config.auth.type === 'oauth2' &&
+				p.config.auth.config.customerApp && { customerApp: true }),
 			// Serve the MCP surface so clients that aren't the web UI can discover
 			// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
 			// provider with autoInject=false is otherwise undiscoverable and reads
@@ -1446,6 +1456,22 @@ app.openapi(connectRoute, (async (c) => {
 		}
 	}
 
+	// A tool whose vendor wants the customer's own app signs in with the one this workspace saved.
+	let clientApp: OAuthClientApp | undefined
+	if (resolved.config.auth.type === 'oauth2' && resolved.config.auth.config.customerApp) {
+		clientApp = (await loadOAuthApp(db, getKmsProvider(), workspaceId, providerName)) ?? undefined
+		if (!clientApp && !process.env[resolved.config.auth.config.clientIdEnv]) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Add your ${resolved.config.displayName} app id and secret in Settings first`,
+					[{ field: 'code', message: 'APP_REQUIRED' }],
+				),
+				400,
+			)
+		}
+	}
+
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
 	const statePayload: OAuthStatePayload = {
@@ -1554,7 +1580,7 @@ app.openapi(connectRoute, (async (c) => {
 			)
 		}
 	} else if (resolved.config.auth.type === 'oauth2') {
-		const handler = new OAuth2Handler(resolved.config.auth.config)
+		const handler = new OAuth2Handler(resolved.config.auth.config, undefined, clientApp)
 		try {
 			installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
 		} catch (err) {
@@ -1873,7 +1899,16 @@ app.openapi(callbackRoute, (async (c) => {
 				if (native) return nativeEnd({ status: 'error', reason: 'missing_code' })
 				return c.json(createApiError('BAD_REQUEST', 'Missing authorization code'), 400)
 			}
-			const handler = new OAuth2Handler(resolved.config.auth.config, resolved.parseTokenResponse)
+			// The app comes from the workspace on the matched pending row, never from the request.
+			const clientApp = resolved.config.auth.config.customerApp
+				? ((await loadOAuthApp(db, getKmsProvider(), stateData.workspaceId, providerName)) ??
+					undefined)
+				: undefined
+			const handler = new OAuth2Handler(
+				resolved.config.auth.config,
+				resolved.parseTokenResponse,
+				clientApp,
+			)
 			credentials = await handler.exchangeCode(code, redirectUri, stateData.codeVerifier)
 		} else {
 			if (native) return nativeEnd({ status: 'error', reason: 'unsupported' })
@@ -4472,7 +4507,7 @@ export function resolvePublicOrigin(
 	return new URL(requestUrl).origin
 }
 
-function buildRedirectUri(
+export function buildRedirectUri(
 	requestUrl: string,
 	providerName: string,
 	headers: Record<string, string | undefined>,

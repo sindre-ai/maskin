@@ -368,4 +368,49 @@ describe('OAuth2Handler', () => {
 			expect((err as TokenRequestError).oauthError).toBeUndefined()
 		})
 	})
+
+	describe("a workspace's own app", () => {
+		const app = { clientId: 'workspace-app-id', clientSecret: 'workspace-app-secret' }
+
+		it('puts its app id, not the server setting, on the sign-in URL', () => {
+			const handler = new OAuth2Handler(baseConfig, undefined, app)
+			const url = new URL(handler.createAuthorizationUrl('s', 'https://app.com/callback'))
+			expect(url.searchParams.get('client_id')).toBe('workspace-app-id')
+		})
+
+		it('sends its id and secret on the code exchange and on a refresh', async () => {
+			mockFetch.mockResolvedValue({ ok: true, json: async () => ({ access_token: 'at' }) })
+			const handler = new OAuth2Handler(baseConfig, undefined, app)
+			await handler.exchangeCode('code', 'https://app.com/callback')
+			await handler.refreshToken('rt')
+			for (const call of mockFetch.mock.calls) {
+				const body = new URLSearchParams(call[1].body as string)
+				expect(body.get('client_id')).toBe('workspace-app-id')
+				expect(body.get('client_secret')).toBe('workspace-app-secret')
+			}
+		})
+
+		it('signs the basic auth header with its pair', async () => {
+			mockFetch.mockResolvedValue({ ok: true, json: async () => ({ access_token: 'at' }) })
+			const handler = new OAuth2Handler(
+				{ ...baseConfig, tokenAuthMethod: 'client_secret_basic' },
+				undefined,
+				app,
+			)
+			await handler.exchangeCode('code', 'https://app.com/callback')
+			const headers = mockFetch.mock.calls[0][1].headers as Headers
+			expect(headers.get('Authorization')).toBe(
+				`Basic ${Buffer.from('workspace-app-id:workspace-app-secret').toString('base64')}`,
+			)
+		})
+
+		it('falls back to the server settings when there is no app', async () => {
+			mockFetch.mockResolvedValue({ ok: true, json: async () => ({ access_token: 'at' }) })
+			const handler = new OAuth2Handler(baseConfig)
+			await handler.exchangeCode('code', 'https://app.com/callback')
+			const body = new URLSearchParams(mockFetch.mock.calls[0][1].body as string)
+			expect(body.get('client_id')).toBe('my-client-id')
+			expect(body.get('client_secret')).toBe('my-client-secret')
+		})
+	})
 })

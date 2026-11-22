@@ -202,6 +202,16 @@ export const FLAGS = {
 	 */
 	ZOOM: 'zoom',
 	/**
+	 * Gates Salesforce and the paste form for a customer's own sign-in app (task
+	 * [Let customers connect with their own app](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1fe9152c-c039-4f84-95d1-0a673fad9957)).
+	 * Actor-scoped, read by the integrations routes: off means Salesforce is missing from
+	 * GET /api/integrations/providers and its connect and app calls are refused, so Settings shows
+	 * nothing new. The sign-in change for providers with a server-wide app is not behind the flag:
+	 * it only does anything when a workspace has saved its own app. Retire once a real Salesforce
+	 * admin has connected through the form and the provider is on for everyone.
+	 */
+	SALESFORCE: 'salesforce',
+	/**
 	 * Gates the four meeting-notes integrations Fireflies, Granola, Fathom and Otter (task
 	 * [Add four meeting-notes integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/7bfb4736-6c21-4cc9-9a19-2e6f8f4d35d6)).
 	 * Actor-scoped, read by the integrations routes: off means the four are missing from

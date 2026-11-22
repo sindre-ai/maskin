@@ -18,7 +18,16 @@ export interface OAuth2Config {
 	extraAuthParams?: Record<string, string>
 	/** Extra params added to token exchange request body */
 	extraTokenParams?: Record<string, string>
-	/** Env var name for OAuth client ID */
+	/**
+	 * The vendor lets only a customer's own admin create the sign-in app. Settings then asks the
+	 * workspace to paste that app's id and secret before Connect, and every sign-in and refresh
+	 * for the workspace uses it. Without it, a workspace's saved app is never read.
+	 */
+	customerApp?: boolean
+	/**
+	 * Env var name for OAuth client ID. Server-wide app. A workspace's own app (customerApp) wins
+	 * over it when one is saved.
+	 */
 	clientIdEnv: string
 	/** Env var name for OAuth client secret. Leave out when tokenAuthMethod is 'none'. */
 	clientSecretEnv?: string

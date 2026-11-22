@@ -80,6 +80,31 @@ export function useConnectDeepdots(workspaceId: string) {
 	})
 }
 
+/** Whether this workspace saved its own sign-in app for a tool, and its app id. */
+export function useOAuthApp(
+	workspaceId: string,
+	provider: string,
+	options?: { enabled?: boolean },
+) {
+	return useQuery({
+		queryKey: queryKeys.integrations.oauthApp(workspaceId, provider),
+		queryFn: () => api.integrations.oauthApp(workspaceId, provider),
+		enabled: options?.enabled ?? true,
+	})
+}
+
+/** Saves or replaces the workspace's own sign-in app. The secret is sent once and never read back. */
+export function useSaveOAuthApp(workspaceId: string, provider: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { clientId: string; clientSecret: string }) =>
+			api.integrations.saveOAuthApp(workspaceId, provider, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
 /** Server-side DNS pre-check the Resend connect flow fires on leaving Step 2.
  *  The backend runs `node:dns.resolveMx()` on the entered domain and returns
  *  the existing MX list plus a `warn` flag — set when the user typed a bare
