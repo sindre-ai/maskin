@@ -10,7 +10,7 @@ export const ACCOUNTING_LOOP_NAME = 'Accounting'
 export const ACCOUNTING_LOOP_VERSION = '1.0.0'
 export const ACCOUNTING_LOOP_USE_CASE = 'Finance'
 export const ACCOUNTING_LOOP_DESCRIPTION =
-	"Turns receipts into draft vouchers in your accounting system, and lists what looks wrong for your adviser. You upload a photo or PDF of a receipt in the flow's chat. The Bookkeeper reads it, saves it as a draft voucher and flags any doubt, such as a missing receipt, VAT that does not add up, a double payment or a private cost. It never books, changes or deletes anything: a person approves every draft in your accounting system. In your first chat you pick your accounting system from a list, and each system shows whether it is ready, needs setup or is not available yet. You then connect it once, and the flow checks the connection and tells you what to fix. A weekly check catches a connection that stopped working."
+	"Turns receipts into draft vouchers in your accounting system, and lists what looks wrong for your adviser. You upload a photo or PDF of a receipt in the flow's chat. The Bookkeeper reads it, saves it as a draft voucher and flags any doubt, such as a missing receipt, VAT that does not add up, a double payment or a private cost. It never books, changes or deletes anything: a person approves every draft in your accounting system. In your first chat you pick your accounting system, and each system shows whether it is ready, needs setup or is not available yet. Today only Dinero connects, and it is an early version: Dinero's own server needs a sign-in the flow cannot keep alive. After install you add the server as a tool and give it a sign-in token, which takes someone technical. The token runs out after about an hour and cannot be renewed by the flow, so a person supplies a fresh one when it does. The flow checks the connection and tells you what to fix, and a weekly check tells you when the token has run out."
 
 // The accounting systems an owner can pick from, and how far each one connects. This list is the one
 // place the status of a system is kept: the accounting-systems skill the Bookkeeper reads is built
@@ -34,7 +34,7 @@ export const ACCOUNTING_SYSTEMS: readonly AccountingSystem[] = [
 	{
 		name: 'Dinero',
 		status: 'needs_setup',
-		note: 'Needs a Pro or Total plan. Create an integration in Dinero and save its client ID, client secret and API key once under Integrations, in the Connect Dinero form. The steps are in the accounting-connection-check skill.',
+		note: "Early version. Add Dinero's own server as a custom tool and give it a sign-in token that runs out after about an hour. Needs someone technical. The steps are in the accounting-connection-check skill.",
 	},
 	{ name: 'Numina', status: 'not_yet', note: 'The connection is not built yet.' },
 	{ name: 'Uniconta', status: 'not_yet', note: 'The connection is not built yet.' },

@@ -77,19 +77,18 @@ describe('Accounting loop definition', () => {
 		}
 	})
 
-	// Install step from the spec: the owner's own Dinero integration keys saved once in the Connect
-	// Dinero form under Integrations, no browser sign-in and no server address, and a check on every
-	// first run.
+	// Install step for Dinero's own server: added as a custom tool, limited to drafts, and a plain
+	// warning that its sign-in runs out because the flow cannot renew it. A check on every first run.
 	it('tells the owner how to connect Dinero and what the first run checks', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
-		expect(check).toMatch(/client ID, the client secret and the API key/)
-		expect(check).toMatch(/Pro or Total plan/)
-		expect(check).toMatch(/one company/)
-		expect(check).toMatch(/under Integrations, in the Connect Dinero form/)
-		expect(check).toMatch(/no browser sign-in and no server address/)
+		expect(check).toMatch(/add Dinero's own server as a custom tool/)
+		expect(check).toMatch(/only the one company/)
+		expect(check).toMatch(/needs someone technical/)
+		expect(check).toMatch(/Limit the tool to reading and saving drafts/)
 		expect(check).toMatch(/read and write access/)
 		expect(check).toMatch(/at the start of every job/i)
+		expect(check).toMatch(/no tool that books, posts, changes, deletes, pays or sends/)
 		expect(actorTexts().join('\n')).toMatch(/connection check first/)
 	})
 
@@ -147,16 +146,33 @@ describe('Accounting loop definition', () => {
 		})
 	})
 
-	it('never sees or asks for the keys', () => {
+	it('says the Dinero sign-in runs out and the flow cannot renew it', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(/early version/)
+		expect(check).toMatch(/runs out after about an hour/)
+		expect(check).toMatch(/cannot renew it/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/runs out after about an hour/)
+		expect(actorTexts().join('\n')).toMatch(/do not try to sign in yourself/i)
+	})
+
+	it('has no key-based install step left', () => {
+		const all = [ACCOUNTING_LOOP.description, ...actorTexts(), ...skillTexts()].join('\n')
+		expect(all).not.toMatch(/client ID|client secret|Connect Dinero form|no browser sign-in/i)
+	})
+
+	it('never sees or asks for the sign-in token', () => {
 		const prompt = actorTexts().join('\n')
-		expect(prompt).toMatch(/never see the owner's Dinero keys and never ask for them in chat/)
-		expect(skillTexts().join('\n')).toMatch(/Never paste them in the chat/)
+		expect(prompt).toMatch(
+			/never see the owner's Dinero sign-in token and never ask for it in chat/,
+		)
+		expect(skillTexts().join('\n')).toMatch(/Never paste the token in the chat/)
 	})
 
 	it('is draft only and takes receipts from uploaded files only', () => {
 		const prompt = actorTexts().join('\n')
 		expect(prompt).toMatch(/Draft only/)
-		expect(prompt).toMatch(/never book, finalise, change, approve or delete/i)
+		expect(prompt).toMatch(/never book, finalise, change, approve, pay, send or delete/i)
 		expect(prompt).toMatch(/uploads in the chat/)
 		expect(prompt).toMatch(/do not promise that a photo or an email will arrive on its own/i)
 	})

@@ -172,6 +172,83 @@ describe('decideToolCall', () => {
 	})
 })
 
+describe('decideToolCall with a list of allowed tools', () => {
+	const base = { provider: 'custom-mcp', providerLabel: 'Books', access: 'read_write' as const }
+	const allowedTools = ['list_vouchers', 'create_voucher_draft']
+
+	it('refuses a tool off the list whatever the access, naming it', () => {
+		for (const toolName of ['book_voucher', 'delete_voucher', 'get_balance']) {
+			const d = decideToolCall({ ...base, toolName, allowedTools })
+			expect(d.allowed).toBe(false)
+			expect(d.message).toContain(`${toolName} is not one of the tools Books may use here`)
+		}
+	})
+
+	it('lets a listed tool through for an agent whose access covers it', () => {
+		expect(
+			decideToolCall({ ...base, toolName: 'create_voucher_draft', allowedTools }).allowed,
+		).toBe(true)
+	})
+
+	it('does not widen access: a listed write is still refused to a Read agent', () => {
+		const d = decideToolCall({
+			...base,
+			access: 'read',
+			toolName: 'create_voucher_draft',
+			allowedTools,
+		})
+		expect(d.allowed).toBe(false)
+		expect(d.message).toContain('needs write access')
+	})
+
+	it('matches the name exactly, not by prefix, case or fan-out suffix', () => {
+		for (const toolName of [
+			'create_voucher_draft_and_book',
+			'Create_Voucher_Draft',
+			'x__create_voucher_draft',
+		]) {
+			expect(decideToolCall({ ...base, toolName, allowedTools }).allowed).toBe(false)
+		}
+	})
+
+	it('changes nothing without a list', () => {
+		expect(decideToolCall({ ...base, toolName: 'book_voucher' }).allowed).toBe(true)
+	})
+})
+
+describe('annotateToolsList with a list of allowed tools', () => {
+	const result = {
+		tools: ['list_vouchers', 'create_voucher_draft', 'book_voucher'].map((name) => ({
+			name,
+			description: name,
+		})),
+		nextCursor: 'c1',
+	}
+
+	it('leaves every tool off the list out and keeps the rest of the result', () => {
+		const { result: out } = annotateToolsList(result, {
+			provider: 'custom-mcp',
+			providerLabel: 'Books',
+			access: 'read_write',
+			allowedTools: ['list_vouchers', 'create_voucher_draft'],
+		})
+		expect((out as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toEqual([
+			'list_vouchers',
+			'create_voucher_draft',
+		])
+		expect((out as { nextCursor: string }).nextCursor).toBe('c1')
+	})
+
+	it('lists every tool when there is no list', () => {
+		const { result: out } = annotateToolsList(result, {
+			provider: 'custom-mcp',
+			providerLabel: 'Books',
+			access: 'read_write',
+		})
+		expect((out as { tools: unknown[] }).tools).toHaveLength(3)
+	})
+})
+
 describe('annotateToolsList', () => {
 	const result = {
 		tools: [
