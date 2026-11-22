@@ -29,7 +29,9 @@ vi.mock('../../lib/logger', () => ({
 	},
 }))
 
+import { logger } from '../../lib/logger'
 import { alertOwnersOncePerDay } from '../../services/run-death-alerts'
+import { BACKOFF_BASE_MS, SessionNotAdmittedError } from '../../services/self-start-limits'
 import { startSession } from '../../services/session-lifecycle'
 
 interface FakeUpdateBuilder {
@@ -238,6 +240,55 @@ describe('SessionRetryScheduler', () => {
 		// No retry started, so nothing was linked and no attempt was spent.
 		expect(updates.some((u) => 'retriedSessionId' in u)).toBe(false)
 		expect(updates.some((u) => 'attemptNumber' in u)).toBe(false)
+	})
+
+	it('does not log an error when the gate refuses the retry, and waits until it would admit it', async () => {
+		const dueRow = buildDueRow()
+		const { db, updates } = fakeDb([dueRow])
+		const retryAt = new Date(NOW.getTime() + 2 * 60 * 60_000)
+		vi.mocked(startSession).mockRejectedValueOnce(
+			new SessionNotAdmittedError(
+				'no_change_backoff',
+				'deferred',
+				'retry',
+				retryAt,
+				'Not started yet',
+			),
+		)
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		// Only the retry-start message: this fake db also makes the put-back and the task
+		// restarter sweep log their own unrelated errors.
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'SessionRetryScheduler failed to start retry session',
+			expect.anything(),
+		)
+		const retryAtWrites = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt)
+		expect(retryAtWrites).toEqual([null, retryAt])
+	})
+
+	it('looks again in an hour when the gate refuses without a time', async () => {
+		const dueRow = buildDueRow()
+		const { db, updates } = fakeDb([dueRow])
+		vi.mocked(startSession).mockRejectedValueOnce(
+			new SessionNotAdmittedError('no_change_decision', 'blocked', 'retry', null, 'Not started'),
+		)
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		const before = Date.now()
+		await scheduler.tick(NOW)
+
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'SessionRetryScheduler failed to start retry session',
+			expect.anything(),
+		)
+		const writes = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt as Date | null)
+		expect(writes[0]).toBeNull()
+		const restored = writes[1] as Date
+		expect(restored.getTime()).toBeGreaterThanOrEqual(before + BACKOFF_BASE_MS)
+		expect(restored.getTime()).toBeLessThanOrEqual(Date.now() + BACKOFF_BASE_MS)
 	})
 
 	it('honours the FEATURE_RETRY_SCHEDULER=0 killswitch', async () => {
