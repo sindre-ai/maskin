@@ -259,7 +259,12 @@ describe('SessionRetryScheduler', () => {
 
 		await scheduler.tick(NOW)
 
-		expect(logger.error).not.toHaveBeenCalled()
+		// Only the retry-start message: this fake db also makes the put-back and the task
+		// restarter sweep log their own unrelated errors.
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'SessionRetryScheduler failed to start retry session',
+			expect.anything(),
+		)
 		const retryAtWrites = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt)
 		expect(retryAtWrites).toEqual([null, retryAt])
 	})
@@ -275,7 +280,10 @@ describe('SessionRetryScheduler', () => {
 		const before = Date.now()
 		await scheduler.tick(NOW)
 
-		expect(logger.error).not.toHaveBeenCalled()
+		expect(logger.error).not.toHaveBeenCalledWith(
+			'SessionRetryScheduler failed to start retry session',
+			expect.anything(),
+		)
 		const writes = updates.filter((u) => 'retryAt' in u).map((u) => u.retryAt as Date | null)
 		expect(writes[0]).toBeNull()
 		const restored = writes[1] as Date
