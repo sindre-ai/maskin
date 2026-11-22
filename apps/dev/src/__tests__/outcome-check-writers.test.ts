@@ -61,6 +61,10 @@ const WRITERS: Record<string, Writer> = {
 		via: 'not-an-agent-route',
 		note: 'A person-run import.',
 	},
+	'services/loop-version-pusher.ts :: { ...patch, updatedAt: new Date() }': {
+		via: 'not-an-agent-route',
+		note: 'The hourly marketplace update renaming an installed flow and adding its Setup section. The patch only carries title and content (loopIdentityPatch), never a status.',
+	},
 }
 
 function sourceFiles(dir: string): string[] {
