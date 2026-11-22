@@ -152,7 +152,7 @@ test.describe('Settings — Integrations own sign-in app form', () => {
 			await openDiscover(page)
 			await page.getByPlaceholder(/Search integrations/).fill('Looker')
 
-			await page.getByRole('button', { name: 'Connect' }).click()
+			await page.getByRole('button', { name: 'Connect', exact: true }).click()
 			const dialog = page.getByRole('dialog')
 			await expect(dialog.getByText('Connect Looker')).toBeVisible()
 			await expect(dialog.getByLabel('App secret')).toHaveCount(0)
