@@ -324,6 +324,21 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `GET /api/integrations/{id}/audit-log`.
     /// - Remark: Generated from `#/paths//api/integrations/{id}/audit-log/get`.
     func get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Output
+    /// Read a workspace's own sign-in app for a tool (app id only, never the secret)
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/get`.
+    func get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(_ input: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output
+    /// Save or replace a workspace's own sign-in app for a tool (admins and owners only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/put`.
+    func put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(_ input: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output
+    /// Remove a workspace's own sign-in app for a tool (refused while the tool is connected)
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/delete`.
+    func delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(_ input: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output
     /// List which agents may use an integration, and how
     ///
     /// - Remark: HTTP `GET /api/integrations/{id}/grants`.
@@ -1528,6 +1543,45 @@ extension APIProtocol {
         try await get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log(Operations.get_sol_api_sol_integrations_sol__lcub_id_rcub__sol_audit_hyphen_log.Input(
             path: path,
             query: query,
+            headers: headers
+        ))
+    }
+    /// Read a workspace's own sign-in app for a tool (app id only, never the secret)
+    ///
+    /// - Remark: HTTP `GET /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/get`.
+    public func get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+        path: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Path,
+        headers: Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers
+    ) async throws -> Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
+        try await get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(Operations.get_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Save or replace a workspace's own sign-in app for a tool (admins and owners only)
+    ///
+    /// - Remark: HTTP `PUT /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/put`.
+    public func put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+        path: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Path,
+        headers: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers
+    ) async throws -> Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
+        try await put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Remove a workspace's own sign-in app for a tool (refused while the tool is connected)
+    ///
+    /// - Remark: HTTP `DELETE /api/integrations/{provider}/app`.
+    /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/delete`.
+    public func delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(
+        path: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Path,
+        headers: Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input.Headers
+    ) async throws -> Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output {
+        try await delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app(Operations.delete_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Input(
+            path: path,
             headers: headers
         ))
     }

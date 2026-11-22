@@ -236,6 +236,37 @@ describe('the app routes', () => {
 		expect(get).not.toContain(SECRET)
 	})
 
+	it('declares no request body for the PUT, so the validator never parses the secret', () => {
+		const doc = oauthAppRoutes.getOpenAPIDocument({
+			openapi: '3.0.0',
+			info: { title: 'test', version: '0' },
+		})
+		const put = doc.paths?.['/{provider}/app']?.put
+		expect(put).toBeDefined()
+		expect(put?.requestBody).toBeUndefined()
+	})
+
+	it('answers 400 with field names only when the PUT body is wrong, and saves nothing', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const app = appFor(ws.id)
+
+		const notJson = await app.request('PUT', '/salesforce/app', undefined)
+		expect(notJson.status).toBe(400)
+
+		for (const body of [
+			{ clientId: CLIENT_ID },
+			{ clientId: CLIENT_ID, clientSecret: SECRET, extra: SECRET },
+			{ clientId: '', clientSecret: SECRET },
+		]) {
+			const res = await app.request('PUT', '/salesforce/app', body)
+			expect(res.status).toBe(400)
+			const text = await res.text()
+			expect(text).not.toContain(SECRET)
+			expect(JSON.parse(text).error.message).toMatch(/^Invalid fields: /)
+		}
+		expect(await getOAuthAppStatus(db, ws.id, 'salesforce')).toEqual({ configured: false })
+	})
+
 	it('keeps the app out of the integrations list', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		await save(ws.id)
