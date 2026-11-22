@@ -14,7 +14,6 @@
 // are merged into one lookup per entity type below — every loop config calls
 // the same getActorData/getTriggerData/getSkillData.
 
-import { ACCOUNTING_SYSTEMS_SKILL } from './accounting-systems'
 import accountingActorsData from './data/accounting-actors.json'
 import accountingSkillsData from './data/accounting-skills.json'
 import accountingTriggersData from './data/accounting-triggers.json'
@@ -119,7 +118,6 @@ const triggersById: Record<string, TriggerData> = {
 
 const skillsById: Record<string, SkillData> = {
 	...(accountingSkillsData as Record<string, SkillData>),
-	[ACCOUNTING_SYSTEMS_SKILL.id]: ACCOUNTING_SYSTEMS_SKILL,
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),

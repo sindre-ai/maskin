@@ -1,8 +1,4 @@
-import {
-	ACCOUNTING_LOOP_ACTOR_BOOKKEEPER,
-	ACCOUNTING_SYSTEMS,
-	ACCOUNTING_SYSTEM_STATUSES,
-} from '@maskin/shared'
+import { ACCOUNTING_LOOP_ACTOR_BOOKKEEPER } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 import {
 	ACCOUNTING_LOOP,
@@ -43,14 +39,13 @@ describe('Accounting loop definition', () => {
 		expect(settings.targets).toBeUndefined()
 	})
 
-	it('ships one actor, one trigger and three skills, no duplicates', () => {
+	it('ships one actor, one trigger and two skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
 		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(1)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(3)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(2)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
-			'accounting-systems',
 			'bookkeeping-draft-method',
 		])
 	})
@@ -90,60 +85,6 @@ describe('Accounting loop definition', () => {
 		expect(check).toMatch(/at the start of every job/i)
 		expect(check).toMatch(/no tool that books, posts, changes, deletes, pays or sends/)
 		expect(actorTexts().join('\n')).toMatch(/connection check first/)
-	})
-
-	// The picker: one list of systems with a status each, kept in one place and read by the Bookkeeper.
-	describe('accounting system picker', () => {
-		const systemsSkill = () =>
-			skillTexts().find((t) => t.startsWith('---\nname: accounting-systems')) ?? ''
-
-		it('lists the nine systems in order, each with a known status', () => {
-			expect(ACCOUNTING_SYSTEMS.map((s) => s.name)).toEqual([
-				'Dinero',
-				'Numina',
-				'Uniconta',
-				'Odoo',
-				'Business Central',
-				'e-conomic',
-				'Billy',
-				'Zenegy',
-				'Appelsin',
-			])
-			for (const system of ACCOUNTING_SYSTEMS) {
-				expect(ACCOUNTING_SYSTEM_STATUSES).toContain(system.status)
-				expect(system.note.length).toBeGreaterThan(0)
-			}
-		})
-
-		it('shows every system with its status in the skill, built from the list', () => {
-			const labels = { ready: 'Ready', needs_setup: 'Needs setup', not_yet: 'Not yet' }
-			for (const system of ACCOUNTING_SYSTEMS) {
-				expect(systemsSkill()).toContain(
-					`- ${system.name}: ${labels[system.status]}. ${system.note}`,
-				)
-			}
-		})
-
-		it('keeps Appelsin and Zenegy at Not yet', () => {
-			const byName = Object.fromEntries(ACCOUNTING_SYSTEMS.map((s) => [s.name, s.status]))
-			expect(byName.Appelsin).toBe('not_yet')
-			expect(byName.Zenegy).toBe('not_yet')
-		})
-
-		it('says what to do for each status and asks once, then remembers the pick', () => {
-			const text = systemsSkill()
-			expect(text).toMatch(/ask which system they use/)
-			expect(text).toMatch(/"Accounting system: <name>"/)
-			expect(text).toMatch(/Ready: run the connection check/)
-			expect(text).toMatch(/Needs setup: tell the owner/)
-			expect(text).toMatch(/Not yet: say plainly that this system cannot connect yet/)
-		})
-
-		it('points the Bookkeeper at the picker before the connection check', () => {
-			expect(actorTexts().join('\n')).toMatch(
-				/which accounting system the owner uses \(skill accounting-systems\), then run the connection check first/,
-			)
-		})
 	})
 
 	it('says the Dinero sign-in runs out and the flow cannot renew it', () => {
