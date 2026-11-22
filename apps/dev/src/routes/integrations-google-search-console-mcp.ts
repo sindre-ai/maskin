@@ -72,6 +72,7 @@ app.post('/', async (c) => {
 		integrationId,
 		provider: 'google-search-console',
 		providerLabel: 'Google Search Console',
+		sessionId: c.req.header('x-maskin-session-id') || undefined,
 	})
 	const mcpServer = createGscMcpServer({ db, workspaceId, actorId, integrationId }, gate)
 

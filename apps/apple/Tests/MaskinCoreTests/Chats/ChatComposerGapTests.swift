@@ -114,14 +114,35 @@ struct ChatComposerGapTests {
 		#expect(m.lengthNotice?.hasPrefix("Remove an attachment to send this as a file") == true)
 	}
 
-	@Test("blank text with an attachment still cannot send, but the bar has content")
-	func attachmentAloneCannotSend() async {
+	@Test("an attachment alone can send, with empty text and the file in the metadata")
+	func attachmentAloneCanSend() async {
 		let m = model()
 		m.attach(name: "a.png", mimeType: "image/png", prepare: picture)
+		#expect(!m.canSend)  // still uploading
 		#expect(await eventually { !m.isUploading })
 		#expect(m.hasContent)
+		#expect(m.canSend)
+		let taken = m.take()
+		#expect(taken?.text == "")
+		#expect(taken?.metadata?.attachments?.count == 1)
+	}
+
+	@Test("blank text and no attachment cannot send")
+	func nothingCannotSend() {
+		let m = model()
+		m.text = "  \n"
 		#expect(!m.canSend)
 		#expect(m.take() == nil)
+	}
+
+	@Test("a comment with no words goes with the attachments' names")
+	func commentTextFallsBackToNames() async {
+		let m = model()
+		m.attach(name: "a.png", mimeType: "image/png", prepare: picture)
+		m.attach(name: "b.pdf", mimeType: "application/pdf", prepare: picture)
+		#expect(m.commentText == "a.png, b.pdf")
+		m.text = " hello "
+		#expect(m.commentText == "hello")
 	}
 
 	// MARK: Edit and reply

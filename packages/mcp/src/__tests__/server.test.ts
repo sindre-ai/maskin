@@ -2096,7 +2096,7 @@ describe('tool handlers', () => {
 					name: 'Lead qualification',
 					driver_id: 'agent-1',
 					content: 'Every lead gets an answer',
-					status: 'learning',
+					status: 'pilot',
 					entry_condition: 'A lead is created',
 					close_condition: 'The lead is won or lost',
 					closed_statuses: { lead: ['won', 'lost'] },
@@ -2163,7 +2163,7 @@ describe('tool handlers', () => {
 					type: 'loop',
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
-					status: 'learning',
+					status: 'pilot',
 					driver: 'agent-1',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
@@ -2198,6 +2198,58 @@ describe('tool handlers', () => {
 				expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'has_members')).toBe(
 					false,
 				)
+			})
+
+			it.each([
+				['draft', false],
+				['paused', false],
+				['pilot', true],
+				['supervised', true],
+				['live', true],
+			])('creates the step trigger for status %s with enabled %s', async (status, enabled) => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
+					if (u.endsWith('/api/triggers') && method === 'POST') return okJson({ id: 'trig-1' })
+					if (u.endsWith('/api/triggers'))
+						return okJson([
+							{ id: 'trig-1', name: 'Step', targetActorId: 'agent-1', actionPrompt: 'Do it' },
+						])
+					if (u.endsWith('/api/graph'))
+						return okJson({
+							nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+							edges: [],
+						})
+					if (u.endsWith('/api/integrations')) return okJson([])
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				await getHandler('create_loop')({
+					name: 'Status flow',
+					driver_id: 'agent-1',
+					status,
+					steps: [
+						{
+							name: 'Step',
+							agent_id: 'agent-1',
+							prompt: 'Do it',
+							when: { cron: '0 9 * * 1' },
+						},
+					],
+					trigger_ids: [],
+					object_ids: [],
+				})
+
+				const triggerCall = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							String(c[0]).endsWith('/api/triggers') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(JSON.parse((triggerCall?.[1] as RequestInit).body as string).enabled).toBe(enabled)
 			})
 
 			it('rejects unknown trigger ids before creating anything', async () => {
@@ -2665,6 +2717,93 @@ describe('tool handlers', () => {
 			})
 		})
 
+		describe('fork_loop', () => {
+			const install = {
+				id: 'inst-1',
+				objectId: 'loop-1',
+				isLocked: true,
+				forkedAt: null,
+				loopName: 'Development',
+			}
+
+			function mockInstalls(installs: unknown[], forkCalls: string[] = []) {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method ?? 'GET'
+					if (method === 'GET' && u.includes('/api/installed-loops?workspaceId=')) {
+						return okJson({ installs })
+					}
+					if (method === 'POST' && u.endsWith('/api/installed-loops/inst-1/fork')) {
+						forkCalls.push(u)
+						return okJson({
+							id: 'inst-1',
+							objectId: 'loop-1',
+							installedVersion: '1.4.0',
+							forkedAt: '2026-11-20T10:00:00.000Z',
+							detached: { actors: 3, triggers: 5, skills: 2, integrations: 0 },
+						})
+					}
+					throw new Error(`Unexpected fetch: ${method} ${u}`)
+				})
+			}
+
+			it('forks the install that matches the loop object id', async () => {
+				const forkCalls: string[] = []
+				mockInstalls([install], forkCalls)
+
+				const result = (await getHandler('fork_loop')({ id: 'loop-1' })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(forkCalls).toHaveLength(1)
+				expect(parsed.forked).toBe(true)
+				expect(parsed.loop).toBe('Development')
+				expect(parsed.forked_from_version).toBe('1.4.0')
+				expect(parsed.detached).toEqual({ actors: 3, triggers: 5, skills: 2, integrations: 0 })
+			})
+
+			it('accepts the installed-loop id too', async () => {
+				const forkCalls: string[] = []
+				mockInstalls([install], forkCalls)
+
+				await getHandler('fork_loop')({ id: 'inst-1' })
+
+				expect(forkCalls).toHaveLength(1)
+			})
+
+			it('does not call the fork endpoint when the loop is already forked', async () => {
+				const forkCalls: string[] = []
+				mockInstalls(
+					[{ ...install, isLocked: false, forkedAt: '2026-11-01T00:00:00.000Z' }],
+					forkCalls,
+				)
+
+				const result = (await getHandler('fork_loop')({ id: 'loop-1' })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(forkCalls).toEqual([])
+				expect(parsed.forked).toBe(false)
+				expect(parsed.already_forked).toBe(true)
+			})
+
+			it('explains when the loop was not installed from the marketplace', async () => {
+				const forkCalls: string[] = []
+				mockInstalls([install], forkCalls)
+
+				const result = (await getHandler('fork_loop')({ id: 'loop-handmade' })) as {
+					content: Array<{ text: string }>
+				}
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(forkCalls).toEqual([])
+				expect(parsed.forked).toBe(false)
+				expect(parsed.reason).toMatch(/not installed from the marketplace/)
+			})
+		})
+
 		describe('delete_loop', () => {
 			it('rejects objects that are not loops', async () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
@@ -3058,7 +3197,7 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('get_started handler', () => {
+	describe('list_marketplace handler', () => {
 		// These cases model an account with no default workspace configured, so a
 		// call with no workspace_id means "no id at all".
 		beforeEach(() => {
@@ -3091,7 +3230,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ loops }),
 				} as Response)
 
-			const handler = getHandler('get_started')
+			const handler = getHandler('list_marketplace')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
@@ -3100,7 +3239,7 @@ describe('tool handlers', () => {
 			expect(text).toContain('Growth')
 			expect(text).toContain('loop-dev-1')
 			expect(text).toContain('loop_id')
-			expect(text).toContain('confirm: true')
+			expect(text).toContain('install_loop')
 		})
 
 		it('returns empty-marketplace message when marketplace has no loops', async () => {
@@ -3111,7 +3250,7 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ loops: [] }),
 				} as Response)
 
-			const handler = getHandler('get_started')
+			const handler = getHandler('list_marketplace')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
@@ -3119,7 +3258,7 @@ describe('tool handlers', () => {
 			expect(text).not.toContain('loop_id')
 		})
 
-		it('installs loop when loop_id and confirm: true are provided', async () => {
+		it('installs loop when loop_id is provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
@@ -3137,10 +3276,9 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ connected: false }),
 				} as Response)
 
-			const handler = getHandler('get_started')
+			const handler = getHandler('install_loop')
 			const result = (await handler({
 				loop_id: 'loop-dev-1',
-				confirm: true,
 			})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
@@ -3177,8 +3315,8 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ connected: false }),
 				} as Response)
 
-			const handler = getHandler('get_started')
-			await handler({ loop_id: 'loop-dev-1', confirm: true, workspace_name: 'Acme' })
+			const handler = getHandler('install_loop')
+			await handler({ loop_id: 'loop-dev-1', workspace_name: 'Acme' })
 
 			const patchCall = fetchSpy.mock.calls.find(
 				([u, opts]) =>
@@ -3193,7 +3331,7 @@ describe('tool handlers', () => {
 		it('degrades gracefully when workspaces fetch fails', async () => {
 			vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
 
-			const handler = getHandler('get_started')
+			const handler = getHandler('list_marketplace')
 			const result = (await handler({})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
@@ -3234,7 +3372,7 @@ describe('tool handlers', () => {
 			it('returns a not_found error naming the id, not the sign-in steps, for an unknown workspace_id', async () => {
 				mockGetStartedApi(three)
 
-				const result = (await getHandler('get_started')({
+				const result = (await getHandler('list_marketplace')({
 					workspace_id: 'ws-missing',
 				})) as ErrorResult
 
@@ -3249,7 +3387,7 @@ describe('tool handlers', () => {
 				mockGetStartedApi(three)
 				createMcpServer({ ...config, defaultWorkspaceId: 'ws-gone' })
 
-				const result = (await getHandler('get_started')({})) as ErrorResult
+				const result = (await getHandler('list_marketplace')({})) as ErrorResult
 
 				expect(result.isError).toBe(true)
 				expect(result.structuredContent?.error?.reason).toContain('ws-gone')
@@ -3259,7 +3397,9 @@ describe('tool handlers', () => {
 			it('uses the requested workspace when the id is in the list', async () => {
 				mockGetStartedApi(three)
 
-				const result = (await getHandler('get_started')({ workspace_id: 'ws-b' })) as ErrorResult
+				const result = (await getHandler('list_marketplace')({
+					workspace_id: 'ws-b',
+				})) as ErrorResult
 
 				expect(result.isError).toBeUndefined()
 				expect(result.content[0].text).toContain('"Beta"')
@@ -3268,18 +3408,17 @@ describe('tool handlers', () => {
 			it('still picks the first workspace for the preview when no id is given', async () => {
 				mockGetStartedApi(three)
 
-				const result = (await getHandler('get_started')({})) as ErrorResult
+				const result = (await getHandler('list_marketplace')({})) as ErrorResult
 
 				expect(result.content[0].text).toContain('"Alpha"')
 				expect(result.content[0].text).toContain('loop-dev-1')
 			})
 
-			it('confirm with no id and several workspaces installs nothing and lists each as name plus id', async () => {
+			it('install with no id and several workspaces installs nothing and lists each as name plus id', async () => {
 				const fetchSpy = mockGetStartedApi(three)
 
-				const result = (await getHandler('get_started')({
+				const result = (await getHandler('install_loop')({
 					loop_id: 'loop-dev-1',
-					confirm: true,
 				})) as ErrorResult
 				const text = result.content[0].text
 
@@ -3293,22 +3432,21 @@ describe('tool handlers', () => {
 				expect(fetchSpy).toHaveBeenCalledTimes(1)
 			})
 
-			it('confirm with no id and exactly one workspace installs into it', async () => {
+			it('install with no id and exactly one workspace installs into it', async () => {
 				const fetchSpy = mockGetStartedApi([three[1]])
 
-				await getHandler('get_started')({ loop_id: 'loop-dev-1', confirm: true })
+				await getHandler('install_loop')({ loop_id: 'loop-dev-1' })
 
 				const calls = installCalls(fetchSpy)
 				expect(calls).toHaveLength(1)
 				expect(JSON.parse((calls[0][1] as RequestInit).body as string).workspaceId).toBe('ws-b')
 			})
 
-			it('confirm with a valid id and several workspaces installs into that one', async () => {
+			it('install with a valid id and several workspaces installs into that one', async () => {
 				const fetchSpy = mockGetStartedApi(three)
 
-				await getHandler('get_started')({
+				await getHandler('install_loop')({
 					loop_id: 'loop-dev-1',
-					confirm: true,
 					workspace_id: 'ws-c',
 				})
 
@@ -3317,12 +3455,11 @@ describe('tool handlers', () => {
 				expect(JSON.parse((calls[0][1] as RequestInit).body as string).workspaceId).toBe('ws-c')
 			})
 
-			it('confirm with no workspaces returns the no-workspace reply', async () => {
+			it('install with no workspaces returns the no-workspace reply', async () => {
 				const fetchSpy = mockGetStartedApi([])
 
-				const result = (await getHandler('get_started')({
+				const result = (await getHandler('install_loop')({
 					loop_id: 'loop-dev-1',
-					confirm: true,
 				})) as ErrorResult
 
 				expect(result.content[0].text).toContain('No workspace found')

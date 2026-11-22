@@ -25,7 +25,7 @@ async function seedViewLoop(account: {
 	const loop = await account.api.createObject(account.workspaceId, {
 		type: 'loop',
 		title: 'Export loop',
-		status: 'learning',
+		status: 'pilot',
 	})
 	const file = await account.api.createFile(account.workspaceId, {
 		name: 'open-deals.html',

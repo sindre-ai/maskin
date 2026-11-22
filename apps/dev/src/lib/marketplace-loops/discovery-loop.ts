@@ -1,6 +1,6 @@
 // Shared constants for the Product Discovery Loop marketplace bundle.
 //
-// The bundle contains the Product Discovery Agent, the CPO and the Strategist,
+// The bundle contains the Product Discovery Lead, the CPO and the Strategist,
 // plus every trigger they drive: triage of new insights, an insight synthesis
 // sweep, a backlog drain, a weekly briefing, weekly and daily upkeep of the
 // Discovery understanding and Bet intelligence pages, the evidence base and
@@ -56,11 +56,11 @@ const DISCOVERY_SETTINGS: LoopSettings = {
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Flow',
-	version: '1.4.0',
+	version: '1.7.0',
 	useCase: 'Discovery',
 	settings: DISCOVERY_SETTINGS,
 	description:
-		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, two living pages (what we understand about customers, and what it means for each bet) are kept current and graded each week, a plain-words weekly briefing says what was learned and what is worth a look, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
+		'Turns a steady stream of customer, prospect and market feedback into a short, ranked list of opportunities backed by evidence. New feedback is triaged as it arrives and clustered into candidate bets that state the problem, who has it, the evidence for and against, and the riskiest unknown. Weak candidates are paused on a rolling schedule, two living pages (what we understand about customers, and what it means for each bet) are kept current and graded each week, a plain-words weekly briefing says what was learned and what is worth a look, a ranked shortlist of up to seven opportunities is refreshed with it, and people decide which opportunities move on to shaping. Works with whatever sources you connect, such as product analytics, meeting transcripts or team chat.',
 } as const
 
 export const DISCOVERY_ACTOR_IDS = [
@@ -79,9 +79,9 @@ export const DISCOVERY_SKILL_IDS: readonly string[] = [
 	...new Set(DISCOVERY_ACTOR_IDS.flatMap(skillIdsForActor)),
 ]
 
-// The loop page's tabs, in order. Radar, Learning, Briefing and Opportunities
-// ship as empty starter pages for the agents to fill in; Pipeline reads live
-// counts and works in any workspace. See data/discovery-views.json.
+// The loop page's tabs, in order. Radar, Learning, Briefing and Opportunity shortlist ship
+// as empty starter pages for the agents to fill in; Opportunities and Pipeline read live
+// counts and work in any workspace. See data/discovery-views.json.
 export const DISCOVERY_VIEW_IDS: readonly string[] = Object.values(discoveryViewsData)
 	.sort((a, b) => a.position - b.position)
 	.map((view) => view.id)

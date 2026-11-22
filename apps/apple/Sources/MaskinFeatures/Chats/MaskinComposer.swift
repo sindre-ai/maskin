@@ -84,17 +84,22 @@ struct MaskinComposer: View {
 	var onStop: (() -> Void)?
 	/// A control that sits inside the bar, above the field (the item page's Comment / Message chip).
 	var topAccessory: AnyView?
+	/// A host whose send drops files sets why a file alone cannot go (the item bar in Message agent
+	/// mode). Send then stays off while the field has no words, and this shows under the bar.
+	var needsWords: String?
 	let onSend: () -> Void
 
 	init(
 		model: ChatComposerModel, config: MaskinComposerConfig, busy: Bool = false,
-		onStop: (() -> Void)? = nil, topAccessory: AnyView? = nil, onSend: @escaping () -> Void
+		onStop: (() -> Void)? = nil, topAccessory: AnyView? = nil, needsWords: String? = nil,
+		onSend: @escaping () -> Void
 	) {
 		self.model = model
 		self.config = config
 		self.busy = busy
 		self.onStop = onStop
 		self.topAccessory = topAccessory
+		self.needsWords = needsWords
 		self.onSend = onSend
 		_showsFormatting = State(initialValue: ComposerFormatting.isShown(actorID: model.selfActorID))
 	}
@@ -128,8 +133,11 @@ struct MaskinComposer: View {
 	#if os(iOS)
 	@State private var dictation = Dictation()
 	@State private var showCamera = false
+	@State private var showScanner = false
 	@Environment(\.openURL) private var openURL
 	#endif
+	/// Present in the app; absent in previews, where the alert falls back to iOS Settings.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// 40pt circles, each inside a 44pt hit frame.
@@ -151,6 +159,15 @@ struct MaskinComposer: View {
 			hasContent: model.hasContent, hasText: !model.trimmedText.isEmpty, busy: busy && onStop != nil,
 			showsMic: config.showsMic && micAvailable, showsSend: config.showsSend)
 	}
+
+	/// Why Send is off for a rule the model leaves to the host (see `ComposerSendGate`).
+	private var gateBlocker: String? {
+		ComposerSendGate.blocker(
+			hasWords: !model.trimmedText.isEmpty, hasFiles: !model.attachments.isEmpty,
+			editing: model.editing != nil, needsWords: needsWords)
+	}
+
+	private var canSend: Bool { model.canSend && gateBlocker == nil }
 
 	/// While Stop is showing the mic stays beside it, so dictation is never blocked by a busy agent.
 	var showsMicBesideStop: Bool { lastSlot == .stop && config.showsMic && micAvailable }
@@ -174,6 +191,10 @@ struct MaskinComposer: View {
 			// Over the cap: say why Send is on (the text goes as a file) or off, never a bare grey arrow.
 			if let lengthNotice = model.lengthNotice {
 				Text(lengthNotice).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
+					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+			}
+			if let gateBlocker {
+				Text(gateBlocker).maskinText(.caption).foregroundStyle(MaskinColor.ink2)
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 			}
 			#if os(iOS)
@@ -288,7 +309,7 @@ struct MaskinComposer: View {
 			.padding(.trailing, MaskinSpace.s1)
 			.frame(maxWidth: .infinity)
 			#if os(iOS)
-			.background { ComposerImagePasteHook { model.attach([.image($0)]) } }
+			.background { ComposerImagePasteHook(isFocused: focused) { model.attach([.image($0)]) } }
 			#endif
 	}
 
@@ -344,9 +365,9 @@ struct MaskinComposer: View {
 			// Sent: drop the keyboard so the reply gets the whole window. Tapping the field brings it back.
 			focused = false
 		}
-		.disabled(!model.canSend)
-		.opacity(model.canSend ? 1 : 0.35)
-		.accessibilityHint(model.sendBlocker ?? "")
+		.disabled(!canSend)
+		.opacity(canSend ? 1 : 0.35)
+		.accessibilityHint(gateBlocker ?? model.sendBlocker ?? "")
 		#if !os(watchOS) && !os(tvOS)
 		.keyboardShortcut(.return, modifiers: .command)
 		#endif
@@ -387,7 +408,7 @@ struct MaskinComposer: View {
 	private var attachActions: [ComposerAttachAction] {
 		#if os(iOS)
 		ComposerAttachAction.available(
-			hasCamera: CameraPicker.isAvailable, clipboardHasImage: UIPasteboard.general.hasImages,
+			hasCamera: CameraPicker.isAvailable, canScan: DocumentScanner.isAvailable, clipboardHasImage: UIPasteboard.general.hasImages,
 			showsFormatting: showsFormatting)
 		#else
 		ComposerAttachAction.available(hasCamera: false, clipboardHasImage: false, showsFormatting: showsFormatting)
@@ -408,7 +429,8 @@ struct MaskinComposer: View {
 			// does not depend on how a guide resolves. Fade only: a move transition can park the card off its spot.
 			let rows = attachActions
 			let estimate = min(ComposerAttachMenu.contentHeight(rows: rows.count), attachMenuMaxHeight)
-			ComposerAttachMenu(actions: rows, maxHeight: attachMenuMaxHeight, onPick: pick)
+			ComposerAttachMenu(
+				actions: rows, maxHeight: attachMenuMaxHeight, onPick: pick, onPasteImages: pasteImages)
 				.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { attachMenuHeight = $0 }
 				.offset(y: ComposerAttachMenu.offsetY(height: attachMenuHeight ?? estimate))
 				.transition(.opacity)
@@ -424,6 +446,10 @@ struct MaskinComposer: View {
 			#if os(iOS)
 			showCamera = true
 			#endif
+		case .scan:
+			#if os(iOS)
+			showScanner = true
+			#endif
 		case .file: showFiles = true
 		case .object:
 			// No object search exists in the chat code yet; `/` is where it will hang (reported).
@@ -433,9 +459,8 @@ struct MaskinComposer: View {
 			showsFormatting = action == .showFormatting
 			ComposerFormatting.setShown(showsFormatting, actorID: model.selfActorID)
 		case .paste:
-			#if os(iOS)
-			pasteImage()
-			#endif
+			// The row is the system paste button and reports through `onPasteImages`, not through a pick.
+			break
 		}
 	}
 
@@ -504,19 +529,45 @@ struct MaskinComposer: View {
 
 	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
-	#if os(iOS)
-	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field.
-	fileprivate func pasteImage() {
-		guard let image = UIPasteboard.general.image, let data = image.jpegData(compressionQuality: 0.9) else {
+	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field. The pictures come from
+	/// the system paste button, so iOS does not ask "Allow Paste".
+	fileprivate func pasteImages(_ providers: [NSItemProvider]) {
+		guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }) else {
 			model.notice = "Couldn't read an image from the clipboard."
 			return
 		}
-		addFiles([.image(data)])
+		let model = model
+		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+			Task { @MainActor in
+				if let data {
+					model.attach([.image(data)])
+				} else {
+					model.notice = "Couldn't read an image from the clipboard."
+				}
+			}
+		}
+	}
+
+	#if os(iOS)
+	/// The Permissions page in Settings, where every phone permission is fixed. Without the app's
+	/// runtime (a preview) it goes to iOS Settings directly.
+	fileprivate func openPermissions() {
+		if let runtime {
+			runtime.openPermissions()
+		} else if let url = URL(string: UIApplication.openSettingsURLString) {
+			openURL(url)
+		}
 	}
 
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
+	}
+
+	/// The scanned pages become one PDF chip, like any other attachment.
+	fileprivate func addScan(_ pages: [UIImage]) {
+		let name = ScannedDocument.fileName(at: Date())
+		model.attach(name: name, mimeType: "application/pdf", prepare: AttachmentLoading.scan(pages: pages, name: name))
 	}
 	#endif
 
@@ -641,12 +692,13 @@ struct MaskinComposer: View {
 				.fullScreenCover(isPresented: composer.$showCamera) {
 					CameraPicker { composer.addPhoto($0) }.ignoresSafeArea()
 				}
+				.fullScreenCover(isPresented: composer.$showScanner) {
+					DocumentScanner { composer.addScan($0) }.ignoresSafeArea()
+				}
 				.alert(
 					"Microphone", isPresented: Binding(get: { composer.voiceProblem != nil }, set: { if !$0 { composer.voiceProblem = nil } })
 				) {
-					Button("Open Settings") {
-						if let url = URL(string: UIApplication.openSettingsURLString) { composer.openURL(url) }
-					}
+					Button("Open Permissions") { composer.openPermissions() }
 					Button("OK", role: .cancel) {}
 				} message: {
 					Text(composer.voiceProblem ?? "")

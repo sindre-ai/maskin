@@ -22,11 +22,11 @@ describe('Product Discovery Flow definition', () => {
 		expect(DISCOVERY_LOOP.slug).toBe('product-discovery-loop')
 		expect(DISCOVERY_LOOP.name).toBe('Product Discovery Flow')
 		expect(DISCOVERY_LOOP.useCase).toBe('Discovery')
-		expect(DISCOVERY_LOOP.version).toBe('1.4.0')
+		expect(DISCOVERY_LOOP.version).toBe('1.7.0')
 		expect(DISCOVERY_LOOP.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships the CPO, the Strategist and the Product Discovery Agent with eleven triggers and sixteen skills', () => {
+	it('ships the CPO, the Strategist and the Product Discovery Lead with eleven triggers and sixteen skills', () => {
 		expect(DISCOVERY_ACTOR_IDS.length).toBe(3)
 		expect(DISCOVERY_TRIGGER_IDS.length).toBe(11)
 		expect(DISCOVERY_SKILL_IDS.length).toBe(16)
@@ -35,9 +35,9 @@ describe('Product Discovery Flow definition', () => {
 		expect(new Set(DISCOVERY_SKILL_IDS).size).toBe(DISCOVERY_SKILL_IDS.length)
 	})
 
-	it('names the agents CPO, Strategist and Product Discovery Agent', () => {
+	it('names the agents CPO, Strategist and Product Discovery Lead', () => {
 		expect(DISCOVERY_ACTOR_IDS.map((id) => getActorData(id).name)).toEqual([
-			'Product Discovery Agent',
+			'Product Discovery Lead',
 			'CPO',
 			'Strategist',
 		])
@@ -132,7 +132,7 @@ describe('Product Discovery Flow definition', () => {
 
 	// This bundle is a template for any workspace: nothing in it may name the
 	// company, people or agents it was derived from, carry a date, or carry a
-	// source id. The CPO, the Strategist and the Product Discovery Agent are the
+	// source id. The CPO, the Strategist and the Product Discovery Lead are the
 	// agents that ship, so their names are the one exception.
 	it('carries no workspace-specific text', () => {
 		const text = JSON.stringify([
@@ -167,12 +167,13 @@ describe('Product Discovery Flow definition', () => {
 		for (const id of foundIds) expect(ownIds.has(id)).toBe(true)
 	})
 
-	it('ships the loop page tabs in order: Radar, Learning, Briefing, Opportunities, Pipeline', () => {
+	it('ships the loop page tabs in order: Radar, Learning, Briefing, Opportunities, Opportunity shortlist, Pipeline', () => {
 		expect(DISCOVERY_VIEW_IDS.map((id) => getViewData(id).name)).toEqual([
 			'Radar',
 			'Learning',
 			'Briefing',
 			'Opportunities',
+			'Opportunity shortlist',
 			'Pipeline',
 		])
 		expect(new Set(DISCOVERY_VIEW_IDS).size).toBe(DISCOVERY_VIEW_IDS.length)
@@ -204,8 +205,47 @@ describe('Product Discovery Flow definition', () => {
 		for (const id of foundIds) expect(ownIds.has(id)).toBe(true)
 	})
 
+	it('has the weekly briefing refresh the Opportunity shortlist view in place', () => {
+		const briefing = DISCOVERY_TRIGGER_IDS.map(getTriggerData).find((t) =>
+			t.name.startsWith('Weekly discovery briefing'),
+		)
+		expect(briefing?.actionPrompt).toMatch(/Opportunity shortlist refresh/)
+		expect(briefing?.actionPrompt).toMatch(/results-data/)
+		expect(briefing?.actionPrompt).toMatch(/up to 7/)
+	})
+
+	it('tells the Product Discovery Lead how to read Miro boards, read-only, and to say when it cannot', () => {
+		const prompt = getActorData(DISCOVERY_ACTOR_PRODUCT_DISCOVERY_AGENT).systemPrompt ?? ''
+		expect(prompt).toMatch(/# Miro boards/)
+		expect(prompt).toMatch(/If a Miro connection is granted to you/)
+		expect(prompt).toMatch(/content_search/)
+		expect(prompt).toMatch(/If the Miro connection is missing/)
+		expect(prompt).toMatch(/do not create or edit anything/)
+	})
+
+	it('ships the Opportunity shortlist page with its data block empty', () => {
+		const shortlist = DISCOVERY_VIEW_IDS.map(getViewData).find(
+			(v) => v.name === 'Opportunity shortlist',
+		)
+		expect(shortlist?.position).toBe(4)
+		const data = shortlist?.html.match(
+			/<script id="results-data" type="application\/json">([\s\S]*?)<\/script>/,
+		)?.[1]
+		expect(JSON.parse(data ?? '{}').items).toEqual([])
+	})
+
 	it('scopes the Pipeline page to the installed loop through the loop id token', () => {
 		const pipeline = DISCOVERY_VIEW_IDS.map(getViewData).find((v) => v.name === 'Pipeline')
 		expect(pipeline?.html).toContain(`"scope":"${LOOP_ID_TOKEN}"`)
+	})
+
+	it('reads live bet and insight counts on the Opportunities page, scoped to the installed loop', () => {
+		const opportunities = DISCOVERY_VIEW_IDS.map(getViewData).find(
+			(v) => v.name === 'Opportunities',
+		)
+		expect(opportunities?.position).toBe(3)
+		expect(opportunities?.html).toContain(`"scope":"${LOOP_ID_TOKEN}"`)
+		expect(opportunities?.html).toContain('maskin.query')
+		expect(opportunities?.html).not.toContain('Nothing here yet')
 	})
 })

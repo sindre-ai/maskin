@@ -76,8 +76,8 @@ struct LinkedLoopTriggerTests {
 	@Test("loop badge mapping: each rung in words, and Waiting on you where the list says Needs you")
 	func badges() {
 		let words: [LoopPill: String] = [
-			.draft: "Draft", .paused: "Paused", .learning: "Learning", .supervised: "Supervised",
-			.fullyAutonomous: "Fully autonomous", .waitingOnYou: "Waiting on you",
+			.draft: "Draft", .pilot: "Pilot", .supervised: "Supervised", .live: "Live",
+			.paused: "Paused", .archived: "Archived", .waitingOnYou: "Waiting on you",
 		]
 		#expect(words.count == LoopPill.allCases.count)
 		for (pill, word) in words { #expect(LinkedLoop.badge(for: pill) == word, "\(pill)") }
@@ -130,7 +130,7 @@ struct LinkedLoopTriggerTests {
 		let objects = FakeDraftsRemote()
 		objects.set(
 			.success(
-				ObjectDetail(object: WorkObject(id: loopID, type: "loop", title: "Far away", status: "learning"), workspaceId: "ws-2")),
+				ObjectDetail(object: WorkObject(id: loopID, type: "loop", title: "Far away", status: "pilot"), workspaceId: "ws-2")),
 			for: loopID)
 		objects.set(
 			.success(ObjectDetail(object: WorkObject(id: otherLoopID, type: "task", title: "Not a loop", status: "todo"), workspaceId: ws)),

@@ -70,8 +70,10 @@ describe('maskin-youtube tool server', () => {
 			'youtube__get_public_channel',
 			'youtube__get_public_videos',
 			'youtube__get_upload_status',
+			'youtube__get_video_stats',
 			'youtube__like',
 			'youtube__list_comments',
+			'youtube__list_recent_videos',
 			'youtube__post_comment',
 			'youtube__publish_video',
 			'youtube__reply_to_comment',
@@ -327,6 +329,47 @@ describe('maskin-youtube tool server', () => {
 		expect(JSON.stringify(trackYoutubeToolCalled.mock.calls)).not.toContain('aaaaaaaaaaa')
 	})
 
+	it('gives every tool an optional integration_id and passes it to the read', async () => {
+		youtubeRead.mockResolvedValue({ items: [] })
+		const { client, ctx } = await connect()
+		const { tools } = await client.listTools()
+		for (const tool of tools) {
+			const schema = tool.inputSchema as {
+				properties?: Record<string, unknown>
+				required?: string[]
+			}
+			expect(schema.properties).toHaveProperty('integration_id')
+			expect(schema.required ?? []).not.toContain('integration_id')
+		}
+		const id = '3f0c2c1e-8a3e-4c0e-9d0e-0a1b2c3d4e5f'
+
+		await client.callTool({ name: 'youtube__get_channel', arguments: { integration_id: id } })
+
+		expect(youtubeRead).toHaveBeenCalledWith(
+			expect.objectContaining({ ...ctx, integrationId: id }),
+			expect.objectContaining({ tool: 'youtube__get_channel' }),
+		)
+	})
+
+	it('returns the connection list as a tool error when the read asks which account', async () => {
+		const connections = [
+			{ integration_id: 'int-1', account: 'a@example.com' },
+			{ integration_id: 'int-2', account: 'b@example.com' },
+		]
+		youtubeRead.mockRejectedValueOnce(
+			new YoutubeError({ code: 'INTEGRATION_REQUIRED', message: 'which one', connections }),
+		)
+		const { client } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__get_channel', arguments: {} })
+
+		expect(result.isError).toBe(true)
+		expect(text(result).error).toMatchObject({ code: 'INTEGRATION_REQUIRED', connections })
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ outcome: 'invalid_input' }),
+		)
+	})
+
 	it('returns a client error as a normalized tool error', async () => {
 		youtubeRead.mockRejectedValueOnce(
 			new YoutubeError({
@@ -360,6 +403,93 @@ describe('maskin-youtube tool server', () => {
 		expect(result.isError).toBe(true)
 		expect(JSON.stringify(text(result))).not.toContain('Secret channel title')
 		expect(text(result).error.code).toBe('PROVIDER_ERROR')
+	})
+})
+
+describe('youtube__list_recent_videos', () => {
+	const CHANNEL = { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU1' } } }] }
+	const PLAYLIST = { items: [{ contentDetails: { videoId: 'v1' } }], nextPageToken: 'tok2' }
+
+	beforeEach(() => {
+		youtubeRead.mockReset()
+		trackYoutubeToolCalled.mockReset()
+	})
+
+	it('resolves the uploads playlist from the channel and reads playlistItems, 1 unit', async () => {
+		youtubeRead.mockResolvedValueOnce(CHANNEL).mockResolvedValueOnce(PLAYLIST)
+		const { client, ctx } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__list_recent_videos', arguments: {} })
+
+		expect(text(result)).toEqual(PLAYLIST)
+		expect(youtubeRead).toHaveBeenNthCalledWith(1, ctx, {
+			tool: 'youtube__get_channel',
+			path: 'channels',
+			params: { part: 'snippet,statistics,contentDetails', mine: 'true' },
+			units: 1,
+		})
+		expect(youtubeRead).toHaveBeenNthCalledWith(2, ctx, {
+			tool: 'youtube__list_recent_videos',
+			path: 'playlistItems',
+			params: { part: 'snippet,contentDetails', playlistId: 'UU1', maxResults: '50' },
+			units: 1,
+		})
+	})
+
+	it('passes the page size and page token through', async () => {
+		youtubeRead.mockResolvedValueOnce(CHANNEL).mockResolvedValueOnce(PLAYLIST)
+		const { client } = await connect()
+
+		await client.callTool({
+			name: 'youtube__list_recent_videos',
+			arguments: { max_results: 10, page_token: 'tok1' },
+		})
+
+		expect(youtubeRead).toHaveBeenLastCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				params: {
+					part: 'snippet,contentDetails',
+					playlistId: 'UU1',
+					maxResults: '10',
+					pageToken: 'tok1',
+				},
+			}),
+		)
+	})
+
+	it.each([0, 51])('refuses a page size of %i without calling YouTube', async (max_results) => {
+		const { client } = await connect()
+
+		const result = await client.callTool({
+			name: 'youtube__list_recent_videos',
+			arguments: { max_results },
+		})
+
+		expect(result.isError).toBe(true)
+		expect(youtubeRead).not.toHaveBeenCalled()
+	})
+
+	it('returns a normalized error when the channel has no uploads playlist', async () => {
+		youtubeRead.mockResolvedValueOnce({ items: [] })
+		const { client } = await connect()
+
+		const result = await client.callTool({ name: 'youtube__list_recent_videos', arguments: {} })
+
+		expect(result.isError).toBe(true)
+		expect(text(result).error.code).toBe('PROVIDER_ERROR')
+		expect(youtubeRead).toHaveBeenCalledTimes(1)
+	})
+
+	it('emits the tool-called event under its short name', async () => {
+		youtubeRead.mockResolvedValueOnce(CHANNEL).mockResolvedValueOnce(PLAYLIST)
+		const { client } = await connect()
+
+		await client.callTool({ name: 'youtube__list_recent_videos', arguments: {} })
+
+		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
+			expect.objectContaining({ tool: 'list_recent_videos', outcome: 'ok' }),
+		)
 	})
 })
 
@@ -469,6 +599,10 @@ describe('youtube tool kinds', () => {
 		expect(classifyTool('youtube', tool)).toBe('read')
 	})
 
+	it('classifies list_recent_videos as a read', () => {
+		expect(classifyTool('youtube', 'youtube__list_recent_videos')).toBe('read')
+	})
+
 	it('treats a youtube tool nobody classified as a write', () => {
 		expect(classifyTool('youtube', 'youtube__upload_video')).toBe('write')
 	})
@@ -518,6 +652,35 @@ describe('youtube write tools', () => {
 		expect(trackYoutubeToolCalled).toHaveBeenCalledWith(
 			expect.objectContaining({ tool, outcome: 'pending_approval' }),
 		)
+	})
+
+	it('passes integration_id on to a held write and to an upload, not only to reads', async () => {
+		proposeYoutubeWrite.mockResolvedValueOnce(HELD)
+		prepareUpload.mockResolvedValueOnce({ status: 'pending_approval', action_id: 'a1' })
+		const { client, ctx } = await connect()
+		const id = '3f0c2c1e-8a3e-4c0e-9d0e-0a1b2c3d4e5f'
+
+		await client.callTool({
+			name: 'youtube__like',
+			arguments: { object_id: OBJECT_ID, video_id: 'v1', integration_id: id },
+		})
+		await client.callTool({
+			name: 'youtube__upload_video',
+			arguments: {
+				file_id: '22222222-2222-4222-8222-222222222222',
+				object_id: OBJECT_ID,
+				title: 'Launch',
+				ai_generated: true,
+				integration_id: id,
+			},
+		})
+
+		expect(proposeYoutubeWrite).toHaveBeenCalledWith(
+			expect.objectContaining({ ...ctx, integrationId: id }),
+			{ object_id: OBJECT_ID, note: undefined },
+			{ tool: 'like', args: { video_id: 'v1' } },
+		)
+		expect(prepareUpload.mock.calls.at(-1)?.[0]).toMatchObject({ ...ctx, integrationId: id })
 	})
 
 	it('marks the write tools as not read-only and the read tools as read-only', async () => {

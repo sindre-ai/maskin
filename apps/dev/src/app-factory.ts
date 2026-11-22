@@ -30,6 +30,7 @@ import {
 import { dbLoadShed, isExempt as isLoadSheddingExempt } from './middleware/db-load-shed'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import { inFlightCap } from './middleware/in-flight-cap'
+import { listReadCache } from './middleware/list-read-cache'
 import accountRoutes from './routes/account'
 import actorAvatarRoutes from './routes/actor-avatar'
 import actorsRoutes from './routes/actors'
@@ -102,6 +103,7 @@ import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
 import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
+import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
@@ -545,6 +547,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
+	// After auth, so the cache is only read for a proven member. Per-person, a few seconds long.
+	app.use('/api/*', listReadCache())
+
 	app.route('/api/objects', objectApprovalsRoutes)
 	app.route('/api/objects', objectDoneWhenRoutes)
 	app.route('/api/objects', objectOutcomeRoutes)
@@ -614,6 +619,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Who may send what without a person approving it; human admins and owners write.
 	app.route('/api/send-permissions', sendPermissionsRoutes)
+	// Pilot flows hold outbound steps: the MCP server and the GitHub relay ask here before one runs.
+	app.route('/api/pilot-gate', pilotGateRoutes)
 	app.route('/api/guardrails', guardrailsRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.

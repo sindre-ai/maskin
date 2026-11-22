@@ -160,6 +160,15 @@ vi.mock('../../lib/credit-classifier', async (importOriginal) => ({
 	isClaudeAuthDeathText: () => false,
 }))
 
+const { mockTrackStartedWithPrompt } = vi.hoisted(() => ({
+	mockTrackStartedWithPrompt: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../lib/analytics/agent-session-events', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/analytics/agent-session-events')>()),
+	trackAgentSessionStartedWithPrompt: mockTrackStartedWithPrompt,
+}))
+
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
@@ -1190,6 +1199,45 @@ describe('SessionManager', () => {
 			expect(identityAt).toBe(0)
 			expect(conversationAt).toBeGreaterThan(identityAt)
 		})
+
+		it('tells a chat agent to post no progress notes, only its reply', async () => {
+			const session = buildSession({
+				status: 'pending',
+				containerId: null,
+				config: { conversation: true },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [[session], [workspace], [{ count: 0 }], [agent], [workspace], []]
+
+			await manager.startSession(session.id)
+
+			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+				env: Record<string, string>
+			}
+			const systemPrompt = createArgs.env.SYSTEM_PROMPT
+			expect(systemPrompt).toContain('Do not post progress notes while you work')
+			expect(systemPrompt).not.toContain('heads-up')
+		})
 	})
 
 	describe('startSession() — LLM model routing (llmConfig.model)', () => {
@@ -1722,12 +1770,160 @@ describe('SessionManager', () => {
 				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
 			)
 
-			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
+			expect(spec.env.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash[1m]')
 			for (const u of calls.updates) {
 				if (typeof u === 'object' && u !== null && 'modelName' in u) {
 					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
 				}
 			}
+		})
+	})
+
+	describe('session-start event — first-call size, once per launch', () => {
+		type Internals = {
+			holdLaunchStartEvent(sessionId: string, props: Record<string, unknown>): void
+			observeFirstCallSize(sessionId: string, chunk: string): void
+			clearActiveSession(sessionId: string): Promise<void>
+			loadSessionRouteAndModel(
+				sessionId: string,
+			): Promise<{ route: string; modelName: string | null }>
+		}
+
+		const launchedAt = new Date('2026-11-19T10:00:00Z')
+		const props = {
+			workspaceId: 'ws-1',
+			sessionId: 'sess-first-call',
+			agentId: 'agent-1',
+			agentName: 'Developer',
+			systemPrompt: 'prompt',
+			launchedAt,
+		}
+		const initLine = `${JSON.stringify({ type: 'system', subtype: 'init', tools: ['a', 'b', 'c'] })}\n`
+		const assistantLine = `${JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm1',
+				usage: {
+					input_tokens: 4,
+					cache_creation_input_tokens: 1_000,
+					cache_read_input_tokens: 58_000,
+				},
+			},
+		})}\n`
+		const resultLine = (cost: number) =>
+			`${JSON.stringify({
+				type: 'result',
+				subtype: 'success',
+				result: 'ok',
+				total_cost_usd: cost,
+				usage: { input_tokens: 4, output_tokens: 9 },
+			})}\n`
+
+		let internals: Internals
+
+		beforeEach(() => {
+			internals = manager as unknown as Internals
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'claude_oauth',
+				modelName: null,
+			})
+		})
+
+		it('sends one event at the first result, with the first-call size and the launch time', async () => {
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine)
+			expect(mockTrackStartedWithPrompt).not.toHaveBeenCalled()
+
+			internals.observeFirstCallSize('sess-first-call', resultLine(0.14))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({
+				...props,
+				firstCall: {
+					toolCount: 3,
+					firstCallInputTokens: 59_004,
+					firstTurnCostUsd: 0.14,
+					cacheHit: true,
+				},
+				startPrompt: null,
+			})
+
+			// Later turns and the teardown add nothing.
+			internals.observeFirstCallSize('sess-first-call', resultLine(0.3))
+			await internals.clearActiveSession('sess-first-call')
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+		})
+
+		it('passes the start prompt size line from the launch output into the event', async () => {
+			const sizeLine =
+				'[system] start prompt size: persona_bytes=900 total_bytes=25000 learnings_bytes=20291 learnings_capped=true\n'
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize(
+				'sess-first-call',
+				sizeLine + initLine + assistantLine + resultLine(0.14),
+			)
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					startPrompt: {
+						personaBytes: 900,
+						totalBytes: 25_000,
+						learningsBytes: 20_291,
+						learningsCapped: true,
+					},
+				}),
+			)
+		})
+
+		it('leaves the first-turn cost empty on maskin_plan with no priced model, never the CLI figure', async () => {
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'maskin_plan',
+				modelName: null,
+			})
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine + resultLine(0.14))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({
+				...props,
+				firstCall: {
+					toolCount: 3,
+					firstCallInputTokens: 59_004,
+					firstTurnCostUsd: null,
+					cacheHit: true,
+				},
+				startPrompt: null,
+			})
+		})
+
+		it('leaves the first-turn cost empty on a custom endpoint with no recorded model', async () => {
+			vi.spyOn(internals, 'loadSessionRouteAndModel').mockResolvedValue({
+				route: 'workspace_custom',
+				modelName: null,
+			})
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine + assistantLine + resultLine(1.91))
+			await vi.waitFor(() => expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1))
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith(
+				expect.objectContaining({ firstCall: expect.objectContaining({ firstTurnCostUsd: null }) }),
+			)
+		})
+
+		it('sends the event once at teardown, without first-call fields, when no turn ran', async () => {
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.observeFirstCallSize('sess-first-call', initLine)
+
+			await internals.clearActiveSession('sess-first-call')
+			await internals.clearActiveSession('sess-first-call')
+
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({ ...props, startPrompt: null })
+		})
+
+		it('sends a launch that was never torn down before it holds the next one', () => {
+			internals.holdLaunchStartEvent('sess-first-call', props)
+			internals.holdLaunchStartEvent('sess-first-call', { ...props, launchedAt: new Date() })
+
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledTimes(1)
+			expect(mockTrackStartedWithPrompt).toHaveBeenCalledWith({ ...props, startPrompt: null })
 		})
 	})
 
@@ -2078,6 +2274,7 @@ describe('SessionManager', () => {
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					})
 					expect(servers['github-vaerksted-ai']).toEqual({
@@ -2090,6 +2287,7 @@ describe('SessionManager', () => {
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					})
 					// The agent's own key stays out of the session's MCP config.

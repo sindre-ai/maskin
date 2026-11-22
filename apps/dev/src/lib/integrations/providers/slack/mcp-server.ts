@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { capturePosthogEvent } from '../../../analytics/posthog'
 import { logger } from '../../../logger'
-import { decideSend, deniedMessage } from '../../../send-gate'
+import { decideSend, deniedMessage, pilotIsReason, withPilotReason } from '../../../send-gate'
 import {
 	type SlackConversation,
 	type SlackConversationType,
@@ -48,6 +48,8 @@ export interface SlackPostContext {
 	workspaceId: string
 	/** For logs only — tells us which actor in that workspace sent it. */
 	actorId: string
+	/** The Maskin session making the call (X-Maskin-Session-Id), so a flow in pilot can hold a send. */
+	sessionId?: string | null
 	/**
 	 * Slack `team_id` for the workspace integration — drives the bet's ship
 	 * metric breakdown by Slack workspace. Sourced from `integration.externalId`,
@@ -269,7 +271,21 @@ function slackSendDecision(ctx: SlackPostContext) {
 		workspaceId: ctx.workspaceId,
 		agentId: ctx.actorId,
 		kind: SLACK_MESSAGE_KIND,
+		sessionId: ctx.sessionId,
 	})
+}
+
+/** The refusal text, led by the pilot reason when the flow is why this send waits. */
+async function slackHeldText(ctx: SlackPostContext, text: string): Promise<string> {
+	return withPilotReason(
+		text,
+		await pilotIsReason(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			agentId: ctx.actorId,
+			kind: SLACK_MESSAGE_KIND,
+			sessionId: ctx.sessionId,
+		}),
+	)
 }
 
 const ASK_FIRST_SLACK_EDIT =
@@ -415,7 +431,8 @@ export function createSlackMcpServer(
 					channel = await resolveChannelId(ctx, approved.channel)
 					text = approved.preview.body
 				} else {
-					if (decision === 'needs_approval') throw new SlackSendRefusal(ASK_FIRST_SLACK)
+					if (decision === 'needs_approval')
+						throw new SlackSendRefusal(await slackHeldText(ctx, ASK_FIRST_SLACK))
 					if (!args.channel || !args.text) {
 						throw new SlackSendRefusal('Give channel and text (or object_id for a draft).')
 					}
@@ -896,7 +913,7 @@ export function createSlackMcpServer(
 					text = approved.preview.body
 				} else {
 					if (decision === 'needs_approval') {
-						throw new SlackSendRefusal(ASK_FIRST_SLACK_EDIT)
+						throw new SlackSendRefusal(await slackHeldText(ctx, ASK_FIRST_SLACK_EDIT))
 					}
 					if (!args.channel || !args.text) {
 						throw new SlackSendRefusal('Give channel and text (or object_id for a draft).')

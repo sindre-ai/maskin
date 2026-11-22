@@ -125,17 +125,9 @@ final class MustKeepMoreTests: XCTestCase {
 		return element
 	}
 
-	/// Taps the More button beside the message that `row` finds, or the lowest More on screen when the
-	/// button is not inside the row's element (the newest message sits at the bottom of the chat).
-	private func tapMore(on row: XCUIElement) {
-		let inRow = row.buttons["More"].firstMatch
-		if inRow.exists {
-			inRow.tap()
-		} else {
-			let all = app.buttons.matching(NSPredicate(format: "label == 'More'")).allElementsBoundByIndex
-			XCTAssertFalse(all.isEmpty, "the chat shows a More button on its messages")
-			all.last?.tap()
-		}
+	/// Long-presses the message that `row` finds, which opens the message menu sheet.
+	private func openMessageMenu(on row: XCUIElement) {
+		row.press(forDuration: 1.0)
 	}
 
 	/// Opens the profile sheet from For you.
@@ -264,41 +256,48 @@ final class MustKeepMoreTests: XCTestCase {
 		expectExists(email, "after signing out, the sign-in screen asks for an email", dump: "mk14-login", timeout: 20)
 		email.tap()
 		email.typeText("sindre@northwind.example")
-		// Typing into the secure field left it empty on the hosted Mac (runs 6 and 7). The eye button turns it into a
-		// plain text field with the same focus, which takes typed text.
+		// The eye button turns the secure field into a plain text field with the same focus. It passed in run 9.
 		let reveal = app.buttons["Show password"].firstMatch
 		expectExists(reveal, "the sign-in screen offers Show password", dump: "mk14-reveal", timeout: 5)
 		reveal.tap()
 		let password = app.textFields.matching(NSPredicate(format: "label == 'Password' OR placeholderValue == 'Password'")).firstMatch
 		XCTAssertTrue(password.waitForExistence(timeout: 5), "the sign-in screen asks for a password")
-		// The mode switch above the form is also a button called "Sign in": the form's own is the last one.
-		func submitButton() -> XCUIElement? {
-			app.buttons.matching(NSPredicate(format: "label == 'Sign in'")).allElementsBoundByIndex.last
+		// Type the password once, with no condition. Run 9 never typed it: the old loop typed only while the last
+		// button labelled "Sign in" read as disabled, that button read as enabled on an empty form (it is not the
+		// form's own button, or the empty password did not disable it), so the loop body never ran.
+		password.tap()
+		password.typeText("Northwind-demo-1")
+		// A text field with no text reads its placeholder as its value, so this also fails on an empty field.
+		let typed = password.value as? String
+		if typed != "Northwind-demo-1" { dumpScreen("mk14-password") }
+		XCTAssertEqual(typed, "Northwind-demo-1", "the password field holds the typed password")
+		// Return on the password field is the keyboard's Go key: it submits the form. That avoids picking between
+		// the two buttons labelled "Sign in" (the mode switch above the form, and the form's own button).
+		password.typeText("\n")
+		// If Return did not submit, tap an enabled "Sign in" button as the last resort.
+		if !app.tabBars.buttons["For you"].waitForExistence(timeout: 8) {
+			let enabled = app.buttons.matching(NSPredicate(format: "label == 'Sign in' AND enabled == true")).allElementsBoundByIndex
+			enabled.last?.tap()
 		}
-		for _ in 0..<3 where !(submitButton()?.isEnabled ?? false) {
-			password.tap()
-			password.typeText("Northwind-demo-1")
-			Thread.sleep(forTimeInterval: 1)
-		}
-		if !(submitButton()?.isEnabled ?? false) { dumpScreen("mk14-password") }
-		XCTAssertTrue(submitButton()?.isEnabled ?? false, "the sign-in form accepts the password typed (Sign in is enabled)")
-		submitButton()?.tap()
 		if !app.tabBars.buttons["For you"].waitForExistence(timeout: 30) { dumpScreen("mk14-signedin") }
 		XCTAssertTrue(app.tabBars.buttons["For you"].exists, "signing in again opens the app on For you")
 	}
 
 	// MARK: MK-15 Edit, react to, and delete a message
 
-	/// MK-15a: your newest message offers Edit. The words go back into the field under "Editing message",
-	/// and sending the change shows the new words.
-	func testMK15a_EditOwnNewestMessage() throws {
+	/// MK-15a: any message you wrote offers Edit, not only the newest. Here an older one of yours (a newer one
+	/// of yours sits below it). The words go back into the field under "Editing message", and sending the
+	/// change shows the new words with the "edited" mark.
+	func testMK15a_EditOwnMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
-		let mine = anyLabel(containing: "Draft the counter offer for Contoso")
-		expectExists(mine, "the chat shows your newest message", dump: "mk15a-message")
-		tapMore(on: mine)
+		expectExists(
+			anyLabel(containing: "Draft the counter offer for Contoso"), "the chat shows your newer message", dump: "mk15a-newer")
+		let older = anyLabel(containing: "Which clause did Legal flag?")
+		expectExists(older, "the chat shows your older message", dump: "mk15a-message")
+		openMessageMenu(on: older)
 		let edit = element(labelled: "Edit")
-		expectExists(edit, "your newest message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
+		expectExists(edit, "your older message's menu offers Edit", dump: "mk15a-menu", timeout: 5)
 		edit.tap()
 		expectExists(app.buttons["Cancel editing"], "the composer says it is editing the message", dump: "mk15a-strip", timeout: 5)
 		let field = composerField()
@@ -311,28 +310,57 @@ final class MustKeepMoreTests: XCTestCase {
 		XCTAssertTrue(send.waitForExistence(timeout: 5), "the composer offers Send for the edit")
 		send.tap()
 		expectExists(
-			anyLabel(containing: "Draft the counter offer for Contoso. (edited by the test)"), "the chat shows the edited words", dump: "mk15a-after",
+			anyLabel(containing: "Which clause did Legal flag? (edited by the test)"), "the chat shows the edited words", dump: "mk15a-after",
 			timeout: 15)
 	}
 
-	/// MK-15b: a message's menu offers React; picking an emoji puts a count chip under the message.
+	/// MK-18: a comment you wrote on an item offers Edit in its long-press menu. The words go into the comment bar
+	/// under "Editing message", and sending the change shows the new words with the "edited" mark. The demo server
+	/// keeps comments posted during the run, so the test posts one first.
+	func testMK18_EditOwnObjectComment() throws {
+		app.tabBars.buttons["Items"].tap()
+		let item = app.staticTexts["Q4 webinar"].firstMatch
+		expectExists(item, "Items lists the Q4 webinar bet", dump: "mk18-items")
+		item.tap()
+		let activity = app.buttons["Activity"].firstMatch
+		expectExists(activity, "the item has an Activity page", dump: "mk18-detail")
+		activity.tap()
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		let field = app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Type /'", kinds[0], kinds[1])
+		).firstMatch
+		expectExists(field, "the item shows its comment bar", dump: "mk18-bar")
+		field.tap()
+		field.typeText("Checking the budget line")
+		app.buttons["Send"].firstMatch.tap()
+		let posted = anyLabel(containing: "Checking the budget line")
+		expectExists(posted, "the comment shows in Activity", dump: "mk18-posted", timeout: 15)
+		openMessageMenu(on: posted)
+		let edit = element(labelled: "Edit")
+		expectExists(edit, "your comment's menu offers Edit", dump: "mk18-menu", timeout: 5)
+		edit.tap()
+		expectExists(app.buttons["Cancel editing"], "the bar says it is editing the comment", dump: "mk18-strip", timeout: 5)
+		let focused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+		_ = XCTWaiter().wait(for: [focused], timeout: 5)
+		field.typeText(" (edited by the test)")
+		app.buttons["Send"].firstMatch.tap()
+		expectExists(
+			anyLabel(containing: "Checking the budget line (edited by the test)"), "Activity shows the edited words",
+			dump: "mk18-after", timeout: 15)
+		expectExists(app.staticTexts["edited"].firstMatch, "the comment carries the edited mark", dump: "mk18-mark", timeout: 5)
+	}
+
+	/// MK-15b: a message's menu offers quick reactions; picking an emoji puts a count chip under the message.
 	func testMK15b_ReactToMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
 		dismissNotNow()
 		let message = anyLabel(containing: "Contoso asked for a 12-month term")
 		expectExists(message, "the chat shows the Chief of Staff's first message", dump: "mk15b-message")
-		tapMore(on: message)
-		let react = element(labelled: "React")
-		expectExists(react, "a message's menu offers React", dump: "mk15b-menu", timeout: 5)
-		react.tap()
-		// The emoji row reads "👍" (or "👍  ✓" once used). The chip reads "👍, 1", so it is left out by the comma.
-		let thumbs = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH '👍' AND NOT (label CONTAINS ',')")).firstMatch
-		expectExists(thumbs, "React offers the thumbs-up emoji", dump: "mk15b-emoji", timeout: 5)
+		openMessageMenu(on: message)
+		// The sheet's quick reactions are buttons labelled "React 👍".
+		let thumbs = app.buttons["React 👍"].firstMatch
+		expectExists(thumbs, "a message's menu offers the thumbs-up reaction", dump: "mk15b-menu", timeout: 5)
 		thumbs.tap()
-		// The menu is still open if the tap did not land: tap the emoji's middle by coordinate.
-		if thumbs.waitForNonExistence(timeout: 3) == false {
-			thumbs.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-		}
 		expectExists(element(labelled: "👍, 1"), "the message shows a 👍 chip with a count of 1", dump: "mk15b-chip", timeout: 10)
 	}
 
@@ -353,7 +381,7 @@ final class MustKeepMoreTests: XCTestCase {
 		let notSent = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Not sent'")).firstMatch
 		expectExists(notSent, "a refused message shows 'Not sent'", dump: "mk15c-notsent", timeout: 45)
 		let row = anyLabel(containing: line)
-		tapMore(on: row)
+		openMessageMenu(on: row)
 		let delete = element(labelled: "Delete")
 		expectExists(delete, "an unsent message's menu offers Delete", dump: "mk15c-menu", timeout: 5)
 		delete.tap()

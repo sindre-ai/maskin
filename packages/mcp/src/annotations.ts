@@ -26,9 +26,8 @@ export interface ToolAnnotationEntry {
 }
 
 /**
- * Tools that only read. Not READ_TOOL_NAMES: get_started is in that set but its
- * confirm path installs a loop, so it is not read-only here; and the four tools at
- * the end read without being in that set (they keep re-throwing on error).
+ * Tools that only read. Not READ_TOOL_NAMES: the tools at the end read without being
+ * in that set (they keep re-throwing on error).
  */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'get_objects',
@@ -56,6 +55,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 	'list_integrations',
 	'list_integration_providers',
 	'list_extensions',
+	'list_marketplace',
 	'get_session_logs',
 	'traverse_graph',
 	'get_conversation',
@@ -169,6 +169,7 @@ const ROWS: Record<string, Row> = {
 	update_loop: row('Update loop', { idempotent: true }),
 	list_loops: row('List loops'),
 	get_loop: row('Get loop'),
+	fork_loop: row('Fork loop'),
 	set_loop_view: row('Set loop view', { idempotent: true }),
 	query_data: row('Query data'),
 	delete_loop: row('Delete loop', { destructive: true, idempotent: true }),
@@ -227,6 +228,7 @@ const ROWS: Record<string, Row> = {
 	desktop_scroll: row('Desktop scroll'),
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
+	desktop_attach_file: row('Desktop attach file'),
 	desktop_run: row('Desktop run command', { destructive: true }),
 	desktop_put_file: row('Desktop put file'),
 	desktop_apply_settings: row('Desktop apply settings'),
@@ -236,7 +238,8 @@ const ROWS: Record<string, Row> = {
 	desktop_list_ports: row('Desktop list ports'),
 	desktop_close_port: row('Desktop close port'),
 	// Setup
-	get_started: row('Get started'),
+	list_marketplace: row('List marketplace'),
+	install_loop: row('Install loop'),
 }
 
 export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotationEntry>> = Object.freeze(

@@ -5,7 +5,7 @@ import SwiftUI
 /// reaches the same pages through `ProfileMenuItem`.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case profile, notifications, permissions, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 	case members, integrations, files, keys, triggers, billing
 	case deviceSignIn, appLock, workspaces, advanced, nativeSurfaces
 	/// `maskin://connect?code=`: Sign in a device with the code already typed.

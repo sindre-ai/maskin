@@ -1,16 +1,25 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, integrations, objects, sendPermissions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	integrations,
+	objects,
+	sendPermissions,
+	triggers,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { approvedSendHashFor } from '../../lib/integrations/providers/gmail/approval-hash'
 import {
+	buildTrigger,
 	insertActor,
 	insertAgentGrant,
 	insertObject,
 	insertRelationship,
 	insertSendMode,
+	insertSession,
 	insertWorkspace,
 } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -1209,5 +1218,78 @@ describe('gmail_send_email: an approval covers the exact text the person saw', (
 
 		expect(res.status).toBe(200)
 		expect(sentMime()).toContain('Subject: Approved subject')
+	})
+})
+
+describe('gmail_send_email: a flow in pilot, called with a session key and no header', () => {
+	// An agent's computer calls the route with its session key and no X-Maskin-Session-Id header.
+	// The key names the session, so leaving the header off must not skip the pilot hold.
+	function postWithSessionKey(
+		actorId: string,
+		workspaceId: string,
+		apiKeySessionId: string,
+		body: Record<string, unknown>,
+	) {
+		const app = new OpenAPIHono<{
+			Variables: { db: Database; actorId: string; apiKeySessionId: string }
+		}>()
+		app.use('*', async (c, next) => {
+			c.set('db', db)
+			c.set('actorId', actorId)
+			c.set('apiKeySessionId', apiKeySessionId)
+			await next()
+		})
+		app.route('/api/integrations/gmail', gmailRoutes as never)
+		return app.request('/api/integrations/gmail/send', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': workspaceId },
+			body: JSON.stringify(body),
+		})
+	}
+
+	async function sessionUnderFlow(s: Setup, flowStatus: string) {
+		const [trigger] = await db
+			.insert(triggers)
+			.values(
+				buildTrigger({
+					workspaceId: s.workspace.id,
+					targetActorId: s.agent.id,
+					createdBy: s.agent.id,
+				}),
+			)
+			.returning()
+		if (!trigger) throw new Error('trigger was not inserted')
+		await insertObject(db, s.workspace.id, s.human, {
+			type: 'loop',
+			title: 'Flow',
+			status: flowStatus,
+			metadata: { trigger_ids: [trigger.id] },
+		})
+		const session = await insertSession(db, s.workspace.id, s.agent.id, s.human, {
+			triggerId: trigger.id,
+		})
+		if (!session) throw new Error('session was not inserted')
+		return session
+	}
+
+	it('holds an always-allow send in a pilot flow', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const session = await sessionUnderFlow(s, 'pilot')
+
+		const res = await postWithSessionKey(s.agent.id, s.workspace.id, session.id, DIRECT)
+
+		expect(res.status).toBe(403)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('sends as before in a supervised flow', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const session = await sessionUnderFlow(s, 'supervised')
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await postWithSessionKey(s.agent.id, s.workspace.id, session.id, DIRECT)
+
+		expect(res.status).toBe(200)
+		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 })

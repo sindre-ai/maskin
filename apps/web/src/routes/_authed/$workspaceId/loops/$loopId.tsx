@@ -7,7 +7,7 @@ import { LoopDecisions } from '@/components/loops/loop-decisions'
 import { LoopDetailTabs } from '@/components/loops/loop-detail-tabs'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
-import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill, loopPillStyle } from '@/components/loops/loop-pill'
 import {
 	LoopProposedEdit,
 	type PlanDiffRow,
@@ -100,7 +100,14 @@ const SLOW_LOAD_MESSAGE = 'The server may be busy.'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
+	errorComponent: ({ error, reset }) => (
+		<RouteError
+			error={error}
+			reset={reset}
+			title="This page could not load"
+			message="Something went wrong on our side. Try again, or reload the page."
+		/>
+	),
 })
 
 interface ProposedEdit {
@@ -113,11 +120,7 @@ interface ProposedEdit {
 	nextSource: string
 }
 
-const LOOP_STAGES = [
-	'learning',
-	'supervised',
-	'fully_autonomous',
-] as const satisfies readonly LoopStatus[]
+const LOOP_STAGES = ['pilot', 'supervised', 'live'] as const satisfies readonly LoopStatus[]
 
 function SetupBlock({ label, text }: { label: string; text: string | null }) {
 	return (
@@ -620,7 +623,7 @@ function LoopDetailRoute() {
 	// Best-effort derivations against the current LoopSummary shape, feeding
 	// LoopStats' v4 5-tile branch:
 	// - cyclesRunning: `inProgressCount` while the loop is on the live rungs of
-	//   the pill ladder (learning / supervised / fully_autonomous), else 0 —
+	//   the pill ladder (pilot / supervised / live), else 0 —
 	//   matches the SPEC's "count of open cycles where pill.stateSlug === live".
 	// - asksWaiting: `waitingCount` from the loop payload — the count of
 	//   sessions on this loop's triggers currently in `waiting_for_input`.
@@ -632,7 +635,7 @@ function LoopDetailRoute() {
 	const cyclesRunning = isLiveLoopPill(loop.pill) ? loop.inProgressCount : 0
 	const asksWaiting = loop.waitingCount
 	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
-	const pill = LOOP_PILL_STYLES[loop.pill]
+	const pill = loopPillStyle(loop.pill)
 	// The flow's driver is the object's own `driver`; no driver, no pill.
 	const driver = object?.driver ? actors?.find((a) => a.id === object.driver) : undefined
 	const needsYouRows = itemsNeedingYou(
@@ -660,7 +663,7 @@ function LoopDetailRoute() {
 	const isPreFirstRun =
 		childIds.length === 0 && (activityEvents?.length ?? 0) === 0 && !edgesFailed && !activityFailed
 
-	// Resuming returns the loop to `learning`, the lowest live rung of the
+	// Resuming returns the loop to `pilot`, the lowest live rung of the
 	// autonomy ladder, matching every server-side creation path
 	// (installed-loops.ts, workspace-bootstrap.ts): a loop that has been paused
 	// re-earns trust rather than snapping back to full autonomy. The trigger
@@ -670,7 +673,7 @@ function LoopDetailRoute() {
 		if (!canWrite) return
 		updateObject.mutate({
 			id: loop.id,
-			data: { status: isPaused ? 'learning' : 'paused' },
+			data: { status: isPaused ? 'pilot' : 'paused' },
 		})
 	}
 
@@ -804,7 +807,7 @@ function LoopDetailRoute() {
 									type="button"
 									data-testid="loop-pill"
 									disabled={!canWrite || !object}
-									aria-label={`Stage: ${LOOP_PILL_STYLES[loop.status].label}`}
+									aria-label={`Stage: ${loopPillStyle(loop.status).label}`}
 									className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3.5 text-[13.5px] font-semibold text-foreground disabled:cursor-default"
 								>
 									<span
@@ -815,7 +818,7 @@ function LoopDetailRoute() {
 											isLiveLoopPill(loop.pill) && 'animate-pulse',
 										)}
 									/>
-									{LOOP_PILL_STYLES[loop.status].label}
+									{loopPillStyle(loop.status).label}
 									{canWrite && object && (
 										<ChevronDown size={11} aria-hidden="true" className="text-muted-foreground" />
 									)}

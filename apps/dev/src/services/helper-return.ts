@@ -11,6 +11,7 @@ import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
 import { MENTION_GUARD_LIMITS, isNotifyOnComplete, resolveReturnObjectId } from './mention-guards'
 import type { SessionManager } from './session-manager'
+import { resolveReplyThreadRootId, resolveTurnMessageId } from './turn-origin'
 
 /**
  * Send a finished helper's outcome back to the session that started it.
@@ -322,6 +323,14 @@ async function doReturn(
 		return { returned: true, destination: 'object' }
 	}
 
+	// The return goes where the sender was working: its own thread, or the thread of the
+	// message that started its last turn. The sender's answer follows the message that woke
+	// it, so a top-level return would move a thread's follow-up into the main chat.
+	const { threadRootId } = await resolveReplyThreadRootId(db, {
+		sessionId: helper.spawnedBySessionId,
+		turnMessageId: await resolveTurnMessageId(db, helper.spawnedBySessionId).catch(() => null),
+		conversationId: destination.conversationId,
+	})
 	const message = await insertConversationMessage(db, {
 		conversationId: destination.conversationId,
 		workspaceId: helper.workspaceId,
@@ -331,6 +340,7 @@ async function doReturn(
 		// but is not part of the conversation the person reads (the chat hides it).
 		metadata: { helper_return: sessionId },
 		sessionId: null,
+		threadRootId,
 	})
 	if (message && opts.sessionManager) {
 		// Lazy import: conversation-responder pulls in the session lifecycle, which

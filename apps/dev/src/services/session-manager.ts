@@ -74,6 +74,8 @@ import {
 	trackSessionLaunchModel,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackChatSessionRotated } from '../lib/analytics/chat-session-events'
+import { FirstCallObserver, type FirstTurnResult } from '../lib/analytics/first-call-size'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -179,6 +181,7 @@ import {
 	type ModelSource,
 	type PinnedModel,
 	PlanCapExceededError,
+	SubscriptionStillLimitedError,
 	canUseCreditBalance,
 	ceilCents,
 	checkPlanCap,
@@ -209,9 +212,11 @@ import {
 	stampMaskinSessionHeader,
 } from '../lib/mcp-session-header'
 import { resolveAgentSendModes } from '../lib/send-permissions'
+import { forgetSessionContextSize, recordSessionContextSize } from '../lib/session-context-size'
 import { sessionLogRedactor } from '../lib/session-log-redactor'
-import { pickRetryAt } from '../lib/subscription-limit-reset'
+import { RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY, pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
+import { TurnSizeObserver } from '../lib/turn-size'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
@@ -222,6 +227,12 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
+import {
+	ChatRotation,
+	type RotationRecord,
+	buildHandoffPrompt,
+	chatRotationEnabled,
+} from './chat-rotation'
 import {
 	ContainerManager,
 	type LogChunk,
@@ -258,6 +269,7 @@ import {
 	type SessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
+	resolveRecordedCostUsd,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
 	sumUncountedResultUsage,
@@ -301,6 +313,12 @@ const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
  * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
  */
 const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** A launch's session-start event, held until its first turn shows the first-call size. */
+interface PendingLaunchStart {
+	props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0]
+	observer: FirstCallObserver
+}
 
 /** Per-session MCP health record: what has been said about each server. */
 interface McpHealthSession {
@@ -716,6 +734,33 @@ export class SessionManager extends EventEmitter {
 	 */
 	private readonly mcpHealth = new Map<string, McpHealthSession>()
 
+	/**
+	 * Per-launch `agent_session_started_with_prompt` waiting for the first turn.
+	 * Taking the entry out of the map is what makes the event go out once per
+	 * launch, whichever of the first `result` and the teardown gets there first.
+	 * In memory only: a backend restart mid-launch drops the entry and the event.
+	 */
+	private readonly pendingLaunchStarts = new Map<string, PendingLaunchStart>()
+
+	/**
+	 * Per-session reader of the window size at the end of each turn. It runs with chat rotation
+	 * off too: the size and end-cause records start at the first deploy, so a baseline exists
+	 * before anything is switched on. In memory only, dropped in clearActiveSession.
+	 */
+	private readonly turnSizeObservers = new Map<string, TurnSizeObserver>()
+
+	/** Sessions already checked for a compaction loop, so the row is read and the stop sent once. */
+	private readonly compactionLoopStopped = new Set<string>()
+
+	/**
+	 * A background session (no chat, no turns) that compacts this many times is stopped, when
+	 * chat rotation is on. A judgment number: each compaction is a full window spent.
+	 */
+	private static readonly BACKGROUND_COMPACTION_STOP = 3
+
+	/** Restarts big chats with a handoff note. See chat-rotation.ts. */
+	private readonly chatRotation: ChatRotation
+
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
@@ -786,10 +831,43 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			isHandoffResult: (sessionId, result) =>
+				this.chatRotation.claimHandoffResult(sessionId, result),
 			// An interactive CLI stays alive after printing a limit banner as its
 			// final error, so no exit settles the row. Same teardown as a helper.
 			onLimitResult: (sessionId, outcome) =>
 				this.finishHelperSession(sessionId, outcome, { retry: false }),
+		})
+		this.chatRotation = this.buildChatRotation()
+	}
+
+	private buildChatRotation(): ChatRotation {
+		return new ChatRotation({
+			loadSession: async (sessionId) => {
+				const [row] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+				return row ?? null
+			},
+			// Tagged on the persisted envelope only, so the transcript shows what the turn was.
+			writeHandoffTurn: (sessionId) =>
+				this.writeInput(
+					sessionId,
+					{ type: 'user', message: { role: 'user', content: buildHandoffPrompt() } },
+					undefined,
+					undefined,
+					{ maskin_handoff: true },
+				),
+			hasUnansweredTurn: (session) => this.hasUnansweredConversationTurn(session),
+			closeForRotation: (session, record) => this.closeSessionForRotation(session, record),
+			handoffTurnClosed: (sessionId) =>
+				this.emit('turn', {
+					sessionId,
+					phase: 'finished',
+					outcome: 'done',
+				} satisfies SessionTurnEvent),
 		})
 	}
 
@@ -1391,6 +1469,8 @@ export class SessionManager extends EventEmitter {
 			// internal message. Everything else keeps today's shape.
 			const launchFailureReason =
 				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
+			const launchFailureRetryAt =
+				err instanceof SubscriptionStillLimitedError ? pickRetryAt(launchFailureReason) : null
 			// settleSession is the only writer of terminal sessions.status. The
 			// container never came up, so there's nothing to stop and no /agent
 			// workspace to push — startup_stalled is the classification the
@@ -1408,6 +1488,8 @@ export class SessionManager extends EventEmitter {
 						reason: launchFailureReason?.human_message ?? message,
 						exitCode: 0,
 						...(launchFailureReason ? { failureReason: launchFailureReason } : {}),
+						// A retry that found every login still limited goes back in the queue for the reset.
+						...(launchFailureRetryAt ? { retryAt: launchFailureRetryAt } : {}),
 					},
 					this.buildSettleDeps({ skipStop: true, skipPush: true }),
 				)
@@ -2878,9 +2960,10 @@ export class SessionManager extends EventEmitter {
 		// The end-of-turn output is posted automatically by
 		// interactive-turn-finalizer.ts, so this no longer has to push the
 		// agent into calling the MCP tool — it has to tell the agent that its
-		// closing words ARE the reply, and that a heads-up is optional.
+		// closing words ARE the reply, and that it posts no progress notes on
+		// the way there (they land in the main timeline and read as noise).
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. Do not post progress notes while you work, however long the work takes: no acknowledgement that you got the message, no line on what you are about to do, no note that you are still on it. The chat already shows the human that you are working, and every extra message is one more thing they have to read before the answer. Your reply at the end of the turn is the only message they should get. Use the post_conversation_message tool mid-turn only when you cannot go on without something from the human, or to bring another agent in. Ending a turn with no reply at all is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\nOther people and agents may be in this chat too. Call get_conversation to see who is in the room (it lists each participant with their actor ID). Humans in the room already see every message, so address them by name in your reply and never ask whether you may; for example, if a decision is theirs, say so to them directly. To pull another agent in and make it respond, post with post_conversation_message and put its name in mention_names (or its actor ID in metadata.mentions); a name written in your reply does not wake an agent. Handing work over on an object works differently: a comment wakes an agent only when it @mentions it in `mentions` (or when a human comments and the object has a driver), so an agent that replies on an object without mentioning anyone wakes nobody. Whenever you would end your reply by asking the person to choose or confirm something that fits in 2 to 4 options (a confirmation, a choice between alternatives, a timing, a go-ahead), do not write the question in your reply: call the ask_user_question tool so they can tap an answer, with your recommended option first and the reason for it in the description of that option, then end your turn without repeating the question. This holds even if your own instructions say to list open questions or recommend an option in prose. Do not ask at all when you can reasonably decide yourself.\n\n'
 			: ''
 		// A helper another agent started from a chat. It is interactive only so it
 		// can ask the person something, and it ends the moment it gives a result.
@@ -2987,7 +3070,11 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 		// the start-event's `skills_staged` at 0 for both paths keeps queries
 		// simple: `skills_attached > 0 AND session_skill_load_failed absent`
 		// is a passing session on either path.
-		void trackAgentSessionStartedWithPrompt({
+		// The event is held until the first turn has run, because the size of the
+		// first call (tools, tokens, cost, cache) only exists then. It goes out once
+		// per launch: at the first `result`, or empty from clearActiveSession if the
+		// launch ends before any turn. `launchedAt` keeps its timestamp at launch.
+		this.holdLaunchStartEvent(session.id, {
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
@@ -3000,6 +3087,7 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 			skillsStaged: 0,
 			triggerType,
 			triggerId: session.triggerId ?? undefined,
+			launchedAt: new Date(),
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -3099,6 +3187,10 @@ ${cont.continues_prompt}
 					wsSettings,
 					enterprise,
 					pinned: pinnedModel,
+					subscriptionOnly:
+						(session.config as Record<string, unknown> | null)?.[
+							RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY
+						] === true,
 					agent: {
 						provider: agent.llmProvider,
 						apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -3635,6 +3727,8 @@ ${cont.continues_prompt}
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							// Lets the relay ask Maskin before a write whether the session's flow is in pilot.
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					}
 				: {
@@ -4401,6 +4495,8 @@ ${cont.continues_prompt}
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
 								await this.recordTurnUsage(sessionId, chunk.data)
+								this.observeFirstCallSize(sessionId, chunk.data)
+								await this.observeTurnSize(sessionId, chunk.data)
 							}
 						}
 
@@ -5309,6 +5405,156 @@ ${cont.continues_prompt}
 	}
 
 	/**
+	 * Reads the window size from a session's stdout and hands each closed turn to chat rotation.
+	 * Runs after the turn finalizer, so the turn's reply is already in the chat when rotation
+	 * looks. With rotation off it only records the reading for the session-completed event. A
+	 * background session (no turns) that compacts in a loop is stopped, when rotation is on.
+	 * Never throws: a fault here must not break log ingest.
+	 */
+	private async observeTurnSize(sessionId: string, chunk: string): Promise<void> {
+		try {
+			let observer = this.turnSizeObservers.get(sessionId)
+			if (!observer) {
+				observer = new TurnSizeObserver()
+				this.turnSizeObservers.set(sessionId, observer)
+			}
+			for (const reading of observer.feed(chunk)) {
+				await this.chatRotation.onTurn(sessionId, reading)
+			}
+			if (
+				observer.pendingCompactions >= SessionManager.BACKGROUND_COMPACTION_STOP &&
+				chatRotationEnabled() &&
+				!this.compactionLoopStopped.has(sessionId)
+			) {
+				await this.stopCompactionLoop(sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to read the turn size', { sessionId, error: String(err) })
+		}
+	}
+
+	/** Stops a background session that keeps compacting. A chat is restarted by rotation instead. */
+	private async stopCompactionLoop(sessionId: string): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		this.compactionLoopStopped.add(sessionId)
+		if (!session || session.status !== 'running' || session.conversationId) return
+		recordSessionContextSize(sessionId, { endCause: 'compaction_failed' })
+		logger.warn('Stopping a background session that keeps compacting', { sessionId })
+		await this.insertSystemLog(
+			sessionId,
+			'Session stopped: its context kept filling up and compacting.',
+		).catch(() => {})
+		await this.stopSession(sessionId).catch((err) =>
+			logger.error('Failed to stop a compacting session', { sessionId, error: String(err) }),
+		)
+	}
+
+	/**
+	 * Closes a chat session for rotation: saves what the next seed needs on the row, then closes
+	 * it as an idle chat is closed, so the next message starts a fresh session. The rotated event
+	 * goes out only when this call is the one that closed the session.
+	 */
+	private async closeSessionForRotation(
+		session: typeof sessions.$inferSelect,
+		record: RotationRecord,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				config: sql`coalesce(${sessions.config}, '{}'::jsonb) || ${JSON.stringify({ rotation: record })}::jsonb`,
+			})
+			.where(eq(sessions.id, session.id))
+		const closed = await this.completeIdleChatSession(session, { rotated: true })
+		if (!closed) return
+		const route = (session.config as { llm_route?: unknown } | null)?.llm_route
+		void trackChatSessionRotated({
+			workspaceId: session.workspaceId,
+			agentId: session.actorId,
+			reason: record.reason,
+			route: typeof route === 'string' ? route : null,
+			sizeBucket: record.sizeBucket,
+			handoff: record.handoff,
+		})
+	}
+
+	/** Holds this launch's session-start event until its first turn has run. */
+	private holdLaunchStartEvent(
+		sessionId: string,
+		props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0],
+	): void {
+		// A launch whose teardown never ran still owes its event: send it empty.
+		this.flushLaunchStartEvent(sessionId)
+		this.pendingLaunchStarts.set(sessionId, { props, observer: new FirstCallObserver() })
+	}
+
+	/** Sends a held event with the first-call fields empty. A no-op once it has gone out. */
+	private flushLaunchStartEvent(sessionId: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			startPrompt: pending.observer.startPromptSize,
+		})
+	}
+
+	/**
+	 * Feeds stdout to the launch's first-call observer and sends the held
+	 * session-start event, with the first-call size on it, when the first turn's
+	 * `result` arrives. Sync and cheap on the hot path: no pending launch, no work.
+	 */
+	private observeFirstCallSize(sessionId: string, chunk: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		let first: FirstTurnResult | null
+		try {
+			first = pending.observer.feed(chunk)
+		} catch (err) {
+			logger.warn('Failed to read first-call size', { sessionId, error: String(err) })
+			return
+		}
+		if (!first) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void this.emitLaunchStartWithFirstCall(sessionId, pending, first).catch((err) =>
+			logger.warn('Failed to emit first-call size', { sessionId, error: String(err) }),
+		)
+	}
+
+	private async emitLaunchStartWithFirstCall(
+		sessionId: string,
+		pending: PendingLaunchStart,
+		first: FirstTurnResult,
+	): Promise<void> {
+		// Only a recorded cost goes on the event (resolveRecordedCostUsd): the CLI's
+		// figure on a route that reaches Anthropic, or tokens times a published price.
+		// A custom endpoint with no price, or a maskin_plan session with no priced
+		// model, leaves it empty: the session row's own fallbacks are estimates.
+		let firstTurnCostUsd: number | null = null
+		try {
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			firstTurnCostUsd = await resolveRecordedCostUsd({
+				route,
+				modelName,
+				usage: { ...first.resultUsage, durationMs: null },
+			})
+		} catch (err) {
+			logger.warn('Failed to price the first turn, leaving its cost empty', {
+				sessionId,
+				error: String(err),
+			})
+		}
+		await trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			firstCall: { ...first.size, firstTurnCostUsd },
+			startPrompt: pending.observer.startPromptSize,
+		})
+	}
+
+	/**
 	 * Mid-session budget check for one running maskin_plan session. Called
 	 * from the watchdog every ~60s for every running maskin_plan session.
 	 *
@@ -5495,11 +5741,14 @@ ${cont.continues_prompt}
 	 * reprocessing — neither can re-mark the session failed afterwards. A CAS
 	 * miss (something else already transitioned the row) is a silent no-op.
 	 */
-	private async completeIdleChatSession(session: typeof sessions.$inferSelect): Promise<void> {
+	private async completeIdleChatSession(
+		session: typeof sessions.$inferSelect,
+		opts: { rotated?: boolean } = {},
+	): Promise<boolean> {
 		// A session that went quiet with an unanswered message is wedged
 		// mid-turn, not idle — leave it for the hard timeout reaper, which
 		// closes it as `timeout` so the chat UI surfaces the interruption.
-		if (await this.hasUnansweredConversationTurn(session)) return
+		if (await this.hasUnansweredConversationTurn(session)) return false
 		const now = new Date()
 		// Save the usage first, as the timeout close does: the terminal row is final
 		// for usage writes, and the settle below reads these totals for its
@@ -5535,11 +5784,13 @@ ${cont.continues_prompt}
 						kind: 'complete',
 						classification: 'agent_completed',
 						source: 'idle-watcher',
-						resultText: 'Conversation went idle — session closed',
+						resultText: opts.rotated
+							? 'Chat restarted with a handoff note — session closed'
+							: 'Conversation went idle — session closed',
 					},
 			this.buildSettleDeps(),
 		)
-		if (settled.alreadySettled) return
+		if (settled.alreadySettled) return false
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
@@ -5591,7 +5842,9 @@ ${cont.continues_prompt}
 			session.id,
 			creditFailure
 				? 'Session failed — every turn hit a credit error'
-				: 'Session completed — conversation idle',
+				: opts.rotated
+					? 'Session completed — chat restarted in a fresh session'
+					: 'Session completed — conversation idle',
 		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
@@ -5605,6 +5858,7 @@ ${cont.continues_prompt}
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
 		)
+		return true
 	}
 
 	/**
@@ -6726,6 +6980,8 @@ ${cont.continues_prompt}
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
 					await this.recordTurnUsage(sessionId, line.content)
+					this.observeFirstCallSize(sessionId, line.content)
+					await this.observeTurnSize(sessionId, line.content)
 				}
 			}
 		}
@@ -7492,7 +7748,12 @@ ${cont.continues_prompt}
 	}
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
+		this.flushLaunchStartEvent(sessionId)
 		this.turnFinalizer.forgetSession(sessionId)
+		this.chatRotation.forget(sessionId)
+		this.turnSizeObservers.delete(sessionId)
+		this.compactionLoopStopped.delete(sessionId)
+		forgetSessionContextSize(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
 		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
 		this.mcpHealth.delete(sessionId)

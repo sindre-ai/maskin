@@ -28,14 +28,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * Gates connecting Deepdots in Integrations (bet [Connect Deepdots so agents can read the
-	 * latest customer feedback](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f24572b9-f500-496c-ba7d-4eee3af6ed7a)).
-	 * The connect route answers 404 when it is off for the caller, and the web app hides the
-	 * Deepdots row. Actor-scoped (FF_TESTER_ACTOR_IDS), because the web app only reads actor
-	 * flags. Retire once Deepdots is on for everyone.
-	 */
-	DEEPDOTS_CONNECT: 'deepdots-connect',
-	/**
 	 * Gates the Daily budget setting in Settings, Billing (bet [A daily token budget,
 	 * spent on the right work first](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/0f3ae096-7efc-4412-aba0-7a21a91ba040),
 	 * slice 1a). UI only: the route layout reads it once and mounts the section
@@ -45,28 +37,18 @@ export const FLAGS = {
 	 */
 	DAILY_BUDGET: 'daily-budget',
 	/**
-	 * Gates the Paste and Copy buttons on the Computer view, which move plain text
-	 * between the person's clipboard and the agent's computer while they are in
-	 * control. Frontend only: read with useFeatureFlag in desktop-viewer. Retire
-	 * once the buttons are on for everyone.
-	 */
-	COMPUTER_CLIPBOARD: 'computer-clipboard',
-	/**
-	 * Claude connector sign-in. Gates only what a person sees and does: the consent preview
-	 * and approve routes under /api/oauth/authorize answer 403 access_denied for non-testers,
-	 * and the Claude tab and consent page read the same id. Default off (FF_TESTER_FEATURES
-	 * empty). Listing and disconnecting connections is NOT behind this flag: a flag that hides
-	 * the only revoke button is a trap. Discovery, the token endpoint and token acceptance act
-	 * before any person is known and sit behind the MASKIN_MCP_OAUTH_ENABLED switch instead.
-	 * See docs/reference/mcp-oauth.md. Retire when the connector ships to everyone.
-	 */
-	MCP_OAUTH_CONSENT: 'mcp-oauth-consent',
-	/**
 	 * Gates editing a draft's text in place on the web For You card, with Send saving the
 	 * edit and approving the saved text in one step. Frontend only: read with useFeatureFlag
 	 * in draft-preview. Retire once editing is on for everyone.
 	 */
 	FORYOU_DRAFT_EDIT: 'foryou-draft-edit',
+	/**
+	 * Gates the Edit action on your own comments on a task, bet or insight in the web app. Frontend
+	 * only: read with useFeatureFlag in activity-comment. Off means a comment shows no Edit button.
+	 * The edit route behind it only changes a comment's text for its author and is safe with the
+	 * flag off. Retire once editing is on for everyone.
+	 */
+	COMMENT_EDIT: 'comment-edit',
 	/**
 	 * Gates the visual layer of agent change review (bet
 	 * [Humans accept, edit or reject an agent's proposed changes to a file instead of re-reading the whole thing](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0daec7c-7c63-4898-bfac-a4dfc98a2d23)):
@@ -94,14 +76,6 @@ export const FLAGS = {
 	 * box formatting reads the same id. Retire once it is on for everyone.
 	 */
 	CHAT_FORMATTING: 'chat-formatting',
-	/**
-	 * Gates the simpler For You card (task [Give For You cards their context](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8ac3f27a-4f3f-4c9e-9e90-d43a03ffe71b)):
-	 * the object the card is about on its first line, the chat composer as the message box, plain
-	 * summary text, no Recommended tag on a lone answer, Open the task to decide when there are no
-	 * buttons, and Open chat on the reply receipt. UI only, read where the card draws. Off means
-	 * the card looks as it does today. Retire once it is on for everyone.
-	 */
-	FOR_YOU_CARD_CONTEXT: 'foryou-card-context',
 	/**
 	 * Gates waking a driver when something it drives changes (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * rule 4): its child tasks all close, a blocker clears, its own object is moved by someone
@@ -151,13 +125,6 @@ export const FLAGS = {
 	 * is on for everyone.
 	 */
 	LOOP_VIEW_EXPORT: 'loop-view-export',
-	/**
-	 * Gates the up arrow in an empty chat message box, which opens the person's last sent
-	 * message in the box for editing, like Slack. Frontend only: read with useFeatureFlag in
-	 * ThreadComposer. Off means the up arrow does nothing in the box. Retire once it is on for
-	 * everyone.
-	 */
-	CHAT_EDIT_LAST_MESSAGE: 'chat-edit-last-message',
 	/**
 	 * Gates the default on silence for decision cards (bet [Agents take the lead](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1a8c343f-7fda-4940-8d73-750f307984ef),
 	 * task [Let decision cards carry a default on silence](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/bcfed848-7a51-418e-a5d0-172999385c9c)).
@@ -218,6 +185,41 @@ export const FLAGS = {
 	 * on for everyone.
 	 */
 	IOS_SHARE_SUGGESTIONS: 'ios-share-suggestions',
+	/**
+	 * Gates the Azure DevOps integration (task [Add Azure DevOps integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/508145fe-70aa-497c-a08a-d37e76f90c82)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Entra app registration is approved for customers and the provider is on for everyone.
+	 */
+	AZURE_DEVOPS: 'azure-devops',
+	/**
+	 * Gates the Zoom integration (task [Add Zoom integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/db07585a-26e3-462f-b73e-e2690e0f142b)).
+	 * Actor-scoped, read by the integrations routes: off means the provider is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once
+	 * the Zoom Marketplace app is approved for customers and the provider is on for everyone.
+	 */
+	ZOOM: 'zoom',
+	/**
+	 * Gates the four meeting-notes integrations Fireflies, Granola, Fathom and Otter (task
+	 * [Add four meeting-notes integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/7bfb4736-6c21-4cc9-9a19-2e6f8f4d35d6)).
+	 * Actor-scoped, read by the integrations routes: off means the four are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	MEETING_NOTES_INTEGRATIONS: 'meeting-notes-integrations',
+	/**
+	 * Gates the ten developer and data integrations Cloudflare, Supabase, Neon, PlanetScale, Netlify,
+	 * Datadog, New Relic, PagerDuty, Retool and Hex (task
+	 * [Add developer and data integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/a0ecefc6-7add-4653-8157-d6e83ea2163d)).
+	 * Actor-scoped, read by the integrations routes: off means the ten are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	DEVELOPER_DATA_INTEGRATIONS: 'developer-data-integrations',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

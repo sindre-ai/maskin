@@ -8,10 +8,11 @@ describe('work extension — loop registration (T2 of bet/loops-first-class, new
 		expect(loop?.label).toBe('Loop')
 		expect(loop?.defaultStatuses).toEqual([
 			'draft',
-			'paused',
-			'learning',
+			'pilot',
 			'supervised',
-			'fully_autonomous',
+			'live',
+			'paused',
+			'archived',
 		])
 	})
 
@@ -31,10 +32,11 @@ describe('work extension — loop registration (T2 of bet/loops-first-class, new
 	it('exposes loop in defaultSettings.statuses with draft as the default', () => {
 		expect(workExtension.defaultSettings?.statuses?.loop).toEqual([
 			'draft',
-			'paused',
-			'learning',
+			'pilot',
 			'supervised',
-			'fully_autonomous',
+			'live',
+			'paused',
+			'archived',
 		])
 		expect(workExtension.defaultSettings?.statuses?.loop?.[0]).toBe('draft')
 	})

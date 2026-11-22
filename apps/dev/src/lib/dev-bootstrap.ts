@@ -128,7 +128,7 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Market & Competitor Watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.

@@ -143,9 +143,9 @@ describe('ChatRow', () => {
 		expect(a.markRead).toHaveBeenCalled()
 	})
 
-	it('names a direct message by its agent and calls it a direct message', () => {
+	it('shows a direct message as the agent name and the preview, with no title line', () => {
 		renderRow(chat({ title: 'Some old topic', directPairKey: 'a:me' }))
-		expect(screen.getByText('Direct message')).toBeInTheDocument()
+		expect(screen.queryByText('Direct message')).not.toBeInTheDocument()
 		expect(screen.queryByText('Some old topic')).not.toBeInTheDocument()
 	})
 })

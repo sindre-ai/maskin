@@ -78,6 +78,7 @@ app.post('/', async (c) => {
 		integrationId: meet?.id ?? null,
 		provider: 'google-meet',
 		providerLabel: 'Google Meet',
+		sessionId: c.req.header('x-maskin-session-id') || undefined,
 	})
 	const mcpServer = createGoogleMeetMcpServer({ db, workspaceId, actorId }, gate)
 

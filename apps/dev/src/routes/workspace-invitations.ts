@@ -12,7 +12,7 @@ import { InviteEmailSendError, sendInviteEmail } from '@maskin/email'
 import { and, count, desc, eq, gt, lte, min, sql } from 'drizzle-orm'
 import { maskLlmConfigSecrets } from '../lib/actor-llm-config-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
 import { createWindowLimiter } from '../lib/fixed-window-limiter'
 import { takeInvitePreviewToken } from '../lib/invite-preview-throttle'
@@ -367,7 +367,7 @@ app.post('/:token/accept', async (c) => {
 					.select({
 						id: workspaces.id,
 						settings: workspaces.settings,
-						billingOwnerId: workspaces.billingOwnerId,
+						enterpriseGranted: workspaces.enterpriseGranted,
 					})
 					.from(workspaces)
 					.where(eq(workspaces.id, invite.workspaceId))
@@ -377,7 +377,7 @@ app.post('/:token/accept', async (c) => {
 
 				// Invitee is always human on the new-signup branch (we just inserted
 				// them with type: 'human'). Skip cap only for enterprise-owned workspaces.
-				if (!isEnterpriseActor(locked.billingOwnerId)) {
+				if (!isEnterprise(locked)) {
 					const plan = resolvePlanTier(locked.settings)
 					const cap = seatCapForPlan(plan)
 					if (cap !== null) {
@@ -532,7 +532,7 @@ app.post('/:token/accept', async (c) => {
 				.select({
 					id: workspaces.id,
 					settings: workspaces.settings,
-					billingOwnerId: workspaces.billingOwnerId,
+					enterpriseGranted: workspaces.enterpriseGranted,
 				})
 				.from(workspaces)
 				.where(eq(workspaces.id, invite.workspaceId))
@@ -543,7 +543,7 @@ app.post('/:token/accept', async (c) => {
 			// Seat cap applies only to humans on non-enterprise-owned workspaces —
 			// mirrors POST /workspaces/:id/members. Agents accepting invites (e.g.
 			// via a personal-token flow) don't count.
-			if (actor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
+			if (actor.type === 'human' && !isEnterprise(locked)) {
 				// If the actor is already a member, adding them again is a no-op —
 				// so the cap check is irrelevant in that case. Cheaper to check
 				// membership first than to over-fetch: countHumanMembers is a single

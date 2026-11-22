@@ -17,6 +17,8 @@ struct ObjectActivityView: View {
 	let store: ObjectDetailStore
 	var onOpenObject: ((String) -> Void)?
 	var onReply: ((TimelineItem) -> Void)?
+	/// Hold → Edit on a comment the reader wrote.
+	var onEdit: ((TimelineItem) -> Void)?
 	/// Which items to show; the whole timeline by default.
 	var include: (TimelineItem) -> Bool = { _ in true }
 	/// Pins "now" for snapshots; the live page uses the clock.
@@ -69,7 +71,8 @@ struct ObjectActivityView: View {
 					.padding(.bottom, MaskinSpace.s3)
 					.accessibilityAddTraits(.isHeader)
 				ForEach(day.entries) { entry in
-					ActivityEntryView(store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply)
+					ActivityEntryView(
+						store: store, entry: entry, onOpenObject: onOpenObject, onReply: onReply, onEdit: onEdit)
 						.id(entry.id)
 					if let status = dividers[entry.id] {
 						PhaseDivider(label: MaskinStatus.sentenceLabel(for: status))
@@ -171,6 +174,7 @@ struct ActivityEntryView: View {
 	let entry: ActivityEntry
 	var onOpenObject: ((String) -> Void)?
 	var onReply: ((TimelineItem) -> Void)?
+	var onEdit: ((TimelineItem) -> Void)?
 
 	private static var replyIndent: CGFloat { MaskinSpace.s12 + MaskinSpace.s1 }
 
@@ -233,6 +237,9 @@ struct ActivityEntryView: View {
 	@ViewBuilder private func menu(for item: TimelineItem) -> some View {
 		if let onReply, !item.isLocal {
 			Button { onReply(item) } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+		}
+		if let onEdit, store.canEdit(item) {
+			Button { onEdit(item) } label: { Label("Edit", systemImage: "pencil") }
 		}
 		if case .comment(let text) = item.kind {
 			Button {
@@ -327,6 +334,11 @@ struct TimelineRow: View {
 								.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
 								.foregroundStyle(MaskinColor.ink5)
 						}
+						if item.isEdited {
+							Text("edited")
+								.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
+								.foregroundStyle(MaskinColor.ink5)
+						}
 					}
 					.frame(minHeight: MaskinSpace.s11)
 					bubble(text)
@@ -389,6 +401,11 @@ struct ReplyRow: View {
 						.foregroundStyle(MaskinColor.ink)
 					if let time {
 						Text(time)
+							.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
+							.foregroundStyle(MaskinColor.ink5)
+					}
+					if item.isEdited {
+						Text("edited")
 							.font(MaskinTypeface.sans(MaskinFontSize.t12, relativeTo: .caption))
 							.foregroundStyle(MaskinColor.ink5)
 					}

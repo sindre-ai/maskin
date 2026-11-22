@@ -54,6 +54,7 @@ import { linkFilesToConversation } from '../lib/conversation-file-links'
 import { createApiError, formatZodError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { refuseRawSecret } from '../lib/integrations/raw-secret-backstop'
+import { evictListReadsFor } from '../lib/list-read-cache'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -82,7 +83,7 @@ import {
 import { loadLatestSnippets, loadWorkingByConversation } from '../services/chat-list-rows'
 import { visibleInDefaultListCondition } from '../services/chat-list-visibility'
 import { reportChatReply } from '../services/chat-reply-tracking'
-import { shareReplyDigest } from '../services/chat-session-context'
+import { shareEditNote, shareReplyDigest } from '../services/chat-session-context'
 import {
 	attachedFileIds,
 	insertConversationMessage,
@@ -1388,6 +1389,8 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		.returning({ actorId: conversationParticipants.actorId })
 
 	if (removed.length > 0) {
+		// The removed member's cached chat lists still show this chat; the cache clears the caller's own.
+		evictListReadsFor(actorId)
 		forgetConversationParticipants(id)
 		await recordEvent(db, {
 			workspaceId,
@@ -1974,6 +1977,18 @@ app.openapi(editMessageRoute, (async (c) => {
 				error: String(err),
 			}),
 		)
+	} else {
+		// Nobody is woken, but a session that already read the old text is told on its next turn.
+		const [editor] = await db
+			.select({ name: actors.name })
+			.from(actors)
+			.where(eq(actors.id, callerId))
+			.limit(1)
+		shareEditNote(db, {
+			conversationId: id,
+			authorName: editor?.name ?? 'Someone',
+			content: body.content,
+		})
 	}
 
 	const [caller] = await db

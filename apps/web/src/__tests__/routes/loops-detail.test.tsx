@@ -145,14 +145,16 @@ vi.mock('@/components/loops/loop-proposed-edit', () => ({
 }))
 vi.mock('@/components/loops/loop-pill', () => ({
 	LOOP_PILL_STYLES: {
-		learning: { label: 'Learning', text: '', dot: '' },
+		pilot: { label: 'Pilot', text: '', dot: '' },
 		supervised: { label: 'Supervised', text: '', dot: '' },
-		fully_autonomous: { label: 'Fully autonomous', text: '', dot: '' },
+		live: { label: 'Live', text: '', dot: '' },
+		archived: { label: 'Archived', text: '', dot: '' },
 		paused: { label: 'Paused', text: '', dot: '' },
 		draft: { label: 'Draft', text: '', dot: '' },
 		waiting_on_you: { label: 'Waiting on you', text: '', dot: '' },
 	},
 	isLiveLoopPill: () => true,
+	loopPillStyle: (pill: string) => ({ label: pill, text: '', dot: '' }),
 }))
 vi.mock('@/components/objects/object-detail-body', () => ({
 	ObjectDetailBody: () => null,

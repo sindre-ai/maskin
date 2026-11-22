@@ -102,7 +102,7 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 		await expect(page).toHaveURL(new RegExp(account.workspaceId))
 	})
 
-	test('the workspace tile expands the sidebar when collapsed to the rail', async ({
+	test('the toggle button expands the sidebar when collapsed to the rail', async ({
 		page,
 		account,
 	}) => {
@@ -114,7 +114,7 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 		await expect(pill).toBeVisible()
 
 		await page.getByRole('button', { name: 'Toggle Sidebar' }).click()
-		// Collapsed, the tile is the expand affordance — not the workspace menu.
+		// Collapsed, the top button is the expand affordance — not the workspace menu.
 		const tile = page.getByRole('button', { name: 'Expand sidebar' })
 		await expect(tile).toBeVisible()
 		await tile.click()

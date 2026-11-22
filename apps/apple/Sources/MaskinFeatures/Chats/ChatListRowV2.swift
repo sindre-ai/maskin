@@ -5,7 +5,7 @@ import SwiftUI
 
 /// One chat in the new list (chat list design spec v12 and its states addendum): three lines like
 /// Apple Mail. Line 1 is the agent names and the time, line 2 the chat title, line 3 the preview
-/// (two lines at most). The row dot is for unread only. The preview line carries at most one marker,
+/// (one line). A direct message has no title, so it has two lines. The row dot is for unread only. The preview line carries at most one marker,
 /// in the order error, needs you, working; nothing animates.
 struct ChatListRowV2: View {
 	let conversation: ConversationSummary
@@ -20,9 +20,9 @@ struct ChatListRowV2: View {
 		return shown.isEmpty ? conversation.title : shown.map(\.name).joined(separator: ", ")
 	}
 
-	/// A direct message has no topic of its own; the second line says what it is.
-	private var title: String {
-		conversation.isDirect ? "Direct message" : ChatPreviewText.plain(conversation.title)
+	/// A direct message has no topic of its own, so it shows no title line.
+	private var title: String? {
+		conversation.isDirect ? nil : ChatPreviewText.plain(conversation.title)
 	}
 
 	private var workingNames: [String] {
@@ -56,10 +56,12 @@ struct ChatListRowV2: View {
 							.fixedSize()
 					}
 				}
-				Text(title)
-					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .medium, relativeTo: .subheadline))
-					.foregroundStyle(MaskinColor.ink)
-					.lineLimit(1)
+				if let title {
+					Text(title)
+						.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .medium, relativeTo: .subheadline))
+						.foregroundStyle(MaskinColor.ink)
+						.lineLimit(1)
+				}
 				previewLine
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -94,7 +96,7 @@ struct ChatListRowV2: View {
 			case .needsYou:
 				Circle().fill(MaskinColor.warning).frame(width: Self.markerDot, height: Self.markerDot)
 					.padding(.top, MaskinSpace.s3).accessibilityHidden(true)
-				previewText.fontWeight(.medium).foregroundStyle(MaskinColor.ink).lineLimit(2)
+				previewText.fontWeight(.medium).foregroundStyle(MaskinColor.ink).lineLimit(1)
 			case .working:
 				// A still ring with the top edge in ink: no animation in the list.
 				Circle()
@@ -107,9 +109,9 @@ struct ChatListRowV2: View {
 					.frame(width: Self.ring, height: Self.ring)
 					.padding(.top, MaskinSpace.s2).accessibilityHidden(true)
 				Text(workingText).font(MaskinTypeface.sans(MaskinFontSize.t15, relativeTo: .subheadline))
-					.foregroundStyle(MaskinColor.ink4).lineLimit(2)
+					.foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			case nil:
-				previewText.foregroundStyle(MaskinColor.ink4).lineLimit(2)
+				previewText.foregroundStyle(MaskinColor.ink4).lineLimit(1)
 			}
 		}
 		.multilineTextAlignment(.leading)
@@ -131,7 +133,7 @@ struct ChatListRowV2: View {
 
 	/// What a screen reader hears: the marker as words, never only a colour.
 	private var accessibilityLabel: String {
-		var parts = [names, title]
+		var parts = [names] + (title.map { [$0] } ?? [])
 		switch conversation.previewMarker {
 		case .error(let reason): parts.append(reason.accessibilityLabel)
 		case .needsYou: parts.append("Needs you")

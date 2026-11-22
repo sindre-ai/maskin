@@ -86,6 +86,7 @@ struct ChatThreadView: View {
 	/// The thread open on top of this chat (a pushed screen).
 	@State private var threadRoute: ThreadRoute?
 	@State private var showingLinked = false
+	@State private var selectingText: ChatMessage?
 	@State private var searching = false
 	@State private var searchText = ""
 	@State private var matchIndex: Int?
@@ -262,6 +263,9 @@ struct ChatThreadView: View {
 							onRemove: { composer.text = $0 }, onVaulted: { composer.text = $0 })
 					}
 				}
+				.sheet(item: $selectingText) { message in
+					SelectTextSheet(text: ChatPreviewText.selectable(message.content))
+				}
 				.sheet(isPresented: $showingLinked) {
 					LinkedSheet(
 						entries: linkedEntries,
@@ -420,10 +424,16 @@ struct ChatThreadView: View {
 		}
 	}
 
+	/// What the thread's `+` menu uploads through; the same source the chat's own composer uses.
+	private var threadUploader: (any ChatFileUploading)? {
+		guard let env = runtime?.environment else { return nil }
+		return APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? "", largeUploads: env.largeUploads)
+	}
+
 	@ViewBuilder
 	private func threadDestination(_ route: ThreadRoute) -> some View {
 		if let root = store.threadRoot(route.rootID) {
-			ThreadScreen(store: store, root: root)
+			ThreadScreen(store: store, root: root, uploader: threadUploader)
 		} else {
 			// The root is older than the page held: fetch it rather than show an empty screen.
 			ProgressView()
@@ -592,6 +602,7 @@ struct ChatThreadView: View {
 			onOpenThread: { message in
 				if let route = ThreadRoute.opening(message) { threadRoute = route }
 			},
+			onSelectText: { selectingText = $0 },
 			matchIDs: matchSet,
 			currentMatchID: currentMatchID, call: call)
 		Color.clear.frame(height: 1).id(Self.bottomID)
@@ -1087,6 +1098,8 @@ struct ThreadTranscript: View {
 	var onJumpToMessage: (String) -> Void = { _ in }
 	/// Opens the thread under a message (the pill, or Reply in thread).
 	var onOpenThread: (ChatMessage) -> Void = { _ in }
+	/// Opens the message's text in the select-words sheet.
+	var onSelectText: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 	/// The call running in this thread: its card shows what you are saying as you say it.
@@ -1149,14 +1162,13 @@ struct ThreadTranscript: View {
 			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID,
 			calls: LiveCallLog.shared.records(for: store.conversationID), callSummaries: true,
 			inlineTranscript: false)
-		let latestOwn = ThreadLayout.latestOwnMessageID(in: messages, currentActorID: store.currentActorID)
 		let cardOwners = LinkedConversationItems.firstMentions(in: messages)
 		let statusIDs = ThreadLayout.statusLineIDs(in: messages, currentActorID: store.currentActorID)
 		let namesAgents = namesAgents
 		let runs = ThreadLayout.runs(in: items)
 		ForEach(items) { item in
 			row(
-				item, answers: answers, anchors: anchors, latestOwnID: latestOwn, statusIDs: statusIDs,
+				item, answers: answers, anchors: anchors, statusIDs: statusIDs,
 				cardOwners: cardOwners, namesAgents: namesAgents, runs: runs)
 				.padding(.top, ThreadLayout.gap(before: item) == .grouped ? Self.groupedGap : Self.listGap)
 		}
@@ -1240,7 +1252,7 @@ struct ThreadTranscript: View {
 		}
 	}
 
-	private func actions(for message: ChatMessage, isOwn: Bool, isLatestOwn: Bool) -> MessageMenuActions {
+	private func actions(for message: ChatMessage, isOwn: Bool) -> MessageMenuActions {
 		var actions = MessageMenuActions()
 		let hasText = !message.content.isEmpty
 		if hasText {
@@ -1248,6 +1260,7 @@ struct ThreadTranscript: View {
 				Clipboard.copy(message.content)
 				MaskinHaptics.play(.selection)
 			}
+			actions.onSelectText = { onSelectText(message) }
 		}
 		if message.serverID != nil, message.kind == "message", !message.isFailed {
 			actions.reacted = Set(message.reactions.filter(\.reactedByMe).map(\.emoji))
@@ -1260,7 +1273,7 @@ struct ThreadTranscript: View {
 			actions.isPinned = store.isPinned(message)
 			actions.onPin = { if store.isPinned(message) { store.unpin() } else { store.pin(message) } }
 		}
-		if isLatestOwn, message.canEdit(by: store.currentActorID) {
+		if message.canEdit(by: store.currentActorID) {
 			actions.onEdit = { onEdit(message) }
 		}
 		if message.author == .agent, message.serverID != nil {
@@ -1305,7 +1318,7 @@ struct ThreadTranscript: View {
 
 	@ViewBuilder
 	private func row(
-		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors, latestOwnID: String?,
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
 		statusIDs: Set<String>, cardOwners: [String: String], namesAgents: Bool, runs: [String: ThreadLayout.Run]
 	) -> some View {
 		switch item {
@@ -1323,11 +1336,10 @@ struct ThreadTranscript: View {
 			LiveReceiptRow(event: event)
 		case .callSummary(let summary, let transcript):
 			LiveCallSummaryCard(summary: summary, transcript: transcript)
-		case .handoff(let session, let behind):
-			HandoffRow(session: session, behind: behind)
+		case .handoff(let entries):
+			HandoffGroup(entries: entries)
 		case .message(let message, let showsAuthor):
 			let isOwn = message.actorID == store.currentActorID
-			let isLatestOwn = message.id == latestOwnID
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn).padding(.bottom, MaskinSpace.s3)
 			}
@@ -1344,7 +1356,7 @@ struct ThreadTranscript: View {
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
 				working: message.author == .agent && store.presence(of: message.actorID) != nil,
-				actions: actions(for: message, isOwn: isOwn, isLatestOwn: isLatestOwn),
+				actions: actions(for: message, isOwn: isOwn),
 				onRetrySend: { store.retrySend(message.id) },
 				onReply: canOpenThread(message) ? { onOpenThread(message) } : nil,
 				onQuoteTap: message.quotedReply == nil

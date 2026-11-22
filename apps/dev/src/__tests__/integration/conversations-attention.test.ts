@@ -279,8 +279,13 @@ describe('GET /api/conversations needs_you, working, later and error', () => {
 			await say(
 				chat,
 				agentId,
-				"I couldn't complete that turn: You've hit your limit",
-				failure({ dedupe_key: 'a', is_error: true, error_kind: 'permanent' }),
+				'Maskin could not run this. Nothing was created.',
+				failure({
+					dedupe_key: 'a',
+					is_error: true,
+					error_kind: 'permanent',
+					error_detail: "You've hit your limit",
+				}),
 			)
 
 			const row = (await list()).get(chat)
