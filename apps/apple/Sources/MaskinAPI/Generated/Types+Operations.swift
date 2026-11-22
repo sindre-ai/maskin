@@ -38857,6 +38857,144 @@ public enum Operations {
                     }
                 }
             }
+            public struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error`.
+                        public struct errorPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/code`.
+                            public var code: Swift.String
+                            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/message`.
+                            public var message: Swift.String
+                            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/detailsPayload`.
+                            public struct detailsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/detailsPayload/field`.
+                                public var field: Swift.String
+                                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/detailsPayload/message`.
+                                public var message: Swift.String
+                                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/detailsPayload/expected`.
+                                public var expected: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/detailsPayload/received`.
+                                public var received: Swift.String?
+                                /// Creates a new `detailsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - field:
+                                ///   - message:
+                                ///   - expected:
+                                ///   - received:
+                                public init(
+                                    field: Swift.String,
+                                    message: Swift.String,
+                                    expected: Swift.String? = nil,
+                                    received: Swift.String? = nil
+                                ) {
+                                    self.field = field
+                                    self.message = message
+                                    self.expected = expected
+                                    self.received = received
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case field
+                                    case message
+                                    case expected
+                                    case received
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/details`.
+                            public typealias detailsPayload = [Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/details`.
+                            public var details: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload?
+                            /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error/suggestion`.
+                            public var suggestion: Swift.String?
+                            /// Creates a new `errorPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - code:
+                            ///   - message:
+                            ///   - details:
+                            ///   - suggestion:
+                            public init(
+                                code: Swift.String,
+                                message: Swift.String,
+                                details: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.errorPayload.detailsPayload? = nil,
+                                suggestion: Swift.String? = nil
+                            ) {
+                                self.code = code
+                                self.message = message
+                                self.details = details
+                                self.suggestion = suggestion
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case code
+                                case message
+                                case details
+                                case suggestion
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/json/error`.
+                        public var error: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.errorPayload
+                        /// Creates a new `jsonPayload`.
+                        ///
+                        /// - Parameters:
+                        ///   - error:
+                        public init(error: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload.errorPayload) {
+                            self.error = error
+                        }
+                        public enum CodingKeys: String, CodingKey {
+                            case error
+                        }
+                    }
+                    /// - Remark: Generated from `#/paths/api/integrations/{provider}/app/PUT/responses/409/content/application\/json`.
+                    case json(Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body.jsonPayload {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The tool is connected with the saved app: a different app id would strand it. The same id with a new secret is fine
+            ///
+            /// - Remark: Generated from `#/paths//api/integrations/{provider}/app/put/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            public var conflict: Operations.put_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_app.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
             /// Undocumented response.
             ///
             /// A response with a code that is not documented in the OpenAPI document.
