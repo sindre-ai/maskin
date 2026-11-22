@@ -192,16 +192,21 @@ struct IntegrationsView: View {
 				SettingsRowRules.integrationActions(
 					isToolServer: integration.provider == IntegrationsStore.toolServerProvider,
 					canManage: store.canManage, canStartConnect: store.canStartConnect(integration.provider),
-					state: integration.state, hasServices: services != nil),
+					state: integration.state, hasServices: services != nil,
+					hasOwnApp: store.needsOwnApp(integration.provider)),
 				id: \.self
 			) { action in
 				switch action {
 				case .reconnect: Button("Reconnect") { startConnectFlow(integration.provider) }
 				case .agentAccess: Button("Agent access") { openAccess(integration) }
+				case .changeApp: Button("Change app") { store.changeApp(providerID: integration.provider) }
 				case .disconnect: Button("Disconnect", role: .destructive) { pendingDisconnect = integration }
 				case .remove: Button("Remove", role: .destructive) { pendingDisconnect = integration }
 				}
 			}
+		}
+		.ownAppSheet(store: store) { prompt in
+			services.flatMap { $0.ownAppStore(prompt: prompt) }
 		}
 		.confirmationDialog(
 			"Choose a GitHub account",

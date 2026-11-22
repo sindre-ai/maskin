@@ -55,6 +55,9 @@ struct IntegrationConnectCard: View {
 			}
 		}
 		.task { await prepare() }
+		.ownAppSheet(store: store) { prompt in
+			runtime.flatMap { SettingsServices(environment: $0.environment).ownAppStore(prompt: prompt) }
+		}
 		.sheet(item: $keyForm) { form in
 			NavigationStack {
 				ConnectWithKeyView(store: form) { if let store { Task { await store.load() } } }

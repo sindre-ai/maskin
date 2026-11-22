@@ -158,7 +158,13 @@ struct SettingsServices {
 			let webAuth: (any WebAuthenticating)? = nil  // connecting stays on the web
 		#endif
 		return IntegrationsStore(
-			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
+			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth, ownApp: source)
+	}
+
+	/// The paste form for a tool's own sign-in app. Nil without a workspace.
+	func ownAppStore(prompt: OwnAppPrompt) -> OwnAppStore? {
+		guard let source else { return nil }
+		return OwnAppStore(prompt: prompt, api: source)
 	}
 
 	/// The figures beside the rows of the account menu and the Settings page; nil without a workspace.
