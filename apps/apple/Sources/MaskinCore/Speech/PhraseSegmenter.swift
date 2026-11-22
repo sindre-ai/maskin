@@ -34,6 +34,13 @@ public struct PhraseSegmenter: Sendable {
 		public var softSilenceMs: Double = 150
 		/// Hard cap on one phrase, so a speaker who never pauses still streams.
 		public var maxSegmentMs: Double = 6_000
+		/// A pause only closes a phrase once the speech in it spans this long. A shorter burst stays in the
+		/// buffer and goes to the server together with what comes next, so the model gets more context and
+		/// is not sent a cough or a click on its own. 0 closes on any pause, as before.
+		public var minSpeechMs: Double = 0
+		/// Speech spanning less than this is a click or a pop, not a word: at the cap and at Done it is
+		/// dropped unless the phone's recogniser heard words in it. 0 keeps everything that crossed the level.
+		public var clickMs: Double = 0
 
 		public init() {}
 	}
@@ -41,6 +48,7 @@ public struct PhraseSegmenter: Sendable {
 	private let options: Options
 	private var segmentStart: Double
 	private var lastVoiceAt: Double
+	private var firstVoiceAt: Double
 	public private(set) var hasVoice = false
 	/// The quietest recent level, which the speech level is measured against. Starts where the
 	/// threshold equals `voiceRMS`, so the first readings behave as they always did.
@@ -49,6 +57,10 @@ public struct PhraseSegmenter: Sendable {
 	public private(set) var threshold: Double
 	/// The loudest reading in the current segment, for the log.
 	public private(set) var peakRMS = 0.0
+	/// How long the speech in this segment spans, from the first reading that counted as speech to the last.
+	public var speechMs: Double { hasVoice ? lastVoiceAt - firstVoiceAt : 0 }
+	/// Whether the segment holds more than a click: speech spanning at least `clickMs`.
+	public var hasSpeech: Bool { hasVoice && speechMs >= options.clickMs }
 	/// Set by the caller while something else (the phone's own recogniser) has heard words in the current
 	/// segment. A segment the level never called speech is then sent anyway, not dropped as silence: the
 	/// words are there, so a microphone too quiet for the level rule must not lose them.
@@ -58,6 +70,7 @@ public struct PhraseSegmenter: Sendable {
 		self.options = options
 		segmentStart = startedAtMs
 		lastVoiceAt = startedAtMs
+		firstVoiceAt = startedAtMs
 		noiseFloor = options.voiceRMS / options.voiceOverFloor
 		threshold = options.voiceRMS
 	}
@@ -69,12 +82,13 @@ public struct PhraseSegmenter: Sendable {
 		threshold = max(options.minVoiceRMS, min(options.voiceRMS, noiseFloor * options.voiceOverFloor))
 		peakRMS = max(peakRMS, rms)
 		if rms >= threshold {
+			if !hasVoice { firstVoiceAt = nowMs }
 			hasVoice = true
 			lastVoiceAt = nowMs
 		}
 		let needed = nowMs - segmentStart >= options.softCutMs ? options.softSilenceMs : options.silenceMs
-		if hasVoice, nowMs - lastVoiceAt >= needed { return .cut }
-		if nowMs - segmentStart >= options.maxSegmentMs { return hasVoice || heardWords ? .cut : .discard }
+		if hasVoice, speechMs >= options.minSpeechMs, nowMs - lastVoiceAt >= needed { return .cut }
+		if nowMs - segmentStart >= options.maxSegmentMs { return hasSpeech || heardWords ? .cut : .discard }
 		return nil
 	}
 
@@ -85,5 +99,17 @@ public struct PhraseSegmenter: Sendable {
 		hasVoice = false
 		heardWords = false
 		peakRMS = 0
+	}
+}
+
+extension PhraseSegmenter.Options {
+	/// Dictation through the server. Phrases of under 0.6 s of speech wait for the next one, and a
+	/// click under 0.15 s is never sent: the server answers both with no words or with too little to go on
+	/// (in a two-week sample about 4 in 10 requests carried 2 s of audio or less).
+	public static var server: PhraseSegmenter.Options {
+		var options = PhraseSegmenter.Options()
+		options.minSpeechMs = 600
+		options.clickMs = 150
+		return options
 	}
 }
