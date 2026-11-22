@@ -62,6 +62,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'netlify',
 	'new-relic',
 	'notion',
+	'numina',
 	'otter',
 	'outreach',
 	'pagerduty',

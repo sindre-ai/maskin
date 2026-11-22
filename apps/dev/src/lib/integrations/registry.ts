@@ -70,6 +70,7 @@ import { config as neonConfig } from './providers/neon/config'
 import { config as netlifyConfig } from './providers/netlify/config'
 import { config as newRelicConfig } from './providers/new-relic/config'
 import { config as notionConfig } from './providers/notion/config'
+import { config as numinaConfig } from './providers/numina/config'
 import { config as otterConfig } from './providers/otter/config'
 import { config as outreachConfig } from './providers/outreach/config'
 import { config as pagerdutyConfig } from './providers/pagerduty/config'
@@ -245,6 +246,10 @@ providers.set('webflow', {
 
 providers.set('notion', {
 	config: notionConfig,
+})
+
+providers.set('numina', {
+	config: numinaConfig,
 })
 
 providers.set('airtable', {
