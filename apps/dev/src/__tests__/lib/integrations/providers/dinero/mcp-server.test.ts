@@ -66,7 +66,7 @@ async function connect(
 	opts: { access?: AgentAccess; fetchImpl?: ReturnType<typeof vi.fn> } = {},
 ) {
 	const fetchImpl =
-		opts.fetchImpl ?? vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => json({}))
+		opts.fetchImpl ?? vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => json([]))
 	const getAuth = vi.fn(async () => ({ token: TOKEN, organizationId: 42 }))
 	const trackToolCalled = vi.fn(async () => undefined)
 	const ctx: DineroMcpContext = {
