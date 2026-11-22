@@ -190,6 +190,8 @@ export interface ProxyContext {
 	/** Remembers each server's own tool annotations between a tools/list and a later call. */
 	cacheKey: string
 	upstreamUrl: string
+	/** A custom server's allowed tools: any other tool is refused and left out of tools/list. */
+	allowedTools?: readonly string[]
 	/** The headers that sign in upstream. Throws GatewayUpstreamError when it cannot. */
 	upstreamHeaders: () => Promise<Record<string, string>>
 }
@@ -247,6 +249,7 @@ export async function proxyMcp(
 			args: rpc?.params?.arguments,
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
+			allowedTools: ctx.allowedTools,
 		})
 		// Read & write lets an agent use Resend's send tools, unless its send setting for emails holds
 		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
@@ -419,6 +422,7 @@ export async function proxyMcp(
 			provider,
 			providerLabel: label,
 			access,
+			allowedTools: ctx.allowedTools,
 		})
 		rememberAnnotations(cacheKey, out.upstreamAnnotations)
 		return { ...m, result: out.result }

@@ -481,6 +481,114 @@ describe('Custom server gateway (Integration)', () => {
 		)
 	})
 
+	describe('with a list of allowed tools', () => {
+		const LIMITED = {
+			...LINEAR_LIKE,
+			allowed_tools: ['list_vouchers', 'create_voucher_draft'],
+		}
+
+		async function limitedServer(s: Setup, access: 'read' | 'read_write') {
+			const { body } = await addServer(s, 'Books', LIMITED)
+			await call(s, 'PUT', `/api/integrations/${body.id}/grants/${s.agentA.id}`, { access })
+			return body.id
+		}
+
+		it('refuses a tool off the list for a Read & write agent, and never sends it upstream', async () => {
+			const s = await setup()
+			const id = await limitedServer(s, 'read_write')
+			for (const tool of ['book_voucher', 'update_voucher', 'delete_voucher']) {
+				const res = await gatewayCall(s, id, s.agentA.id, tool)
+				const json = (await res.json()) as {
+					result: { isError: boolean; content: Array<{ text: string }> }
+				}
+				expect(json.result.isError).toBe(true)
+				expect(json.result.content[0]?.text).toContain(`${tool} is not one of the tools`)
+			}
+			expect(fetchMock).not.toHaveBeenCalled()
+		})
+
+		it('lets a Read & write agent save a draft and read, and sends those upstream', async () => {
+			const s = await setup()
+			const id = await limitedServer(s, 'read_write')
+			expect((await gatewayCall(s, id, s.agentA.id, 'create_voucher_draft')).status).toBe(200)
+			expect((await gatewayCall(s, id, s.agentA.id, 'list_vouchers')).status).toBe(200)
+			expect(fetchMock).toHaveBeenCalledTimes(2)
+		})
+
+		it('still refuses the draft tool to a Read agent: the list narrows access, it never widens it', async () => {
+			const s = await setup()
+			const id = await limitedServer(s, 'read')
+			const res = await gatewayCall(s, id, s.agentA.id, 'create_voucher_draft')
+			expect(((await res.json()) as { result: { isError: boolean } }).result.isError).toBe(true)
+			expect(fetchMock).not.toHaveBeenCalled()
+		})
+
+		it('leaves the tools off the list out of tools/list', async () => {
+			const s = await setup()
+			const id = await limitedServer(s, 'read_write')
+			fetchMock.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						jsonrpc: '2.0',
+						id: 1,
+						result: {
+							tools: [
+								'list_vouchers',
+								'create_voucher_draft',
+								'book_voucher',
+								'delete_voucher',
+							].map((name) => ({ name, description: name })),
+						},
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				),
+			)
+			const res = await appFor(s.agentA.id, 'agent').request(
+				`/api/custom-mcp-servers/${id}/gateway`,
+				{
+					method: 'POST',
+					headers: {
+						'X-Workspace-Id': s.ws.id,
+						'content-type': 'application/json',
+						authorization: 'Bearer ank_agent_key',
+					},
+					body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+				},
+			)
+			const json = (await res.json()) as { result: { tools: Array<{ name: string }> } }
+			expect(json.result.tools.map((t) => t.name)).toEqual([
+				'list_vouchers',
+				'create_voucher_draft',
+			])
+		})
+
+		it('keeps the list when the server is read back and saved again', async () => {
+			const s = await setup()
+			const id = await limitedServer(s, 'read_write')
+			const read = await call(s, 'GET', `/api/custom-mcp-servers/${id}`)
+			const { server } = (await read.json()) as {
+				server: { allowed_tools?: string[] }
+			}
+			expect(server.allowed_tools).toEqual(LIMITED.allowed_tools)
+			const put = await call(s, 'PUT', `/api/custom-mcp-servers/${id}`, { name: 'Books', server })
+			expect(put.status).toBe(200)
+			const res = await gatewayCall(s, id, s.agentA.id, 'book_voucher')
+			expect(((await res.json()) as { result: { isError: boolean } }).result.isError).toBe(true)
+		})
+
+		it('refuses a list on a server it cannot sit in front of, so no list reads as a limit and is none', async () => {
+			const s = await setup()
+			for (const server of [
+				{ type: 'stdio', command: 'npx', allowed_tools: ['list_vouchers'] },
+				{ type: 'http', url: 'http://localhost:9000/mcp', allowed_tools: ['list_vouchers'] },
+				{ ...LINEAR_LIKE, allowed_tools: [] },
+			]) {
+				const res = await call(s, 'POST', '/api/custom-mcp-servers', { name: 'Bad', server })
+				expect(res.status).toBe(400)
+			}
+		})
+	})
+
 	it('has no gateway for a server it cannot sit in front of', async () => {
 		const s = await setup()
 		const { body } = await addServer(s, 'Local files', { type: 'stdio', command: 'npx' })
