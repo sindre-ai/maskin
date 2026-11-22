@@ -1,5 +1,6 @@
-import { fillCustomerValue } from '../customer-value'
+import { fillCustomerValue, hasCustomerValueToken } from '../customer-value'
 import { getEnvOrThrow } from '../env'
+import { assertPublicHost } from '../public-host'
 import type { OAuth2Config, StoredCredentials } from '../types'
 import { createS256CodeChallenge } from './pkce'
 
@@ -66,6 +67,18 @@ export class OAuth2Handler {
 	/** A URL of the tool's setup with the customer's value in it, checked again on the way in. */
 	private url(template: string): string {
 		return fillCustomerValue(template, this.config.customerValue, this.app?.value)
+	}
+
+	/**
+	 * Where a request to the customer's own host goes: looked up first and refused unless every
+	 * address is public, and sent with redirects off, so neither a name that points inside our
+	 * network nor a redirect to another host is ever followed. A tool at a fixed address is unchanged.
+	 */
+	private async guardedFetch(template: string, init: RequestInit): Promise<Response> {
+		const url = this.url(template)
+		if (!hasCustomerValueToken(template)) return fetch(url, init)
+		await assertPublicHost(new URL(url).hostname)
+		return fetch(url, { ...init, redirect: 'manual' })
 	}
 
 	private clientId(): string {
@@ -142,7 +155,7 @@ export class OAuth2Handler {
 		const headers = this.buildAuthHeaders()
 		headers.set('Content-Type', 'application/x-www-form-urlencoded')
 
-		const response = await fetch(this.url(this.config.revokeUrl), {
+		const response = await this.guardedFetch(this.config.revokeUrl, {
 			method: 'POST',
 			headers,
 			body: body.toString(),
@@ -177,8 +190,7 @@ export class OAuth2Handler {
 			body.set('client_id', this.clientId())
 		}
 
-		const tokenUrl = this.url(urlOverride ?? this.config.tokenUrl)
-		const response = await fetch(tokenUrl, {
+		const response = await this.guardedFetch(urlOverride ?? this.config.tokenUrl, {
 			method: 'POST',
 			headers,
 			body: body.toString(),

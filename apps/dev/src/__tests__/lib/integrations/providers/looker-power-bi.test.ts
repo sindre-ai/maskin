@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const lookupMock = vi.hoisted(() => vi.fn())
+vi.mock('node:dns/promises', () => ({ lookup: lookupMock }))
+
 import { FLAGS } from '../../../../lib/feature-flags'
 import { GATEWAY_PROVIDERS } from '../../../../lib/integrations/mcp-gateway'
 import { OAuth2Handler } from '../../../../lib/integrations/oauth/handler'
@@ -71,7 +75,14 @@ describe('Looker and Power BI wiring', () => {
 	})
 })
 
+const PUBLIC = [{ address: '93.184.216.34', family: 4 }]
+
 describe('Sign-in on the customer address', () => {
+	beforeEach(() => {
+		lookupMock.mockReset()
+		lookupMock.mockResolvedValue(PUBLIC)
+	})
+
 	it('Looker: the authorize URL is on the saved instance, with no secret and a PKCE challenge', () => {
 		const handler = new OAuth2Handler(oauth(looker), undefined, {
 			clientId: 'client-guid',
@@ -142,5 +153,86 @@ describe('Sign-in on the customer address', () => {
 			clientSecret: '',
 		})
 		expect(() => handler.createAuthorizationUrl('state', 'https://app/cb')).toThrow()
+	})
+
+	it('refuses a token request when the host now resolves inside our network', async () => {
+		lookupMock.mockResolvedValue([{ address: '10.0.0.5', family: 4 }])
+		const fetchSpy = vi.fn()
+		const original = globalThis.fetch
+		globalThis.fetch = fetchSpy as unknown as typeof fetch
+		try {
+			const handler = new OAuth2Handler(oauth(looker), undefined, {
+				clientId: 'client-guid',
+				clientSecret: '',
+				value: 'acme.cloud.looker.com',
+			})
+			await expect(handler.exchangeCode('code', 'https://app/cb', 'verifier')).rejects.toThrow(
+				'not reachable',
+			)
+			await expect(handler.refreshToken('rt')).rejects.toThrow('not reachable')
+		} finally {
+			globalThis.fetch = original
+		}
+		expect(fetchSpy).not.toHaveBeenCalled()
+	})
+
+	it('refuses when one of several addresses is private, and when the host does not resolve', async () => {
+		const handler = new OAuth2Handler(oauth(looker), undefined, {
+			clientId: 'client-guid',
+			clientSecret: '',
+			value: 'acme.cloud.looker.com',
+		})
+		lookupMock.mockResolvedValue([...PUBLIC, { address: '127.0.0.1', family: 4 }])
+		await expect(handler.refreshToken('rt')).rejects.toThrow('not reachable')
+		lookupMock.mockRejectedValue(new Error('ENOTFOUND'))
+		await expect(handler.refreshToken('rt')).rejects.toThrow("Couldn't find")
+	})
+
+	it('does not follow a redirect from the customer host to another host', async () => {
+		const seen: RequestInit[] = []
+		const original = globalThis.fetch
+		globalThis.fetch = (async (_url: string, init: RequestInit) => {
+			seen.push(init)
+			return new Response(null, { status: 302, headers: { location: 'https://evil.example/x' } })
+		}) as unknown as typeof fetch
+		try {
+			const handler = new OAuth2Handler(oauth(looker), undefined, {
+				clientId: 'client-guid',
+				clientSecret: '',
+				value: 'acme.cloud.looker.com',
+			})
+			await expect(handler.refreshToken('rt')).rejects.toThrow('302')
+		} finally {
+			globalThis.fetch = original
+		}
+		expect(seen).toHaveLength(1)
+		expect(seen[0]?.redirect).toBe('manual')
+	})
+
+	it('leaves a tool at a fixed address alone: no lookup, redirects as before', async () => {
+		const seen: RequestInit[] = []
+		const original = globalThis.fetch
+		globalThis.fetch = (async (_url: string, init: RequestInit) => {
+			seen.push(init)
+			return new Response(JSON.stringify({ access_token: 'at' }))
+		}) as unknown as typeof fetch
+		try {
+			const handler = new OAuth2Handler(
+				{
+					authorizationUrl: 'https://provider.example/authorize',
+					tokenUrl: 'https://provider.example/token',
+					scopes: [],
+					clientIdEnv: 'X_CLIENT_ID',
+					clientSecretEnv: 'X_CLIENT_SECRET',
+				},
+				undefined,
+				{ clientId: 'id', clientSecret: 's' },
+			)
+			await handler.refreshToken('rt')
+		} finally {
+			globalThis.fetch = original
+		}
+		expect(lookupMock).not.toHaveBeenCalled()
+		expect(seen[0]?.redirect).toBeUndefined()
 	})
 })

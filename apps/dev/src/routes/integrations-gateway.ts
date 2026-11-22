@@ -7,7 +7,11 @@ import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
-import { CustomerValueError, fillCustomerValue } from '../lib/integrations/customer-value'
+import {
+	CustomerValueError,
+	fillCustomerValue,
+	hasCustomerValueToken,
+} from '../lib/integrations/customer-value'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -25,6 +29,7 @@ import {
 } from '../lib/integrations/mcp-gateway'
 import { loadOAuthApp } from '../lib/integrations/oauth-app'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
 import { getKmsProvider } from '../lib/keychain-kms'
@@ -158,12 +163,14 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 				resolved.config.auth.config.customerValue,
 				app?.value,
 			)
+			// Looked up on every call: a name that now points inside our network is never called.
+			if (hasCustomerValueToken(server.url)) await assertPublicHost(new URL(upstreamUrl).hostname)
 		} catch (err) {
 			if (!(err instanceof CustomerValueError)) throw err
 			return jsonRpcError(
 				400,
 				-32001,
-				`${label} needs its address. Add it under Settings → Integrations.`,
+				`${label} cannot be called: ${err.message} Check it under Settings → Integrations.`,
 			)
 		}
 	}
