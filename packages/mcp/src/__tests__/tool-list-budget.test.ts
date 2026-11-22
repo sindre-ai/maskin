@@ -18,12 +18,12 @@ vi.mock('node:fs', () => ({
 
 const wsId = '00000000-0000-0000-0000-0000000000aa'
 
-// Measured 19 Nov 2026 after the schema trim: 200,628 characters for 120 tools, down from
-// 277,238 (name, title, description, JSON input schema and annotations of every tool, the
-// same way the SDK builds tools/list; the wire list adds about 19 KB of _meta on top).
+// Measured 22 Nov 2026: 199,261 characters for 123 tools (name, title, description, JSON input
+// schema and annotations of every tool, the same way the SDK builds tools/list). It leaves out
+// the execution flag and _meta the wire list adds, which tool-list-wire-budget.test.ts counts.
 // The budget leaves a little room, so a new tool is fine but a doubling is not. Raise it
 // on purpose, with the new size in the PR, never to make a red test green.
-const TOOL_LIST_BUDGET = 206_000
+const TOOL_LIST_BUDGET = 200_500
 const PER_TOOL_BUDGET: Record<string, number> = {
 	create_comment: 12_000,
 	post_conversation_message: 7_000,
