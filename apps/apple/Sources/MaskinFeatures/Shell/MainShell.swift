@@ -261,10 +261,12 @@ private struct AdaptiveTabs: View {
 	@ViewBuilder private var shell: some View {
 		#if os(iOS)
 			if ShellIdiom.hasRail {
-				// The iPad: the rail picks the tab; the tab view only holds each tab's state, with its own bar hidden.
-				HStack(spacing: 0) {
+				// The iPad: the rail (landscape) or our own bottom bar (portrait) picks the tab; the tab
+				// view only holds each tab's state, with its own bar hidden.
+				PadShell(runtime: runtime, badges: badges) {
 					ShellRail(
 						environment: environment, runtime: runtime, badges: badges, switchWorkspace: { showWorkspaces = true })
+				} tabs: {
 					tabs
 						.tabViewStyle(.tabBarOnly)
 						.toolbarVisibility(.hidden, for: .tabBar)
@@ -302,6 +304,50 @@ private struct AdaptiveTabs: View {
 			if !ShellIdiom.isPad {
 				Tab(ShellTab.newChat.title, systemImage: ShellTab.newChat.systemImage, value: ShellTab.newChat, role: .search) {
 					Color.clear
+				}
+			}
+		}
+	}
+}
+
+/// The iPad's shell. Landscape (and Slide Over, a one-third split) has the rail down the left.
+/// Portrait at regular width has no rail: the bottom bar picks the tab, full while no chat is open
+/// and icons only under the chat list while one is.
+@available(iOS 18, *)
+private struct PadShell<Rail: View, Tabs: View>: View {
+	let runtime: AppRuntime
+	let badges: ShellBadges
+	@ViewBuilder let rail: () -> Rail
+	@ViewBuilder let tabs: () -> Tabs
+	@Environment(\.horizontalSizeClass) private var horizontal
+
+	var body: some View {
+		// Read here, not inside the geometry closure, so a change to any of them redraws the bar.
+		let selectedTab = runtime.selectedTab
+		let shape = PadBarLayout.shape(
+			tab: selectedTab, chatOpen: runtime.chatOpenBesideList,
+			covered: runtime.presentation != nil || !runtime.padBarHiders.isEmpty)
+		return GeometryReader { proxy in
+			let bottomBar = PadBarLayout.usesBottomBar(
+				portrait: ChatsPadLayout.isPortrait(proxy.size), regularWidth: horizontal == .regular)
+			HStack(spacing: 0) {
+				if !bottomBar { rail() }
+				tabs()
+					// The full bar takes room at the foot of every screen. The compact one sits under the
+					// list only: the Chats list leaves its own room, and the thread keeps its full height.
+					.safeAreaInset(edge: .bottom, spacing: 0) {
+						if bottomBar, shape == .full { Color.clear.frame(height: PadBarLayout.reserve) }
+					}
+			}
+			.overlay(alignment: .bottom) {
+				if bottomBar {
+					PadBottomBar(
+						shape: shape, selected: selectedTab,
+						badge: { $0.badge(runtime: runtime, badges: badges) },
+						select: { runtime.selectedTab = $0 },
+						newConversation: { runtime.requestNewConversation() }
+					)
+					.ignoresSafeArea(.container, edges: .bottom)
 				}
 			}
 		}
