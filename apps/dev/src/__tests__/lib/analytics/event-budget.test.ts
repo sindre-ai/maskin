@@ -42,6 +42,7 @@ describe('admitPosthogEvent', () => {
 			'chat_session_seeded',
 			'integration_connect_started',
 			'integration_tool_called',
+			'receipt_draft_booked',
 			'foryou_card_action',
 			'signup_completed',
 			'workspace_created',

@@ -4,6 +4,7 @@ import { isPilotHeldIntegrationTool } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
+import { countReceiptDraft, receiptDraftConnector } from '../lib/analytics/receipt-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
@@ -377,6 +378,19 @@ export async function proxyMcp(
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
 	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
+	// A draft saved in the customer's accounting system is counted once, when the vendor says it worked.
+	const draftConnector = toolName && allowed ? receiptDraftConnector(server.url, toolName) : null
+	if (draftConnector) {
+		void countReceiptDraft({
+			db,
+			upstream,
+			requestId: rpc?.id,
+			connector: draftConnector,
+			workspaceId,
+			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+	}
 
 	const responseHeaders = new Headers()
 	for (const name of FORWARDED_RESPONSE_HEADERS) {
