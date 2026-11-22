@@ -6,7 +6,7 @@ import SwiftUI
 /// Settings, presented by the shell as a sheet or destination. Owns its `NavigationStack` and a
 /// Done button.
 ///
-/// Five sections: Account (Account, Billing), Preferences (Notifications, App lock, Sign in a
+/// Five sections: Account (Account, Billing), Preferences (Notifications, Permissions, App lock, Sign in a
 /// device), Workspace (Members, Integrations, Triggers, Files), Agents and access (Skills, Item
 /// types, Keys and secrets) and one Advanced row. Advanced holds Native surfaces, the state
 /// previews, About and the danger zone. A figure sits beside a row only when it is known.
@@ -120,6 +120,7 @@ extension SettingsPageRow {
 		case .account: .profile
 		case .billing: .billing
 		case .notifications: .notifications
+		case .permissions: .permissions
 		case .appLock: .appLock
 		case .deviceSignIn: .deviceSignIn
 		case .members: .members
@@ -138,6 +139,7 @@ extension SettingsPageRow {
 		case .account: "person.crop.circle"
 		case .billing: "creditcard"
 		case .notifications: "bell"
+		case .permissions: "hand.raised"
 		case .appLock: "lock"
 		case .deviceSignIn: "appletv"
 		case .members: "person.2"
