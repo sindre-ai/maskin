@@ -18,7 +18,7 @@ describe('Competitor watch loop definition', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
 		expect(MARKET_WATCH_LOOP.name).toBe('Competitor watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.2.0')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.2.1')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -112,7 +112,7 @@ describe('Competitor watch loop definition', () => {
 		]
 		for (const text of texts) {
 			expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
-			expect(text).not.toMatch(/\u2014|assum/i)
+			expect(text).not.toMatch(/—|assum/i)
 		}
 	})
 
