@@ -36,9 +36,11 @@ describe('Microsoft provider config', () => {
 		expect(config.auth.config.scopes).toEqual([
 			'offline_access',
 			'User.Read',
-			'Calendars.Read',
+			'Calendars.ReadWrite',
 			'Mail.ReadWrite',
 			'Mail.Send',
+			'Files.ReadWrite.All',
+			'Sites.Read.All',
 			'OnlineMeetings.Read',
 			'OnlineMeetingTranscript.Read.All',
 		])
@@ -70,7 +72,7 @@ describe('parseTokenResponse', () => {
 			access_token: 'a',
 			refresh_token: 'r',
 			scope:
-				'User.Read Calendars.Read Mail.ReadWrite Mail.Send OnlineMeetings.Read OnlineMeetingTranscript.Read.All profile openid email',
+				'User.Read Calendars.ReadWrite Mail.ReadWrite Mail.Send Files.ReadWrite.All Sites.Read.All OnlineMeetings.Read OnlineMeetingTranscript.Read.All profile openid email',
 		})
 		expect(parsed.scope).toContain('offline_access')
 		expect(integrationScopeGaps(config, { scope: parsed.scope })).toEqual({

@@ -89,12 +89,18 @@ function payload(result: Awaited<ReturnType<Client['callTool']>>) {
 }
 
 describe('Microsoft MCP server', () => {
-	it('registers the six read tools, the draft tool and the send tool, classifying only the reads as reads', async () => {
+	it('registers the read tools and the write tools, classifying only the reads as reads', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		const names = tools.map((t) => t.name).sort()
 		expect(names).toEqual([
+			'onedrive_get_file',
+			'onedrive_list_files',
+			'onedrive_search_files',
+			'onedrive_upload_file',
+			'outlook_cancel_event',
 			'outlook_create_draft',
+			'outlook_create_event',
 			'outlook_get_event',
 			'outlook_get_message',
 			'outlook_list_events',
@@ -102,8 +108,17 @@ describe('Microsoft MCP server', () => {
 			'outlook_search_events',
 			'outlook_search_messages',
 			'outlook_send_mail',
+			'outlook_update_event',
+			'sharepoint_search_sites',
 		])
-		const writes = ['outlook_create_draft', 'outlook_send_mail']
+		const writes = [
+			'onedrive_upload_file',
+			'outlook_cancel_event',
+			'outlook_create_draft',
+			'outlook_create_event',
+			'outlook_send_mail',
+			'outlook_update_event',
+		]
 		for (const t of tools.filter((t) => !writes.includes(t.name))) {
 			expect(classifyTool('microsoft', t.name, undefined)).toBe('read')
 			expect(t.annotations?.readOnlyHint).toBe(true)
@@ -111,7 +126,9 @@ describe('Microsoft MCP server', () => {
 		// The draft is a write: a Read agent is refused it. So is anything added later and left off the list.
 		expect(classifyTool('microsoft', 'outlook_create_draft', undefined)).toBe('write')
 		expect(classifyTool('microsoft', 'outlook_send_mail', undefined)).toBe('write')
-		expect(classifyTool('microsoft', 'outlook_create_event', undefined)).toBe('write')
+		for (const name of writes) expect(classifyTool('microsoft', name, undefined)).toBe('write')
+		// A tool nobody listed is a write, so a file tool added later starts refused to Read agents.
+		expect(classifyTool('microsoft', 'onedrive_delete_file', undefined)).toBe('write')
 		// The one tool that sends takes ids of what a person approved, never the text itself.
 		const send = tools.find((t) => t.name === 'outlook_send_mail')
 		expect(Object.keys(send?.inputSchema.properties ?? {}).sort()).toEqual([
@@ -551,5 +568,445 @@ describe('Microsoft MCP server: mail', () => {
 		const res = await client.callTool({ name: 'outlook_create_draft', arguments: DRAFT })
 		expect(payload(res).error.code).toBe('TEMPORARILY_UNAVAILABLE')
 		expect(fetchImpl).toHaveBeenCalledOnce()
+	})
+})
+
+const EVENT = {
+	subject: 'Planning',
+	start: '2026-11-13T09:00:00+01:00',
+	end: '2026-11-13T10:00:00+01:00',
+	location: 'Room 2',
+	body: 'Agenda',
+}
+
+/** Graph for event writes: reads answer a stored event, POST creates, PATCH changes, DELETE removes. */
+function fakeEventGraph(stored: Record<string, unknown> = event(1)) {
+	return vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+		if (init?.method === 'POST') return json({ ...event(9), id: 'new-1' }, 201)
+		if (init?.method === 'PATCH') return json({ ...stored, subject: 'Renamed' })
+		if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+		return json(stored)
+	})
+}
+
+describe('Microsoft MCP server: calendar writes', () => {
+	it('creates an event with one POST, in UTC, with nobody invited', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeEventGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({ name: 'outlook_create_event', arguments: EVENT })
+		expect(fetchImpl).toHaveBeenCalledOnce()
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		expect(url).toBe('https://graph.microsoft.com/v1.0/me/events')
+		expect(init.method).toBe('POST')
+		const sent = JSON.parse(init.body as string)
+		expect(sent).toEqual({
+			subject: 'Planning',
+			start: { dateTime: '2026-11-13T08:00:00.000', timeZone: 'UTC' },
+			end: { dateTime: '2026-11-13T09:00:00.000', timeZone: 'UTC' },
+			location: { displayName: 'Room 2' },
+			body: { contentType: 'text', content: 'Agenda' },
+		})
+		expect(sent.attendees).toBeUndefined()
+		expect(payload(res).event.id).toBe('new-1')
+	})
+
+	it('has no way to invite people: attendees is not an input', async () => {
+		const { client } = await connect()
+		const { tools } = await client.listTools()
+		for (const name of ['outlook_create_event', 'outlook_update_event']) {
+			const tool = tools.find((t) => t.name === name)
+			expect(Object.keys(tool?.inputSchema.properties ?? {})).not.toContain('attendees')
+		}
+	})
+
+	it('rejects a bad create before calling Microsoft', async () => {
+		const { client, fetchImpl } = await connect({}, 'read_write')
+		for (const args of [
+			{ ...EVENT, end: EVENT.start },
+			{ ...EVENT, start: 'tomorrow' },
+			{ ...EVENT, subject: 'Hi\nthere' },
+			{ ...EVENT, end: '2026-12-13T10:00:00+01:00' },
+		]) {
+			const res = await client.callTool({ name: 'outlook_create_event', arguments: args })
+			expect(payload(res).error.code).toBe('INVALID_INPUT')
+		}
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('does not retry a create after a gateway error, so an event is never made twice', async () => {
+		const fetchImpl = vi.fn(async () => json({}, 503))
+		const { client } = await connect(
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({ name: 'outlook_create_event', arguments: EVENT })
+		expect(payload(res).error.code).toBe('TEMPORARILY_UNAVAILABLE')
+		expect(fetchImpl).toHaveBeenCalledOnce()
+	})
+
+	it('reads the event first, then changes only what was passed', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeEventGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({
+			name: 'outlook_update_event',
+			arguments: { id: 'ev-1', subject: 'Renamed' },
+		})
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		const [guardUrl, guardInit] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		expect(guardUrl).toContain('/me/events/ev-1?$select=id,type,attendees,isOrganizer')
+		expect(guardInit.method ?? 'GET').toBe('GET')
+		const [url, init] = fetchImpl.mock.calls[1] as unknown as [string, RequestInit]
+		expect(url).toBe('https://graph.microsoft.com/v1.0/me/events/ev-1')
+		expect(init.method).toBe('PATCH')
+		expect(JSON.parse(init.body as string)).toEqual({ subject: 'Renamed' })
+		expect(payload(res).event.subject).toBe('Renamed')
+	})
+
+	it('refuses to change or cancel an event with other people on it, and sends nothing', async () => {
+		const withGuests = event(1, {
+			attendees: [{ emailAddress: { name: 'Ada', address: 'ada@example.com' } }],
+		})
+		const fetchImpl = fakeEventGraph(withGuests)
+		const { client } = await connect(
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+			'read_write',
+		)
+		const update = await client.callTool({
+			name: 'outlook_update_event',
+			arguments: { id: 'ev-1', subject: 'Renamed' },
+		})
+		const cancel = await client.callTool({
+			name: 'outlook_cancel_event',
+			arguments: { id: 'ev-1' },
+		})
+		expect(payload(update).error.code).toBe('NEEDS_A_PERSON')
+		expect(payload(cancel).error.code).toBe('NEEDS_A_PERSON')
+		const methods = fetchImpl.mock.calls.map(
+			(c) => (c[1] as RequestInit | undefined)?.method ?? 'GET',
+		)
+		expect(methods).toEqual(['GET', 'GET'])
+	})
+
+	it('refuses to change or cancel a recurring series', async () => {
+		const fetchImpl = fakeEventGraph(event(1, { type: 'seriesMaster' }))
+		const { client } = await connect(
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({ name: 'outlook_cancel_event', arguments: { id: 'ev-1' } })
+		expect(payload(res).error.code).toBe('NEEDS_A_PERSON')
+		expect(fetchImpl).toHaveBeenCalledOnce()
+	})
+
+	it('cancels an event with nobody else on it with one DELETE', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeEventGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({ name: 'outlook_cancel_event', arguments: { id: 'ev-1' } })
+		const [url, init] = fetchImpl.mock.calls[1] as unknown as [string, RequestInit]
+		expect(url).toBe('https://graph.microsoft.com/v1.0/me/events/ev-1')
+		expect(init.method).toBe('DELETE')
+		expect(payload(res)).toEqual({ cancelled: true })
+	})
+
+	it('rejects an update with nothing to change, or only one end of the time, before calling Microsoft', async () => {
+		const { client, fetchImpl } = await connect({}, 'read_write')
+		for (const args of [{ id: 'ev-1' }, { id: 'ev-1', start: EVENT.start }]) {
+			const res = await client.callTool({ name: 'outlook_update_event', arguments: args })
+			expect(payload(res).error.code).toBe('INVALID_INPUT')
+		}
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('refuses every event write to a Read agent, and never reaches Microsoft', async () => {
+		const { client, fetchImpl, getAccessToken } = await connect({}, 'read')
+		for (const [name, args] of [
+			['outlook_create_event', EVENT],
+			['outlook_update_event', { id: 'ev-1', subject: 'x' }],
+			['outlook_cancel_event', { id: 'ev-1' }],
+		] as const) {
+			const res = await client.callTool({ name, arguments: args })
+			expect(res.isError).toBe(true)
+			expect(JSON.stringify(res)).toContain('Access denied')
+		}
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(getAccessToken).not.toHaveBeenCalled()
+	})
+})
+
+const item = (n: number, extra: Record<string, unknown> = {}) => ({
+	id: `item-${n}`,
+	name: `notes-${n}.md`,
+	size: 20,
+	webUrl: `https://contoso.sharepoint.com/notes-${n}.md`,
+	file: { mimeType: 'text/markdown' },
+	parentReference: { path: '/drive/root:/Reports' },
+	lastModifiedDateTime: '2026-11-10T08:00:00Z',
+	lastModifiedBy: { user: { displayName: 'Mette Holm' } },
+	...extra,
+})
+
+/** Graph for files: collections answer a fixed list, an item by id its details, content its text. */
+function fakeFilesGraph(items = [item(1), item(2), item(3)], text = 'Hello from the file') {
+	return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+		const u = new URL(String(url))
+		if (init?.method === 'PUT') return json(item(7, { name: 'made.md' }), 201)
+		if (u.pathname.endsWith('/content')) return new Response(text, { status: 200 })
+		if (u.pathname.includes('/items/')) {
+			const id = decodeURIComponent(u.pathname.split('/items/')[1].split('/')[0])
+			const hit = items.find((i) => i.id === id)
+			return hit ? json(hit) : json({}, 404)
+		}
+		if (u.pathname === '/v1.0/sites')
+			return json({
+				value: [
+					{
+						id: 'contoso.sharepoint.com,a,b',
+						displayName: 'Team A',
+						webUrl: 'https://contoso.sharepoint.com/sites/a',
+					},
+				],
+			})
+		return json({ value: items.slice(0, Number(u.searchParams.get('$top'))) })
+	})
+}
+
+describe('Microsoft MCP server: files', () => {
+	it('finds a SharePoint site by name', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeFilesGraph() as unknown as typeof fetch,
+		})
+		const res = await client.callTool({
+			name: 'sharepoint_search_sites',
+			arguments: { query: 'team a' },
+		})
+		const [url] = fetchImpl.mock.calls[0] as unknown as [string]
+		expect(new URL(url).pathname).toBe('/v1.0/sites')
+		expect(new URL(url).searchParams.get('search')).toBe('team a')
+		expect(payload(res).sites).toEqual([
+			{
+				id: 'contoso.sharepoint.com,a,b',
+				name: 'Team A',
+				web_url: 'https://contoso.sharepoint.com/sites/a',
+				description: null,
+			},
+		])
+	})
+
+	it('lists the top folder of OneDrive, and a folder of a site library', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeFilesGraph() as unknown as typeof fetch,
+		})
+		const top = await client.callTool({ name: 'onedrive_list_files', arguments: { limit: 2 } })
+		await client.callTool({
+			name: 'onedrive_list_files',
+			arguments: { site_id: 'contoso.sharepoint.com,a,b', folder_path: 'Reports/2026' },
+		})
+		const urls = fetchImpl.mock.calls.map((c) => new URL(String(c[0])))
+		expect(urls[0].pathname).toBe('/v1.0/me/drive/root/children')
+		expect(decodeURIComponent(urls[1].pathname)).toBe(
+			'/v1.0/sites/contoso.sharepoint.com,a,b/drive/root:/Reports/2026:/children',
+		)
+		const body = payload(top)
+		expect(body.items.map((i: { id: string }) => i.id)).toEqual(['item-1', 'item-2'])
+		expect(body.has_more).toBe(true)
+		expect(body.items[0]).toMatchObject({
+			type: 'file',
+			folder: '/Reports',
+			modified_by: 'Mette Holm',
+		})
+	})
+
+	it('searches with the text quoted inside q', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeFilesGraph() as unknown as typeof fetch,
+		})
+		await client.callTool({ name: 'onedrive_search_files', arguments: { query: "Q3 plan's" } })
+		const [url] = fetchImpl.mock.calls[0] as unknown as [string]
+		expect(decodeURIComponent(new URL(url).pathname)).toBe(
+			"/v1.0/me/drive/root/search(q='Q3 plan''s')",
+		)
+	})
+
+	it('opens a text file with its text, and says when it was cut', async () => {
+		const long = 'x'.repeat(40_000)
+		const { client } = await connect({
+			fetchImpl: fakeFilesGraph([item(1)], long) as unknown as typeof fetch,
+		})
+		const res = await client.callTool({
+			name: 'onedrive_get_file',
+			arguments: { item_id: 'item-1' },
+		})
+		const body = payload(res)
+		expect(body.file.name).toBe('notes-1.md')
+		expect(body.content).toHaveLength(30_000)
+		expect(body.truncated).toBe(true)
+	})
+
+	it('does not download a file that is not text, is a folder or is too big', async () => {
+		const items = [
+			item(1, { name: 'deck.pptx', file: { mimeType: 'application/vnd.ms-powerpoint' } }),
+			item(2, { file: undefined, folder: { childCount: 3 } }),
+			item(3, { size: 5_000_000 }),
+		]
+		const fetchImpl = fakeFilesGraph(items)
+		const { client } = await connect({ fetchImpl: fetchImpl as unknown as typeof fetch })
+		for (const id of ['item-1', 'item-2', 'item-3']) {
+			const res = await client.callTool({ name: 'onedrive_get_file', arguments: { item_id: id } })
+			expect(payload(res).content).toBeNull()
+			expect(payload(res).content_note).toBeTruthy()
+		}
+		expect(fetchImpl.mock.calls.some((c) => String(c[0]).endsWith('/content'))).toBe(false)
+	})
+
+	it('answers NOT_FOUND for an item Microsoft does not know', async () => {
+		const { client } = await connect({ fetchImpl: fakeFilesGraph() as unknown as typeof fetch })
+		const res = await client.callTool({ name: 'onedrive_get_file', arguments: { item_id: 'nope' } })
+		expect(payload(res).error.code).toBe('NOT_FOUND')
+	})
+
+	it('uploads text with one PUT that fails if the name is taken', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeFilesGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({
+			name: 'onedrive_upload_file',
+			arguments: { name: 'made.md', content: '# Hi', folder_path: 'Reports/2026' },
+		})
+		expect(fetchImpl).toHaveBeenCalledOnce()
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		expect(url).toBe(
+			'https://graph.microsoft.com/v1.0/me/drive/root:/Reports/2026/made.md:/content?@microsoft.graph.conflictBehavior=fail',
+		)
+		expect(init.method).toBe('PUT')
+		expect(init.body).toBe('# Hi')
+		expect(payload(res).file.name).toBe('made.md')
+	})
+
+	it('replaces a file only when overwrite is true', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeFilesGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		await client.callTool({
+			name: 'onedrive_upload_file',
+			arguments: { name: 'made.md', content: '# Hi', overwrite: true },
+		})
+		const [url] = fetchImpl.mock.calls[0] as unknown as [string]
+		expect(url).toContain('conflictBehavior=replace')
+	})
+
+	it('reports a name clash as CONFLICT and does not retry the upload', async () => {
+		const fetchImpl = vi.fn(async () => json({ error: { code: 'nameAlreadyExists' } }, 409))
+		const { client } = await connect(
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({
+			name: 'onedrive_upload_file',
+			arguments: { name: 'made.md', content: '# Hi' },
+		})
+		expect(payload(res).error.code).toBe('CONFLICT')
+		expect(fetchImpl).toHaveBeenCalledOnce()
+	})
+
+	it('does not retry an upload after a gateway error', async () => {
+		const fetchImpl = vi.fn(async () => json({}, 502))
+		const { client } = await connect(
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({
+			name: 'onedrive_upload_file',
+			arguments: { name: 'made.md', content: '# Hi' },
+		})
+		expect(payload(res).error.code).toBe('TEMPORARILY_UNAVAILABLE')
+		expect(fetchImpl).toHaveBeenCalledOnce()
+	})
+
+	it('rejects a bad name, a path climbing out, a site id with slashes and a huge file before calling Microsoft', async () => {
+		const { client, fetchImpl } = await connect({}, 'read_write')
+		for (const args of [
+			{ name: '../x.md', content: 'a' },
+			{ name: 'a.md', content: 'a', folder_path: 'Reports/../Secret' },
+			{ name: 'a.md', content: 'a', site_id: 'x/../../me' },
+			{ name: 'a.md', content: 'a'.repeat(1_000_001) },
+		]) {
+			const res = await client.callTool({ name: 'onedrive_upload_file', arguments: args })
+			expect(payload(res).error.code).toBe('INVALID_INPUT')
+		}
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('lets a Read agent read files but refuses the upload', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeFilesGraph() as unknown as typeof fetch },
+			'read',
+		)
+		const read = await client.callTool({ name: 'onedrive_list_files', arguments: {} })
+		expect(read.isError).toBeFalsy()
+		const calls = fetchImpl.mock.calls.length
+		const write = await client.callTool({
+			name: 'onedrive_upload_file',
+			arguments: { name: 'a.md', content: 'a' },
+		})
+		expect(write.isError).toBe(true)
+		expect(JSON.stringify(write)).toContain('Access denied')
+		expect(fetchImpl.mock.calls.length).toBe(calls)
+	})
+
+	it('fires integration_tool_called with the microsoft provider for every new tool', async () => {
+		const { client, trackToolCalled } = await connect(
+			{ fetchImpl: fakeFilesGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		const calls = [
+			['sharepoint_search_sites', { query: 'a' }],
+			['onedrive_list_files', {}],
+			['onedrive_search_files', { query: 'plan' }],
+			['onedrive_get_file', { item_id: 'item-1' }],
+			['onedrive_upload_file', { name: 'a.md', content: 'a' }],
+		] as const
+		for (const [name, args] of calls) {
+			await client.callTool({ name, arguments: args })
+			expect(trackToolCalled).toHaveBeenLastCalledWith({
+				provider: 'microsoft',
+				tool: name,
+				outcome: 'success',
+				errorCode: null,
+				actorId: 'agent-1',
+				sessionId: 'sess-1',
+				workspaceId: 'ws-1',
+			})
+		}
+	})
+
+	it('fires integration_tool_called with the microsoft provider for every event write', async () => {
+		const { client, trackToolCalled } = await connect(
+			{ fetchImpl: fakeEventGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		for (const [name, args] of [
+			['outlook_create_event', EVENT],
+			['outlook_update_event', { id: 'ev-1', subject: 'x' }],
+			['outlook_cancel_event', { id: 'ev-1' }],
+		] as const) {
+			await client.callTool({ name, arguments: args })
+			expect(trackToolCalled).toHaveBeenLastCalledWith({
+				provider: 'microsoft',
+				tool: name,
+				outcome: 'success',
+				errorCode: null,
+				actorId: 'agent-1',
+				sessionId: 'sess-1',
+				workspaceId: 'ws-1',
+			})
+		}
 	})
 })

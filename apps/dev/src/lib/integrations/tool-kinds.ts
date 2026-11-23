@@ -47,7 +47,7 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
-	// Outlook calendar and mail, served by Maskin. Curated, so a tool added later (outlook_create_draft
+	// Outlook calendar and mail and OneDrive and SharePoint files, served by Maskin. Curated, so a tool added later (outlook_create_draft
 	// included) is a write until it is listed here.
 	microsoft: new Set([
 		'outlook_list_events',
@@ -56,6 +56,10 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'outlook_list_messages',
 		'outlook_get_message',
 		'outlook_search_messages',
+		'sharepoint_search_sites',
+		'onedrive_list_files',
+		'onedrive_search_files',
+		'onedrive_get_file',
 	]),
 	// Stripe's hosted tool names are not read verbs (stripe_api_read), and stripe_api_write takes
 	// any POST, PATCH, PUT or DELETE, so only these exact tools are reads. Left out on purpose

@@ -13,12 +13,20 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  * find nothing.
  *
  * Scopes, each tied to one call in sync.ts:
- *  - Calendars.Read: the person's calendar events that carry a Teams link.
+ *  - Calendars.ReadWrite: the person's calendar events that carry a Teams link (the poll job only
+ *    reads), and create, change and cancel an event (outlook_*_event). It replaces Calendars.Read,
+ *    which it covers. The event tools only touch events with nobody else invited.
  *  - Mail.ReadWrite: read and search the mailbox and save drafts (outlook_* mail tools). Graph has no
  *    narrower scope for creating a draft. It would also allow edits and deletes, so the MCP tools
  *    only ever read, and create a draft.
  *  - Mail.Send: send one message after a person approved that exact text (outlook_send_mail). Graph
  *    has no narrower scope for sendMail. It is only used from the approved-send path (send.ts).
+ *  - Files.ReadWrite.All: list, search, read and upload files in OneDrive and in SharePoint document
+ *    libraries (onedrive_* tools). Files.ReadWrite reaches only the person's own OneDrive, and
+ *    Microsoft lists Files.ReadWrite.All or Sites.ReadWrite.All as the next step for SharePoint
+ *    libraries; this is the narrower of the two.
+ *  - Sites.Read.All: find a SharePoint site by name (sharepoint_search_sites), the only call that
+ *    needs it. Sites.ReadWrite.All is not asked for: no tool needs it.
  *  - OnlineMeetings.Read: find the online meeting for an event by its join link
  *    (Graph "get onlineMeeting" with a JoinWebUrl filter lists this as the least
  *    privileged delegated permission). The spec said to add it only if the end to
@@ -31,17 +39,17 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  *
  * No webhook: transcripts are pulled by the poll job.
  *
- * MCP is Maskin-hosted, like Deepdots: Outlook calendar and mail tools served at
+ * MCP is Maskin-hosted, like Deepdots: Outlook calendar, mail and file tools served at
  * `${MASKIN_API_URL}/api/integrations/microsoft/mcp` (./mcp-server.ts). The spec references only
  * MASKIN_API_KEY, so the Microsoft token is never injected into a session; the route resolves it
  * server-side. `autoInject: false` so each agent opts in (or gets it through an access grant).
- * Calendars.Read, Mail.ReadWrite and Mail.Send, all in the scopes above, are all the tools need.
+ * The scopes above are all the tools need.
  */
 export const config: ProviderConfig = {
 	name: MICROSOFT_PROVIDER,
 	displayName: 'Microsoft',
 	description:
-		'Teams meeting transcripts land in Maskin as meetings. Agents can also read your Outlook calendar and mail, save mail drafts, and send an email only after a person approves that exact email. Work or school accounts only. Covers Teams meetings on your calendar that had transcription on; instant meetings and channel meetings are not included.',
+		'Teams meeting transcripts land in Maskin as meetings. Agents can also read and change your Outlook calendar (only events with nobody else invited), read your Outlook mail, save mail drafts, send an email only after a person approves that exact email, and list, search, read and upload files in OneDrive and SharePoint. Work or school accounts only. Covers Teams meetings on your calendar that had transcription on; instant meetings and channel meetings are not included.',
 
 	auth: {
 		type: 'oauth2',
@@ -51,9 +59,11 @@ export const config: ProviderConfig = {
 			scopes: [
 				'offline_access',
 				'User.Read',
-				'Calendars.Read',
+				'Calendars.ReadWrite',
 				'Mail.ReadWrite',
 				'Mail.Send',
+				'Files.ReadWrite.All',
+				'Sites.Read.All',
 				'OnlineMeetings.Read',
 				'OnlineMeetingTranscript.Read.All',
 			],
