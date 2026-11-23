@@ -43,6 +43,21 @@ export type PullSessionWorkspaceResult = {
 	archiveBytes: number
 }
 
+export type PullSessionWorkspaceOptions = {
+	retries?: number
+	retryDelayMs?: number
+	sleep?: (ms: number) => Promise<void>
+}
+
+// 4 attempts with exponential backoff (2s, 4s, 8s — ~14s total) on the S3 reads.
+// A refused pull fails the whole session start with `workspace_pull_failed`, and
+// the dispatch queue only gives a start 5 tries over about 2 minutes, so a storage
+// blip longer than that dropped ~135 sessions on 23 Nov. Kept short: the caller is
+// an HTTP request that apps/dev waits on.
+const DEFAULT_PULL_RETRIES = 4
+const DEFAULT_PULL_RETRY_DELAY_MS = 2_000
+const MAX_PULL_RETRY_DELAY_MS = 8_000
+
 /**
  * Prepare sessionDir to be bind-mounted as `/agent` into a microVM.
  *
@@ -60,8 +75,13 @@ export async function pullSessionWorkspace(
 	sessionId: string,
 	sessionDir: string,
 	sourceSessionId?: string,
+	options: PullSessionWorkspaceOptions = {},
 ): Promise<PullSessionWorkspaceResult> {
 	await mkdir(sessionDir, { recursive: true })
+
+	const retries = options.retries ?? DEFAULT_PULL_RETRIES
+	const retryDelayMs = options.retryDelayMs ?? DEFAULT_PULL_RETRY_DELAY_MS
+	const sleep = options.sleep ?? defaultSleep
 
 	let restored = false
 	let archiveBytes = 0
@@ -74,16 +94,31 @@ export async function pullSessionWorkspace(
 		`${LEGACY_SESSION_WORKSPACE_PREFIX}/${sessionId}.tar.gz`,
 	]
 
-	let resolvedKey: string | null = null
-	for (const candidate of candidates) {
-		if (await storage.exists(candidate)) {
-			resolvedKey = candidate
+	// Only the S3 reads are retried. A tar failure below means a bad archive, which
+	// a second read would not fix.
+	let buf: Buffer | null = null
+	let lastErr: unknown
+	for (let attempt = 1; attempt <= retries; attempt++) {
+		try {
+			buf = null
+			for (const candidate of candidates) {
+				if (await storage.exists(candidate)) {
+					buf = await storage.get(candidate)
+					break
+				}
+			}
+			lastErr = undefined
 			break
+		} catch (err) {
+			lastErr = err
+			if (attempt < retries) {
+				await sleep(Math.min(retryDelayMs * 2 ** (attempt - 1), MAX_PULL_RETRY_DELAY_MS))
+			}
 		}
 	}
+	if (lastErr !== undefined) throw lastErr
 
-	if (resolvedKey) {
-		const buf = await storage.get(resolvedKey)
+	if (buf) {
 		archiveBytes = buf.length
 		// The archive is staged INSIDE sessionDir and tar is run with `cwd: sessionDir`,
 		// so neither the archive operand nor the extraction directory is ever passed as
