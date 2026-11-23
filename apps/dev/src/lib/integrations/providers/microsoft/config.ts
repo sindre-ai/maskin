@@ -14,6 +14,9 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  *
  * Scopes, each tied to one call in sync.ts:
  *  - Calendars.Read: the person's calendar events that carry a Teams link.
+ *  - Mail.ReadWrite: read and search the mailbox and save drafts (outlook_* mail tools). Graph has no
+ *    narrower scope for creating a draft. It would also allow edits and deletes, so the MCP tools
+ *    only ever read, and create a draft. Sending is a separate scope (Mail.Send), not requested here.
  *  - OnlineMeetings.Read: find the online meeting for an event by its join link
  *    (Graph "get onlineMeeting" with a JoinWebUrl filter lists this as the least
  *    privileged delegated permission). The spec said to add it only if the end to
@@ -26,17 +29,17 @@ export const MICROSOFT_PROVIDER = 'microsoft'
  *
  * No webhook: transcripts are pulled by the poll job.
  *
- * MCP is Maskin-hosted, like Deepdots: three read-only Outlook calendar tools served at
+ * MCP is Maskin-hosted, like Deepdots: Outlook calendar and mail tools served at
  * `${MASKIN_API_URL}/api/integrations/microsoft/mcp` (./mcp-server.ts). The spec references only
  * MASKIN_API_KEY, so the Microsoft token is never injected into a session; the route resolves it
  * server-side. `autoInject: false` so each agent opts in (or gets it through an access grant).
- * Calendars.Read, already in the scopes above, is all the tools need.
+ * Calendars.Read and Mail.ReadWrite, both in the scopes above, are all the tools need.
  */
 export const config: ProviderConfig = {
 	name: MICROSOFT_PROVIDER,
 	displayName: 'Microsoft',
 	description:
-		'Teams meeting transcripts land in Maskin as meetings. Work or school accounts only. Covers Teams meetings on your calendar that had transcription on; instant meetings and channel meetings are not included.',
+		'Teams meeting transcripts land in Maskin as meetings. Agents can also read your Outlook calendar and mail, and save mail drafts (nothing is sent). Work or school accounts only. Covers Teams meetings on your calendar that had transcription on; instant meetings and channel meetings are not included.',
 
 	auth: {
 		type: 'oauth2',
@@ -47,6 +50,7 @@ export const config: ProviderConfig = {
 				'offline_access',
 				'User.Read',
 				'Calendars.Read',
+				'Mail.ReadWrite',
 				'OnlineMeetings.Read',
 				'OnlineMeetingTranscript.Read.All',
 			],

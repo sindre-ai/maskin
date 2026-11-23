@@ -47,8 +47,16 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
-	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
-	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
+	// Outlook calendar and mail, served by Maskin. Curated, so a tool added later (outlook_create_draft
+	// included) is a write until it is listed here.
+	microsoft: new Set([
+		'outlook_list_events',
+		'outlook_get_event',
+		'outlook_search_events',
+		'outlook_list_messages',
+		'outlook_get_message',
+		'outlook_search_messages',
+	]),
 	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list
 	// (19 Nov 2026, not yet checked against a live tools/list). Its tools are dispatchers that take an
 	// `action`, and the read and write sides are separate tools (the writes end in `_write`, or are

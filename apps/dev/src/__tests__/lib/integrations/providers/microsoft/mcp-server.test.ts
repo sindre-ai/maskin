@@ -89,17 +89,28 @@ function payload(result: Awaited<ReturnType<Client['callTool']>>) {
 }
 
 describe('Microsoft MCP server', () => {
-	it('registers exactly the three read tools, all classified as reads and marked read only', async () => {
+	it('registers the six read tools and the draft tool, classifying only the reads as reads', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		const names = tools.map((t) => t.name).sort()
-		expect(names).toEqual(['outlook_get_event', 'outlook_list_events', 'outlook_search_events'])
-		for (const t of tools) {
+		expect(names).toEqual([
+			'outlook_create_draft',
+			'outlook_get_event',
+			'outlook_get_message',
+			'outlook_list_events',
+			'outlook_list_messages',
+			'outlook_search_events',
+			'outlook_search_messages',
+		])
+		for (const t of tools.filter((t) => t.name !== 'outlook_create_draft')) {
 			expect(classifyTool('microsoft', t.name, undefined)).toBe('read')
 			expect(t.annotations?.readOnlyHint).toBe(true)
 		}
-		// A tool added later and left off the list counts as a write.
+		// The draft is a write: a Read agent is refused it. So is anything added later and left off the list.
+		expect(classifyTool('microsoft', 'outlook_create_draft', undefined)).toBe('write')
 		expect(classifyTool('microsoft', 'outlook_create_event', undefined)).toBe('write')
+		// Nothing sends mail.
+		expect(names.some((n) => /send/.test(n))).toBe(false)
 	})
 
 	it('lists events with the bearer token and UTC preference, and hides the token from the agent', async () => {
@@ -261,6 +272,47 @@ describe('Microsoft MCP server', () => {
 		})
 	})
 
+	it('fires integration_tool_called with the microsoft provider for every mail tool', async () => {
+		const { client, trackToolCalled } = await connect(
+			{ fetchImpl: fakeMailGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		for (const [name, args] of [
+			['outlook_list_messages', {}],
+			['outlook_search_messages', { query: 'invoice' }],
+			['outlook_get_message', { id: 'msg-1' }],
+			['outlook_create_draft', DRAFT],
+		] as const) {
+			await client.callTool({ name, arguments: args })
+			expect(trackToolCalled).toHaveBeenLastCalledWith({
+				provider: 'microsoft',
+				tool: name,
+				outcome: 'success',
+				errorCode: null,
+				actorId: 'agent-1',
+				sessionId: 'sess-1',
+				workspaceId: 'ws-1',
+			})
+		}
+		expect(trackToolCalled).toHaveBeenCalledTimes(4)
+	})
+
+	it('reports a failed mail call as outcome error with the code, and no mail text', async () => {
+		const { client, trackToolCalled } = await connect({
+			fetchImpl: fakeMailGraph() as unknown as typeof fetch,
+		})
+		await client.callTool({ name: 'outlook_get_message', arguments: { id: 'nope' } })
+		expect(trackToolCalled).toHaveBeenCalledWith({
+			provider: 'microsoft',
+			tool: 'outlook_get_message',
+			outcome: 'error',
+			errorCode: 'NOT_FOUND',
+			actorId: 'agent-1',
+			sessionId: 'sess-1',
+			workspaceId: 'ws-1',
+		})
+	})
+
 	it('refuses a caller with no access, and never reaches Microsoft', async () => {
 		const { client, fetchImpl } = await connect({}, 'none')
 		const res = await client.callTool({ name: 'outlook_list_events', arguments: {} })
@@ -270,15 +322,185 @@ describe('Microsoft MCP server', () => {
 		expect(tools[0].description).toContain('Unavailable')
 	})
 
-	it('lets a Read agent use every tool', async () => {
+	it('lets a Read agent use every read tool', async () => {
 		const { client } = await connect({}, 'read')
 		for (const [name, args] of [
 			['outlook_list_events', {}],
 			['outlook_get_event', { id: 'ev-1' }],
 			['outlook_search_events', { query: 'meeting' }],
+			['outlook_list_messages', {}],
+			['outlook_get_message', { id: 'msg-1' }],
+			['outlook_search_messages', { query: 'invoice' }],
 		] as const) {
 			const res = await client.callTool({ name, arguments: args })
 			expect(res.isError).toBeFalsy()
 		}
+	})
+
+	it('refuses the draft tool to a Read agent, and never reaches Microsoft', async () => {
+		const { client, fetchImpl } = await connect({}, 'read')
+		const res = await client.callTool({ name: 'outlook_create_draft', arguments: DRAFT })
+		expect(res.isError).toBe(true)
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+})
+
+const DRAFT = {
+	to: 'Ada Lovelace <ada@example.com>',
+	subject: 'Hello',
+	body: 'Short note.',
+}
+
+const message = (n: number, extra: Record<string, unknown> = {}) => ({
+	id: `msg-${n}`,
+	subject: `Subject ${n}`,
+	from: { emailAddress: { name: 'Mette Holm', address: 'mette@example.com' } },
+	toRecipients: [{ emailAddress: { name: 'Me', address: 'me@example.com' } }],
+	receivedDateTime: `2026-11-1${n}T08:00:00Z`,
+	isRead: n % 2 === 0,
+	bodyPreview: 'Preview text',
+	...extra,
+})
+
+function fakeMailGraph(messages = [message(1), message(2), message(3)]) {
+	return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+		const u = new URL(String(url))
+		if (init?.method === 'POST') {
+			return json({ id: 'draft-1', webLink: 'https://outlook.office.com/draft-1' }, 201)
+		}
+		if (u.pathname.startsWith('/v1.0/me/messages/')) {
+			const id = decodeURIComponent(u.pathname.split('/').pop() ?? '')
+			const hit = messages.find((m) => m.id === id)
+			return hit ? json({ ...hit, body: { content: 'Plain text body' } }) : json({}, 404)
+		}
+		return json({ value: messages.slice(0, Number(u.searchParams.get('$top'))) })
+	})
+}
+
+describe('Microsoft MCP server: mail', () => {
+	it('lists the inbox newest first, with a window that starts at the epoch', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeMailGraph() as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'outlook_list_messages', arguments: { limit: 2 } })
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		const u = new URL(url)
+		expect(u.pathname).toBe('/v1.0/me/mailFolders/inbox/messages')
+		expect(u.searchParams.get('$orderby')).toBe('receivedDateTime desc')
+		expect(u.searchParams.get('$filter')).toBe('receivedDateTime ge 1970-01-01T00:00:00Z')
+		expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`)
+		const body = payload(res)
+		expect(body.folder).toBe('inbox')
+		expect(body.messages.map((m: { id: string }) => m.id)).toEqual(['msg-1', 'msg-2'])
+		expect(body.messages[0].from).toEqual({ name: 'Mette Holm', email: 'mette@example.com' })
+		expect(body.has_more).toBe(true)
+		expect(JSON.stringify(res)).not.toContain(TOKEN)
+	})
+
+	it('filters unread messages in another folder', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeMailGraph() as unknown as typeof fetch,
+		})
+		await client.callTool({
+			name: 'outlook_list_messages',
+			arguments: { folder: 'sentitems', unread_only: true, since: '2026-11-01' },
+		})
+		const u = new URL((fetchImpl.mock.calls[0] as unknown as [string])[0])
+		expect(u.pathname).toBe('/v1.0/me/mailFolders/sentitems/messages')
+		expect(u.searchParams.get('$filter')).toBe(
+			'receivedDateTime ge 2026-11-01T00:00:00.000Z and isRead eq false',
+		)
+	})
+
+	it('searches the mailbox with Graph search, quoting the text', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeMailGraph() as unknown as typeof fetch,
+		})
+		const res = await client.callTool({
+			name: 'outlook_search_messages',
+			arguments: { query: 'the "Q4" invoice' },
+		})
+		const u = new URL((fetchImpl.mock.calls[0] as unknown as [string])[0])
+		expect(u.pathname).toBe('/v1.0/me/messages')
+		expect(u.searchParams.get('$search')).toBe('"the Q4 invoice"')
+		expect(u.searchParams.has('$orderby')).toBe(false)
+		expect(payload(res).messages).toHaveLength(3)
+	})
+
+	it('opens one message with its body as text', async () => {
+		const { client, fetchImpl } = await connect({
+			fetchImpl: fakeMailGraph() as unknown as typeof fetch,
+		})
+		const res = await client.callTool({ name: 'outlook_get_message', arguments: { id: 'msg-2' } })
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		expect(url).toContain('/v1.0/me/messages/msg-2?')
+		expect((init.headers as Record<string, string>).Prefer).toContain(
+			'outlook.body-content-type="text"',
+		)
+		expect(payload(res).message.body).toBe('Plain text body')
+	})
+
+	it('answers NOT_FOUND for a message id Microsoft does not know', async () => {
+		const { client } = await connect({ fetchImpl: fakeMailGraph() as unknown as typeof fetch })
+		const res = await client.callTool({ name: 'outlook_get_message', arguments: { id: 'nope' } })
+		expect(payload(res).error.code).toBe('NOT_FOUND')
+	})
+
+	it('rejects a bad since date without calling Microsoft', async () => {
+		const { client, fetchImpl } = await connect()
+		const res = await client.callTool({
+			name: 'outlook_list_messages',
+			arguments: { since: 'last week' },
+		})
+		expect(payload(res).error.code).toBe('INVALID_INPUT')
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('saves a draft with one POST to the messages collection, and says it was not sent', async () => {
+		const { client, fetchImpl } = await connect(
+			{ fetchImpl: fakeMailGraph() as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({ name: 'outlook_create_draft', arguments: DRAFT })
+		expect(fetchImpl).toHaveBeenCalledOnce()
+		const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+		expect(url).toBe('https://graph.microsoft.com/v1.0/me/messages')
+		expect(init.method).toBe('POST')
+		expect(JSON.parse(init.body as string)).toEqual({
+			subject: 'Hello',
+			body: { contentType: 'text', content: 'Short note.' },
+			toRecipients: [{ emailAddress: { address: 'ada@example.com', name: 'Ada Lovelace' } }],
+			ccRecipients: [],
+		})
+		expect(payload(res)).toEqual({
+			draft: { id: 'draft-1', web_link: 'https://outlook.office.com/draft-1' },
+			sent: false,
+		})
+	})
+
+	it('rejects a draft with a bad address or a multi-line subject before calling Microsoft', async () => {
+		const { client, fetchImpl } = await connect({}, 'read_write')
+		const bad = await client.callTool({
+			name: 'outlook_create_draft',
+			arguments: { ...DRAFT, to: 'not-an-address' },
+		})
+		expect(payload(bad).error.code).toBe('INVALID_INPUT')
+		const multi = await client.callTool({
+			name: 'outlook_create_draft',
+			arguments: { ...DRAFT, subject: 'Hi\nBcc: x@example.com' },
+		})
+		expect(payload(multi).error.code).toBe('INVALID_INPUT')
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('does not retry a draft after a gateway error, so a draft is never made twice', async () => {
+		const fetchImpl = vi.fn(async () => json({}, 503))
+		const { client } = await connect(
+			{ fetchImpl: fetchImpl as unknown as typeof fetch },
+			'read_write',
+		)
+		const res = await client.callTool({ name: 'outlook_create_draft', arguments: DRAFT })
+		expect(payload(res).error.code).toBe('TEMPORARILY_UNAVAILABLE')
+		expect(fetchImpl).toHaveBeenCalledOnce()
 	})
 })
