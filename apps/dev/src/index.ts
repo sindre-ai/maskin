@@ -79,6 +79,7 @@ import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
+import { OpenRouterBalanceMonitor } from './services/openrouter-balance-monitor'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
@@ -380,6 +381,10 @@ logger.info('Blocked tool calls cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+const openRouterBalanceMonitor = new OpenRouterBalanceMonitor(db)
+openRouterBalanceMonitor.start()
+logger.info('OpenRouter balance monitor started')
 
 const posthogAccountSync = new PosthogAccountSync(db)
 posthogAccountSync.start()
