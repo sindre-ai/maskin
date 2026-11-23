@@ -5,7 +5,9 @@ import { GRAPH_BASE } from './graph'
  * addresses, validates what an agent passed, and trims events to the fields an agent needs. No
  * I/O here, so every rule is unit-tested without a server.
  *
- * Read only. Only GET addresses are built, and Calendars.Read cannot write anyway.
+ * Reads, plus the bodies for create, change and cancel of an event with nobody else invited. An
+ * invitation or a cancellation notice is mail sent in the person's name, so agents only touch
+ * events with no attendees (editBlocker); inviting people would have to go through approval.
  */
 
 export const DEFAULT_LIMIT = 25
@@ -25,6 +27,11 @@ const MAX_ID_LENGTH = 1_000
 const MAX_ATTENDEES = 20
 const MAX_PREVIEW_CHARS = 500
 const MAX_BODY_CHARS = 4_000
+const MAX_SUBJECT_LENGTH = 255
+const MAX_LOCATION_LENGTH = 255
+const MAX_EVENT_BODY_LENGTH = 20_000
+/** Longest single event an agent may write (a window that is days long is almost always a typo). */
+const MAX_EVENT_DAYS = 7
 
 const SUMMARY_SELECT = [
 	'id',
@@ -164,6 +171,130 @@ export function buildGetRequest(id: string): Built<{ url: string }> {
 		ok: true,
 		url: `${GRAPH_BASE}/me/events/${encodeURIComponent(trimmed)}?$select=${SUMMARY_SELECT},body`,
 	}
+}
+
+// ── Writes ───────────────────────────────────────────────────────────────
+
+export interface EventFields {
+	subject?: string
+	start?: string
+	end?: string
+	location?: string
+	body?: string
+}
+
+function eventUrl(id: string): string {
+	return `${GRAPH_BASE}/me/events/${encodeURIComponent(id.trim())}`
+}
+
+function badId(id: string): boolean {
+	const trimmed = id.trim()
+	return trimmed === '' || trimmed.length > MAX_ID_LENGTH
+}
+
+const ID_MESSAGE = 'id must be an event id from outlook_list_events or outlook_search_events.'
+
+/** Graph wants a wall-clock string and a zone name; we always send UTC. */
+function utcTime(when: Date) {
+	return { dateTime: when.toISOString().replace(/Z$/, ''), timeZone: 'UTC' }
+}
+
+/** The fields shared by create and change, checked and reshaped. Only fields that were passed. */
+function checkFields(input: EventFields): Built<{ fields: Record<string, unknown> }> {
+	const fields: Record<string, unknown> = {}
+	if (input.subject !== undefined) {
+		const subject = input.subject.trim()
+		if (/[\r\n]/.test(input.subject) || subject === '' || subject.length > MAX_SUBJECT_LENGTH) {
+			return {
+				ok: false,
+				message: `subject must be one line of 1 to ${MAX_SUBJECT_LENGTH} characters.`,
+			}
+		}
+		fields.subject = subject
+	}
+	if (input.location !== undefined) {
+		if (/[\r\n]/.test(input.location) || input.location.length > MAX_LOCATION_LENGTH) {
+			return {
+				ok: false,
+				message: `location must be one line of at most ${MAX_LOCATION_LENGTH} characters.`,
+			}
+		}
+		fields.location = { displayName: input.location.trim() }
+	}
+	if (input.body !== undefined) {
+		if (input.body.length > MAX_EVENT_BODY_LENGTH) {
+			return { ok: false, message: `body can be at most ${MAX_EVENT_BODY_LENGTH} characters.` }
+		}
+		fields.body = { contentType: 'text', content: input.body }
+	}
+	if (input.start !== undefined || input.end !== undefined) {
+		if (input.start === undefined || input.end === undefined) {
+			return { ok: false, message: 'Give start and end together.' }
+		}
+		const start = parseWhen(input.start, 'start')
+		if (typeof start === 'string') return { ok: false, message: start }
+		const end = parseWhen(input.end, 'end')
+		if (typeof end === 'string') return { ok: false, message: end }
+		if (end.getTime() <= start.getTime()) return { ok: false, message: 'end must be after start.' }
+		if (end.getTime() - start.getTime() > MAX_EVENT_DAYS * DAY_MS) {
+			return { ok: false, message: `An event can be at most ${MAX_EVENT_DAYS} days long.` }
+		}
+		fields.start = utcTime(start)
+		fields.end = utcTime(end)
+	}
+	return { ok: true, fields }
+}
+
+/**
+ * A new event on the person's own calendar, with nobody invited (so Outlook sends nothing). A date
+ * with no time is read as midnight UTC, so give a time and an offset to mean a local time.
+ */
+export function buildCreateEventRequest(
+	input: EventFields & { subject: string; start: string; end: string },
+): Built<{ url: string; body: unknown }> {
+	const checked = checkFields(input)
+	if (!checked.ok) return checked
+	return { ok: true, url: `${GRAPH_BASE}/me/events`, body: checked.fields }
+}
+
+/** A change to one event. At least one field; start and end go together. Attendees cannot be changed. */
+export function buildUpdateEventRequest(
+	id: string,
+	input: EventFields,
+): Built<{ url: string; body: unknown }> {
+	if (badId(id)) return { ok: false, message: ID_MESSAGE }
+	if (Object.values(input).every((v) => v === undefined)) {
+		return { ok: false, message: 'Give at least one thing to change.' }
+	}
+	const checked = checkFields(input)
+	if (!checked.ok) return checked
+	return { ok: true, url: eventUrl(id), body: checked.fields }
+}
+
+/** The read before a change or a cancel: just what editBlocker needs. */
+export function buildGuardRequest(id: string): Built<{ url: string }> {
+	if (badId(id)) return { ok: false, message: ID_MESSAGE }
+	return { ok: true, url: `${eventUrl(id)}?$select=id,type,attendees,isOrganizer` }
+}
+
+export function buildCancelRequest(id: string): Built<{ url: string }> {
+	if (badId(id)) return { ok: false, message: ID_MESSAGE }
+	return { ok: true, url: eventUrl(id) }
+}
+
+/**
+ * Why an agent may not change or cancel this event, or null when it may. Anything with someone
+ * else on it would send them a notice in the person's name, and a series master would change
+ * every occurrence at once.
+ */
+export function editBlocker(raw: GraphEvent & { isOrganizer?: boolean }): string | null {
+	if ((raw.attendees ?? []).length > 0) {
+		return "This event has other people on it, so changing or cancelling it would send them a notice in the connected person's name. Ask a person to do it in Outlook."
+	}
+	if (raw.type === 'seriesMaster') {
+		return 'This is a recurring series. Changing or cancelling it would hit every occurrence, so ask a person to do it in Outlook.'
+	}
+	return null
 }
 
 // ── Trimming ─────────────────────────────────────────────────────────────

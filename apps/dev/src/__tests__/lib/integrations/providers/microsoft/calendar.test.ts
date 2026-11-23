@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
 	MAX_LIMIT,
+	buildCancelRequest,
+	buildCreateEventRequest,
 	buildGetRequest,
+	buildGuardRequest,
 	buildListRequest,
 	buildSearchRequest,
+	buildUpdateEventRequest,
+	editBlocker,
 	matchesQuery,
 	trimEvent,
 } from '../../../../../lib/integrations/providers/microsoft/calendar'
@@ -143,5 +148,53 @@ describe('matchesQuery', () => {
 
 	it('does not match text that is nowhere in the event', () => {
 		expect(matchesQuery(RAW, 'dentist')).toBe(false)
+	})
+})
+
+describe('event writes', () => {
+	const fields = {
+		subject: 'Planning',
+		start: '2026-11-13T09:00:00+01:00',
+		end: '2026-11-13T10:00:00Z',
+	}
+
+	it('builds a create with UTC wall-clock times and no attendees', () => {
+		const built = buildCreateEventRequest(fields)
+		if (!built.ok) throw new Error(built.message)
+		expect(built.url).toBe('https://graph.microsoft.com/v1.0/me/events')
+		expect(built.body).toEqual({
+			subject: 'Planning',
+			start: { dateTime: '2026-11-13T08:00:00.000', timeZone: 'UTC' },
+			end: { dateTime: '2026-11-13T10:00:00.000', timeZone: 'UTC' },
+		})
+	})
+
+	it('refuses an end before the start, an event over 7 days and an unreadable time', () => {
+		expect(buildCreateEventRequest({ ...fields, end: fields.start }).ok).toBe(false)
+		expect(buildCreateEventRequest({ ...fields, end: '2026-11-21T10:00:00Z' }).ok).toBe(false)
+		expect(buildCreateEventRequest({ ...fields, start: 'soon' }).ok).toBe(false)
+	})
+
+	it('needs something to change, and start with end', () => {
+		expect(buildUpdateEventRequest('ev-1', {}).ok).toBe(false)
+		expect(buildUpdateEventRequest('ev-1', { start: fields.start }).ok).toBe(false)
+		const built = buildUpdateEventRequest('a+b/c=', { subject: 'New' })
+		if (!built.ok) throw new Error(built.message)
+		expect(built.url).toBe('https://graph.microsoft.com/v1.0/me/events/a%2Bb%2Fc%3D')
+		expect(built.body).toEqual({ subject: 'New' })
+	})
+
+	it('refuses an empty id for the read before a change and for a cancel', () => {
+		expect(buildGuardRequest(' ').ok).toBe(false)
+		expect(buildCancelRequest('').ok).toBe(false)
+	})
+
+	it('blocks an event with attendees or a series master, and lets a solo event through', () => {
+		expect(editBlocker({ attendees: [{ emailAddress: { address: 'a@example.com' } }] })).toMatch(
+			/other people/,
+		)
+		expect(editBlocker({ type: 'seriesMaster' })).toMatch(/recurring/)
+		expect(editBlocker({ type: 'singleInstance', attendees: [] })).toBeNull()
+		expect(editBlocker({ type: 'occurrence' })).toBeNull()
 	})
 })

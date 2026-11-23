@@ -169,3 +169,66 @@ export async function graphPostAction(
 	})
 	if (!res.ok) throw await toGraphError(res)
 }
+
+/**
+ * PATCH a JSON body to Graph and return the updated item. Never retried, so a gateway error
+ * cannot apply an edit twice. Non-2xx throws a GraphError.
+ */
+export async function graphPatchJson<T>(
+	url: string,
+	accessToken: string,
+	body: unknown,
+	deps: GraphDeps = {},
+): Promise<T> {
+	const doFetch = deps.fetch ?? fetch
+	const res = await doFetch(url, {
+		method: 'PATCH',
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify(body),
+	})
+	if (!res.ok) throw await toGraphError(res)
+	return (await res.json()) as T
+}
+
+/** DELETE one Graph item (answers 204). Never retried. Non-2xx throws a GraphError. */
+export async function graphDelete(
+	url: string,
+	accessToken: string,
+	deps: GraphDeps = {},
+): Promise<void> {
+	const doFetch = deps.fetch ?? fetch
+	const res = await doFetch(url, {
+		method: 'DELETE',
+		headers: { Authorization: `Bearer ${accessToken}` },
+	})
+	if (!res.ok) throw await toGraphError(res)
+}
+
+/**
+ * PUT text to a drive item's content address (a simple upload). Never retried: a gateway error
+ * can arrive after the file was written, and a second attempt would rewrite it. Non-2xx throws a
+ * GraphError.
+ */
+export async function graphPutText<T>(
+	url: string,
+	accessToken: string,
+	text: string,
+	deps: GraphDeps = {},
+): Promise<T> {
+	const doFetch = deps.fetch ?? fetch
+	const res = await doFetch(url, {
+		method: 'PUT',
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			Accept: 'application/json',
+			'Content-Type': 'text/plain',
+		},
+		body: text,
+	})
+	if (!res.ok) throw await toGraphError(res)
+	return (await res.json()) as T
+}
