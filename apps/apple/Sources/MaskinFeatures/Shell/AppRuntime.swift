@@ -55,6 +55,10 @@ public final class AppRuntime {
 		chiefChatRequested = true
 	}
 
+	/// A chat or flow room is open in the Chats tab. `ChatsScreen` sets it; the iPad's landscape
+	/// sidebar folds to icons while it is true and Chats is on show.
+	var chatIsOpen = false
+
 	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
 	let teamPill = TeamPillModel()
 
