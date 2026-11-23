@@ -116,7 +116,7 @@ describe('describeCronExpression in plain words', () => {
 
 	it('hands back the raw expression when it cannot be put into words', () => {
 		expect(words('*/15 9-17 * * 1-5')).toBe('*/15 9-17 * * 1-5')
-		expect(words('0 9 1 * 1')).toBe('0 9 1 * 1')
+		expect(words('0 9 1,15 * 1')).toBe('0 9 1,15 * 1')
 		expect(words('0 */5 * * *')).toBe('0 */5 * * *')
 		expect(words('*/7 * * * *')).toBe('*/7 * * * *')
 		expect(words('0 9 * * 8')).toBe('0 9 * * 8')
