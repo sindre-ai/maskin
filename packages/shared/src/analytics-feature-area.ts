@@ -96,6 +96,7 @@ const PREFIXES: ReadonlyArray<readonly [string, FeatureArea]> = [
 	['keychain_', 'integrations'],
 	['extension_', 'integrations'],
 	['drive_', 'integrations'],
+	['youtube_', 'integrations'],
 	['slack.', 'integrations'],
 	['slack_', 'integrations'],
 	['search_', 'search'],

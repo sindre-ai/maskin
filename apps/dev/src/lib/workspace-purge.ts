@@ -158,6 +158,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'workspace_onboarding_prompts',
 	'workspace_skills',
 	'workspace_suppressions',
+	'youtube_action_audit',
+	'youtube_pending_actions',
 ] as const
 
 export interface WorkspacePurgeResult {

@@ -27,6 +27,7 @@ import { StripePaymentSyncJob } from './jobs/stripe-payment-sync'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
+import { YoutubeActionsSweepJob } from './jobs/youtube-actions-sweep'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -442,6 +443,8 @@ logger.info('Webhook deliveries reconciler started')
 
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
+const youtubeActionsSweepJob = new YoutubeActionsSweepJob(db, undefined, storageProvider)
+youtubeActionsSweepJob.start()
 logger.info('Purge idempotency job started')
 
 // Direct uploads: aborts uploads nobody finished and settles ones whose complete
@@ -696,6 +699,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	decisionDefaultWake.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
+	youtubeActionsSweepJob.stop()
 	oauthSweeper.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()

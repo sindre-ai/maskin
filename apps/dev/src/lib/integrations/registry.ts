@@ -118,6 +118,9 @@ import { config as unicontaConfig } from './providers/uniconta/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
 import { config as xeroConfig } from './providers/xero/config'
+import { config as youtubeConfig } from './providers/youtube/config'
+import { revokeYoutubeGrant } from './providers/youtube/disconnect'
+import { resolveExternalId as youtubeResolveExternalId } from './providers/youtube/resolve-id'
 import { config as zapierConfig } from './providers/zapier/config'
 import { config as zendeskConfig } from './providers/zendesk/config'
 import { config as zoomConfig } from './providers/zoom/config'
@@ -301,6 +304,15 @@ providers.set('sentry', {
 
 providers.set('zapier', {
 	config: zapierConfig,
+})
+
+// youtube — read-only, own channel. Workspace-scoped like Meet (deliberately NOT in
+// `actorScopedProviders`). No webhook, postInstall or watch hooks: reads are on demand.
+// `preDisconnect` revokes the Google grant and purges cached reads and session logs.
+providers.set('youtube', {
+	config: youtubeConfig,
+	resolveExternalId: youtubeResolveExternalId,
+	preDisconnect: revokeYoutubeGrant,
 })
 
 providers.set('zoom', {

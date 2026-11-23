@@ -8,7 +8,7 @@
  *
  * Order of evidence, strongest first:
  *   1. the curated sets below, for tools we register ourselves (Slack, LinkedIn, Meet, Drive,
- *      Search Console);
+ *      Search Console, YouTube);
  *   2. the server's own MCP annotation (readOnlyHint), for hosted servers we do not
  *      control, and only when it says read-only — destructiveHint or a missing hint
  *      never makes a tool a read;
@@ -47,6 +47,19 @@ const READ_TOOLS: Record<string, ReadonlySet<string>> = {
 		'google_drive__get_sheet_range',
 	]),
 	'google-search-console': new Set(['inspect_url', 'list_sites', 'list_sitemaps', 'get_sitemap']),
+	// Maskin-hosted and read-only. Curated, so a tool added later is a write until it is listed here.
+	youtube: new Set([
+		'youtube__get_channel',
+		'youtube__get_video_stats',
+		'youtube__get_analytics',
+		'youtube__list_recent_videos',
+		'youtube__search',
+		'youtube__get_public_channel',
+		'youtube__get_public_videos',
+		'youtube__get_upload_status',
+		'youtube__list_comments',
+		'youtube__get_own_captions',
+	]),
 	// Outlook calendar, served by Maskin. Curated, so a tool added later is a write until it is listed here.
 	microsoft: new Set(['outlook_list_events', 'outlook_get_event', 'outlook_search_events']),
 	// Azure DevOps (core, repos, wit and pipelines toolsets), from Microsoft's published tool list

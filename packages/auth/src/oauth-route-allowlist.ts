@@ -109,6 +109,9 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	// The "Not useful" link under a Marketplace pick: opened signed out and authenticated by its own signed token.
 	'GET /api/email/pick-dismiss',
 	'POST /api/email/pick-dismiss',
+	// A held YouTube change is decided only by a person's own tap. A connected Claude client is a model holding a person's key, so it never decides one (and no MCP tool reads the status).
+	'GET /api/youtube/actions/:id',
+	'POST /api/youtube/actions/:id/decision',
 	'GET /api/briefing',
 	'POST /api/briefing/spoken',
 	'GET /api/conversations',
@@ -296,6 +299,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'DELETE /api/integrations/google-drive/watched-folders/:folderId',
 	'DELETE /api/integrations/google-search-console/mcp',
 	'DELETE /api/integrations/microsoft/mcp',
+	'DELETE /api/integrations/youtube/mcp',
 	'DELETE /api/live-activities/follows/:session_id',
 	'DELETE /api/live-activities/tokens/:id',
 	'DELETE /api/web-push/subscriptions/:id',
@@ -338,6 +342,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/integrations/google-drive/watched-folders',
 	'GET /api/integrations/google-search-console/mcp',
 	'GET /api/integrations/microsoft/mcp',
+	'GET /api/integrations/youtube/mcp',
 	'GET /api/notification-preferences',
 	'GET /api/objects/facets',
 	'GET /api/search',
@@ -405,6 +410,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/integrations/google-drive/mcp',
 	'POST /api/integrations/google-search-console/mcp',
 	'POST /api/integrations/microsoft/mcp',
+	'POST /api/integrations/youtube/mcp',
 	'POST /api/integrations/google/disconnect',
 	'POST /api/integrations/resend/send',
 	'POST /api/internal/mcp-guard/report',

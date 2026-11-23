@@ -83,6 +83,7 @@ import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsYoutubeMcpRoutes from './routes/integrations-youtube-mcp'
 import keychainAdminRoutes from './routes/keychain-admin'
 import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
@@ -125,6 +126,7 @@ import webPushRoutes from './routes/web-push'
 import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
+import youtubeActionsRoutes from './routes/youtube-actions'
 import type { AgentStorageManager } from './services/agent-storage'
 import type { SessionManager } from './services/session-manager'
 
@@ -604,6 +606,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/deepdots/mcp', integrationsDeepdotsMcpRoutes)
 	app.route('/api/integrations/microsoft/mcp', integrationsMicrosoftMcpRoutes)
 	app.route('/api/integrations/google-search-console/mcp', integrationsGoogleSearchConsoleMcpRoutes)
+	// youtube MCP surface — same ordering constraint as google-meet's above.
+	app.route('/api/integrations/youtube/mcp', integrationsYoutubeMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
 	app.route('/api/integrations', integrationsOAuthAppRoutes)
@@ -642,6 +646,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/for-you', forYouRoutes)
+	app.route('/api/youtube/actions', youtubeActionsRoutes)
 	app.route('/api/devices', devicesRoutes)
 	app.route('/api/notification-preferences', notificationPreferencesRoutes)
 	app.route('/api/email/stop', emailStopRoutes)

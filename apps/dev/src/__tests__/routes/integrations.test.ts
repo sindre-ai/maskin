@@ -187,6 +187,7 @@ describe('Integrations Routes', () => {
 				'ubersuggest',
 				'vercel',
 				'webflow',
+				'youtube',
 				'zapier',
 			])
 
