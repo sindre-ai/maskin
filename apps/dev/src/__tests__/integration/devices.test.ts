@@ -59,14 +59,47 @@ describe('device_tokens', () => {
 		expect(rows[0]?.lastSeenAt.getTime()).toBeGreaterThanOrEqual(rows[0]?.createdAt.getTime() ?? 0)
 	})
 
-	it('moves the token to the new actor when another actor re-registers it', async () => {
-		await appAs(actorA).request(jsonRequest('POST', '/api/devices', body(token)))
-		const res = await appAs(actorB).request(jsonRequest('POST', '/api/devices', body(token)))
+	it('moves the token when another actor re-registers it with the secret it was registered with (same phone)', async () => {
+		const secret = 's'.repeat(43)
+		await appAs(actorA).request(
+			jsonRequest('POST', '/api/devices', { ...body(token), unregister_secret: secret }),
+		)
+		const res = await appAs(actorB).request(
+			jsonRequest('POST', '/api/devices', { ...body(token), unregister_secret: secret }),
+		)
 		expect(res.status).toBe(200)
 
 		const rows = await db.select().from(deviceTokens).where(eq(deviceTokens.apnsToken, token))
 		expect(rows).toHaveLength(1)
 		expect(rows[0]?.actorId).toBe(actorB)
+	})
+
+	it('refuses to move a token held by another actor without the matching secret', async () => {
+		const secret = 's'.repeat(43)
+		await appAs(actorA).request(
+			jsonRequest('POST', '/api/devices', { ...body(token), unregister_secret: secret }),
+		)
+
+		const noSecret = await appAs(actorB).request(jsonRequest('POST', '/api/devices', body(token)))
+		expect(noSecret.status).toBe(409)
+		const wrongSecret = await appAs(actorB).request(
+			jsonRequest('POST', '/api/devices', { ...body(token), unregister_secret: 'x'.repeat(43) }),
+		)
+		expect(wrongSecret.status).toBe(409)
+
+		const rows = await db.select().from(deviceTokens).where(eq(deviceTokens.apnsToken, token))
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.actorId).toBe(actorA)
+	})
+
+	it('refuses to move a token registered without a secret', async () => {
+		await appAs(actorA).request(jsonRequest('POST', '/api/devices', body(token)))
+		const res = await appAs(actorB).request(
+			jsonRequest('POST', '/api/devices', { ...body(token), unregister_secret: 's'.repeat(43) }),
+		)
+		expect(res.status).toBe(409)
+		const rows = await db.select().from(deviceTokens).where(eq(deviceTokens.apnsToken, token))
+		expect(rows[0]?.actorId).toBe(actorA)
 	})
 
 	it('enforces UNIQUE(apns_token, environment) but allows the same token in another environment', async () => {
@@ -120,7 +153,6 @@ describe('POST /api/devices/unregister', () => {
 	const OTHER_SECRET = 'o'.repeat(43)
 	let token: string
 	let actorA: string
-	let actorB: string
 
 	const registerAs = (actorId: string, secret?: string) =>
 		appAs(actorId).request(
@@ -139,7 +171,6 @@ describe('POST /api/devices/unregister', () => {
 		resetUnregisterLimiterForTests()
 		token = [...Array(64)].map(() => Math.floor(Math.random() * 16).toString(16)).join('')
 		actorA = (await insertActor(db))?.id as string
-		actorB = (await insertActor(db))?.id as string
 	})
 
 	it('stores only a hash of the secret, never the secret', async () => {
@@ -246,8 +277,8 @@ describe('POST /api/devices/unregister', () => {
 
 	it('replaces the hash when the token registers again, so the old secret deletes nothing', async () => {
 		await registerAs(actorA, SECRET)
-		await registerAs(actorB, OTHER_SECRET)
-		expect((await rows())[0]?.actorId).toBe(actorB)
+		await registerAs(actorA, OTHER_SECRET)
+		expect((await rows())[0]?.actorId).toBe(actorA)
 
 		const old = await attempt()
 		expect(await old.json()).toEqual({ deleted: false })
@@ -264,7 +295,7 @@ describe('POST /api/devices/unregister', () => {
 
 	it('clears the secret when the token registers again without one', async () => {
 		await registerAs(actorA, SECRET)
-		await registerAs(actorB)
+		await registerAs(actorA)
 		expect((await rows())[0]?.unregisterSecretHash).toBeNull()
 	})
 

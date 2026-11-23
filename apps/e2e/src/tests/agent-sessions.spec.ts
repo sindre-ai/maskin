@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { grantEnterprise } from '../helpers/plan.helper'
@@ -325,17 +326,32 @@ async function openFailedSession(
 	})
 
 	// POST /api/relationships derives every endpoint kind as 'object' or 'file';
-	// only the server's own provenance writer stamps a session source. So the
-	// graph answer is patched to carry the kind that writer would have stored.
+	// only the server's own provenance writer stamps a session source. The graph
+	// route only returns edges whose endpoints resolve inside the workspace, so
+	// it drops the edge written above (a session id is not an object). The
+	// graph answer therefore carries the edge as that writer would have stored it.
 	await page.route(new RegExp(`/api/objects/${object.id}/graph(\\?.*)?$`), async (route) => {
 		const response = await route.fetch()
 		const graph = await response.json()
-		for (const rel of graph.relationships ?? []) {
-			if (rel.type === 'produced_by' && rel.sourceId === session.id) {
-				rel.sourceType = 'session'
-				rel.sourceTitle = 'Draft the weekly note'
-			}
-		}
+		graph.relationships = [
+			...(graph.relationships ?? []).filter(
+				(rel: { type: string; sourceId: string }) =>
+					!(rel.type === 'produced_by' && rel.sourceId === session.id),
+			),
+			{
+				id: randomUUID(),
+				sourceType: 'session',
+				sourceId: session.id,
+				sourceTitle: 'Draft the weekly note',
+				targetType: 'object',
+				targetId: object.id,
+				targetTitle: `Failed run ${reasonCode}`,
+				type: 'produced_by',
+				metadata: null,
+				createdBy: agent.id,
+				createdAt: '2026-01-01T00:00:00Z',
+			},
+		]
 		await route.fulfill({ response, json: graph })
 	})
 	await page.goto(`/${account.workspaceId}/objects/${object.id}`, {

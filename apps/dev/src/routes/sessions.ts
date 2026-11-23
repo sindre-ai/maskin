@@ -460,7 +460,10 @@ app.openapi(listSessionsRoute, (async (c) => {
 			>`CASE WHEN ${sessions.status} = 'failed' THEN ${sessions.result}->>'error' END`,
 		})
 		.from(sessions)
-		.leftJoin(triggers, eq(sessions.triggerId, triggers.id))
+		.leftJoin(
+			triggers,
+			and(eq(sessions.triggerId, triggers.id), eq(triggers.workspaceId, sessions.workspaceId)),
+		)
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
