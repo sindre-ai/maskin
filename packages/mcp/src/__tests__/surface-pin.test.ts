@@ -216,11 +216,11 @@ describe('MCP surface pin', () => {
 		expect(violations, violations.join('\n')).toEqual([])
 	})
 
-	it('registers propose_file_changes as a plain write, not a read, delete or idempotent update', () => {
+	it('registers propose_file_changes as a plain write, not a read or idempotent update', () => {
 		expect(registeredTools.has('propose_file_changes')).toBe(true)
 		expect(TOOL_ANNOTATIONS.propose_file_changes).toMatchObject({
 			readOnlyHint: false,
-			destructiveHint: false,
+			destructiveHint: true,
 			idempotentHint: false,
 			openWorldHint: false,
 		})
@@ -323,20 +323,18 @@ describe('MCP surface pin', () => {
 			}
 		})
 
-		it('destructiveHint is true for every delete_* tool, stop_session, disconnect_integration and desktop_run only', () => {
-			const expected = [
-				...Object.keys(TOOL_ANNOTATIONS).filter((n) => n.startsWith('delete_')),
+		it('destructiveHint is true for every tool that is not read-only, and for no read-only tool', () => {
+			for (const [name, entry] of Object.entries(TOOL_ANNOTATIONS)) {
+				expect(entry.destructiveHint, `${name} destructiveHint`).toBe(!entry.readOnlyHint)
+			}
+			for (const name of [
+				'delete_object',
 				'stop_session',
-				'stop_chat_agent',
 				'disconnect_integration',
 				'desktop_run',
-			].sort()
-			const actual = Object.entries(TOOL_ANNOTATIONS)
-				.filter(([, entry]) => entry.destructiveHint)
-				.map(([name]) => name)
-				.sort()
-			expect(actual).toEqual(expected)
-			for (const name of expected) expect(registeredTools.has(name)).toBe(true)
+			]) {
+				expect(TOOL_ANNOTATIONS[name]?.destructiveHint, name).toBe(true)
+			}
 		})
 
 		it('idempotentHint is true for update_*, delete_*, pause_session, mark_read, set_loop_view and withdraw_decision_card only', () => {
