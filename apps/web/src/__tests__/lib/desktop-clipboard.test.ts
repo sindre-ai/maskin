@@ -110,6 +110,26 @@ describe('taking what the computer copied', () => {
 		expect(await takeRemoteCopy(arming, 'x')).toMatchObject({ ok: false })
 	})
 
+	it('waits from the copy key press until the computer answers', async () => {
+		stubClipboard({ writeText: vi.fn().mockResolvedValue(undefined) })
+		expect(arming.waiting()).toBe(false)
+
+		arming.arm()
+		expect(arming.waiting()).toBe(true)
+
+		await takeRemoteCopy(arming, 'x')
+		expect(arming.waiting()).toBe(false)
+	})
+
+	it('still waits after the window closes, until it is told the computer sent nothing', () => {
+		arming.arm()
+		clock += COPY_WINDOW_MS + 1
+
+		expect(arming.waiting()).toBe(true)
+		arming.disarm()
+		expect(arming.waiting()).toBe(false)
+	})
+
 	it('ignores clipboard text when the person did not press copy', async () => {
 		const writeText = vi.fn()
 		stubClipboard({ writeText })
