@@ -37,6 +37,11 @@ import {
 	recordDineroAction,
 } from '../lib/integrations/providers/dinero/action-log'
 import { fixedAllowedTools } from '../lib/integrations/providers/dinero/allowed-tools'
+import {
+	DINERO_BRIDGE_TOOLS,
+	callDineroBridge,
+	isDineroBridgeTool,
+} from '../lib/integrations/providers/dinero/bridge'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
@@ -426,6 +431,40 @@ export async function proxyMcp(
 		throw err
 	}
 
+	// Dinero's public API has tools its hosted server lacks (email an invoice, chase a late one).
+	// They were judged above like any other tool, and are answered here, never sent upstream.
+	if (provider === 'dinero' && toolName && allowed && isDineroBridgeTool(toolName)) {
+		const done = await callDineroBridge(
+			toolName,
+			rpc?.params?.arguments,
+			upstreamHeaders.Authorization ?? upstreamHeaders.authorization ?? '',
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		const answer = new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+		if (DINERO_LOGGED_TOOLS.has(toolName)) {
+			void recordDineroAction({
+				db,
+				upstream: answer,
+				requestId: rpc?.id,
+				tool: toolName,
+				args: rpc?.params?.arguments,
+				booking: ctx.allowedTools?.includes('BookVoucher') === true,
+				integrationId: integration.id,
+				workspaceId,
+				actorId,
+				sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+			})
+		}
+		return answer
+	}
+
 	const headers = new Headers()
 	for (const name of FORWARDED_REQUEST_HEADERS) {
 		const value = c.req.header(name)
@@ -509,7 +548,17 @@ export async function proxyMcp(
 	const rewritten = payloads.map((p) => {
 		const m = p as { result?: { tools?: unknown[] } }
 		if (!m?.result || !Array.isArray(m.result.tools)) return p
-		const out = annotateToolsList(m.result as Parameters<typeof annotateToolsList>[0], {
+		// The bridge tools are added before the list is judged, so the fixed list leaves them out
+		// while booking is off, and each is marked a write.
+		const upstreamResult = m.result as Parameters<typeof annotateToolsList>[0]
+		const withBridge =
+			provider === 'dinero'
+				? {
+						...upstreamResult,
+						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS],
+					}
+				: upstreamResult
+		const out = annotateToolsList(withBridge as Parameters<typeof annotateToolsList>[0], {
 			provider,
 			providerLabel: label,
 			access,

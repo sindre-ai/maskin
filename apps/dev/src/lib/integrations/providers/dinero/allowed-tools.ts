@@ -1,4 +1,5 @@
 import type { IntegrationConfig } from '../../../types'
+import { DINERO_BRIDGE_TOOL_NAMES } from './bridge'
 
 /**
  * The only tools an agent may use on Dinero's hosted server (48 tools, read from the live list on
@@ -16,8 +17,10 @@ import type { IntegrationConfig } from '../../../types'
  * gateway checks the arguments (dineroCallRefusal in action-log.ts) and refuses it unless book is
  * false, or the owner's booking switch is on.
  *
+ * get_report reads the Result, Balance or Saldo report for one whole accounting year.
+ *
  * The listing text (accounting-loop.ts) names the first 16, for the custom-server route that has
- * no argument check. CreateFinanceVoucher is not in it and must not be added to a custom server's list.
+ * no argument check. CreateFinanceVoucher and get_report are not in it and must not be added to a custom server's list.
  */
 export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'CreatePurchaseVoucher',
@@ -37,18 +40,21 @@ export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'SearchBankTransactions',
 	'upload_file',
 	'CreateFinanceVoucher',
+	'get_report',
 ]
 
 /**
- * The draft-only list plus BookVoucher and the two tools that register a payment, for an owner
- * who switched booking on. add_purchase_payment and add_invoice_payment need the voucher's
- * current timestamp, so a payment cannot land on a version nobody looked at.
+ * The draft-only list plus BookVoucher, the two tools that register a payment and the four bridge
+ * tools that email an invoice or chase a late one (./bridge.ts), for an owner who switched booking
+ * on. Each of them needs the document's current timestamp, so nothing lands on a version nobody
+ * looked at.
  */
 export const DINERO_WITH_BOOKING_TOOLS: readonly string[] = [
 	...DINERO_DRAFT_ONLY_TOOLS,
 	'BookVoucher',
 	'add_purchase_payment',
 	'add_invoice_payment',
+	...DINERO_BRIDGE_TOOL_NAMES,
 ]
 
 /**
