@@ -56,6 +56,7 @@ describe('bulk write replies', () => {
 			apiBaseUrl: 'http://localhost:3000',
 			apiKey: 'ank_testkey',
 			defaultWorkspaceId: wsId,
+			webAppBaseUrl: 'https://maskin.io',
 			telemetrySink: () => {},
 		})
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
