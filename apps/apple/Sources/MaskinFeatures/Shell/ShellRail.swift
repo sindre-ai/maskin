@@ -84,7 +84,7 @@ private struct ShellRailItem: View {
 	static let height: CGFloat = 56
 }
 
-private struct RailBadge: View {
+struct RailBadge: View {
 	let badge: TabBadge
 
 	var body: some View {

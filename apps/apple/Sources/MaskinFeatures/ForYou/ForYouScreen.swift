@@ -37,6 +37,7 @@ public struct ForYouScreen: View {
 			feed(openObject: isWide ? { path.append($0) } : openObject)
 				.navigationDestination(for: String.self) { id in
 					ForYouObjectDetail(environment: environment, objectId: id) { path.append($0) }
+						.hidesPadBar()
 				}
 		}
 	}
