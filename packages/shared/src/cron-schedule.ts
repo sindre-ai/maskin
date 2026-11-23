@@ -178,12 +178,159 @@ function nextOneTimeFire(cron: OneTimeCron, from: Date): Date | null {
 	return null
 }
 
-/** Human-readable schedule from a raw cron expression, e.g. "0 17 * * 0" -> "every Sunday at 18:00".
+const FULL_DAY_NAMES = Object.values(DAY_NAMES)
+
+const FULL_MONTH_NAMES = [
+	'January',
+	'February',
+	'March',
+	'April',
+	'May',
+	'June',
+	'July',
+	'August',
+	'September',
+	'October',
+	'November',
+	'December',
+]
+
+/** The numbers a cron field covers, or `null` when it is not valid. Reads `*`, single values,
+ * lists (`8,16`), ranges (`1-5`), steps and names (`MON`, `mar`). Day of week 7 counts as Sunday. */
+function expandCronField(
+	field: string,
+	min: number,
+	max: number,
+	names: readonly string[] = [],
+): number[] | null {
+	const value = (text: string): number => {
+		if (/^\d+$/.test(text)) return Number(text)
+		const index = names.findIndex((name) => name.slice(0, 3).toLowerCase() === text.toLowerCase())
+		return text.length === 3 && index >= 0 ? index + min : Number.NaN
+	}
+	const found = new Set<number>()
+	for (const part of field.split(',')) {
+		const match = /^(\*|\w+(?:-\w+)?)(?:\/(\d+))?$/.exec(part)
+		if (!match?.[1]) return null
+		const step = match[2] === undefined ? 1 : Number(match[2])
+		const bounds = match[1] === '*' ? [min, max] : match[1].split('-').map(value)
+		const first = bounds[0] ?? Number.NaN
+		const to = bounds[1] ?? (match[2] === undefined ? first : max)
+		if (!(step >= 1) || !(first >= min) || !(to <= max) || first > to) return null
+		for (let n = first; n <= to; n += step) found.add(n)
+	}
+	return [...found].sort((a, b) => a - b)
+}
+
+/** `N` when the values are every Nth value from 0 and N divides `size`, so "every N" holds
+ * all the way round (every 15 of 60 minutes). Otherwise `null`. */
+function everyNth(values: number[], size: number): number | null {
+	const [first = 0, second = 0] = values
+	const step = values.length > 1 ? second - first : size
+	if (step < 1 || size % step !== 0 || values.length !== size / step) return null
+	return values.every((value, i) => value === i * step) ? step : null
+}
+
+/** "Monday, Wednesday and Friday", with a run of three or more as "Monday to Friday". */
+function describeRuns(positions: number[], nameOf: (position: number) => string): string {
+	const words: string[] = []
+	for (let i = 0; i < positions.length; ) {
+		let end = i
+		const at = (index: number) => positions[index] ?? 0
+		while (end + 1 < positions.length && at(end + 1) === at(end) + 1) end++
+		if (end - i >= 2) words.push(`${nameOf(at(i))} to ${nameOf(at(end))}`)
+		else for (let k = i; k <= end; k++) words.push(nameOf(at(k)))
+		i = end + 1
+	}
+	return words.length < 2
+		? (words[0] ?? '')
+		: `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`
+}
+
+const dayName = (day: number) => FULL_DAY_NAMES[day % 7] ?? ''
+
+/** Weekdays (0 is Sunday) as a person says them. A lone day reads "every Monday". */
+function describeWeekdays(days: number[]): string {
+	if (days.length === 7) return 'every day'
+	if (days.length === 1) return `every ${dayName(days[0] ?? 0)}`
+	// Monday first, so Monday to Friday and Saturday and Sunday read as runs.
+	const positions = days.map((day) => (day + 6) % 7).sort((a, b) => a - b)
+	return describeRuns(positions, (position) => dayName(position + 1))
+}
+
+/** Plain words for the cron shapes `parseCronExpression` rejects: steps, lists, ranges and
+ * names. Times move from UTC to Copenhagen at `now`. `null` for anything it will not put into
+ * words: a day of month together with a day of week, a step inside a restricted day, a
+ * time it cannot read as a few clock times. */
+function describeCronShapes(expr: string, now: Date): string | null {
+	const parts = expr.trim().split(/\s+/)
+	const fields = parts.length === 6 ? parts.slice(1) : parts
+	if (fields.length !== 5) return null
+	const [minuteField = '', hourField = '', dayField = '', monthField = '', weekField = ''] = fields
+	const minutes = expandCronField(minuteField, 0, 59)
+	const hours = expandCronField(hourField, 0, 23)
+	const monthDays = expandCronField(dayField, 1, 31)
+	const months = expandCronField(monthField, 1, 12, FULL_MONTH_NAMES)
+	const weekDayValues = expandCronField(weekField, 0, 7, FULL_DAY_NAMES)
+	if (!minutes || !hours || !monthDays || !months || !weekDayValues) return null
+	const weekDays = [...new Set(weekDayValues.map((day) => day % 7))].sort((a, b) => a - b)
+	const anyMonthDay = monthDays.length === 31
+	const anyWeekDay = weekDays.length === 7
+	const anyMonth = months.length === 12
+	if (!anyMonthDay && !anyWeekDay) return null
+	const monthText = anyMonth
+		? ''
+		: ` in ${describeRuns(
+				months.map((month) => month - 1),
+				(position) => FULL_MONTH_NAMES[position] ?? '',
+			)}`
+
+	// Steps that run through the whole day, with no day or month restriction.
+	const minuteStep = minutes.length > 1 ? everyNth(minutes, 60) : null
+	const hourStep = hours.length > 1 ? everyNth(hours, 24) : null
+	if (anyMonthDay && anyWeekDay && anyMonth) {
+		if (minuteStep && hours.length === 24) {
+			return minuteStep === 1 ? 'every minute' : `every ${minuteStep} minutes`
+		}
+		if (minutes.length === 1 && hourStep) {
+			const unit = hourStep === 1 ? 'every hour' : `every ${hourStep} hours`
+			return minutes[0] === 0 ? unit : `${unit} at minute ${minutes[0]}`
+		}
+	}
+
+	// A few fixed clock times, shifted to Copenhagen. The day moves with them when they cross midnight.
+	if (minutes.length * hours.length > 8) return null
+	const offset = copenhagenOffsetMinutes(now)
+	const times = hours.flatMap((hour) => minutes.map((minute) => hour * 60 + minute + offset))
+	const dayShift = Math.floor((times[0] ?? 0) / 1440)
+	if (times.some((total) => Math.floor(total / 1440) !== dayShift)) return null
+	if (dayShift !== 0 && !anyMonth) return null
+	const timeText = [...new Set(times.map((total) => total - dayShift * 1440))]
+		.sort((a, b) => a - b)
+		.map((within) => formatTime(String(Math.floor(within / 60)), String(within % 60)))
+	const at = `${timeText.slice(0, -1).join(', ')}${timeText.length > 1 ? ' and ' : ''}${timeText.at(-1)}`
+
+	if (!anyWeekDay) {
+		const shifted = weekDays.map((day) => (((day + dayShift) % 7) + 7) % 7)
+		return `${describeWeekdays(shifted)} at ${at}${monthText}`
+	}
+	if (!anyMonthDay) {
+		const shifted = monthDays.map((day) => day + dayShift)
+		if (shifted.some((day) => day < 1 || day > 28)) return null
+		const label =
+			shifted.length === 1 ? `day ${shifted[0]}` : `days ${describeRuns(shifted, String)}`
+		return `on ${label} of each month at ${at}${monthText}`
+	}
+	return `every day at ${at}${monthText}`
+}
+
+/** Human-readable schedule from a raw cron expression, e.g. "0 17 * * 0" -> "every Sunday at 18:00",
+ * "0 8 * * 1-5" -> "Monday to Friday at 09:00".
  * The server runs every schedule in UTC, so times are converted to Copenhagen time (24-hour),
  * using the next firing so summer and winter time are right. A weekly or monthly schedule can
  * land on another day after the conversion; the weekday or day number follows it.
- * Falls back to the raw expression when it uses syntax this app doesn't generate itself
- * (steps, lists, ranges, day names) rather than rendering a wrong description. */
+ * Returns the raw expression when it cannot be put into words without guessing, so a caller can
+ * tell (`result === expr`) and show its own neutral text. */
 export function describeCronExpression(expr: string, now: Date = new Date()): string {
 	const parsed = parseCronExpression(expr)
 	if (parsed) {
@@ -206,7 +353,7 @@ export function describeCronExpression(expr: string, now: Date = new Date()): st
 		if (!next) return expr
 		return `once on ${describeCopenhagenDateTime(next, now)}`
 	}
-	return expr
+	return describeCronShapes(expr, now) ?? expr
 }
 
 /** Next firing instant strictly after `from` for a cron expression this app

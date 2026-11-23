@@ -5,6 +5,7 @@ import {
 	copenhagenWallToInstant,
 	cronCopenhagenToUtc,
 	cronUtcToCopenhagen,
+	describeCronExpression,
 	formatCopenhagenStamp,
 } from '../cron-schedule'
 
@@ -76,5 +77,49 @@ describe('schedule form fields', () => {
 	it('leaves an hourly schedule alone', () => {
 		const hourly = { ...daily, frequency: 'hourly', minute: '15' } as const
 		expect(cronUtcToCopenhagen(hourly, summer)).toEqual(hourly)
+	})
+})
+
+describe('describeCronExpression in plain words', () => {
+	const words = (expr: string, now: Date = winter) => describeCronExpression(expr, now)
+
+	it('reads steps of minutes and hours', () => {
+		expect(words('*/15 * * * *')).toBe('every 15 minutes')
+		expect(words('* * * * *')).toBe('every minute')
+		expect(words('0 */6 * * *')).toBe('every 6 hours')
+		expect(words('40 */2 * * *')).toBe('every 2 hours at minute 40')
+	})
+
+	it('reads weekday ranges and day names in Copenhagen time', () => {
+		expect(words('0 9 * * 1-5')).toBe('Monday to Friday at 10:00')
+		expect(words('0 3 * * 1-5')).toBe('Monday to Friday at 04:00')
+		expect(words('0 3 * * 1-5', summer)).toBe('Monday to Friday at 05:00')
+		expect(words('0 9 * * MON')).toBe('every Monday at 10:00')
+		expect(words('0 9 * * SAT,SUN')).toBe('Saturday and Sunday at 10:00')
+		expect(words('0 9 * * 1,3,5')).toBe('Monday, Wednesday and Friday at 10:00')
+	})
+
+	it('reads a list of hours, as several clock times', () => {
+		expect(words('30 8,16 * * *')).toBe('every day at 09:30 and 17:30')
+	})
+
+	it('moves the weekdays along when the conversion crosses midnight', () => {
+		// 23:00 UTC is 00:00 the next day in Copenhagen winter time.
+		expect(words('0 23 * * 1-5')).toBe('Tuesday to Saturday at 00:00')
+	})
+
+	it('reads a day of the month and a restricted month', () => {
+		expect(words('0 9 1 * *')).toBe('on day 1 of each month at 10:00')
+		expect(words('0 9 1,15 * *')).toBe('on days 1 and 15 of each month at 10:00')
+		expect(words('0 9 * 3-6 1-5')).toBe('Monday to Friday at 10:00 in March to June')
+	})
+
+	it('hands back the raw expression when it cannot be put into words', () => {
+		expect(words('*/15 9-17 * * 1-5')).toBe('*/15 9-17 * * 1-5')
+		expect(words('0 9 1 * 1')).toBe('0 9 1 * 1')
+		expect(words('0 */5 * * *')).toBe('0 */5 * * *')
+		expect(words('*/7 * * * *')).toBe('*/7 * * * *')
+		expect(words('0 9 * * 8')).toBe('0 9 * * 8')
+		expect(words('not a cron')).toBe('not a cron')
 	})
 })
