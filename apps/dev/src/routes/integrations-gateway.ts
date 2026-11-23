@@ -31,6 +31,7 @@ import {
 } from '../lib/integrations/mcp-gateway'
 import { loadOAuthApp } from '../lib/integrations/oauth-app'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import { fixedAllowedTools } from '../lib/integrations/providers/dinero/allowed-tools'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
@@ -210,6 +211,7 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		access,
 		cacheKey: `${workspaceId}:${provider}`,
 		upstreamUrl,
+		allowedTools: fixedAllowedTools(provider, integration.config as IntegrationConfig | null),
 		upstreamHeaders: async () => {
 			let token: string
 			try {
@@ -246,7 +248,7 @@ export interface ProxyContext {
 	/** Remembers each server's own tool annotations between a tools/list and a later call. */
 	cacheKey: string
 	upstreamUrl: string
-	/** A custom server's allowed tools: any other tool is refused and left out of tools/list. */
+	/** A fixed list of allowed tools (a custom server's, or Dinero's): any other tool is refused and left out of tools/list. */
 	allowedTools?: readonly string[]
 	/** The headers that sign in upstream. Throws GatewayUpstreamError when it cannot. */
 	upstreamHeaders: () => Promise<Record<string, string>>
