@@ -175,6 +175,7 @@ describe('Integrations Routes', () => {
 				'canva',
 				'clickup',
 				'deepdots',
+				'dinero',
 				'github',
 				'gmail',
 				'google-calendar',
