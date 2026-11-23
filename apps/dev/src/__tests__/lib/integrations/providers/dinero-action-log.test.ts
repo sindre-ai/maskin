@@ -19,6 +19,7 @@ describe('Dinero action log', () => {
 		for (const tool of DINERO_LOGGED_TOOLS) expect(DINERO_WITH_BOOKING_TOOLS).toContain(tool)
 		expect([...DINERO_LOGGED_TOOLS].sort()).toEqual([
 			'BookVoucher',
+			'CreateFinanceVoucher',
 			'CreatePurchaseVoucher',
 			'add_invoice_payment',
 			'add_purchase_payment',
@@ -36,6 +37,31 @@ describe('Dinero action log', () => {
 		}
 		expect(dineroCallRefusal('CreatePurchaseVoucher', {})).toBeNull()
 		expect(dineroCallRefusal('list_vouchers', {})).toBeNull()
+	})
+
+	it('lets CreateFinanceVoucher through only as a draft while booking is off', () => {
+		const tool = 'CreateFinanceVoucher'
+		expect(dineroCallRefusal(tool, { organizationId: 1, book: false })).toBeNull()
+		expect(dineroCallRefusal(tool, { book: false, lines: [{ amount: 4000 }] })).toBeNull()
+		for (const args of [
+			undefined,
+			null,
+			{},
+			{ organizationId: 1 },
+			{ book: true },
+			{ book: 'false' },
+			{ book: 0 },
+			{ book: null },
+			{ Book: true, book: false },
+			{ book: false, autoBook: true },
+			{ book: false, voucher: { book: true } },
+			{ book: false, lines: [{ bookNow: true }] },
+		]) {
+			expect(dineroCallRefusal(tool, args)).toContain('booking is off')
+		}
+		// With the owner's switch on, the arguments are the agent's to set.
+		expect(dineroCallRefusal(tool, { book: true }, true)).toBeNull()
+		expect(dineroCallRefusal(tool, {}, true)).toBeNull()
 	})
 
 	it('reads the text of the answer to one call, from plain JSON or an event stream', () => {

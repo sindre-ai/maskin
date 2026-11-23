@@ -339,9 +339,14 @@ export async function proxyMcp(
 				}
 			}
 		}
-		// Dinero: a booking or payment must carry the version stamp of the voucher the agent read.
+		// Dinero: a booking or payment must carry the version stamp of the voucher the agent read, and a
+		// group voucher only saves a draft while booking is off.
 		if (decision.allowed && provider === 'dinero') {
-			const refusal = dineroCallRefusal(toolName, rpc?.params?.arguments)
+			const refusal = dineroCallRefusal(
+				toolName,
+				rpc?.params?.arguments,
+				ctx.allowedTools?.includes('BookVoucher') === true,
+			)
 			if (refusal) decision = { ...decision, allowed: false, message: refusal }
 		}
 		// A write waits for a person while the calling session runs under a flow in pilot, unless the
