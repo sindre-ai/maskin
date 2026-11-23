@@ -1112,6 +1112,26 @@ describe('IntegrationsPage tabs, search and categories', () => {
 		expect(screen.getByText('No integration matches that filter')).toBeInTheDocument()
 	})
 
+	it('files the bookkeeping providers under the Accounting chip, not Sales & payments', async () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [
+				{ name: 'numina', displayName: 'Numina', authType: 'api_key', events: [] },
+				{ name: 'dinero', displayName: 'Dinero', authType: 'oauth2', events: [] },
+				{ name: 'uniconta', displayName: 'Uniconta', authType: 'api_key', events: [] },
+				{ name: 'stripe', displayName: 'Stripe', authType: 'oauth2', events: [] },
+			],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+		await openDiscover()
+		await userEvent.click(screen.getByRole('button', { name: 'Accounting' }))
+		expect(screen.getByText('Numina')).toBeInTheDocument()
+		expect(screen.getByText('Dinero')).toBeInTheDocument()
+		expect(screen.getByText('Uniconta')).toBeInTheDocument()
+		expect(screen.queryByText('Stripe')).not.toBeInTheDocument()
+	})
+
 	it('still says everything is connected when nothing is filtered', async () => {
 		mockUseIntegrations.mockReturnValue({
 			data: providers.map((p) => buildIntegrationResponse({ provider: p.name, status: 'active' })),
