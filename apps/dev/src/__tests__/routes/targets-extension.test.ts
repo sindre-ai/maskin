@@ -102,7 +102,8 @@ describe('Targets extension', () => {
 				metadata: targetMetadata,
 			})
 			const { app, mockResults, calls } = createTestApp(objectsRoutes, '/api/objects')
-			mockResults.selectQueue = [[workspaceWithTargets()]]
+			// workspace settings, then the check that the owner is a workspace member
+			mockResults.selectQueue = [[workspaceWithTargets()], [{ id: owner }]]
 			mockResults.insert = [obj]
 
 			const res = await app.request(
