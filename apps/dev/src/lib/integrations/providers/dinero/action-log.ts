@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { toolCallSucceeded } from '../../../analytics/receipt-events'
 import { recordEvent } from '../../../events/record-event'
@@ -27,6 +28,29 @@ const VERSIONED_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 const RESULT_LIMIT = 4000
+
+/** A text argument longer than this is a file (upload_file takes the receipt as one string). */
+const ARGUMENT_TEXT_LIMIT = 1000
+
+/**
+ * The arguments as the log keeps them. A long text argument is the file itself (a receipt, up to
+ * a few MB), so it is replaced by its size and a short fingerprint, and the other arguments (the
+ * file name, the voucher figures) stay as they are.
+ */
+export function loggedArguments(args: unknown): unknown {
+	if (typeof args === 'string' && args.length > ARGUMENT_TEXT_LIMIT) {
+		return {
+			omitted: 'file content',
+			length: args.length,
+			sha256: createHash('sha256').update(args).digest('hex').slice(0, 16),
+		}
+	}
+	if (Array.isArray(args)) return args.map(loggedArguments)
+	if (args && typeof args === 'object') {
+		return Object.fromEntries(Object.entries(args).map(([k, v]) => [k, loggedArguments(v)]))
+	}
+	return args
+}
 
 /**
  * A call the list cannot judge, because it depends on the arguments. A booking or payment must
@@ -93,7 +117,7 @@ export async function recordDineroAction(p: {
 			entityId: p.integrationId,
 			data: {
 				tool: p.tool,
-				arguments: p.args ?? null,
+				arguments: loggedArguments(p.args) ?? null,
 				outcome: ok ? 'success' : 'error',
 				result: toolAnswerText(text, p.requestId),
 				booking_switch: p.booking,
