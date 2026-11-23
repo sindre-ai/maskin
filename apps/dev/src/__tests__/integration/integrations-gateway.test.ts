@@ -643,6 +643,13 @@ describe('The gateway forwards the message it judged (Integration)', () => {
 	})
 })
 
+const stamped = (name: string, extra: Record<string, unknown> = {}) => ({
+	jsonrpc: '2.0',
+	id: 1,
+	method: 'tools/call',
+	params: { name, arguments: { organizationId: 1, timestamp: 'v1', ...extra } },
+})
+
 describe('Dinero is limited to a fixed list of tools through the gateway (Integration)', () => {
 	const toolText = async (res: Response) =>
 		((await res.json()) as { result: { isError?: boolean; content: Array<{ text: string }> } })
@@ -680,9 +687,9 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://mcp.dinero.dk')
 	})
 
-	it('adds BookVoucher, and only it, when the owner switched booking on', async () => {
+	it('adds BookVoucher and the two payment tools, and no others, when the owner switched booking on', async () => {
 		const s = await dinero({ dinero_booking: true })
-		const booked = await post(s.app, s.ws.id, call('BookVoucher'), 'dinero')
+		const booked = await post(s.app, s.ws.id, stamped('BookVoucher'), 'dinero')
 		expect((await toolText(booked)).isError).toBeUndefined()
 		expect(fetchMock).toHaveBeenCalledOnce()
 
@@ -728,5 +735,79 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		)
 		const { result } = (await res.json()) as { result: { tools: Array<{ name: string }> } }
 		expect(result.tools.map((t) => t.name)).toEqual(['CreatePurchaseVoucher', 'list_vouchers'])
+	})
+})
+
+describe('Dinero booking is stamped and logged through the gateway (Integration)', () => {
+	async function booking() {
+		const s = await setup({ provider: 'dinero', config: { dinero_booking: true } })
+		return { ...s, app: appFor(s.writer.id) }
+	}
+	const logged = async (integrationId: string) => {
+		for (let i = 0; i < 20; i++) {
+			const rows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, integrationId), eq(events.action, 'dinero_action')))
+			if (rows.length > 0) return rows
+			await new Promise((r) => setTimeout(r, 25))
+		}
+		return []
+	}
+
+	it('registers a payment with the booking switch on, and refuses it with the switch off', async () => {
+		const on = await booking()
+		for (const tool of ['add_purchase_payment', 'add_invoice_payment']) {
+			const res = await post(on.app, on.ws.id, stamped(tool, { amount: 100 }), 'dinero')
+			expect(
+				((await res.json()) as { result: { isError?: boolean } }).result.isError,
+			).toBeUndefined()
+		}
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+
+		fetchMock.mockClear()
+		const off = await setup({ provider: 'dinero' })
+		const res = await post(
+			appFor(off.writer.id),
+			off.ws.id,
+			stamped('add_invoice_payment'),
+			'dinero',
+		)
+		expect(((await res.json()) as { result: { isError?: boolean } }).result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses a booking or payment with no version stamp, before Dinero', async () => {
+		const s = await booking()
+		for (const tool of ['BookVoucher', 'add_purchase_payment']) {
+			const res = await post(
+				s.app,
+				s.ws.id,
+				{ ...call(tool), params: { name: tool, arguments: { organizationId: 1, timestamp: ' ' } } },
+				'dinero',
+			)
+			const { result } = (await res.json()) as {
+				result: { isError?: boolean; content: Array<{ text: string }> }
+			}
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('needs the timestamp')
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('logs a draft save and a booking with the arguments and the answer, and a read not at all', async () => {
+		const s = await booking()
+		await post(s.app, s.ws.id, stamped('BookVoucher', { voucherGuid: 'g-1' }), 'dinero')
+		await post(s.app, s.ws.id, call('list_vouchers'), 'dinero')
+		const rows = await logged(s.linear.id)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({ actorId: s.writer.id })
+		expect(rows[0].data).toMatchObject({
+			tool: 'BookVoucher',
+			outcome: 'success',
+			result: 'ok',
+			booking_switch: true,
+			arguments: { voucherGuid: 'g-1', timestamp: 'v1' },
+		})
 	})
 })

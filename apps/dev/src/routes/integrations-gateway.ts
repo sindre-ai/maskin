@@ -31,6 +31,11 @@ import {
 } from '../lib/integrations/mcp-gateway'
 import { loadOAuthApp } from '../lib/integrations/oauth-app'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import {
+	DINERO_LOGGED_TOOLS,
+	dineroCallRefusal,
+	recordDineroAction,
+} from '../lib/integrations/providers/dinero/action-log'
 import { fixedAllowedTools } from '../lib/integrations/providers/dinero/allowed-tools'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
@@ -334,6 +339,11 @@ export async function proxyMcp(
 				}
 			}
 		}
+		// Dinero: a booking or payment must carry the version stamp of the voucher the agent read.
+		if (decision.allowed && provider === 'dinero') {
+			const refusal = dineroCallRefusal(toolName, rpc?.params?.arguments)
+			if (refusal) decision = { ...decision, allowed: false, message: refusal }
+		}
 		// A write waits for a person while the calling session runs under a flow in pilot, unless the
 		// provider has a hold of its own (Gmail, Resend). Asked on every call, so a flow moved out of
 		// pilot applies to the next one. Not an access denial, so no denied-call event.
@@ -449,6 +459,22 @@ export async function proxyMcp(
 			upstream,
 			requestId: rpc?.id,
 			connector: draftConnector,
+			workspaceId,
+			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+	}
+
+	// A Dinero call that changes something goes in the owner's action log once Dinero has answered.
+	if (provider === 'dinero' && toolName && allowed && DINERO_LOGGED_TOOLS.has(toolName)) {
+		void recordDineroAction({
+			db,
+			upstream,
+			requestId: rpc?.id,
+			tool: toolName,
+			args: rpc?.params?.arguments,
+			booking: ctx.allowedTools?.includes('BookVoucher') === true,
+			integrationId: integration.id,
 			workspaceId,
 			actorId,
 			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),

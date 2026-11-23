@@ -51,6 +51,7 @@ import dataQueryRoutes from './routes/data-query'
 import desktopRoutes from './routes/desktop'
 import deviceAuthRoutes from './routes/device-auth'
 import devicesRoutes from './routes/devices'
+import dineroBookingRoutes from './routes/dinero-booking'
 import emailPickRoutes from './routes/email-pick'
 import emailStopRoutes from './routes/email-stop'
 import eventsRoutes from './routes/events'
@@ -609,6 +610,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// youtube MCP surface — same ordering constraint as google-meet's above.
 	app.route('/api/integrations/youtube/mcp', integrationsYoutubeMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
+	app.route('/api/dinero-booking', dineroBookingRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
 	app.route('/api/integrations', integrationsOAuthAppRoutes)
 	app.route('/api/keychain', keychainAdminRoutes)
