@@ -876,6 +876,22 @@ export const api = {
 				workspaceId,
 			}),
 	},
+	dineroReview: {
+		log: (workspaceId: string, from: string, to: string) =>
+			request<DineroReviewLog>(`/dinero-review?from=${from}&to=${to}`, { workspaceId }),
+		reverse: (workspaceId: string, eventId: number) =>
+			request<DineroReverseResult>('/dinero-review/reverse', {
+				method: 'POST',
+				body: { event_id: eventId },
+				workspaceId,
+			}),
+		approve: (workspaceId: string, body: { from: string; to: string; figures_hash: string }) =>
+			request<DineroReviewLog>('/dinero-review/approve', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+	},
 	sendPermissions: {
 		get: (workspaceId: string) =>
 			request<SendPermissionsView>('/send-permissions', { workspaceId }),
@@ -3929,4 +3945,42 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface DineroReviewLine {
+	description: string | null
+	amount: number | null
+	account: number | null
+	counter_account: number | null
+	vat_code: string | null
+}
+
+export interface DineroReviewItem {
+	event_id: number
+	at: string | null
+	tool: string
+	outcome: string
+	booked: boolean
+	voucher_date: string | null
+	lines: DineroReviewLine[]
+	result: string | null
+	reverses_event_id: number | null
+	reversed_by_event_id: number | null
+	can_reverse: boolean
+	cannot_reverse_because: string | null
+}
+
+export interface DineroReviewLog {
+	from: string
+	to: string
+	items: DineroReviewItem[]
+	figures_hash: string
+	approval: { approved_by: string; approved_at: string; figures_hash: string } | null
+	truncated: boolean
+}
+
+export interface DineroReverseResult {
+	outcome: 'success' | 'error'
+	message: string | null
+	reversal_event_id: number
 }

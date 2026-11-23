@@ -90,6 +90,8 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/actors',
 
 	// Not called by any MCP tool, so not offered to a mat_ token in v1.
+	'POST /api/dinero-review/approve',
+	'POST /api/dinero-review/reverse',
 	'POST /api/installed-loops/:id/update',
 	'GET /api/actors/:actorId/skills',
 	'DELETE /api/actors/:actorId/skills/:skillName',
@@ -323,6 +325,7 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'GET /api/desktop/settings',
 	'GET /api/device-auth/preview',
 	'GET /api/dinero-booking',
+	'GET /api/dinero-review',
 	'GET /api/extensions',
 	'GET /api/extensions/:id',
 	'GET /api/extensions/:id/attempted',

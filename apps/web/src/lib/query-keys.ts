@@ -84,6 +84,11 @@ export const queryKeys = {
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
 	},
+	dineroReview: {
+		log: (workspaceId: string, from: string, to: string) =>
+			['dinero-review', workspaceId, from, to] as const,
+		all: (workspaceId: string) => ['dinero-review', workspaceId] as const,
+	},
 	sendPermissions: {
 		all: (workspaceId: string) => ['send-permissions', workspaceId] as const,
 	},

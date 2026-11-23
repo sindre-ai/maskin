@@ -3778,6 +3778,31 @@ export const apiRouteTimingMinutes = pgTable(
 	],
 )
 
+// ── Owner approvals ────────────────────────────────────────────────────────
+
+// The owner approval record: one row per "the owner approved this", shared by every step that needs
+// one. kind says what was approved (dinero_books: the final approval of a period's books), subject
+// says which one, figures_hash is the sha256 of the figures the owner saw. expires_at and used_at
+// are for steps that consume an approval once. approved_by carries no foreign key: it is a record.
+// See 0175_owner_approvals.sql.
+export const ownerApprovals = pgTable(
+	'owner_approvals',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind').notNull(),
+		subject: text('subject').notNull(),
+		figuresHash: text('figures_hash').notNull(),
+		approvedBy: uuid('approved_by').notNull(),
+		approvedAt: timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+	},
+	(t) => [index('owner_approvals_ws_kind_subject_idx').on(t.workspaceId, t.kind, t.subject)],
+)
+
 // ── YouTube approval gate ──────────────────────────────────────────────────
 
 // One write an agent wants to make on YouTube, held until a person approves it. A tool call only

@@ -42,6 +42,10 @@ import {
 	callDineroBridge,
 	isDineroBridgeTool,
 } from '../lib/integrations/providers/dinero/bridge'
+import {
+	DINERO_LOCKED_MESSAGE,
+	isDineroPeriodLocked,
+} from '../lib/integrations/providers/dinero/review'
 import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
@@ -353,6 +357,16 @@ export async function proxyMcp(
 				ctx.allowedTools?.includes('BookVoucher') === true,
 			)
 			if (refusal) decision = { ...decision, allowed: false, message: refusal }
+		}
+		// Dinero: once the owner approved the books for a period that includes today, nothing the
+		// flow does can change them. Reads still work.
+		if (
+			decision.allowed &&
+			provider === 'dinero' &&
+			DINERO_LOGGED_TOOLS.has(toolName) &&
+			(await isDineroPeriodLocked(db, { workspaceId, integrationId: integration.id }))
+		) {
+			decision = { ...decision, allowed: false, message: DINERO_LOCKED_MESSAGE }
 		}
 		// A write waits for a person while the calling session runs under a flow in pilot, unless the
 		// provider has a hold of its own (Gmail, Resend). Asked on every call, so a flow moved out of
