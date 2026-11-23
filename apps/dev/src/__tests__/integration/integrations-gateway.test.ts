@@ -664,7 +664,6 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		const s = await dinero()
 		for (const tool of [
 			'BookVoucher',
-			'CreateFinanceVoucher',
 			'book_finance_voucher',
 			'delete_purchase_voucher_draft',
 			'create_invoice',
@@ -694,11 +693,50 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		expect(fetchMock).toHaveBeenCalledOnce()
 
 		fetchMock.mockClear()
-		for (const tool of ['CreateFinanceVoucher', 'book_finance_voucher']) {
-			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+		const result = await toolText(
+			await post(s.app, s.ws.id, call('book_finance_voucher'), 'dinero'),
+		)
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('saves a group voucher as a draft only, and refuses it when the call asks to book', async () => {
+		const s = await dinero()
+		const finance = (args: Record<string, unknown>) => ({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'CreateFinanceVoucher', arguments: { organizationId: 1, ...args } },
+		})
+		for (const args of [{ book: true }, {}, { book: 'false' }, { book: false, autoBook: true }]) {
+			const result = await toolText(await post(s.app, s.ws.id, finance(args), 'dinero'))
 			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('booking is off')
 		}
 		expect(fetchMock).not.toHaveBeenCalled()
+
+		const draft = await post(s.app, s.ws.id, finance({ book: false }), 'dinero')
+		expect((await toolText(draft)).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const sent = JSON.parse((fetchMock.mock.calls[0] as [string, { body: string }])[1].body)
+		expect(sent.params.arguments.book).toBe(false)
+	})
+
+	it('lets a group voucher book in one call only when the owner switched booking on', async () => {
+		const s = await dinero({ dinero_booking: true })
+		const res = await post(
+			s.app,
+			s.ws.id,
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name: 'CreateFinanceVoucher', arguments: { organizationId: 1, book: true } },
+			},
+			'dinero',
+		)
+		expect((await toolText(res)).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
 	})
 
 	it('keeps booking off when the switch is anything but true', async () => {
@@ -734,7 +772,11 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 			'dinero',
 		)
 		const { result } = (await res.json()) as { result: { tools: Array<{ name: string }> } }
-		expect(result.tools.map((t) => t.name)).toEqual(['CreatePurchaseVoucher', 'list_vouchers'])
+		expect(result.tools.map((t) => t.name)).toEqual([
+			'CreatePurchaseVoucher',
+			'CreateFinanceVoucher',
+			'list_vouchers',
+		])
 	})
 })
 

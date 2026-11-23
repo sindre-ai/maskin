@@ -14,6 +14,7 @@ export const DINERO_ACTION_EVENT = 'dinero_action'
  */
 export const DINERO_LOGGED_TOOLS: ReadonlySet<string> = new Set([
 	'CreatePurchaseVoucher',
+	'CreateFinanceVoucher',
 	'upload_file',
 	'BookVoucher',
 	'add_purchase_payment',
@@ -52,12 +53,37 @@ export function loggedArguments(args: unknown): unknown {
 	return args
 }
 
+/** Every value stored under a key that has "book" in it, at any depth of the arguments. */
+function bookValues(value: unknown, out: unknown[] = []): unknown[] {
+	if (Array.isArray(value)) {
+		for (const item of value) bookValues(item, out)
+	} else if (value && typeof value === 'object') {
+		for (const [key, inner] of Object.entries(value)) {
+			if (/book/i.test(key)) out.push(inner)
+			bookValues(inner, out)
+		}
+	}
+	return out
+}
+
 /**
  * A call the list cannot judge, because it depends on the arguments. A booking or payment must
  * carry the version stamp (timestamp) of the voucher the agent looked at, so Dinero refuses it
  * if the voucher changed since. BookVoucher makes the stamp optional; here it is not.
+ *
+ * CreateFinanceVoucher books in the same call when its book argument is set, so a name on the list
+ * is not enough. With the owner's booking switch off it is let through only with book set to
+ * false, and every book-like value anywhere in the arguments must be false: a missing book, a true,
+ * a string, or a shape that is not understood is refused, so it fails closed. With the switch on
+ * it is let through as it is.
  */
-export function dineroCallRefusal(tool: string, args: unknown): string | null {
+export function dineroCallRefusal(tool: string, args: unknown, booking = false): string | null {
+	if (tool === 'CreateFinanceVoucher') {
+		if (booking) return null
+		const top = (args as { book?: unknown } | null | undefined)?.book
+		if (top === false && bookValues(args).every((v) => v === false)) return null
+		return `${tool} saves a draft only while booking is switched off, and booking is off. Call it again with book set to false and no other book setting. Nothing was sent to Dinero.`
+	}
 	if (!VERSIONED_TOOLS.has(tool)) return null
 	const stamp = (args as { timestamp?: unknown } | null | undefined)?.timestamp
 	if (typeof stamp === 'string' && stamp.trim().length > 0) return null

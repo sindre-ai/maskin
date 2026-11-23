@@ -6,16 +6,16 @@ import {
 } from '../../../../lib/integrations/providers/dinero/allowed-tools'
 
 describe('Dinero allowed tools', () => {
-	it('is the 16 names the accounting flow listing promises', () => {
-		expect(DINERO_DRAFT_ONLY_TOOLS).toHaveLength(16)
+	it('is the 16 names the accounting flow listing promises, plus CreateFinanceVoucher', () => {
+		expect(DINERO_DRAFT_ONLY_TOOLS).toHaveLength(17)
 		expect(DINERO_DRAFT_ONLY_TOOLS).toContain('CreatePurchaseVoucher')
-		expect(new Set(DINERO_DRAFT_ONLY_TOOLS).size).toBe(16)
+		expect(DINERO_DRAFT_ONLY_TOOLS).toContain('CreateFinanceVoucher')
+		expect(new Set(DINERO_DRAFT_ONLY_TOOLS).size).toBe(17)
 	})
 
 	it('never lists a tool that books, changes or deletes, except BookVoucher and the payments behind the switch', () => {
 		for (const tool of [
 			'BookVoucher',
-			'CreateFinanceVoucher',
 			'book_finance_voucher',
 			'attach_file_to_voucher_card',
 			'submit_feedback',
@@ -31,7 +31,6 @@ describe('Dinero allowed tools', () => {
 			'add_purchase_payment',
 			'add_invoice_payment',
 		])
-		expect(DINERO_WITH_BOOKING_TOOLS).not.toContain('CreateFinanceVoucher')
 		expect(DINERO_WITH_BOOKING_TOOLS).not.toContain('book_finance_voucher')
 	})
 

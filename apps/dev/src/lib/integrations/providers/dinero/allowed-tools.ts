@@ -4,15 +4,20 @@ import type { IntegrationConfig } from '../../../types'
  * The only tools an agent may use on Dinero's hosted server (48 tools, read from the live list on
  * 23 Nov 2026). An exact-name list, not name rules: a tool Dinero adds later is refused until
  * someone lists it here. Everything that changes the books but is not on it stays refused for
- * every agent, Read & write included: CreateFinanceVoucher (its book flag books in the same call),
- * book_finance_voucher, the invoice, credit note, trade offer and contact writes, the
+ * every agent, Read & write included: book_finance_voucher, the invoice, credit note, trade offer and contact writes, the
  * draft deletes, attach_file_to_voucher_card and submit_feedback.
  *
  * CreatePurchaseVoucher has no argument that books, so naming it is enough: it saves a draft and
  * BookVoucher is a separate tool. upload_file puts a receipt in the archive, which does not touch
  * the books, and gives the fileGuid the draft attaches.
  *
- * The same 16 names are in the accounting flow's listing text (accounting-loop.ts).
+ * CreateFinanceVoucher is on the list because it is the only way to save a draft on a group or
+ * balance account, but its book argument books in the same call. The name is not enough: the
+ * gateway checks the arguments (dineroCallRefusal in action-log.ts) and refuses it unless book is
+ * false, or the owner's booking switch is on.
+ *
+ * The listing text (accounting-loop.ts) names the first 16, for the custom-server route that has
+ * no argument check. CreateFinanceVoucher is not in it and must not be added to a custom server's list.
  */
 export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'CreatePurchaseVoucher',
@@ -31,6 +36,7 @@ export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'get_purchase_drafts_for_file',
 	'SearchBankTransactions',
 	'upload_file',
+	'CreateFinanceVoucher',
 ]
 
 /**
