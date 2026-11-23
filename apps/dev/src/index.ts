@@ -120,11 +120,13 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
-	onPoolRecycled: ({ runningQueries, sql }) => {
-		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
-			runningQueries,
-			sql,
-		})
+	onPoolRecycled: ({ runningQueries, sql, reason }) => {
+		logger.warn(
+			reason === 'read_only'
+				? 'DB pool replaced: a write was refused as read-only, so the connections are on a node that is no longer the primary'
+				: 'DB pool replaced: a query got no answer and the database was not busy',
+			{ runningQueries, sql, reason },
+		)
 	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {

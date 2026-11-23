@@ -103,6 +103,41 @@ struct PhraseSegmenterTests {
 		#expect(action == .discard)
 	}
 
+	@Test func aShortBurstWaitsForTheNextPhraseOnTheServerSettings() {
+		var segmenter = PhraseSegmenter(options: .server)
+		#expect(segmenter.push(rms: 0.1, atMs: 500) == nil)
+		#expect(segmenter.push(rms: 0.1, atMs: 700) == nil)
+		// 200 ms of speech is under the 600 ms a phrase needs, so the pause does not close it.
+		#expect(segmenter.push(rms: 0, atMs: 1_200) == nil)
+		// More speech follows: the phrase now spans enough and the next pause closes it, burst included.
+		#expect(segmenter.push(rms: 0.1, atMs: 1_500) == nil)
+		#expect(segmenter.push(rms: 0.1, atMs: 1_700) == nil)
+		#expect(segmenter.push(rms: 0, atMs: 2_200) == .cut)
+	}
+
+	@Test func aClickIsDroppedAtTheCapOnTheServerSettings() {
+		var segmenter = PhraseSegmenter(options: .server)
+		#expect(segmenter.push(rms: 0.1, atMs: 500) == nil)
+		#expect(segmenter.hasVoice)
+		#expect(!segmenter.hasSpeech)
+		#expect(segmenter.push(rms: 0, atMs: 6_000) == .discard)
+	}
+
+	@Test func aClickTheRecogniserHeardWordsInIsStillSent() {
+		var segmenter = PhraseSegmenter(options: .server)
+		segmenter.heardWords = true
+		#expect(segmenter.push(rms: 0.1, atMs: 500) == nil)
+		#expect(segmenter.push(rms: 0, atMs: 6_000) == .cut)
+	}
+
+	@Test func aShortWordAtTheCapIsStillSentOnTheServerSettings() {
+		var segmenter = PhraseSegmenter(options: .server)
+		#expect(segmenter.push(rms: 0.1, atMs: 500) == nil)
+		#expect(segmenter.push(rms: 0.1, atMs: 800) == nil)
+		#expect(segmenter.hasSpeech)
+		#expect(segmenter.push(rms: 0, atMs: 6_000) == .cut)
+	}
+
 	@Test func resetForgetsWhatWasHeard() {
 		var segmenter = PhraseSegmenter()
 		segmenter.heardWords = true

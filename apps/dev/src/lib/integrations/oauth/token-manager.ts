@@ -3,9 +3,11 @@ import { integrations } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import { recordEvent } from '../../events/record-event'
+import { getKmsProvider } from '../../keychain-kms'
 import { logger } from '../../logger'
 import { requireCredentials } from '../credential-column'
 import { IntegrationAuthRevokedError } from '../errors'
+import { loadOAuthApp } from '../oauth-app'
 import type { ResolvedProvider, StoredCredentials } from '../types'
 import { OAuth2Handler, TokenRequestError } from './handler'
 
@@ -290,7 +292,11 @@ export class TokenManager {
 		}
 
 		const oauth2Config = provider.config.auth.config
-		const handler = new OAuth2Handler(oauth2Config, provider.parseTokenResponse)
+		// A tool that wants the customer's own app refreshes with the one this workspace saved.
+		const clientApp = oauth2Config.customerApp
+			? ((await loadOAuthApp(db, getKmsProvider(), workspaceId, provider.config.name)) ?? undefined)
+			: undefined
+		const handler = new OAuth2Handler(oauth2Config, provider.parseTokenResponse, clientApp)
 
 		let refreshed: StoredCredentials
 		try {

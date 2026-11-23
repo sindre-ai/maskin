@@ -2558,7 +2558,7 @@ export const tools = {
 	},
 	request_integration_access: {
 		description:
-			'Ask the user, with an Allow / Not now card in the chat, to let you use a connected integration you may not use (or not at the level you need). Use it when a call was refused for access, or `list_integrations` shows no access or only read when you need to write. Use `connect_integration` when it is not connected, `request_keychain_access` for a saved key or login. Only a person can change your access (`update_integration_access` refuses agents). If allowed you are restarted with it. After calling, end your turn without a closing message. Chat with a person only; otherwise say what you need in your reply.',
+			'Ask the user, with an Allow / Not now card in the chat, to let you use a connected integration you may not use (or not at the level you need). Use it when a call was refused for access, or `list_integrations` shows no access or only read when you need to write. Use `connect_integration` when it is not connected, `request_keychain_access` for a saved key or login. Only a person can change your access (`update_integration_access` refuses agents). For Google Calendar, Google Meet, Gmail and Linear the card also offers Allow in this chat for 8 hours (write access in this chat only). If allowed you are restarted with it. After calling, end your turn without a closing message. Chat with a person only; otherwise say what you need in your reply.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			integration_id: z.string().uuid().describe('Id from list_integrations.'),

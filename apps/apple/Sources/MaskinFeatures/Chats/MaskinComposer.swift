@@ -644,10 +644,11 @@ struct MaskinComposer: View {
 				.onChange(of: composer.photoItems) { _, items in
 					guard !items.isEmpty else { return }
 					for (index, item) in items.enumerated() {
-						let name = AttachmentLoading.photoName(index: index)
+						let isMovie = AttachmentLoading.isMovie(item)
 						composer.model.attach(
-							name: name, mimeType: AttachmentLoading.isMovie(item) ? "video/quicktime" : "image/jpeg",
-							prepare: AttachmentLoading.media(item, name: name))
+							name: isMovie ? AttachmentLoading.videoName(index: index) : AttachmentLoading.photoName(index: index),
+							mimeType: isMovie ? "video/quicktime" : "image/jpeg",
+							prepare: AttachmentLoading.media(item, index: index))
 					}
 					composer.photoItems = []
 				}

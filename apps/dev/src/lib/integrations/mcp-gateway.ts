@@ -1,4 +1,5 @@
 import { PILOT_REFUSAL } from '@maskin/shared'
+import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../mcp-session-header'
 import { type AgentAccess, canRead, canWrite } from './agent-access'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
 import {
@@ -36,40 +37,67 @@ import {
 export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'airtable',
 	'amplitude',
+	'apollo',
+	'asana',
 	'atlassian',
 	'attio',
 	'azure-devops',
+	'box',
+	'calendly',
 	'canva',
+	'clay',
 	'clickup',
 	'cloudflare',
 	'datadog',
+	'dinero',
+	'docusign',
+	'dropbox',
 	'fathom',
+	'figma',
 	'fireflies',
 	'gmail',
+	'gong',
 	'google-calendar',
 	'granola',
 	'hex',
+	'hubspot',
+	'intercom',
+	'lattice',
 	'linear',
+	'looker',
+	'make',
 	'miro',
 	'mixpanel',
+	'monday',
 	'neon',
 	'netlify',
 	'new-relic',
 	'notion',
+	'numina',
 	'otter',
+	'outreach',
 	'pagerduty',
+	'pipedrive',
 	'planetscale',
 	'posthog',
+	'power-bi',
+	'ramp',
 	'resend',
 	'retool',
+	'salesforce',
 	'sentry',
+	'squarespace',
 	'stripe',
 	'supabase',
 	'ubersuggest',
+	'uniconta',
 	'vercel',
 	'webflow',
+	'xero',
 	'zapier',
+	'zendesk',
 	'zoom',
+	'zoominfo',
 ])
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000
@@ -86,6 +114,8 @@ export function gatewayServerSpec(provider: string): Record<string, unknown> {
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			// Tells the gateway which chat the call comes from, so an Allow in this chat counts.
+			[MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE,
 		},
 	}
 }
@@ -202,6 +232,11 @@ const COMMAND_GATED_HINT =
 const COMMAND_GATED_LIST_NOTE =
 	'Read access: query and lookup commands run; create, update and delete commands are refused.'
 
+/** The refusal for a tool that is not on the server's list of allowed tools. */
+export function toolNotListedMessage(providerLabel: string, toolName: string): string {
+	return `Access denied: ${toolName} is not one of the tools ${providerLabel} may use here. A person limited this server to a short list of tools. This is a permission, not an outage, so do not retry the same call or look for another way to do it. Say in your reply what you needed it for; a person can change the list.`
+}
+
 export function decideToolCall(input: {
 	provider: string
 	providerLabel: string
@@ -210,6 +245,8 @@ export function decideToolCall(input: {
 	args?: unknown
 	access: AgentAccess
 	annotations?: ToolAnnotationsLike | null
+	/** A custom server's allowed tools. Set, a tool outside it is refused whatever the access. */
+	allowedTools?: readonly string[]
 }): GatewayDecision {
 	const { kind, innerTool } = classifyCall(
 		input.provider,
@@ -217,6 +254,14 @@ export function decideToolCall(input: {
 		input.args,
 		input.annotations,
 	)
+	if (input.allowedTools && !input.allowedTools.includes(input.toolName)) {
+		return {
+			allowed: false,
+			kind,
+			innerTool,
+			message: toolNotListedMessage(input.providerLabel, input.toolName),
+		}
+	}
 	if (allows(input.access, kind)) return { allowed: true, kind, innerTool }
 	const named = innerTool ? `${input.toolName} (${innerTool})` : input.toolName
 	const message = accessDeniedMessage({
@@ -285,10 +330,18 @@ function annotateCommandGatedTool(
  */
 export function annotateToolsList(
 	result: { tools?: ListedTool[] } & Record<string, unknown>,
-	ctx: { provider: string; providerLabel: string; access: AgentAccess },
+	ctx: {
+		provider: string
+		providerLabel: string
+		access: AgentAccess
+		/** A custom server's allowed tools. Set, every other tool is left out of the list. */
+		allowedTools?: readonly string[]
+	},
 ): { result: Record<string, unknown>; upstreamAnnotations: Map<string, ToolAnnotationsLike> } {
 	const upstreamAnnotations = new Map<string, ToolAnnotationsLike>()
-	const tools = (result.tools ?? []).map((tool) => {
+	const allowed = ctx.allowedTools
+	const listed = (result.tools ?? []).filter((tool) => !allowed || allowed.includes(tool.name))
+	const tools = listed.map((tool) => {
 		if (tool.annotations) upstreamAnnotations.set(tool.name, tool.annotations)
 		if (isCommandGated(ctx.provider, tool.name)) return annotateCommandGatedTool(tool, ctx)
 		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)

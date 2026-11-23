@@ -2,6 +2,7 @@ import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { isPrivateAddress } from './public-host'
 import { classifyToolKind } from './tool-kind'
 
 /** The modal gives a slow server this long before it shows the error band. */
@@ -19,40 +20,6 @@ export type McpProbeTool = { name: string; kind: 'read' | 'write'; description?:
 export type McpProbeResult =
 	| { ok: true; tools: McpProbeTool[] }
 	| { ok: false; reason: 'rejected' | 'unreachable' | 'invalid' | 'blocked'; message: string }
-
-function isPrivateAddress(address: string): boolean {
-	if (isIP(address) === 6) {
-		const a = address.toLowerCase()
-		if (
-			a === '::1' ||
-			a === '::' ||
-			a.startsWith('fe80') ||
-			a.startsWith('fc') ||
-			a.startsWith('fd')
-		)
-			return true
-		// IPv4 inside IPv6 (::ffff:a.b.c.d or ::a.b.c.d). new URL() rewrites the
-		// dotted tail to hex (::ffff:7f00:1), so accept both spellings.
-		const embedded = a.match(
-			/^::(?:ffff:)?(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/,
-		)
-		if (!embedded) return false
-		if (embedded[1]) return isPrivateAddress(embedded[1])
-		const hi = Number.parseInt(embedded[2] ?? '0', 16)
-		const lo = Number.parseInt(embedded[3] ?? '0', 16)
-		return isPrivateAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
-	}
-	const [a = 0, b = 0] = address.split('.').map(Number)
-	return (
-		a === 0 ||
-		a === 10 ||
-		a === 127 ||
-		(a === 100 && b >= 64 && b <= 127) ||
-		(a === 169 && b === 254) ||
-		(a === 172 && b >= 16 && b <= 31) ||
-		(a === 192 && b === 168)
-	)
-}
 
 /**
  * The probe makes this server call a URL a workspace owner typed in, so it

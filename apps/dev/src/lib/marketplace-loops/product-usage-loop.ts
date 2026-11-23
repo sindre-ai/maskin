@@ -1,7 +1,8 @@
-// Shared constants for the Product Usage marketplace bundle.
+// Shared constants for the Product Analytics marketplace bundle (slug product-usage-loop).
 //
-// The bundle contains the Product Analyst, its two triggers (the Monday read
-// and the owner heartbeat), the two skills it loads and a starter Results tab.
+// The bundle contains the Product Analyst, its three triggers (the Monday read, the daily
+// anomaly check and the owner heartbeat), the two skills it loads and starter Results and
+// Lifecycle tabs. The flow description carries an empty Setup section the installer fills.
 // Its data in data/product-usage-*.json is written to be workspace-neutral:
 // it names no company, person, product, date or id, and it works with
 // whichever product analytics tool the installer connects. With none
@@ -28,9 +29,9 @@ export { actorSnapshot, skillSnapshot, triggerSnapshot } from './loop-snapshot'
 // actual of "Usage reads" current.
 const PRODUCT_USAGE_SETTINGS: LoopSettings = {
 	entryCondition:
-		'The weekly usage read finds a change, or a number that contradicts what the team believes.',
+		'The weekly read or the daily check finds a change, an anomaly, or a number that contradicts what the team believes.',
 	closeCondition:
-		'A finding is done when it is filed once as an insight linked to the feature or bet it concerns. A read with nothing new counts as done and stays silent. With no product analytics tool connected the flow only says so, once.',
+		'A finding is done when it is filed once as an insight with a recommended action, linked to the feature or bet it concerns, and, if critical, the person named in Setup has been notified. A read with nothing new counts as done and stays silent. With no product analytics tool connected the flow only says so, once.',
 	tags: ['Product'],
 	targets: [
 		{
@@ -65,8 +66,8 @@ export const PRODUCT_USAGE_SKILL_IDS: readonly string[] = [
 	...new Set(PRODUCT_USAGE_ACTOR_IDS.flatMap(skillIdsForActor)),
 ]
 
-// The flow page's tabs, in order. Results ships as a starter page in the quiet state; its
-// counter reads live and shows zero in an empty workspace. See data/product-usage-views.json.
+// The flow page's tabs, in order. Results and Lifecycle ship as starter pages in the quiet state;
+// their counters read live and show zero in an empty workspace. See data/product-usage-views.json.
 export const PRODUCT_USAGE_VIEW_IDS: readonly string[] = Object.values(productUsageViewsData)
 	.sort((a, b) => a.position - b.position)
 	.map((view) => view.id)

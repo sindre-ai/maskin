@@ -82,6 +82,7 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Agent access has its own tests; here it only has to render.
 	useSetAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useRemoveAgentGrant: () => ({ mutate: vi.fn(), isPending: false }),
+	useRemoveChatGrant: () => ({ mutate: vi.fn(), isPending: false }),
 	useSetDefaultAgentAccess: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 

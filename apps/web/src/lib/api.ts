@@ -959,19 +959,32 @@ export const api = {
 				`/integrations/${id}/allow-from-chat`,
 				{ method: 'POST', body: { sessionId, scope }, workspaceId },
 			),
+		/** Record that a person pressed Not now on an access card. Grants nothing, restarts nothing. */
+		declineFromChat: (id: string, workspaceId: string, sessionId: string) =>
+			request<{ actorId: string }>(`/integrations/${id}/decline-from-chat`, {
+				method: 'POST',
+				body: { sessionId },
+				workspaceId,
+			}),
 		/** Allow the agent whose session asked in a chat to use a connected integration, and restart it. */
 		allowAccess: (
 			id: string,
 			workspaceId: string,
 			sessionId: string,
 			level: 'read' | 'read_write',
+			scope: 'chat' | 'always' = 'always',
 		) =>
 			request<{ actorId: string; changed: boolean; relaunch: 'stopped' | 'failed' }>(
 				`/integrations/${id}/allow-access`,
-				{ method: 'POST', body: { sessionId, level }, workspaceId },
+				{ method: 'POST', body: { sessionId, level, scope }, workspaceId },
 			),
 		removeGrant: (id: string, workspaceId: string, actorId: string) =>
 			request<{ actorId: string }>(`/integrations/${id}/grants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		removeChatGrant: (id: string, workspaceId: string, grantId: string) =>
+			request<{ grantId: string }>(`/integrations/${id}/chat-grants/${grantId}`, {
 				method: 'DELETE',
 				workspaceId,
 			}),
@@ -997,11 +1010,28 @@ export const api = {
 				workspaceId,
 			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
+		/** The workspace's own sign-in app for a tool: its app id and whether one is saved, never the secret. */
+		oauthApp: (workspaceId: string, provider: string) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, { workspaceId }),
+		saveOAuthApp: (
+			workspaceId: string,
+			provider: string,
+			body: { clientId: string; clientSecret?: string; value?: string },
+		) =>
+			request<OAuthAppStatus>(`/integrations/${provider}/app`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+		/** Removes the saved app. The server refuses while the tool is still connected. */
+		deleteOAuthApp: (workspaceId: string, provider: string) =>
+			request<void>(`/integrations/${provider}/app`, { method: 'DELETE', workspaceId }),
 		connect: (
 			workspaceId: string,
 			provider: string,
 			body?: {
 				api_key?: string
+				project_id?: string
 				receive_subdomain?: string
 				install_new_org?: boolean
 				origin?: string
@@ -2751,7 +2781,12 @@ export interface IntegrationResponse {
 	/** Explicit per-agent grants. For a Keychain credential these are the only agents with access. */
 	agentGrants?: AgentGrant[]
 	/** Saved credentials shared with an agent for one chat only. */
-	chatGrants?: Array<{ actorId: string; conversationId: string }>
+	chatGrants?: Array<{
+		id: string
+		actorId: string
+		conversationId: string
+		expiresAt: string | null
+	}>
 }
 
 /** Where a send setting came from: the agent's own, the workspace default, or the starting table. */
@@ -2878,12 +2913,28 @@ export interface ProviderEventDefinition {
 	label: string
 }
 
+export interface OAuthAppStatus {
+	configured: boolean
+	clientId?: string
+	/** The customer's own address or tenant, for a tool that has one. Not secret. */
+	value?: string
+	updatedAt?: string
+	/** The URL the vendor's app must list as its callback. */
+	callbackUrl: string
+}
+
 export interface ProviderInfo {
 	name: string
 	displayName: string
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	/** The vendor wants the workspace's own sign-in app: ask for its id and secret before Connect. */
+	customerApp?: boolean
+	/** With customerApp: the app has no secret (a public client), so the form does not ask for one. */
+	customerAppPublic?: boolean
+	/** With customerApp: the tool lives at an address that differs per customer, asked for in the form. */
+	customerValue?: { label: string; placeholder: string; help?: string }
 	mcp?: {
 		envKey: string
 		autoInject: boolean
@@ -3331,6 +3382,8 @@ export interface MessageIntegrationAccessRequest {
 	display_name: string
 	level: 'read' | 'read_write'
 	reason?: string
+	/** Set by the server: the card can also allow write for a few hours in this chat only. */
+	chat_lift?: { hours: number; text: string; tool?: string }
 }
 
 /** An agent asking the person to add a tool (MCP) server, surfaced as a card. Holds no secret. */
