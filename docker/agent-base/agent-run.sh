@@ -208,6 +208,29 @@ assert_skills_symlink() {
   echo "[system] workspace skills registered: ${link} -> ${target}"
 }
 
+# Lean context (MASKIN_LEAN_CONTEXT=1; off unless set, so a session starts as it
+# always has). Rollback is unsetting it, no image rebuild. When on:
+#   - CLAUDE.md carries the persona and learnings, and only the always-on skills in
+#     full. Every other skill stays at /agent/skills, where Claude Code lists it by
+#     name and description and loads it through the Skill tool when it is needed.
+#   - the bundled Claude Code skills and the built-in tools no agent uses are
+#     switched off (see run_agent).
+# Always-on skills are named in MASKIN_ALWAYS_ON_SKILLS (comma separated). Unset,
+# it keeps the voice and working-way skills; set empty, it keeps none.
+lean_context_on() {
+  [ "${MASKIN_LEAN_CONTEXT:-}" = "1" ] || [ "${MASKIN_LEAN_CONTEXT:-}" = "true" ]
+}
+
+skill_always_on() {
+  case ",${MASKIN_ALWAYS_ON_SKILLS-plain-english-voice,maskin-way-of-working}," in
+    *",$1,"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Most of the consolidated learnings file pasted at start (20 KB, the CTO's number).
+LEARNINGS_MAX_BYTES=20480
+
 # Build CLAUDE.md from system prompt + skills
 build_context() {
   local context_file="/agent/workspace/CLAUDE.md"
@@ -219,26 +242,62 @@ build_context() {
 
   # Append skills — each skill lives at /agent/skills/<name>/SKILL.md
   # (agent-storage.ts pullWorkspaceSkillsForAgent), not as a flat <name>.md.
+  # With lean context on, only the always-on skills are pasted in.
   if [ -d /agent/skills ] && [ "$(ls -A /agent/skills/*/SKILL.md 2>/dev/null)" ]; then
-    echo "## Skills" >> "$context_file"
-    echo "" >> "$context_file"
+    local skills_heading_written=""
+    local skill_name
     for f in /agent/skills/*/SKILL.md; do
-      echo "### $(basename "$(dirname "$f")")" >> "$context_file"
+      skill_name="$(basename "$(dirname "$f")")"
+      if lean_context_on && ! skill_always_on "$skill_name"; then
+        continue
+      fi
+      if [ -z "$skills_heading_written" ]; then
+        echo "## Skills" >> "$context_file"
+        echo "" >> "$context_file"
+        skills_heading_written=1
+      fi
+      echo "### $skill_name" >> "$context_file"
       echo "" >> "$context_file"
       cat "$f" >> "$context_file"
       echo "" >> "$context_file"
     done
   fi
 
-  # Append memory/learnings
-  if [ -f /agent/memory/consolidated-learnings.md ]; then
+  # Append memory/learnings, capped so a huge memory file cannot eat the window.
+  local learnings_bytes=0 learnings_capped=false
+  local learnings_file="/agent/memory/consolidated-learnings.md"
+  if [ -f "$learnings_file" ]; then
+    local learnings_total
+    learnings_total=$(wc -c < "$learnings_file" | tr -d ' ')
     echo "## Learnings" >> "$context_file"
     echo "" >> "$context_file"
-    cat /agent/memory/consolidated-learnings.md >> "$context_file"
+    if [ "$learnings_total" -le "$LEARNINGS_MAX_BYTES" ]; then
+      cat "$learnings_file" >> "$context_file"
+      learnings_bytes=$learnings_total
+    else
+      # Keep the newest entries, which the agent appends at the end of the file.
+      # Start the kept part on a heading so no entry is cut in the middle.
+      local kept from_heading
+      kept=$(tail -c "$LEARNINGS_MAX_BYTES" "$learnings_file" | tail -n +2)
+      from_heading=$(printf '%s\n' "$kept" | awk '/^#+ /{found=1} found')
+      [ -n "$from_heading" ] && kept=$from_heading
+      printf '_Older learnings are left out here (%s bytes in the full file, cap %s). Read the full file at %s._\n\n' \
+        "$learnings_total" "$LEARNINGS_MAX_BYTES" "$learnings_file" >> "$context_file"
+      printf '%s\n' "$kept" >> "$context_file"
+      learnings_bytes=$(printf '%s\n' "$kept" | wc -c | tr -d ' ')
+      learnings_capped=true
+    fi
     echo "" >> "$context_file"
   fi
 
   echo "[system] Context file written to $context_file"
+
+  # One machine-readable line: the session manager reads it for the session-start
+  # event and warns when the persona or the whole start prompt is very large.
+  local persona_bytes total_bytes
+  persona_bytes=$(printf '%s' "$SYSTEM_PROMPT" | wc -c | tr -d ' ')
+  total_bytes=$(( $(wc -c < "$context_file" | tr -d ' ') + $(printf '%s' "$ACTION_PROMPT" | wc -c | tr -d ' ') ))
+  echo "[system] start prompt size: persona_bytes=${persona_bytes} total_bytes=${total_bytes} learnings_bytes=${learnings_bytes} learnings_capped=${learnings_capped}"
 }
 
 # Configure MCP servers — writes config file and sets MCP_CONFIG_FILE for run_agent
@@ -625,9 +684,23 @@ run_agent() {
         low|medium|high|xhigh|max) effort_args=(--effort "$MASKIN_CLAUDE_EFFORT") ;;
       esac
       # The Maskin-funded route cannot run the CLI's server-side WebSearch.
-      local search_args=()
+      local disallowed=""
       if [ "${MASKIN_DISABLE_WEB_SEARCH:-}" = "1" ]; then
-        search_args=(--disallowedTools=WebSearch)
+        disallowed="WebSearch"
+      fi
+      # Lean context: Claude Code has a switch for its bundled skills
+      # (CLAUDE_CODE_DISABLE_BUNDLED_SKILLS) that leaves workspace skills alone. Two
+      # bundled skills survive it (design, doctor), so they are switched off by name
+      # in settings. The built-in tools below are ones no agent here uses.
+      local lean_args=()
+      if lean_context_on; then
+        export CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1
+        disallowed="${disallowed:+$disallowed,}CronCreate,CronDelete,CronList,DesignSync,PushNotification,RemoteTrigger"
+        lean_args=(--settings '{"skillOverrides":{"design":"off","doctor":"off"}}')
+      fi
+      local search_args=()
+      if [ -n "$disallowed" ]; then
+        search_args=(--disallowedTools="$disallowed")
       fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
@@ -660,6 +733,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
             "${search_args[@]}" \
+            "${lean_args[@]}" \
             "${mcp_args[@]}" \
             < <(node /input-stream.js)
         else
@@ -671,6 +745,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${effort_args[@]}" \
             "${search_args[@]}" \
+            "${lean_args[@]}" \
             "${mcp_args[@]}"
         fi
       else
@@ -682,6 +757,7 @@ run_agent() {
           --dangerously-skip-permissions \
           "${effort_args[@]}" \
           "${search_args[@]}" \
+          "${lean_args[@]}" \
           "${mcp_args[@]}"
       fi
       ;;

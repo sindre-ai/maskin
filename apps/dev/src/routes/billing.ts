@@ -293,8 +293,7 @@ export function resolveBillingWindow(workspace: BillingWorkspace) {
 	// first ran; we use a 30d rolling window so the trial usage never grows
 	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
 	//
-	// A BYO-LLM entitled workspace (the `enterprise_granted` column OR an enterprise
-	// billing owner) is reported as `enterprise` regardless of what's stored:
+	// A BYO-LLM entitled workspace (the `enterprise_granted` column) is reported as `enterprise` regardless of what's stored:
 	// `billing.plan === 'enterprise'` is only written by `billingAfterByoTransition()`
 	// once a BYO credential is connected, so an entitled workspace that hasn't
 	// connected one yet — or never had a billing block at all — would otherwise

@@ -74,6 +74,8 @@ import {
 	trackSessionLaunchModel,
 	trackSessionSkillLoadFailed,
 } from '../lib/analytics/agent-session-events'
+import { trackChatSessionRotated } from '../lib/analytics/chat-session-events'
+import { FirstCallObserver, type FirstTurnResult } from '../lib/analytics/first-call-size'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { trackPlanLimitReached } from '../lib/analytics/plan-limit-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -104,6 +106,7 @@ import { isEnterprise } from '../lib/enterprise'
 import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
+import { githubBackupOwners, preflightWithBackup } from '../lib/github/backup-install'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
 	type GitHubInstallSkip,
@@ -210,9 +213,11 @@ import {
 } from '../lib/mcp-session-header'
 import { READABLE_PROMPT_ENV, isReadablePromptEnabled } from '../lib/readable-prompt'
 import { resolveAgentSendModes } from '../lib/send-permissions'
+import { forgetSessionContextSize, recordSessionContextSize } from '../lib/session-context-size'
 import { sessionLogRedactor } from '../lib/session-log-redactor'
 import { RETRY_SUBSCRIPTION_ONLY_CONFIG_KEY, pickRetryAt } from '../lib/subscription-limit-reset'
 import { thinkingRowThrottle } from '../lib/thinking-row-throttle'
+import { TurnSizeObserver } from '../lib/turn-size'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import { SecretUnreadableError, openSecret } from '../lib/workspace-secrets'
 import {
@@ -223,6 +228,12 @@ import {
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { buildChatDrivesBlock, saveChatDrives } from './chat-drives'
 import { buildChatJobTargetBlock, saveChatJobTarget } from './chat-job-target'
+import {
+	ChatRotation,
+	type RotationRecord,
+	buildHandoffPrompt,
+	chatRotationEnabled,
+} from './chat-rotation'
 import {
 	ContainerManager,
 	type LogChunk,
@@ -259,6 +270,7 @@ import {
 	type SessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutChunks,
+	resolveRecordedCostUsd,
 	resolveSessionCostUsd,
 	sumAssistantUsage,
 	sumUncountedResultUsage,
@@ -302,6 +314,12 @@ const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
  * life (MCP tool use). At the cap it is labelled slow-unknown, never failed.
  */
 const MCP_HEALTH_RESAMPLE_CAP_MS = 120_000
+
+/** A launch's session-start event, held until its first turn shows the first-call size. */
+interface PendingLaunchStart {
+	props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0]
+	observer: FirstCallObserver
+}
 
 /** Per-session MCP health record: what has been said about each server. */
 interface McpHealthSession {
@@ -717,6 +735,33 @@ export class SessionManager extends EventEmitter {
 	 */
 	private readonly mcpHealth = new Map<string, McpHealthSession>()
 
+	/**
+	 * Per-launch `agent_session_started_with_prompt` waiting for the first turn.
+	 * Taking the entry out of the map is what makes the event go out once per
+	 * launch, whichever of the first `result` and the teardown gets there first.
+	 * In memory only: a backend restart mid-launch drops the entry and the event.
+	 */
+	private readonly pendingLaunchStarts = new Map<string, PendingLaunchStart>()
+
+	/**
+	 * Per-session reader of the window size at the end of each turn. It runs with chat rotation
+	 * off too: the size and end-cause records start at the first deploy, so a baseline exists
+	 * before anything is switched on. In memory only, dropped in clearActiveSession.
+	 */
+	private readonly turnSizeObservers = new Map<string, TurnSizeObserver>()
+
+	/** Sessions already checked for a compaction loop, so the row is read and the stop sent once. */
+	private readonly compactionLoopStopped = new Set<string>()
+
+	/**
+	 * A background session (no chat, no turns) that compacts this many times is stopped, when
+	 * chat rotation is on. A judgment number: each compaction is a full window spent.
+	 */
+	private static readonly BACKGROUND_COMPACTION_STOP = 3
+
+	/** Restarts big chats with a handoff note. See chat-rotation.ts. */
+	private readonly chatRotation: ChatRotation
+
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
@@ -787,10 +832,43 @@ export class SessionManager extends EventEmitter {
 			onTurnFinished: (sessionId, outcome) =>
 				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 			onHelperResult: (sessionId, outcome) => this.finishHelperSession(sessionId, outcome),
+			isHandoffResult: (sessionId, result) =>
+				this.chatRotation.claimHandoffResult(sessionId, result),
 			// An interactive CLI stays alive after printing a limit banner as its
 			// final error, so no exit settles the row. Same teardown as a helper.
 			onLimitResult: (sessionId, outcome) =>
 				this.finishHelperSession(sessionId, outcome, { retry: false }),
+		})
+		this.chatRotation = this.buildChatRotation()
+	}
+
+	private buildChatRotation(): ChatRotation {
+		return new ChatRotation({
+			loadSession: async (sessionId) => {
+				const [row] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+				return row ?? null
+			},
+			// Tagged on the persisted envelope only, so the transcript shows what the turn was.
+			writeHandoffTurn: (sessionId) =>
+				this.writeInput(
+					sessionId,
+					{ type: 'user', message: { role: 'user', content: buildHandoffPrompt() } },
+					undefined,
+					undefined,
+					{ maskin_handoff: true },
+				),
+			hasUnansweredTurn: (session) => this.hasUnansweredConversationTurn(session),
+			closeForRotation: (session, record) => this.closeSessionForRotation(session, record),
+			handoffTurnClosed: (sessionId) =>
+				this.emit('turn', {
+					sessionId,
+					phase: 'finished',
+					outcome: 'done',
+				} satisfies SessionTurnEvent),
 		})
 	}
 
@@ -2954,6 +3032,16 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 		if (isReadablePromptEnabled()) {
 			envVars[READABLE_PROMPT_ENV] = 'on'
 		}
+		// Lean context for agent-run.sh (skills listed by name instead of pasted in,
+		// bundled skills and unused built-in tools switched off). Off unless set on
+		// this service; unsetting it is the rollback. A session's own env_vars can
+		// still turn it on for one agent.
+		if (['1', 'true'].includes((process.env.MASKIN_LEAN_CONTEXT ?? '').trim().toLowerCase())) {
+			envVars.MASKIN_LEAN_CONTEXT = '1'
+			if (process.env.MASKIN_ALWAYS_ON_SKILLS !== undefined) {
+				envVars.MASKIN_ALWAYS_ON_SKILLS = process.env.MASKIN_ALWAYS_ON_SKILLS
+			}
+		}
 
 		// Resolve the workspace-skill manifest here so both the emitted
 		// `agent_session_started_with_prompt` signal AND the dispatch payload
@@ -3007,7 +3095,11 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 		// the start-event's `skills_staged` at 0 for both paths keeps queries
 		// simple: `skills_attached > 0 AND session_skill_load_failed absent`
 		// is a passing session on either path.
-		void trackAgentSessionStartedWithPrompt({
+		// The event is held until the first turn has run, because the size of the
+		// first call (tools, tokens, cost, cache) only exists then. It goes out once
+		// per launch: at the first `result`, or empty from clearActiveSession if the
+		// launch ends before any turn. `launchedAt` keeps its timestamp at launch.
+		this.holdLaunchStartEvent(session.id, {
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
@@ -3020,6 +3112,7 @@ ${accessPreamble}${missingToolBlock}${handoffBlock}${HUMAN_MESSAGE_STYLE}${askWi
 			skillsStaged: 0,
 			triggerType,
 			triggerId: session.triggerId ?? undefined,
+			launchedAt: new Date(),
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -3659,6 +3752,8 @@ ${cont.continues_prompt}
 							MASKIN_API_URL: '${MASKIN_API_URL}',
 							MASKIN_API_KEY: '${MASKIN_API_KEY}',
 							MASKIN_WORKSPACE_ID: '${MASKIN_WORKSPACE_ID}',
+							// Lets the relay ask Maskin before a write whether the session's flow is in pilot.
+							MASKIN_SESSION_ID: '${SESSION_ID}',
 						},
 					}
 				: {
@@ -3869,7 +3964,29 @@ ${cont.continues_prompt}
 		}))
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
-			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
+			// Backup rule (off unless MASKIN_GITHUB_BACKUP_OWNERS names an org): the backup
+			// install's server is attached only when the others are refused with 401 or 403.
+			// The org that owns the target repo, and a server the agent lists itself, stay.
+			const backupOwners = githubBackupOwners()
+			const backupNames = new Set(
+				[...backupOwners]
+					.filter((owner) => owner !== targetRepoOwner)
+					.map((owner) => `github-${owner}`)
+					.filter((name) => !(agentToolsMcpServers && name in agentToolsMcpServers)),
+			)
+			const checked = await preflightWithBackup(
+				preflightIdentities,
+				backupNames,
+				runGitHubPreflight,
+			)
+			preflightVerdicts = checked.verdicts
+			for (const name of checked.dropped) delete sessionMcpServers[name]
+			if (checked.dropped.length > 0) {
+				logger.info('Backup GitHub server left out: the others answered', {
+					sessionId: session.id,
+					dropped: checked.dropped,
+				})
+			}
 			const failed = preflightVerdicts.filter((v) => !v.healthy)
 			if (failed.length > 0) {
 				logger.warn('GitHub preflight failed for one or more identities', {
@@ -4425,6 +4542,8 @@ ${cont.continues_prompt}
 							if (chunk.stream === 'stdout') {
 								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
 								await this.recordTurnUsage(sessionId, chunk.data)
+								this.observeFirstCallSize(sessionId, chunk.data)
+								await this.observeTurnSize(sessionId, chunk.data)
 							}
 						}
 
@@ -5333,6 +5452,156 @@ ${cont.continues_prompt}
 	}
 
 	/**
+	 * Reads the window size from a session's stdout and hands each closed turn to chat rotation.
+	 * Runs after the turn finalizer, so the turn's reply is already in the chat when rotation
+	 * looks. With rotation off it only records the reading for the session-completed event. A
+	 * background session (no turns) that compacts in a loop is stopped, when rotation is on.
+	 * Never throws: a fault here must not break log ingest.
+	 */
+	private async observeTurnSize(sessionId: string, chunk: string): Promise<void> {
+		try {
+			let observer = this.turnSizeObservers.get(sessionId)
+			if (!observer) {
+				observer = new TurnSizeObserver()
+				this.turnSizeObservers.set(sessionId, observer)
+			}
+			for (const reading of observer.feed(chunk)) {
+				await this.chatRotation.onTurn(sessionId, reading)
+			}
+			if (
+				observer.pendingCompactions >= SessionManager.BACKGROUND_COMPACTION_STOP &&
+				chatRotationEnabled() &&
+				!this.compactionLoopStopped.has(sessionId)
+			) {
+				await this.stopCompactionLoop(sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to read the turn size', { sessionId, error: String(err) })
+		}
+	}
+
+	/** Stops a background session that keeps compacting. A chat is restarted by rotation instead. */
+	private async stopCompactionLoop(sessionId: string): Promise<void> {
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		this.compactionLoopStopped.add(sessionId)
+		if (!session || session.status !== 'running' || session.conversationId) return
+		recordSessionContextSize(sessionId, { endCause: 'compaction_failed' })
+		logger.warn('Stopping a background session that keeps compacting', { sessionId })
+		await this.insertSystemLog(
+			sessionId,
+			'Session stopped: its context kept filling up and compacting.',
+		).catch(() => {})
+		await this.stopSession(sessionId).catch((err) =>
+			logger.error('Failed to stop a compacting session', { sessionId, error: String(err) }),
+		)
+	}
+
+	/**
+	 * Closes a chat session for rotation: saves what the next seed needs on the row, then closes
+	 * it as an idle chat is closed, so the next message starts a fresh session. The rotated event
+	 * goes out only when this call is the one that closed the session.
+	 */
+	private async closeSessionForRotation(
+		session: typeof sessions.$inferSelect,
+		record: RotationRecord,
+	): Promise<void> {
+		await this.db
+			.update(sessions)
+			.set({
+				config: sql`coalesce(${sessions.config}, '{}'::jsonb) || ${JSON.stringify({ rotation: record })}::jsonb`,
+			})
+			.where(eq(sessions.id, session.id))
+		const closed = await this.completeIdleChatSession(session, { rotated: true })
+		if (!closed) return
+		const route = (session.config as { llm_route?: unknown } | null)?.llm_route
+		void trackChatSessionRotated({
+			workspaceId: session.workspaceId,
+			agentId: session.actorId,
+			reason: record.reason,
+			route: typeof route === 'string' ? route : null,
+			sizeBucket: record.sizeBucket,
+			handoff: record.handoff,
+		})
+	}
+
+	/** Holds this launch's session-start event until its first turn has run. */
+	private holdLaunchStartEvent(
+		sessionId: string,
+		props: Parameters<typeof trackAgentSessionStartedWithPrompt>[0],
+	): void {
+		// A launch whose teardown never ran still owes its event: send it empty.
+		this.flushLaunchStartEvent(sessionId)
+		this.pendingLaunchStarts.set(sessionId, { props, observer: new FirstCallObserver() })
+	}
+
+	/** Sends a held event with the first-call fields empty. A no-op once it has gone out. */
+	private flushLaunchStartEvent(sessionId: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			startPrompt: pending.observer.startPromptSize,
+		})
+	}
+
+	/**
+	 * Feeds stdout to the launch's first-call observer and sends the held
+	 * session-start event, with the first-call size on it, when the first turn's
+	 * `result` arrives. Sync and cheap on the hot path: no pending launch, no work.
+	 */
+	private observeFirstCallSize(sessionId: string, chunk: string): void {
+		const pending = this.pendingLaunchStarts.get(sessionId)
+		if (!pending) return
+		let first: FirstTurnResult | null
+		try {
+			first = pending.observer.feed(chunk)
+		} catch (err) {
+			logger.warn('Failed to read first-call size', { sessionId, error: String(err) })
+			return
+		}
+		if (!first) return
+		this.pendingLaunchStarts.delete(sessionId)
+		void this.emitLaunchStartWithFirstCall(sessionId, pending, first).catch((err) =>
+			logger.warn('Failed to emit first-call size', { sessionId, error: String(err) }),
+		)
+	}
+
+	private async emitLaunchStartWithFirstCall(
+		sessionId: string,
+		pending: PendingLaunchStart,
+		first: FirstTurnResult,
+	): Promise<void> {
+		// Only a recorded cost goes on the event (resolveRecordedCostUsd): the CLI's
+		// figure on a route that reaches Anthropic, or tokens times a published price.
+		// A custom endpoint with no price, or a maskin_plan session with no priced
+		// model, leaves it empty: the session row's own fallbacks are estimates.
+		let firstTurnCostUsd: number | null = null
+		try {
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			firstTurnCostUsd = await resolveRecordedCostUsd({
+				route,
+				modelName,
+				usage: { ...first.resultUsage, durationMs: null },
+			})
+		} catch (err) {
+			logger.warn('Failed to price the first turn, leaving its cost empty', {
+				sessionId,
+				error: String(err),
+			})
+		}
+		await trackAgentSessionStartedWithPrompt({
+			...pending.props,
+			firstCall: { ...first.size, firstTurnCostUsd },
+			startPrompt: pending.observer.startPromptSize,
+		})
+	}
+
+	/**
 	 * Mid-session budget check for one running maskin_plan session. Called
 	 * from the watchdog every ~60s for every running maskin_plan session.
 	 *
@@ -5519,11 +5788,14 @@ ${cont.continues_prompt}
 	 * reprocessing — neither can re-mark the session failed afterwards. A CAS
 	 * miss (something else already transitioned the row) is a silent no-op.
 	 */
-	private async completeIdleChatSession(session: typeof sessions.$inferSelect): Promise<void> {
+	private async completeIdleChatSession(
+		session: typeof sessions.$inferSelect,
+		opts: { rotated?: boolean } = {},
+	): Promise<boolean> {
 		// A session that went quiet with an unanswered message is wedged
 		// mid-turn, not idle — leave it for the hard timeout reaper, which
 		// closes it as `timeout` so the chat UI surfaces the interruption.
-		if (await this.hasUnansweredConversationTurn(session)) return
+		if (await this.hasUnansweredConversationTurn(session)) return false
 		const now = new Date()
 		// Save the usage first, as the timeout close does: the terminal row is final
 		// for usage writes, and the settle below reads these totals for its
@@ -5559,11 +5831,13 @@ ${cont.continues_prompt}
 						kind: 'complete',
 						classification: 'agent_completed',
 						source: 'idle-watcher',
-						resultText: 'Conversation went idle — session closed',
+						resultText: opts.rotated
+							? 'Chat restarted with a handoff note — session closed'
+							: 'Conversation went idle — session closed',
 					},
 			this.buildSettleDeps(),
 		)
-		if (settled.alreadySettled) return
+		if (settled.alreadySettled) return false
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
@@ -5615,7 +5889,9 @@ ${cont.continues_prompt}
 			session.id,
 			creditFailure
 				? 'Session failed — every turn hit a credit error'
-				: 'Session completed — conversation idle',
+				: opts.rotated
+					? 'Session completed — chat restarted in a fresh session'
+					: 'Session completed — conversation idle',
 		).catch((err) =>
 			logger.warn('Failed to write idle chat close system log', {
 				sessionId: session.id,
@@ -5629,6 +5905,7 @@ ${cont.continues_prompt}
 		await this.drainQueue(session.workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
 		)
+		return true
 	}
 
 	/**
@@ -6750,6 +7027,8 @@ ${cont.continues_prompt}
 				if (line.stream === 'stdout') {
 					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
 					await this.recordTurnUsage(sessionId, line.content)
+					this.observeFirstCallSize(sessionId, line.content)
+					await this.observeTurnSize(sessionId, line.content)
 				}
 			}
 		}
@@ -7508,7 +7787,12 @@ ${cont.continues_prompt}
 	}
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
+		this.flushLaunchStartEvent(sessionId)
 		this.turnFinalizer.forgetSession(sessionId)
+		this.chatRotation.forget(sessionId)
+		this.turnSizeObservers.delete(sessionId)
+		this.compactionLoopStopped.delete(sessionId)
+		forgetSessionContextSize(sessionId)
 		this.mcpHealthBuffers.delete(sessionId)
 		clearTimeout(this.mcpHealth.get(sessionId)?.timer)
 		this.mcpHealth.delete(sessionId)

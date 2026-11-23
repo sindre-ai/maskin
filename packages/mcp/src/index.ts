@@ -2,6 +2,17 @@ export { createMcpServer, getServerHandlers } from './server.js'
 export type { McpConfig, McpToolHandler } from './server.js'
 export { tools } from './tools.js'
 export { READ_TOOL_NAMES } from './read-error.js'
+export {
+	CORE_TOOLS,
+	TOOL_GROUPS,
+	TOOL_GROUP_NAMES,
+	groupOfTool,
+	groupedToolNamesIn,
+	groupsForToolNames,
+	isToolGroupsEnabled,
+	readGrantedToolGroups,
+} from './tool-groups.js'
+export type { ToolGroup } from './tool-groups.js'
 
 // CTO pre-req 1 for Voice v1 (bet 16bd0042). Extracted so both the stdio
 // transport (via createMcpServer) and the voice tool-proxy (Task 3) dispatch

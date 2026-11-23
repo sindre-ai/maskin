@@ -17,6 +17,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	private var _updateKeys: [String] = []
 	private var _relationshipKeys: [String] = []
 	private var _commentCalls = 0
+	private var _editedComments: [(eventId: Int, content: String)] = []
 	private var _graphCalls = 0
 	private var _nextEventId = 900
 	private var _offline = false
@@ -44,6 +45,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	var commentRefs: [[String]] { lock.withLock { _commentRefs } }
 	var commentFiles: [[String]] { lock.withLock { _commentFiles } }
 	var updateKeys: [String] { lock.withLock { _updateKeys } }
+	var editedComments: [(eventId: Int, content: String)] { lock.withLock { _editedComments } }
 	var relationshipKeys: [String] { lock.withLock { _relationshipKeys } }
 
 	private func check(_ op: String) throws {
@@ -136,6 +138,11 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 		return ObjectEvent(
 			id: id, actorId: "me", action: "commented", data: .object(["content": .string(content)]),
 			createdAt: Date())
+	}
+
+	func editComment(eventId: Int, content: String) async throws {
+		try check("editComment")
+		lock.withLock { _editedComments.append((eventId, content)) }
 	}
 
 	func createRelationship(

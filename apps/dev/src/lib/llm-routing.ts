@@ -1680,7 +1680,7 @@ export function resolveChatCredentials(params: {
 	// `billing` undefined when the workspace never had a billing block, so an
 	// entitled workspace can be BYO in every meaningful sense while its plan
 	// still reads as the `trial` default. `isEnterprise()` (the
-	// `enterprise_granted` column OR an enterprise billing owner) is what catches
+	// `enterprise_granted` column) is what catches
 	// that case, and mirrors the `enterprise` param `resolveLlmRoute` takes.
 	if (!isMaskinPlanRouted(wsSettings.billing)) return null
 	if (isEnterprise(workspace)) return null

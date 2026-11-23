@@ -8,6 +8,8 @@ describe('hasMarkdownSyntax', () => {
 		'~~gone~~',
 		'run `pnpm dev`',
 		'[the board](https://example.com)',
+		'<https://example.com/a-b>',
+		'look at <https://example.com/a-b?x=1> please',
 		'- one\n- two',
 		'* one',
 		'1. first',
@@ -30,6 +32,8 @@ describe('hasMarkdownSyntax', () => {
 		'a -b flag',
 		'---',
 		'email me @ noon',
+		'2 < 3 and 5 > 4',
+		'use <owner> as the name',
 	])('leaves %j as plain text', (text) => {
 		expect(hasMarkdownSyntax(text)).toBe(false)
 	})

@@ -421,6 +421,12 @@ export type InteractiveTurnFinalizerOptions = {
 	 * Injected for the same reason as the options above.
 	 */
 	onLimitResult?: (sessionId: string, outcome: { isError: true; text: string }) => Promise<void>
+	/**
+	 * Asked for every top-level result of a chat session before it is posted. True means the result
+	 * is a handoff note the session was asked for, and goes nowhere near the chat. Sync, must not
+	 * throw; a throw is treated as false.
+	 */
+	isHandoffResult?: (sessionId: string, result: { text: string; isError: boolean }) => boolean
 	/** Test seam: replaces process.env for the end-of-turn send-back killswitch. */
 	env?: NodeJS.ProcessEnv
 }
@@ -488,6 +494,7 @@ export class InteractiveTurnFinalizer {
 	private readonly onTurnFinished?: InteractiveTurnFinalizerOptions['onTurnFinished']
 	private readonly onHelperResult?: InteractiveTurnFinalizerOptions['onHelperResult']
 	private readonly onLimitResult?: InteractiveTurnFinalizerOptions['onLimitResult']
+	private readonly isHandoffResult?: InteractiveTurnFinalizerOptions['isHandoffResult']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 	private readonly env: NodeJS.ProcessEnv
@@ -501,6 +508,7 @@ export class InteractiveTurnFinalizer {
 		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.onHelperResult = options.onHelperResult
 		this.onLimitResult = options.onLimitResult
+		this.isHandoffResult = options.isHandoffResult
 		this.onStopSession = options.onStopSession
 		this.onResumeAfterMove = options.onResumeAfterMove
 		this.onTurnFinished = options.onTurnFinished
@@ -551,6 +559,15 @@ export class InteractiveTurnFinalizer {
 					`Interactive turn finalizer failed to post final output for session ${sessionId} (log ${logId}): ${describeError(err)}`,
 				)
 			}
+		}
+	}
+
+	private claimsAsHandoff(sessionId: string, result: { text: string; isError: boolean }): boolean {
+		try {
+			return this.isHandoffResult?.(sessionId, result) === true
+		} catch (err) {
+			logger.warn(`isHandoffResult failed for session ${sessionId}: ${describeError(err)}`)
+			return false
 		}
 	}
 
@@ -640,6 +657,9 @@ export class InteractiveTurnFinalizer {
 			await this.failOnLimitResult(sessionId, result, logId)
 			return
 		}
+
+		// The note a big chat was asked to write for its fresh session is not a reply.
+		if (this.claimsAsHandoff(sessionId, result)) return
 
 		// The `result` envelope is the intended carrier for the turn's reply, but
 		// it is not reliable: when the model's turn ends on a non-text block (a

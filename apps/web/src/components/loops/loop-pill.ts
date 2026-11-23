@@ -14,6 +14,21 @@ export const LOOP_PILL_STYLES: Record<
 }
 
 /**
+ * Style lookup that never throws. A pill value the table does not know (a new
+ * status shipped by the server before this build, or stale cached data) shows
+ * its raw text in the muted style instead of crashing the page.
+ */
+export function loopPillStyle(pill: string): { label: string; dot: string; text: string } {
+	return (
+		(LOOP_PILL_STYLES as Record<string, (typeof LOOP_PILL_STYLES)[LoopSummary['pill']]>)[pill] ?? {
+			label: pill,
+			dot: 'bg-muted-foreground',
+			text: 'text-muted-foreground',
+		}
+	)
+}
+
+/**
  * The three "live" rungs of the autonomy ladder — a loop that is actually
  * running work through its triggers. `draft`, `paused` and `archived` are not live, and
  * `waiting_on_you` is a per-viewer overlay on a live status rather than a

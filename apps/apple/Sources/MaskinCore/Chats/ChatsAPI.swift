@@ -192,7 +192,7 @@ public struct ChatsHTTPError: Error, Equatable, Sendable {
 }
 
 /// Uploads one file to the workspace. Bytes in memory go as base64 JSON (`POST /api/files`, 10 MB cap,
-/// 50 MB for video); a file on disk of any size up to 1 GB can also go straight to storage in parts.
+/// 50 MB for video); a file on disk of any size up to 5 GB can also go straight to storage in parts.
 public protocol ChatFileUploading: Sendable {
 	func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef
 	/// A file on disk. Conformers that can stream it override this; the default reads it whole.

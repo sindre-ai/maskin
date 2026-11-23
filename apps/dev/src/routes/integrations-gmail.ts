@@ -44,7 +44,13 @@ import { DELIVERED_ACTION, findCurrentApproval, hasDelivered } from '../lib/obje
 import { buildObjectPreview } from '../lib/object-preview'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { recordSendOutcome } from '../lib/send-closure'
-import { decideSend, deniedMessage, recordAutoSent } from '../lib/send-gate'
+import {
+	decideSend,
+	deniedMessage,
+	pilotIsReason,
+	recordAutoSent,
+	withPilotReason,
+} from '../lib/send-gate'
 import { callingSessionId } from '../lib/session-flow'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
 
@@ -685,11 +691,21 @@ app.openapi(sendRoute, async (c) => {
 	} else {
 		// A new email passed straight to the tool by an agent that is set to ask first: nothing a
 		// person has approved yet.
+		const pilot = await pilotIsReason(db, {
+			workspaceId,
+			agentId: actorId,
+			kind: 'email',
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
 		const f = fail(
 			403,
 			'FORBIDDEN',
-			'Not sent. This agent is set to ask first, so a person has to approve this email before it is sent.',
-			SEND_APPROVAL_HOWTO,
+			pilot
+				? withPilotReason('Not sent. A person has to approve this email before it is sent.', true)
+				: 'Not sent. This agent is set to ask first, so a person has to approve this email before it is sent.',
+			pilot
+				? SEND_APPROVAL_HOWTO.replace('This agent is set to ask first for emails. ', '')
+				: SEND_APPROVAL_HOWTO,
 		)
 		return c.json(f.body, f.status)
 	}
