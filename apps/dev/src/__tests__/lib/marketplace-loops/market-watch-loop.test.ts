@@ -18,7 +18,7 @@ describe('Competitor watch loop definition', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
 		expect(MARKET_WATCH_LOOP.name).toBe('Competitor watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.2.0')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.2.1')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
