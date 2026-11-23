@@ -4,6 +4,10 @@ Everything the portal at https://claude.ai/directory/manage asks for, ready to p
 
 Requirements source: Anthropic's "Submit a connector to the directory", "Connector pre-submission checklist" and "Test your connector" pages, read 2026-11-22.
 
+## Link tagging
+
+Every link to maskin.io that a person can click in the listing text ends in `?utm_source=claude`, so signups from the directory can be counted (tag value `claude`, one lowercase name per marketplace). The server URL and the `.well-known` discovery addresses are machine endpoints and stay untagged. Do not submit before the signup-tagging task is merged and live.
+
 ## 1. Connection
 
 - Server URL: https://maskin.io/mcp
@@ -14,27 +18,27 @@ Requirements source: Anthropic's "Submit a connector to the directory", "Connect
 
 Tools sync from the server. Every tool carries a title and annotations from `packages/mcp/src/annotations.ts`. Extension tools (registered as `<extension>_<tool>`) get a plain title from their name and the changes-data label by default.
 
-Known point for a reviewer: the platform tools mark reads as `readOnlyHint: true`, deletes and stops as `destructiveHint: true`, and ordinary writes (create, update, send) as both false. Anthropic's checklist says `destructiveHint: true` is for tools that modify or delete data. If the portal flags ordinary writes, the fix is one table in `annotations.ts` plus the tests that pin it (`surface-pin.test.ts`).
+Labels follow the checklist: every pure read carries `readOnlyHint: true`, and every tool that is not read-only carries `destructiveHint: true` (create, update, send, delete, stop alike), so Claude asks before any of them. `destructiveHint` is derived from the read-only set in `annotations.ts`, and `surface-pin.test.ts` pins it. No tool takes a `method` argument or mixes reads and writes. Tool names are at most 27 characters (limit 64).
 
 ## 3. Listing
 
 - Server name (max 100): Maskin
-- One-liner (max 200): Work in Maskin from Claude. Create and update bets, tasks and insights, read your workspace, and put agents to work, all under your own name.
+- One-liner (max 200): Run a Maskin product discovery flow from Claude: customer signals become insights and shaped bets, linked and tracked in your workspace.
 - Description (max 2,000):
 
-  Maskin is an open-source workspace where AI agents do the work and people set direction. Insights, bets and tasks live as connected objects, and agents and people work on the same ones.
+  Start with one flow. The Maskin product discovery flow turns customer signal (interviews, tickets, reviews) into typed insights, then into shaped bets and tasks, on one graph your team and your agents share. A product lead can install it in their own workspace and run it the same day: https://maskin.io/marketplace/product-discovery/?utm_source=claude
 
-  Connect Claude to your Maskin workspace and you can ask it to look up what is going on, create or update bets, tasks and insights, comment on them, start agents on a task, read files and meeting notes, and manage triggers and flows. What Claude creates shows up in Maskin under your name, so your team sees it.
+  Connect Claude to your Maskin workspace and you can ask it to look up what is active or blocked, create or update bets, tasks and insights, comment on them, start agents on a task, read files and meeting notes, and manage triggers and flows. What Claude creates shows up in Maskin under your name, so your team sees it.
 
   Sign in with one click: Claude sends you to Maskin, you pick a workspace and approve. You can see every connected client under Settings in Maskin and remove it at any time.
 
-  Maskin is open source (Apache 2.0) and can be self-hosted. This listing connects to Maskin Cloud at maskin.io.
+  Maskin is open source (Apache 2.0) and can be self-hosted. This listing connects to Maskin Cloud: https://maskin.io/?utm_source=claude
 
 - Categories (1 to 5): Productivity, Project management, Developer tools
-- Documentation URL: https://maskin.io/docs/
-- Privacy policy URL: https://maskin.io/privacy
-- Terms: https://maskin.io/terms
-- Support contact: ai@maskin.io (support page: https://maskin.io/support)
+- Documentation URL: https://maskin.io/docs/?utm_source=claude
+- Privacy policy URL: https://maskin.io/privacy?utm_source=claude
+- Terms: https://maskin.io/terms?utm_source=claude
+- Support contact: ai@maskin.io (support page: https://maskin.io/support?utm_source=claude)
 - Icon: `assets/logo.svg` in the repo (80x80 viewBox, vector), or `apps/web/public/icon-512.png` (512x512 PNG)
 - URL slug: maskin (permanent once published)
 
@@ -43,13 +47,13 @@ Known point for a reviewer: the platform tools mark reads as `readOnlyHint: true
 - Look up the state of a workspace from a Claude conversation (what is active, what is blocked).
 - Turn a conversation into bets, tasks or insights, linked to each other.
 - Start an agent on a task and read what it did.
-- Before connecting, a person needs a Maskin account and a workspace (https://maskin.io).
+- Before connecting, a person needs a Maskin account and a workspace (https://maskin.io/?utm_source=claude).
 - The connector reads and writes data.
 
 ## 5. Company
 
 - Company name: Maskin
-- Website: https://maskin.io
+- Website: https://maskin.io/?utm_source=claude
 - Primary contact for review updates: ai@maskin.io
 
 ## 6. Authentication
@@ -78,7 +82,7 @@ The portal words each one itself and all seven are required. The topics, with wh
 4. AI media generation: no tool generates images, video or audio with an AI model. (`transcribe_file` turns speech into text; it creates no media.)
 5. Prompt injection: tool descriptions say what a tool does and do not steer Claude. Content stored in a workspace is returned as data.
 6. Conversation data collection: tools receive only the arguments the person's request needs. Nothing reads Claude's memory, chat history or user files.
-7. Public documentation: https://maskin.io/docs/ and https://maskin.io/docs/what-is-mcp-native/
+7. Public documentation: https://maskin.io/docs/?utm_source=claude and https://maskin.io/docs/what-is-mcp-native/?utm_source=claude
 
 ## Reviewer notes
 
