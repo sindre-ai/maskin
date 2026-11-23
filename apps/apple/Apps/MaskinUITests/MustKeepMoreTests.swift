@@ -200,6 +200,11 @@ final class MustKeepMoreTests: XCTestCase {
 		for _ in 0..<4 where !option.exists { app.swipeUp() }
 		expectExists(option, "For you shows the decision option 'Send all 7'", dump: "mk12-option")
 		option.tap()
+		// Undo is free for 6 seconds after the pick (the toast and the receipt row both drop it then), and each
+		// query on a Mac runner can take a second or more. Look for Undo first, before the slower checks.
+		let undo = app.buttons["Undo"].firstMatch
+		let offeredUndo = undo.waitForExistence(timeout: 4)
+		if !offeredUndo { dumpScreen("mk12-undo") }
 		let left = option.waitForNonExistence(timeout: 10)
 		if !left { dumpScreen("mk12-after-pick") }
 		XCTAssertTrue(left, "the card leaves the open list once an option is picked")
@@ -208,7 +213,7 @@ final class MustKeepMoreTests: XCTestCase {
 		).firstMatch
 		if !chosen.waitForExistence(timeout: 15) { dumpScreen("mk12-receipt") }
 		XCTAssertTrue(chosen.exists, "the choice shows as a receipt or toast ('You chose Send all 7')")
-		XCTAssertTrue(app.buttons["Undo"].firstMatch.waitForExistence(timeout: 5), "the choice offers Undo")
+		XCTAssertTrue(offeredUndo, "the choice offers Undo")
 	}
 
 	// MARK: MK-13 @mention someone
