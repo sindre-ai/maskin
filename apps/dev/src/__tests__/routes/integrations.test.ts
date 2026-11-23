@@ -101,6 +101,15 @@ describe('Integrations Routes', () => {
 			expect(body[0]).toHaveProperty('events')
 		})
 
+		it('lists Dinero for everyone, with no flag on', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+
+			const names = ((await res.json()) as Array<{ name: string }>).map((p) => p.name)
+			expect(names).toContain('dinero')
+		})
+
 		// A provider whose mcp.autoInject is false gives an agent no tools until
 		// its server spec is attached per-agent. That spec used to exist only as
 		// a frontend constant, so an agent driving Maskin over MCP could connect

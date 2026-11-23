@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { FLAGS, isFlagEnabled, parseFeatureFlagConfig } from '../../../../lib/feature-flags'
 import {
 	GATEWAY_PROVIDERS,
 	buildUpstreamHeaders,
@@ -57,17 +56,6 @@ describe('Dinero provider config', () => {
 				scope: 'dinero_mcp:invoke_tools offline_access dineropublicapi:read dineropublicapi:write',
 			}),
 		).toEqual({ missing: [], needsReconnect: false })
-	})
-
-	it('is behind a flag that is off unless the actor is a tester', () => {
-		const actor = '00000000-0000-4000-8000-000000000001'
-		const off = parseFeatureFlagConfig({})
-		const on = parseFeatureFlagConfig({
-			FF_TESTER_ACTOR_IDS: actor,
-			FF_TESTER_FEATURES: FLAGS.DINERO,
-		})
-		expect(isFlagEnabled(actor, FLAGS.DINERO, off)).toBe(false)
-		expect(isFlagEnabled(actor, FLAGS.DINERO, on)).toBe(true)
 	})
 })
 
