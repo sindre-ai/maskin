@@ -112,7 +112,7 @@ describe('Competitor watch loop definition', () => {
 		]
 		for (const text of texts) {
 			expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
-			expect(text).not.toMatch(/—|assum/i)
+			expect(text).not.toMatch(/\\u2014|assum/i)
 		}
 	})
 
