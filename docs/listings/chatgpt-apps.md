@@ -20,6 +20,7 @@ What I could not check from here: the portal itself (nobody has opened it), and 
 - Only one MCP server per app can be connected. Maskin has one.
 - The tool set is the same for every client: 123 tools, synced from the server. A smaller set only if a reviewer asks (same rule as the Claude listing).
 - The domain challenge host is maskin.io, the same host as the server URL.
+- The server address must be inside the first plugin ZIP: OpenAI says "If your plugin uses an MCP server, include it in the initial ZIP" and that adding one to a skills-only plugin later is not supported. The ZIP holds `plugin.json` at its root and `mcp.json` with `mcpServers.maskin` set to type `streamable-http` and url `https://maskin.io/mcp`, plus `skills/` and `assets/` if wanted, and no lifecycle hooks. Public plugins are published once to a directory shared by ChatGPT and Codex, so this one submission should also create the Codex entry (not confirmed until the portal opens). Setup for Codex without a listing: https://maskin.io/docs/connect-ai-tools/.
 
 ## 3. Listing fields
 
@@ -167,6 +168,6 @@ For the CTO to decide before submission. Each is a point in OpenAI's published r
 8. Demo account without MFA. Not verified, the account does not exist yet (section 7).
 9. Demo video. Required for the first review, not produced (section 8).
 10. ChatGPT sign-in is untested live. The pin was read from OpenAI's published document on 2026-11-22 and the discovery documents answer 200 today. Nobody has completed a real ChatGPT sign-in. The bet already holds the first submission for that test.
-11. Package format. OpenAI's page describes a package with a manifest (`plugin.json`, `mcp.json`, hooks removed) for plugins. For a hosted-server-only listing I could not tell from the page whether the portal wants one. Check when the portal opens. If it does, it is a small follow-up task.
+11. Package format. OpenAI's pages describe a plugin ZIP with a manifest (`plugin.json`, `mcp.json`, hooks removed), and section 2 says what ours holds. Whether the portal asks for that ZIP for a hosted-server-only listing is unconfirmed until it opens. If it does, building the ZIP is a small follow-up task.
 
 Not an issue on the points I checked: no ads, no sponsored content, no payments moved by any tool, the name Maskin is not a generic dictionary word, support contact and privacy and terms links exist, the server is public HTTPS on the same host as the domain proof.
