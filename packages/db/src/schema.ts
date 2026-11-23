@@ -3800,7 +3800,13 @@ export const ownerApprovals = pgTable(
 		expiresAt: timestamp('expires_at', { withTimezone: true }),
 		usedAt: timestamp('used_at', { withTimezone: true }),
 	},
-	(t) => [index('owner_approvals_ws_kind_subject_idx').on(t.workspaceId, t.kind, t.subject)],
+	(t) => [
+		// One open approval per subject: two clicks at the same instant cannot write two rows. A used
+		// approval is out of the way, so a later step can approve the same subject again.
+		uniqueIndex('owner_approvals_open_ws_kind_subject_uniq')
+			.on(t.workspaceId, t.kind, t.subject)
+			.where(sql`${t.usedAt} IS NULL`),
+	],
 )
 
 // ── YouTube approval gate ──────────────────────────────────────────────────

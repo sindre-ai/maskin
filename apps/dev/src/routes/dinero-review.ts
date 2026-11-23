@@ -46,6 +46,14 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const DAY_MS = 86_400_000
 
+/** Postgres unique_violation (23505), also when Drizzle wraps it as the cause. */
+function isUniqueViolation(err: unknown): boolean {
+	for (let e: unknown = err; e && typeof e === 'object'; e = (e as { cause?: unknown }).cause) {
+		if ((e as { code?: string }).code === '23505') return true
+	}
+	return false
+}
+
 const errorResponses = {
 	400: { description: 'Invalid', content: { 'application/json': { schema: errorSchema } } },
 	403: { description: 'Not allowed', content: { 'application/json': { schema: errorSchema } } },
@@ -422,13 +430,21 @@ app.openapi(approveRoute, (async (c) => {
 			409,
 		)
 	}
-	await recordOwnerApproval(db, {
-		workspaceId,
-		kind: OWNER_APPROVAL_DINERO_BOOKS,
-		subject: approvalSubject(row.id, body.from, body.to),
-		figuresHash: view.figures_hash,
-		approvedBy: actorId,
-	})
+	try {
+		await recordOwnerApproval(db, {
+			workspaceId,
+			kind: OWNER_APPROVAL_DINERO_BOOKS,
+			subject: approvalSubject(row.id, body.from, body.to),
+			figuresHash: view.figures_hash,
+			approvedBy: actorId,
+		})
+	} catch (e) {
+		// Two approvals at the same instant: the unique index let one through.
+		if (isUniqueViolation(e)) {
+			return c.json(createApiError('CONFLICT', 'This period is already approved'), 409)
+		}
+		throw e
+	}
 	await recordEvent(db, {
 		workspaceId,
 		actorId,

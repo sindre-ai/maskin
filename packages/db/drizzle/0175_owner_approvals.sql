@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS "owner_approvals" (
 	"used_at" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "owner_approvals_ws_kind_subject_idx"
-	ON "owner_approvals" USING btree ("workspace_id", "kind", "subject");
+-- One open (not yet used) approval per subject, so two approvals at the same instant cannot both
+-- land. It also serves the lookup by workspace, kind and subject.
+CREATE UNIQUE INDEX IF NOT EXISTS "owner_approvals_open_ws_kind_subject_uniq"
+	ON "owner_approvals" USING btree ("workspace_id", "kind", "subject")
+	WHERE "used_at" IS NULL;
 --> statement-breakpoint
 ALTER TABLE "owner_approvals" ENABLE ROW LEVEL SECURITY;

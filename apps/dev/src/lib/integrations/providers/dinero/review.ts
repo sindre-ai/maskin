@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events } from '@maskin/db/schema'
-import { and, asc, eq, gte, lt } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, lt, sql } from 'drizzle-orm'
 import { toolCallSucceeded } from '../../../analytics/receipt-events'
 import { OWNER_APPROVAL_DINERO_BOOKS, findOwnerApprovals } from '../../../owner-approval'
 import { DINERO_ACTION_EVENT, toolAnswerText } from './action-log'
@@ -202,12 +202,31 @@ export async function readReviewLog(
 		)
 		.orderBy(asc(events.id))
 		.limit(LOG_LIMIT)
-	// A reversal counts only when Dinero answered with success.
+	// A reversal counts only when Dinero answered with success. It is logged when the owner
+	// clicks, which may be a later day than the booking, so look for it by the entry it undoes and
+	// not inside the date window. A reversal always has a higher id than its original.
 	const reversedBy = new Map<number, number>()
-	for (const r of rows) {
-		const d = asObj(r.data)
-		if (typeof d?.reverses_event_id === 'number' && d.outcome === 'success') {
-			reversedBy.set(d.reverses_event_id, r.id)
+	if (rows.length > 0) {
+		const reversals = await db
+			.select({ id: events.id, data: events.data })
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, p.workspaceId),
+					eq(events.entityId, p.integrationId),
+					eq(events.action, DINERO_ACTION_EVENT),
+					gt(events.id, rows[0]?.id ?? 0),
+					sql`${events.data}->>'outcome' = 'success'`,
+					inArray(
+						sql<string>`${events.data}->>'reverses_event_id'`,
+						rows.map((r) => String(r.id)),
+					),
+				),
+			)
+			.orderBy(asc(events.id))
+		for (const r of reversals) {
+			const d = asObj(r.data)
+			if (typeof d?.reverses_event_id === 'number') reversedBy.set(d.reverses_event_id, r.id)
 		}
 	}
 	return rows.map((r) => toItem(r, reversedBy))

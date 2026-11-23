@@ -5,7 +5,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { createApiError } from '../../lib/errors'
 import { isDineroPeriodLocked } from '../../lib/integrations/providers/dinero/review'
-import { OWNER_APPROVAL_DINERO_BOOKS, findOwnerApprovals } from '../../lib/owner-approval'
+import {
+	OWNER_APPROVAL_DINERO_BOOKS,
+	findOwnerApprovals,
+	recordOwnerApproval,
+} from '../../lib/owner-approval'
 import dineroReviewRoutes from '../../routes/dinero-review'
 import { insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -257,5 +261,90 @@ describe('The Dinero review screen (Integration)', () => {
 		expect(
 			await isDineroPeriodLocked(db, { workspaceId: s.ws.id, integrationId: s.dinero.id }),
 		).toBe(false)
+	})
+
+	it('sees a reversal made on a later day than the booking, and refuses a second click', async () => {
+		const s = await setup()
+		const yesterday = new Date(Date.now() - 86_400_000)
+		await db.update(events).set({ createdAt: yesterday }).where(eq(events.id, s.eventId))
+		const day = yesterday.toISOString().slice(0, 10)
+		const sent: unknown[] = []
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init: RequestInit) => {
+				const body = JSON.parse(init.body as string)
+				if (body.method === 'tools/call') sent.push(body.params.arguments)
+				const answer = (id: number) =>
+					`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Voucher 2 booked' }] } })}\n\n`
+				return new Response(
+					body.method === 'initialize' ? answer(1) : body.method === 'tools/call' ? answer(2) : '',
+					{ status: 200 },
+				)
+			}),
+		)
+		const app = appFor(s.human)
+		expect((await call(app, s.ws.id, 'POST', '/reverse', { event_id: s.eventId })).status).toBe(200)
+
+		// The reversal is logged today. The view of yesterday still shows the item as reversed.
+		const log = (await (await call(app, s.ws.id, 'GET', `?from=${day}&to=${day}`)).json()) as Log
+		expect(log.items).toHaveLength(1)
+		expect(log.items[0]).toMatchObject({ event_id: s.eventId, can_reverse: false })
+		expect(log.items[0]?.reversed_by_event_id).not.toBeNull()
+
+		// A second click is refused and nothing more goes to Dinero.
+		expect((await call(app, s.ws.id, 'POST', '/reverse', { event_id: s.eventId })).status).toBe(409)
+		expect(sent).toHaveLength(1)
+
+		// The approved figures for that day carry the reversal, so the approval is not a stale one.
+		const ok = await call(app, s.ws.id, 'POST', '/approve', {
+			from: day,
+			to: day,
+			figures_hash: log.figures_hash,
+		})
+		expect(ok.status).toBe(200)
+	})
+
+	it('does not count a reversal Dinero refused, even on a later day', async () => {
+		const s = await setup()
+		const yesterday = new Date(Date.now() - 86_400_000)
+		await db.update(events).set({ createdAt: yesterday }).where(eq(events.id, s.eventId))
+		await db.insert(events).values({
+			workspaceId: s.ws.id,
+			actorId: s.human,
+			action: 'dinero_action',
+			entityType: 'integration',
+			entityId: s.dinero.id,
+			data: {
+				tool: 'CreateFinanceVoucher',
+				arguments: financeArgs,
+				outcome: 'error',
+				reverses_event_id: s.eventId,
+			},
+		})
+		const day = yesterday.toISOString().slice(0, 10)
+		const log = (await (
+			await call(appFor(s.human), s.ws.id, 'GET', `?from=${day}&to=${day}`)
+		).json()) as Log
+		expect(log.items[0]).toMatchObject({ event_id: s.eventId, can_reverse: true })
+		expect(log.items[0]?.reversed_by_event_id).toBeNull()
+	})
+
+	it('keeps one open approval per workspace, kind and subject', async () => {
+		const s = await setup()
+		const row = {
+			workspaceId: s.ws.id,
+			kind: OWNER_APPROVAL_DINERO_BOOKS,
+			subject: `dinero:${s.dinero.id}:2026-11-01:2026-11-30`,
+			figuresHash: 'a'.repeat(64),
+			approvedBy: s.human,
+		}
+		await recordOwnerApproval(db, row)
+		await expect(recordOwnerApproval(db, row)).rejects.toThrow()
+		// Once used, the same subject can be approved again.
+		await db
+			.update(ownerApprovals)
+			.set({ usedAt: new Date() })
+			.where(eq(ownerApprovals.workspaceId, s.ws.id))
+		await expect(recordOwnerApproval(db, row)).resolves.toMatchObject({ subject: row.subject })
 	})
 })
