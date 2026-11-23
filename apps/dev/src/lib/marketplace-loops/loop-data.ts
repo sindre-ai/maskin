@@ -14,6 +14,9 @@
 // are merged into one lookup per entity type below — every loop config calls
 // the same getActorData/getTriggerData/getSkillData.
 
+import accountingActorsData from './data/accounting-actors.json'
+import accountingSkillsData from './data/accounting-skills.json'
+import accountingTriggersData from './data/accounting-triggers.json'
 import customerVoiceActorsData from './data/customer-voice-actors.json'
 import customerVoiceSkillsData from './data/customer-voice-skills.json'
 import customerVoiceTriggersData from './data/customer-voice-triggers.json'
@@ -72,7 +75,7 @@ export interface ViewData extends ViewSnapshotSource {
 }
 
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
-// ./market-watch-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop, ./product-usage-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
+// ./market-watch-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop, ./product-usage-loop, ./accounting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
 export interface MarketplaceLoopSeedConfig {
 	loop: {
@@ -92,6 +95,7 @@ export interface MarketplaceLoopSeedConfig {
 }
 
 const actorsById: Record<string, ActorData> = {
+	...(accountingActorsData as Record<string, ActorData>),
 	...(marketWatchActorsData as Record<string, ActorData>),
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
@@ -102,6 +106,7 @@ const actorsById: Record<string, ActorData> = {
 }
 
 const triggersById: Record<string, TriggerData> = {
+	...(accountingTriggersData as Record<string, TriggerData>),
 	...(marketWatchTriggersData as Record<string, TriggerData>),
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
@@ -112,6 +117,7 @@ const triggersById: Record<string, TriggerData> = {
 }
 
 const skillsById: Record<string, SkillData> = {
+	...(accountingSkillsData as Record<string, SkillData>),
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),

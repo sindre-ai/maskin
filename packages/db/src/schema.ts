@@ -471,7 +471,13 @@ export type IntegrationStatus =
 /** The one status meaning "connected and usable". See `IntegrationStatus`. */
 export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
 
-export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_login' | 'byo_oauth'
+export type IntegrationProviderMode =
+	| 'registered'
+	| 'byo_apikey'
+	| 'byo_login'
+	| 'byo_oauth'
+	/** A workspace's own sign-in app (id in config, secret in credentials). Settings, not an integration: no agent access. */
+	| 'oauth_app'
 
 export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
 
@@ -668,6 +674,8 @@ export const agentChatGrants = pgTable(
 			.notNull(),
 		createdBy: uuid('created_by').references(() => actors.id, { onDelete: 'set null' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		/** Null: lasts until the chat or the credential is removed (Keychain). Set: an Allow in this chat that stops counting at this time. */
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
 	},
 	(t) => [
 		unique('agent_chat_grants_uniq').on(t.integrationId, t.actorId, t.conversationId),

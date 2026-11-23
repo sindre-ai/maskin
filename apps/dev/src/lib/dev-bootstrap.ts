@@ -13,6 +13,12 @@ import type { SessionManager } from '../services/session-manager'
 import { provisionWorkspace } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import {
+	ACCOUNTING_LOOP,
+	ACCOUNTING_LOOP_ACTOR_IDS,
+	ACCOUNTING_LOOP_SKILL_IDS,
+	ACCOUNTING_LOOP_TRIGGER_IDS,
+} from './marketplace-loops/accounting-loop'
+import {
 	CUSTOMER_VOICE_ACTOR_IDS,
 	CUSTOMER_VOICE_LOOP,
 	CUSTOMER_VOICE_SKILL_IDS,
@@ -70,6 +76,12 @@ import {
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
+	{
+		loop: ACCOUNTING_LOOP,
+		actorIds: ACCOUNTING_LOOP_ACTOR_IDS,
+		triggerIds: ACCOUNTING_LOOP_TRIGGER_IDS,
+		skillIds: ACCOUNTING_LOOP_SKILL_IDS,
+	},
 	{
 		loop: MARKET_WATCH_LOOP,
 		actorIds: MARKET_WATCH_ACTOR_IDS,

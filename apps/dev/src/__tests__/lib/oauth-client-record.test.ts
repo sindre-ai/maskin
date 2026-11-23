@@ -1,4 +1,10 @@
-import { MCP_OAUTH_CLAUDE_CLIENT_ID, MCP_OAUTH_PINNED_CLAUDE_CLIENT } from '@maskin/shared'
+import {
+	MCP_OAUTH_CHATGPT_CLIENT_ID,
+	MCP_OAUTH_CLAUDE_CLIENT_ID,
+	MCP_OAUTH_PINNED_CHATGPT_CLIENT,
+	MCP_OAUTH_PINNED_CLAUDE_CLIENT,
+	MCP_OAUTH_PINNED_CLIENTS,
+} from '@maskin/shared'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	resolvePinnedClient,
@@ -6,6 +12,54 @@ import {
 } from '../../lib/oauth-server/client-record'
 
 const CLAUDE_REDIRECT = 'https://claude.ai/api/mcp/auth_callback'
+const CHATGPT_REDIRECT = 'https://chatgpt.com/connector_platform_oauth_redirect'
+
+describe('the ChatGPT pinned client', () => {
+	it('is the second and last entry, next to Claude', () => {
+		expect(Object.keys(MCP_OAUTH_PINNED_CLIENTS).sort()).toEqual(
+			[MCP_OAUTH_CHATGPT_CLIENT_ID, MCP_OAUTH_CLAUDE_CLIENT_ID].sort(),
+		)
+	})
+
+	it('accepts the exact ChatGPT client_id with its one fixed redirect_uri', () => {
+		const result = resolvePinnedClient(MCP_OAUTH_CHATGPT_CLIENT_ID, CHATGPT_REDIRECT)
+
+		expect(result).toEqual({ ok: true, client: MCP_OAUTH_PINNED_CHATGPT_CLIENT })
+		expect(result.ok && result.client.client_name).toBe('ChatGPT')
+		expect(supportsAuthorizationCodeFlow(MCP_OAUTH_PINNED_CHATGPT_CLIENT)).toBe(true)
+	})
+
+	it.each([
+		['a trailing slash', `${MCP_OAUTH_CHATGPT_CLIENT_ID}/`],
+		['a different case', 'https://ChatGPT.com/oauth/client.json'],
+		['a per-app callback id', 'https://chatgpt.com/oauth/abc123/client.json'],
+		['another host', 'https://chatgpt.com.evil.example/oauth/client.json'],
+	])('rejects a client_id with %s', (_name, clientId) => {
+		expect(resolvePinnedClient(clientId, CHATGPT_REDIRECT)).toEqual({
+			ok: false,
+			error: 'client_not_allowlisted',
+		})
+	})
+
+	it.each([
+		['the Claude return address', CLAUDE_REDIRECT],
+		['the per-app return address', 'https://chatgpt.com/connector/oauth/abc123'],
+		['a trailing slash', `${CHATGPT_REDIRECT}/`],
+		['a query string', `${CHATGPT_REDIRECT}?x=1`],
+	])('rejects a redirect_uri with %s', (_name, redirectUri) => {
+		expect(resolvePinnedClient(MCP_OAUTH_CHATGPT_CLIENT_ID, redirectUri)).toEqual({
+			ok: false,
+			error: 'bad_redirect_uri',
+		})
+	})
+
+	it('does not accept the ChatGPT return address for Claude', () => {
+		expect(resolvePinnedClient(MCP_OAUTH_CLAUDE_CLIENT_ID, CHATGPT_REDIRECT)).toEqual({
+			ok: false,
+			error: 'bad_redirect_uri',
+		})
+	})
+})
 
 describe('resolvePinnedClient', () => {
 	it('accepts the exact Claude client_id with its pinned redirect_uri', () => {

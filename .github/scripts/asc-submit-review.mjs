@@ -7,6 +7,8 @@
 //   BUILD_NUMBER    the build the workflow just uploaded. Empty on a manual run: the script then
 //                   takes the newest processed build of that version.
 //   DRY_RUN         "true" reads from App Store Connect and prints what it would do, creates nothing.
+//   SCHEDULED       "true" on the daily scheduled run: when App Store Connect has no build of the
+//                   version at all, the run ends quietly instead of waiting 45 minutes and failing.
 //   RELEASE_NOTES_PATH  defaults to apps/apple/release-notes.md. First line "# <version>", the
 //                   what's-new text below it. A file for another version fails the step.
 //
@@ -75,6 +77,7 @@ const {
 	GITHUB_STEP_SUMMARY = '',
 } = process.env
 const DRY_RUN = process.env.DRY_RUN === 'true'
+const SCHEDULED = process.env.SCHEDULED === 'true'
 
 const plan = []
 const problems = []
@@ -426,6 +429,19 @@ async function main() {
 		`${DRY_RUN ? 'DRY RUN. ' : ''}Version ${SUBMIT_VERSION}, ${BUILD_NUMBER ? `build ${BUILD_NUMBER}` : 'newest processed build'}, release type ${RELEASE_TYPE}.`,
 	)
 
+	const app = await findApp()
+	console.log(`App: ${app.attributes.name} (${app.attributes.bundleId}), id ${app.id}.`)
+
+	// The daily run meets versions nobody has built yet (a bumped number before its merge uploads).
+	// Nothing to send, so end green without waiting for a build that is not coming.
+	if (SCHEDULED) {
+		const builds = await listBuilds(app.id)
+		if (builds.length === 0) {
+			console.log(`Nothing to do: App Store Connect has no build of ${SUBMIT_VERSION} yet.`)
+			return
+		}
+	}
+
 	let notes = ''
 	try {
 		notes = readReleaseNotes()
@@ -435,9 +451,6 @@ async function main() {
 		problems.push(error.message)
 		console.log(`WOULD FAIL: ${error.message}`)
 	}
-
-	const app = await findApp()
-	console.log(`App: ${app.attributes.name} (${app.attributes.bundleId}), id ${app.id}.`)
 
 	let version = await findVersion(app.id)
 	if (version) {

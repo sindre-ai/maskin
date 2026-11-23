@@ -23,40 +23,67 @@ describe('GATEWAY_PROVIDERS', () => {
 		expect([...GATEWAY_PROVIDERS].sort()).toEqual([
 			'airtable',
 			'amplitude',
+			'apollo',
+			'asana',
 			'atlassian',
 			'attio',
 			'azure-devops',
+			'box',
+			'calendly',
 			'canva',
+			'clay',
 			'clickup',
 			'cloudflare',
 			'datadog',
+			'dinero',
+			'docusign',
+			'dropbox',
 			'fathom',
+			'figma',
 			'fireflies',
 			'gmail',
+			'gong',
 			'google-calendar',
 			'granola',
 			'hex',
+			'hubspot',
+			'intercom',
+			'lattice',
 			'linear',
+			'looker',
+			'make',
 			'miro',
 			'mixpanel',
+			'monday',
 			'neon',
 			'netlify',
 			'new-relic',
 			'notion',
+			'numina',
 			'otter',
+			'outreach',
 			'pagerduty',
+			'pipedrive',
 			'planetscale',
 			'posthog',
+			'power-bi',
+			'ramp',
 			'resend',
 			'retool',
+			'salesforce',
 			'sentry',
+			'squarespace',
 			'stripe',
 			'supabase',
 			'ubersuggest',
+			'uniconta',
 			'vercel',
 			'webflow',
+			'xero',
 			'zapier',
+			'zendesk',
 			'zoom',
+			'zoominfo',
 		])
 		for (const other of ['slack', 'github', 'linkedin-unipile', 'google-meet']) {
 			expect(GATEWAY_PROVIDERS.has(other)).toBe(false)
@@ -73,6 +100,11 @@ describe('gatewayServerSpec', () => {
 		expect(spec.url).toBe('${MASKIN_API_URL}/api/integrations/linear/gateway')
 		expect(spec.headers.Authorization).toBe('Bearer ${MASKIN_API_KEY}')
 		expect(JSON.stringify(spec)).not.toContain('LINEAR_TOKEN')
+	})
+
+	it('names the calling session so an Allow in this chat can be found', () => {
+		const spec = gatewayServerSpec('google-calendar') as { headers: Record<string, string> }
+		expect(spec.headers['X-Maskin-Session-Id']).toBe('${SESSION_ID}')
 	})
 })
 
@@ -169,6 +201,83 @@ describe('decideToolCall', () => {
 				annotations: { destructiveHint: true },
 			}).allowed,
 		).toBe(false)
+	})
+})
+
+describe('decideToolCall with a list of allowed tools', () => {
+	const base = { provider: 'custom-mcp', providerLabel: 'Books', access: 'read_write' as const }
+	const allowedTools = ['list_vouchers', 'create_voucher_draft']
+
+	it('refuses a tool off the list whatever the access, naming it', () => {
+		for (const toolName of ['book_voucher', 'delete_voucher', 'get_balance']) {
+			const d = decideToolCall({ ...base, toolName, allowedTools })
+			expect(d.allowed).toBe(false)
+			expect(d.message).toContain(`${toolName} is not one of the tools Books may use here`)
+		}
+	})
+
+	it('lets a listed tool through for an agent whose access covers it', () => {
+		expect(
+			decideToolCall({ ...base, toolName: 'create_voucher_draft', allowedTools }).allowed,
+		).toBe(true)
+	})
+
+	it('does not widen access: a listed write is still refused to a Read agent', () => {
+		const d = decideToolCall({
+			...base,
+			access: 'read',
+			toolName: 'create_voucher_draft',
+			allowedTools,
+		})
+		expect(d.allowed).toBe(false)
+		expect(d.message).toContain('needs write access')
+	})
+
+	it('matches the name exactly, not by prefix, case or fan-out suffix', () => {
+		for (const toolName of [
+			'create_voucher_draft_and_book',
+			'Create_Voucher_Draft',
+			'x__create_voucher_draft',
+		]) {
+			expect(decideToolCall({ ...base, toolName, allowedTools }).allowed).toBe(false)
+		}
+	})
+
+	it('changes nothing without a list', () => {
+		expect(decideToolCall({ ...base, toolName: 'book_voucher' }).allowed).toBe(true)
+	})
+})
+
+describe('annotateToolsList with a list of allowed tools', () => {
+	const result = {
+		tools: ['list_vouchers', 'create_voucher_draft', 'book_voucher'].map((name) => ({
+			name,
+			description: name,
+		})),
+		nextCursor: 'c1',
+	}
+
+	it('leaves every tool off the list out and keeps the rest of the result', () => {
+		const { result: out } = annotateToolsList(result, {
+			provider: 'custom-mcp',
+			providerLabel: 'Books',
+			access: 'read_write',
+			allowedTools: ['list_vouchers', 'create_voucher_draft'],
+		})
+		expect((out as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toEqual([
+			'list_vouchers',
+			'create_voucher_draft',
+		])
+		expect((out as { nextCursor: string }).nextCursor).toBe('c1')
+	})
+
+	it('lists every tool when there is no list', () => {
+		const { result: out } = annotateToolsList(result, {
+			provider: 'custom-mcp',
+			providerLabel: 'Books',
+			access: 'read_write',
+		})
+		expect((out as { tools: unknown[] }).tools).toHaveLength(3)
 	})
 })
 

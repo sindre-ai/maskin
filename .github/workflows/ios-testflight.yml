@@ -64,6 +64,12 @@ name: iOS TestFlight
 # apps/apple/release-notes.md ("# <version>" on the first line). The release type is automatic: the
 # version goes live as soon as Apple approves it, with no one pressing Release.
 #
+# Daily retry: a schedule (07:23 UTC, weekends too) runs the app-review job alone for the
+# MARKETING_VERSION on main, as a real submit and not a dry run. A submit that failed once, or a
+# version whose upload finished after the push, is then sent without anyone starting a run. It is
+# safe every day: the script stops with "Nothing to do" for a version that is sent, in review or
+# live, and ends quietly when App Store Connect has no build of that version yet.
+#
 # Started by hand (Actions, Run workflow) the workflow does not archive. It reads App Store Connect:
 # "dry run" prints what a submission would do and creates nothing; "submit_version" submits that
 # version (it also retries a submission that failed, because a later merge with the same version
@@ -83,6 +89,9 @@ on:
       - '!apps/apple/Tests/**'
       - '!apps/apple/**/*.md'
       - '.github/workflows/ios-testflight.yml'
+  # Retry of the App Review submit, see the header. Cron runs in UTC and only on the default branch.
+  schedule:
+    - cron: '23 7 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -560,7 +569,9 @@ jobs:
       # Decides whether to submit and which version. On a push: only when MARKETING_VERSION differs
       # from the commit before the push. No previous commit (first push, force push that dropped
       # it) means no comparison is possible, so nothing is submitted and the log says how to do it
-      # by hand. It never fails on that.
+      # by hand. It never fails on that. A scheduled run is a manual run with an empty version and
+      # no dry run: it submits the version in project.yml, and the script skips it when that version
+      # has no uploaded build.
       - name: Decide what to submit
         id: plan
         if: steps.gate.outputs.enabled == 'true'
@@ -579,6 +590,11 @@ jobs:
           if [ -z "$current" ]; then
             echo "::error::Could not read MARKETING_VERSION from apps/apple/project.yml."
             exit 1
+          fi
+
+          if [ "$EVENT" = "schedule" ]; then
+            { echo "submit=true"; echo "version=$current"; echo "build_number="; echo "dry_run=false"; echo "scheduled=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if [ "$EVENT" = "workflow_dispatch" ]; then
@@ -629,6 +645,7 @@ jobs:
           SUBMIT_VERSION: ${{ steps.plan.outputs.version }}
           BUILD_NUMBER: ${{ steps.plan.outputs.build_number }}
           DRY_RUN: ${{ steps.plan.outputs.dry_run }}
+          SCHEDULED: ${{ steps.plan.outputs.scheduled }}
         run: |
           ASC_KEY_P8_PATH="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
             node .github/scripts/asc-submit-review.mjs

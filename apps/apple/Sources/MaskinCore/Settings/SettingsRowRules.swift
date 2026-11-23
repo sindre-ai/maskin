@@ -154,19 +154,21 @@ public enum SettingsRowRules {
 
 	/// A button in the menu a connected row opens.
 	public enum IntegrationAction: Hashable, Sendable {
-		case reconnect, agentAccess, disconnect, remove
+		case reconnect, agentAccess, changeApp, disconnect, remove
 	}
 
 	/// The menu of a connected row, in order. A tool server only offers Remove. Reconnect shows for
 	/// managers when the account is not connected and can be started here. Agent access needs the
-	/// page services and a connected account. Everything else ends with Disconnect.
+	/// page services and a connected account. Change app is for managers on a provider that signs in
+	/// with the workspace's own app (`hasOwnApp`). Everything else ends with Disconnect.
 	public static func integrationActions(
 		isToolServer: Bool, canManage: Bool, canStartConnect: Bool, state: ConnectedIntegration.State,
-		hasServices: Bool
+		hasServices: Bool, hasOwnApp: Bool = false
 	) -> [IntegrationAction] {
 		var actions: [IntegrationAction] = []
 		if !isToolServer, canManage, canStartConnect, state != .connected { actions.append(.reconnect) }
 		if hasServices, state == .connected { actions.append(.agentAccess) }
+		if !isToolServer, canManage, hasOwnApp { actions.append(.changeApp) }
 		actions.append(isToolServer ? .remove : .disconnect)
 		return actions
 	}

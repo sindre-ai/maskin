@@ -1,4 +1,6 @@
+import { fillCustomerValue, hasCustomerValueToken } from '../customer-value'
 import { getEnvOrThrow } from '../env'
+import { assertPublicHost } from '../public-host'
 import type { OAuth2Config, StoredCredentials } from '../types'
 import { createS256CodeChallenge } from './pkce'
 
@@ -42,14 +44,45 @@ function parseOAuthErrorField(body: string): string | undefined {
 	return undefined
 }
 
+/** A workspace's own sign-in app. When one is passed it wins over the server settings. */
+export interface OAuthClientApp {
+	clientId: string
+	/** Empty for a public client (tokenAuthMethod 'none'), which has no secret. */
+	clientSecret: string
+	/** The customer's own address or tenant (OAuth2Config.customerValue), put into the URLs. */
+	value?: string
+}
+
 export class OAuth2Handler {
 	private customParser?: (raw: unknown) => Partial<StoredCredentials>
 
 	constructor(
 		private config: OAuth2Config,
 		customParser?: (raw: unknown) => Partial<StoredCredentials>,
+		private app?: OAuthClientApp,
 	) {
 		this.customParser = customParser
+	}
+
+	/** A URL of the tool's setup with the customer's value in it, checked again on the way in. */
+	private url(template: string): string {
+		return fillCustomerValue(template, this.config.customerValue, this.app?.value)
+	}
+
+	/**
+	 * Where a request to the customer's own host goes: looked up first and refused unless every
+	 * address is public, and sent with redirects off, so neither a name that points inside our
+	 * network nor a redirect to another host is ever followed. A tool at a fixed address is unchanged.
+	 */
+	private async guardedFetch(template: string, init: RequestInit): Promise<Response> {
+		const url = this.url(template)
+		if (!hasCustomerValueToken(template)) return fetch(url, init)
+		await assertPublicHost(new URL(url).hostname)
+		return fetch(url, { ...init, redirect: 'manual' })
+	}
+
+	private clientId(): string {
+		return this.app?.clientId ?? getEnvOrThrow(this.config.clientIdEnv)
 	}
 
 	/**
@@ -57,9 +90,9 @@ export class OAuth2Handler {
 	 * If PKCE is enabled, pass a code verifier to include a code challenge.
 	 */
 	createAuthorizationUrl(state: string, redirectUri: string, codeVerifier?: string): string {
-		const url = new URL(this.config.authorizationUrl)
+		const url = new URL(this.url(this.config.authorizationUrl))
 		url.searchParams.set('response_type', 'code')
-		url.searchParams.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
+		url.searchParams.set('client_id', this.clientId())
 		url.searchParams.set('redirect_uri', redirectUri)
 		url.searchParams.set('state', state)
 
@@ -122,7 +155,7 @@ export class OAuth2Handler {
 		const headers = this.buildAuthHeaders()
 		headers.set('Content-Type', 'application/x-www-form-urlencoded')
 
-		const response = await fetch(this.config.revokeUrl, {
+		const response = await this.guardedFetch(this.config.revokeUrl, {
 			method: 'POST',
 			headers,
 			body: body.toString(),
@@ -151,14 +184,13 @@ export class OAuth2Handler {
 		// sends its id only, and PKCE proves the exchange.
 		const method = this.config.tokenAuthMethod ?? 'client_secret_post'
 		if (method === 'client_secret_post') {
-			body.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
+			body.set('client_id', this.clientId())
 			body.set('client_secret', this.clientSecret())
 		} else if (method === 'none') {
-			body.set('client_id', getEnvOrThrow(this.config.clientIdEnv))
+			body.set('client_id', this.clientId())
 		}
 
-		const tokenUrl = urlOverride ?? this.config.tokenUrl
-		const response = await fetch(tokenUrl, {
+		const response = await this.guardedFetch(urlOverride ?? this.config.tokenUrl, {
 			method: 'POST',
 			headers,
 			body: body.toString(),
@@ -181,6 +213,7 @@ export class OAuth2Handler {
 	}
 
 	private clientSecret(): string {
+		if (this.app) return this.app.clientSecret
 		if (!this.config.clientSecretEnv) {
 			throw new Error(
 				'OAuth config has no clientSecretEnv, but its token auth method needs a secret',
@@ -194,7 +227,7 @@ export class OAuth2Handler {
 		const method = this.config.tokenAuthMethod ?? 'client_secret_post'
 
 		if (method === 'client_secret_basic') {
-			const clientId = getEnvOrThrow(this.config.clientIdEnv)
+			const clientId = this.clientId()
 			const clientSecret = this.clientSecret()
 			const encoded = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
 			headers.set('Authorization', `Basic ${encoded}`)

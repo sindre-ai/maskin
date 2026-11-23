@@ -41,7 +41,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import type { z } from 'zod'
 import { needsNormalise, normaliseArgs, wrapInputSchema } from './alias-layer.js'
-import { READ_ONLY_TOOLS, TOOL_ANNOTATIONS } from './annotations.js'
+import {
+	EXTENSION_TOOL_ANNOTATIONS,
+	READ_ONLY_TOOLS,
+	TOOL_ANNOTATIONS,
+	extensionToolTitle,
+} from './annotations.js'
 import { addCopenhagenTimesToResponse } from './copenhagen-times.js'
 import {
 	CURSOR_MAX_OFFSET,
@@ -145,6 +150,14 @@ export interface McpConfig {
 	 */
 	forwardMarker?: string
 	/**
+	 * Leave the hero card out of `structuredContent`. The card is a widget-only copy of data the
+	 * response already carries in full, so a caller that draws no widgets (a Maskin agent session)
+	 * only pays for it. Set by `routes/mcp.ts` for agent sessions; the HTTP server is built per
+	 * POST and never sees the client's `initialize`, so widget support cannot be read from the
+	 * client's capabilities. Unset keeps the card, which is what a widget host needs.
+	 */
+	omitHeroCard?: boolean
+	/**
 	 * Protocol era and allowlisted version label for telemetry, next to
 	 * `transport`. Set by `routes/mcp.ts` from `classifyMcpEra` on HTTP; stdio
 	 * sets the fallback (legacy, none) because the SDK does not expose the
@@ -209,6 +222,18 @@ function uiMeta(
 	resourceUri: string,
 ): Record<string, unknown> {
 	return { ...meta(toolName, config, workspaceId), ui: { resourceUri, csp: CSP } }
+}
+
+/**
+ * The `heroCard` key for a response's `structuredContent`, or nothing when the caller draws no
+ * widgets (`config.omitHeroCard`). Only for tools whose full record also sits in
+ * `structuredContent`: where the card is the only carrier of the rows, dropping it drops the data.
+ */
+function heroCardBlock(
+	config: McpConfig,
+	heroCard: HeroCardPayload,
+): { heroCard?: HeroCardPayload } {
+	return config.omitHeroCard ? {} : { heroCard }
 }
 
 function addUrl(
@@ -429,6 +454,17 @@ async function fetchEventHistoryPage(
 		n: nextOffset,
 	})
 	return { page, nextCursor }
+}
+
+/** A file record with its `content` and `content_text` starting at character `offset`, plus the offset. */
+function sliceFileFrom(file: unknown, offset: number): unknown {
+	if (!file || typeof file !== 'object') return file
+	const out: Record<string, unknown> = { ...(file as Record<string, unknown>), offset }
+	for (const key of ['content', 'content_text']) {
+		const value = out[key]
+		if (typeof value === 'string') out[key] = value.slice(offset)
+	}
+	return out
 }
 
 /** Read `.url` off an enriched row without paying the TS cost each time. */
@@ -3563,7 +3599,7 @@ async function listObjectsPage(
 			},
 		],
 		structuredContent: {
-			heroCard,
+			...heroCardBlock(config, heroCard),
 			objects: rows,
 			page: {
 				limit: pagination.limit,
@@ -3629,6 +3665,8 @@ const UNKNOWN_KEY_HINTS: Record<string, Record<string, string>> = {
 		types: 'edge_type_allow_list',
 	},
 	get_objects: {
+		object_id: 'ids: ["<uuid>"]',
+		object_ids: 'ids',
 		include_content: 'include: ["content"]',
 		include_body: 'include: ["content"]',
 		include_metadata: 'include: ["metadata"]',
@@ -3874,8 +3912,9 @@ export function createMcpServer(config: McpConfig) {
 		handlers.set(name, wrappedHandler)
 
 		// Title and annotations come from the table in annotations.ts, so every
-		// tool gets them here and nowhere else. Extension tools have no row and
-		// pass through unannotated.
+		// platform tool gets them here. Extension tools have no row: they carry
+		// their own title and annotations from the loop that registers them, and
+		// pass through here untouched.
 		const annotation = TOOL_ANNOTATIONS[name]
 		const annotatedDefinition = annotation
 			? {
@@ -3921,7 +3960,9 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, nodes, edges } = args
+			const { nodes, edges } = args
+			// Left out, the call runs in the caller's own workspace (the session's, or the default).
+			const workspace_id = args.workspace_id ?? config.defaultWorkspaceId
 			const wsOpts = { workspaceId: workspace_id }
 
 			// /api/graph doesn't understand file_ids — strip them from the body
@@ -4223,7 +4264,7 @@ export function createMcpServer(config: McpConfig) {
 					...(wait ? [{ type: 'text' as const, text: JSON.stringify({ wait }) }] : []),
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					results: slimResults,
 					objects: canonicalObjects,
 					...(wait ? { wait } : {}),
@@ -4830,7 +4871,7 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					objects: enriched,
 					page: {
 						limit: pagination.limit,
@@ -4934,7 +4975,7 @@ export function createMcpServer(config: McpConfig) {
 					},
 				],
 				structuredContent: {
-					heroCard,
+					...heroCardBlock(config, heroCard),
 					objects: enriched,
 					page: {
 						limit: result.length,
@@ -5471,6 +5512,20 @@ export function createMcpServer(config: McpConfig) {
 				// never serializes onto the wire.
 				[TELEMETRY_VIEW]: view,
 				_meta: uiMeta('list_actors', config, scopeWorkspaceId, pickCollectionResourceUri(heroCard)),
+				// The rows live in the heroCard only, so the text carries them too: a client that
+				// reads text (a live voice call) gets the same rows the card holds.
+				content: [
+					{
+						type: 'text' as const,
+						text: listPageText({
+							key: 'actors',
+							rows: heroObjects,
+							limit: pagination.limit,
+							nextCursor,
+							total: totalCount,
+						}),
+					},
+				],
 				structuredContent: {
 					heroCard,
 					...(nextCursor
@@ -5485,16 +5540,7 @@ export function createMcpServer(config: McpConfig) {
 							}
 						: {}),
 				},
-				// The SDK's CallToolResult type requires `content` because Zod's
-				// `Infer` treats a `ZodDefault` field as required on the output side,
-				// even though nothing in the SDK's tool-dispatch path (`mcp.js`'s
-				// `Promise.resolve(cb(args, extra))`) actually validates the return
-				// value against that schema — this handler genuinely omits `content`
-				// at runtime (see the `list_actors: flag ... never emits a content
-				// channel` tests); this is a static-type artifact only, not a real
-				// contract violation.
-				// biome-ignore lint/suspicious/noExplicitAny: see comment above.
-			} as any
+			}
 		},
 	)
 
@@ -5593,7 +5639,7 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-				structuredContent: { heroCard, actor: withUrl },
+				structuredContent: { ...heroCardBlock(config, heroCard), actor: withUrl },
 			}
 		},
 	)
@@ -6571,9 +6617,12 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsId = resolveWorkspaceId(args.workspace_id)
 			const fileQuery = args.format === 'text' ? '?format=text' : ''
-			const result = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
+			const fetched = await apiCall(config, 'GET', `/api/files/${args.id}${fileQuery}`, undefined, {
 				workspaceId: wsId,
 			})
+			// A read past the first characters starts where the caller left off, so a file the
+			// response cap cut can still be read to the end.
+			const result = args.offset ? sliceFileFrom(fetched, args.offset) : fetched
 			const file = result as { mimeType?: string | null; encoding?: string; content?: unknown }
 			// Images go back as a real image block so the model can see them; the
 			// base64 bytes would otherwise arrive as ~50k chars of opaque text.
@@ -6770,23 +6819,35 @@ export function createMcpServer(config: McpConfig) {
 				pagination,
 				args.workspace_id,
 			)
+			// One payload on both channels, so the text and the structured copy cannot drift.
+			const payload = buildListPayload({
+				key: 'comments',
+				rows: pagedRows,
+				limit: pagination.limit,
+				nextCursor,
+				total: null,
+			})
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [
-					{
-						type: 'text' as const,
-						text: listPageText({
-							key: 'comments',
-							rows: pagedRows,
-							limit: pagination.limit,
-							nextCursor,
-							total: null,
-						}),
-					},
-				],
-				structuredContent: {
-					comments: pagedRows,
-					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				content: [{ type: 'text' as const, text: listText(payload) }],
+				structuredContent: payload,
+				// If the token cap trims this page, the walk resumes right after the last comment
+				// that ships. The history walk pages by offset, so the cursor carries the new offset.
+				[RESUME_CURSOR]: (lastShipped: unknown) => {
+					const index = pagedRows.findIndex(
+						(row) =>
+							String((row as { id?: unknown }).id) === String((lastShipped as { id?: unknown }).id),
+					)
+					const row = pagedRows[index] as
+						| { id: number | string; createdAt?: string | null }
+						| undefined
+					if (!row?.createdAt) return null
+					return encodeCursor({
+						s: pagination.snapshotAt,
+						o: pagination.order,
+						k: { sortValue: row.createdAt, id: String(row.id) },
+						n: (pagination.cursor?.n ?? 0) + index + 1,
+					})
 				},
 			}
 		},
@@ -7428,6 +7489,11 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, run_at, ...fields } = args
+			if (!fields.target_actor_id && fields.config?.target !== 'item_driver') {
+				throw new Error(
+					'Missing required key "target_actor_id": the agent to start (find one with list_actors), or set config.target to "item_driver" to start the item\'s driver.',
+				)
+			}
 			const body = oneTimeOrScheduledBody(fields, run_at)
 			const saved = (await apiCall(config, 'POST', '/api/triggers', body, {
 				workspaceId: workspace_id,
@@ -8584,7 +8650,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const params = new URLSearchParams({ for_actor_id: args.actor_id })
+			// Without for_actor_id the route reads the caller's own list.
+			const params = new URLSearchParams(args.actor_id ? { for_actor_id: args.actor_id } : {})
 			const result = (await apiCall(config, 'GET', `/api/for-you?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as { items?: ForYouItemLike[] }
@@ -10940,8 +11007,10 @@ ${claudeCredsBlock}`,
 					server,
 					`${ext.id}_${tool.name}`,
 					{
+						title: extensionToolTitle(tool.name),
 						description: `[${ext.name}] ${tool.description}`,
 						inputSchema: tool.inputSchema.shape,
+						annotations: { ...EXTENSION_TOOL_ANNOTATIONS },
 						_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 					},
 					async (args) => {

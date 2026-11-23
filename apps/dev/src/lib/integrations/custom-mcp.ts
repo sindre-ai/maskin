@@ -41,6 +41,12 @@ export const customMcpServerSchema = z
 		env: envSchema.optional(),
 		url: urlSchema.optional(),
 		headers: headersSchema.optional(),
+		/**
+		 * The only tools an agent may call on this server, by the name the server gives them. Without
+		 * it every tool the agent's access allows is open. Enforced by the gateway on tools/call and
+		 * tools/list, so it needs a server the gateway can sit in front of.
+		 */
+		allowed_tools: z.array(z.string().trim().min(1).max(200)).min(1).max(200).optional(),
 	})
 	.strict()
 	.superRefine((v, ctx) => {
@@ -49,6 +55,14 @@ export const customMcpServerSchema = z
 			ctx.addIssue({ code: 'custom', path: ['url'], message: 'A URL is required' })
 		if (!http && !v.command) {
 			ctx.addIssue({ code: 'custom', path: ['command'], message: 'A command is required' })
+		}
+		// A list nobody can enforce would read as a limit and be none.
+		if (v.allowed_tools && !isGatewayable(v)) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['allowed_tools'],
+				message: 'A tool list needs an HTTP server at a public address, so Maskin can enforce it',
+			})
 		}
 	})
 
@@ -159,8 +173,11 @@ export function isPublicHost(host: string): boolean {
 	return h.includes('.')
 }
 
+/** The part of a server definition that decides whether the gateway can serve it. */
+type GatewayTarget = { type?: 'stdio' | 'http'; url?: string }
+
 /** True when Maskin can sit in front of this server: HTTP, absolute URL, public host. */
-export function isGatewayable(server: CustomMcpServer): boolean {
+export function isGatewayable(server: GatewayTarget): boolean {
 	const http = server.type === 'http' || (server.type === undefined && !!server.url)
 	if (!http || !server.url || server.url.startsWith('$')) return false
 	try {

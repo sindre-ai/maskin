@@ -221,6 +221,31 @@ describe('LinkedIn send tools for an agent set to always allow', () => {
 		expect(stubs.publishPost).toHaveBeenCalledTimes(1)
 	})
 
+	it('refuses a message or reply with no text, and sends nothing', async () => {
+		const stubs = stubClient()
+		const { call } = await connect()
+
+		const results = [
+			await call('send_message', {
+				recipient_urn: 'ACoAAA1',
+				body: ' \n\t ',
+				idempotency_key: 'k-blank-message',
+			}),
+			await call('reply', {
+				thread_id: 'thread-1',
+				body: '   ',
+				in_reply_to_message_id: 'm-blank-1',
+			}),
+			await call('reply', { thread_id: 'thread-1', in_reply_to_message_id: 'm-blank-2' }),
+		]
+
+		for (const result of results) expect(result.isError).toBe(true)
+		expect(textOf(results[0])).toContain('blank')
+		expect(textOf(results[1])).toContain('blank')
+		expect(stubs.sendMessage).not.toHaveBeenCalled()
+		expect(stubs.reply).not.toHaveBeenCalled()
+	})
+
 	it('logs a direct send once, with the kind and the outcome', async () => {
 		stubClient()
 		const { call, integrationId } = await connect()

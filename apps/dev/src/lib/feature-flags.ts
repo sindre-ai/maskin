@@ -202,6 +202,25 @@ export const FLAGS = {
 	 */
 	ZOOM: 'zoom',
 	/**
+	 * Gates Salesforce and the paste form for a customer's own sign-in app (task
+	 * [Let customers connect with their own app](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1fe9152c-c039-4f84-95d1-0a673fad9957)).
+	 * Actor-scoped, read by the integrations routes: off means Salesforce is missing from
+	 * GET /api/integrations/providers and its connect and app calls are refused, so Settings shows
+	 * nothing new. The sign-in change for providers with a server-wide app is not behind the flag:
+	 * it only does anything when a workspace has saved its own app. Retire once a real Salesforce
+	 * admin has connected through the form and the provider is on for everyone.
+	 */
+	SALESFORCE: 'salesforce',
+	/**
+	 * Gates the tools that sign in with a customer's own app and were added after Salesforce: Box and
+	 * Lattice (task [Add the other eleven customer-app tools](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/126e9c17-63d3-4b0f-86fb-c8918a901b94)).
+	 * Actor-scoped, read by the integrations routes: off means the tools are missing from
+	 * GET /api/integrations/providers and their connect and app calls are refused, so Settings
+	 * shows nothing new. Retire once a real admin has connected each through the form and the
+	 * providers are on for everyone.
+	 */
+	CUSTOMER_APP_TOOLS: 'customer-app-tools',
+	/**
 	 * Gates the four meeting-notes integrations Fireflies, Granola, Fathom and Otter (task
 	 * [Add four meeting-notes integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/7bfb4736-6c21-4cc9-9a19-2e6f8f4d35d6)).
 	 * Actor-scoped, read by the integrations routes: off means the four are missing from
@@ -220,6 +239,46 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	DEVELOPER_DATA_INTEGRATIONS: 'developer-data-integrations',
+	/**
+	 * Gates the eight sales and automation integrations Apollo, ZoomInfo, Outreach, Gong, Clay,
+	 * Calendly, monday.com and Make (task
+	 * [Add sales and automation integrations](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/18a0ef4c-3cd5-468e-a8cb-3ea3b3344599)).
+	 * Actor-scoped, read by the integrations routes: off means the eight are missing from
+	 * GET /api/integrations/providers and their connect call is refused, so Settings shows nothing
+	 * new. A workspace that is already connected keeps working through the gateway. Retire once a
+	 * real sign-in has worked for each and the providers are on for everyone.
+	 */
+	SALES_AUTOMATION_INTEGRATIONS: 'sales-automation-integrations',
+	/**
+	 * Gates connecting Uniconta (task
+	 * [Connect Uniconta to the accounting flow](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e303850f-6315-428b-bb65-b764f7729314)).
+	 * Actor-scoped, read by the integrations routes: off means Uniconta is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Uniconta sign-in has worked and Uniconta is on for everyone.
+	 */
+	UNICONTA_CONNECT: 'uniconta-connect',
+	/**
+	 * Gates connecting Dinero (task
+	 * [Add Dinero integration](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f1c15747-e94d-44f2-8834-441a57345e48)).
+	 * Actor-scoped, read by the integrations routes: off means Dinero is missing from
+	 * GET /api/integrations/providers and its connect call is refused, so Settings shows nothing new.
+	 * A workspace that is already connected keeps working through the gateway. Retire once a real
+	 * Dinero sign-in has worked, the draft-only tool list is set and Dinero is on for everyone.
+	 */
+	DINERO: 'dinero',
+	/**
+	 * Gates the ten integrations that sign in through an app Maskin owns at the vendor, or need the
+	 * vendor to approve Maskin first: HubSpot, Asana, DocuSign, Figma, Dropbox, Intercom, Pipedrive,
+	 * Ramp, Squarespace and Xero (task
+	 * [Add fourteen tools that need Maskin's own app](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e09203c0-8d1c-472b-b668-f9312024a5f2)).
+	 * Actor-scoped, read by the integrations routes: off means the ten are missing from
+	 * GET /api/integrations/providers and their connect call is refused. On is not enough on its own:
+	 * a provider also stays hidden until its CLIENT_ID is set on the server. A workspace that is
+	 * already connected keeps working through the gateway. Retire once a real sign-in has worked for
+	 * each and the providers are on for everyone.
+	 */
+	OWN_APP_INTEGRATIONS: 'own-app-integrations',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

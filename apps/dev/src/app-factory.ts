@@ -79,6 +79,7 @@ import integrationsKeychainRoutes from './routes/integrations-keychain'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsMicrosoftMcpRoutes from './routes/integrations-microsoft-mcp'
+import integrationsOAuthAppRoutes from './routes/integrations-oauth-app'
 import integrationsResendRoutes from './routes/integrations-resend'
 import integrationsSkjaldConnectRoutes from './routes/integrations-skjald-connect'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
@@ -103,6 +104,7 @@ import objectGoAheadRoutes from './routes/object-go-ahead'
 import objectNextStepRoutes from './routes/object-next-step'
 import objectOutcomeRoutes from './routes/object-outcome'
 import objectsRoutes from './routes/objects'
+import openaiAppsChallengeRoutes from './routes/openai-apps-challenge'
 import pilotGateRoutes from './routes/pilot-gate'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
@@ -608,6 +610,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/youtube/mcp', integrationsYoutubeMcpRoutes)
 	app.route('/api/custom-mcp-servers', customMcpServersRoutes)
 	app.route('/api/integrations', integrationsKeychainRoutes)
+	app.route('/api/integrations', integrationsOAuthAppRoutes)
 	app.route('/api/keychain', keychainAdminRoutes)
 	app.route('/api/integrations', integrationsGrantsRoutes)
 	app.route('/api/integrations', integrationsGatewayRoutes)
@@ -697,6 +700,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Claude sign-in discovery documents. Mounted before the SPA fallthrough below, which would
 	// otherwise answer these paths with index.html.
 	app.route('/', oauthDiscoveryRoutes)
+
+	// Domain proof for the ChatGPT app listing. 404 until OPENAI_APPS_CHALLENGE is set.
+	app.route('/', openaiAppsChallengeRoutes)
 
 	// Client ID Metadata Document for Vercel's MCP sign-in. Public, and before the SPA fallthrough for
 	// the same reason as the discovery documents above.

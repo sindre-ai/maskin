@@ -80,6 +80,7 @@ import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
+import { OpenRouterBalanceMonitor } from './services/openrouter-balance-monitor'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
@@ -121,11 +122,13 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
-	onPoolRecycled: ({ runningQueries, sql }) => {
-		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
-			runningQueries,
-			sql,
-		})
+	onPoolRecycled: ({ runningQueries, sql, reason }) => {
+		logger.warn(
+			reason === 'read_only'
+				? 'DB pool replaced: a write was refused as read-only, so the connections are on a node that is no longer the primary'
+				: 'DB pool replaced: a query got no answer and the database was not busy',
+			{ runningQueries, sql, reason },
+		)
 	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
@@ -379,6 +382,10 @@ logger.info('Blocked tool calls cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+const openRouterBalanceMonitor = new OpenRouterBalanceMonitor(db)
+openRouterBalanceMonitor.start()
+logger.info('OpenRouter balance monitor started')
 
 const posthogAccountSync = new PosthogAccountSync(db)
 posthogAccountSync.start()

@@ -1,0 +1,30 @@
+{
+	"name": "maskin",
+	"version": "0.1.0",
+	"description": "Maskin, the open-source workspace where AI agents do the work and people set direction. Connect Cursor to your Maskin workspace over MCP.",
+	"author": {
+		"name": "Maskin",
+		"email": "ai@maskin.io"
+	},
+	"homepage": "https://maskin.io",
+	"repository": "https://github.com/sindre-ai/maskin",
+	"license": "Apache-2.0",
+	"keywords": ["mcp", "agents", "workspace", "project-management", "ai-agents"],
+	"logo": "assets/logo.svg",
+	"variables": {
+		"type": "object",
+		"properties": {
+			"MASKIN_API_KEY": {
+				"type": "string",
+				"title": "Maskin API key",
+				"description": "Your personal Maskin key, starting with ank_. Create one in Maskin under Settings, then Keys."
+			},
+			"MASKIN_WORKSPACE_ID": {
+				"type": "string",
+				"title": "Maskin workspace ID",
+				"description": "The ID of the workspace to connect to. It is the first part of the address when you have the workspace open in Maskin."
+			}
+		},
+		"required": ["MASKIN_API_KEY", "MASKIN_WORKSPACE_ID"]
+	}
+}

@@ -24,18 +24,18 @@ export const doneWhenLineInputSchema = z.object({
 		.min(1)
 		.max(300)
 		.describe(
-			'One thing that will be true when the job is done, in plain words a person can check: "The first 10 emails are sent and logged". Not a step you will take.',
+			'One thing that will be true when the job is done, in plain words a person can check ("The first 10 emails are sent and logged"). Not a step.',
 		),
 	checked_by: z
 		.enum(DONE_WHEN_CHECKERS)
 		.describe(
-			'Who checks the line. code: only when you can name a reading the system takes by itself (give reading and comparison). checker: a second agent reads the result. person: a person looks. A line with no reading behind it is person. Never mark checker by default.',
+			'Who checks the line. code: only with a reading the system takes by itself (give reading and comparison). checker: a second agent reads the result. person: a person looks; the default when there is no reading.',
 		),
 	needs_yes: z
 		.boolean()
 		.optional()
 		.describe(
-			'True when making the line true sends something in a person’s name, spends money or deletes something. Such a line is never covered by the go-ahead on the card.',
+			"True when making the line true sends in a person’s name, spends or deletes; the card's go-ahead never covers it.",
 		),
 	reading: z
 		.string()
@@ -43,12 +43,7 @@ export const doneWhenLineInputSchema = z.object({
 		.max(300)
 		.optional()
 		.describe('code lines only: what the system reads, e.g. "Stripe payments in the last 7 days".'),
-	comparison: z
-		.string()
-		.min(1)
-		.max(100)
-		.optional()
-		.describe('code lines only: how the reading is compared, e.g. ">= 3".'),
+	comparison: z.string().min(1).max(100).optional(),
 })
 
 /**
@@ -61,15 +56,13 @@ export const doneWhenBlockSchema = z.object({
 		.max(DONE_WHEN_QUESTIONS_MAX)
 		.optional()
 		.describe(
-			`Questions about the goal you need answered before you can write the lines, all at once, shown at the top of the card (up to ${DONE_WHEN_QUESTIONS_MAX}). Leave out when you have none.`,
+			`Questions to answer before writing the lines, all at once (up to ${DONE_WHEN_QUESTIONS_MAX}).`,
 		),
 	lines: z
 		.array(doneWhenLineInputSchema)
 		.min(DONE_WHEN_LINES_MIN)
 		.max(DONE_WHEN_LINES_MAX)
-		.describe(
-			`The done-when list, ${DONE_WHEN_LINES_MIN} to ${DONE_WHEN_LINES_MAX} lines. Together they are what "done" means for this job.`,
-		),
+		.describe(`${DONE_WHEN_LINES_MIN} to ${DONE_WHEN_LINES_MAX} lines.`),
 })
 
 export type DoneWhenBlock = z.infer<typeof doneWhenBlockSchema>

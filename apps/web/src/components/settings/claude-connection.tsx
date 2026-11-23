@@ -164,6 +164,7 @@ function DisconnectDialog({
 	onClose,
 }: { grant: OauthGrantRow | null; onClose: () => void }) {
 	const disconnect = useDisconnectGrant()
+	const name = grant?.client_name ?? 'Claude'
 	const close = () => {
 		disconnect.reset()
 		onClose()
@@ -177,15 +178,15 @@ function DisconnectDialog({
 		>
 			<ResponsiveDialogContent>
 				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>Disconnect Claude?</ResponsiveDialogTitle>
+					<ResponsiveDialogTitle>Disconnect {name}?</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
-						Claude loses access to Maskin right away. Claude may then show "connection expired". You
+						{name} loses access to Maskin right away. {name} may then show "connection expired". You
 						can connect it again any time.
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 				{disconnect.isError && (
 					<p role="alert" className="text-xs text-error">
-						We couldn't disconnect Claude. Try again.
+						We couldn't disconnect {name}. Try again.
 					</p>
 				)}
 				<ResponsiveDialogFooter>
@@ -232,13 +233,13 @@ export function ClaudeTabPanel({ mcpUrl }: { mcpUrl: string }) {
 				</ul>
 				{rows.length > 1 && (
 					<p className="text-xs text-muted-foreground">
-						One row per workspace. Connecting Claude again to the same workspace replaces the old
+						One row per workspace. Connecting the same app again to a workspace replaces the old
 						connection.
 					</p>
 				)}
 				<p className="text-xs text-muted-foreground">
-					Claude acts as you, with your access in the workspace shown. Disconnect to end it right
-					away. Removing Maskin inside Claude may not end access. Disconnect here too.
+					Each app acts as you, with your access in the workspace shown. Disconnect to end it right
+					away. Removing Maskin inside the app may not end access. Disconnect here too.
 				</p>
 				<DisconnectDialog grant={target} onClose={() => setTarget(null)} />
 			</div>

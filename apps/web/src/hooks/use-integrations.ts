@@ -27,6 +27,8 @@ export function useConnectIntegration(workspaceId: string) {
 		mutationFn: (input: {
 			provider: string
 			apiKey?: string
+			// PostHog only: the project agents start in. Absent keeps PostHog's own default.
+			projectId?: string
 			// Resend two-call handshake: both fields travel with the first POST so
 			// the backend can hit Resend's `POST /domains` in the same round-trip.
 			receiveSubdomain?: string
@@ -44,12 +46,14 @@ export function useConnectIntegration(workspaceId: string) {
 		}) => {
 			const body =
 				input.apiKey ||
+				input.projectId ||
 				input.receiveSubdomain ||
 				input.installNewOrg ||
 				input.returnTo ||
 				input.origin
 					? {
 							...(input.apiKey ? { api_key: input.apiKey } : {}),
+							...(input.projectId ? { project_id: input.projectId } : {}),
 							...(input.receiveSubdomain ? { receive_subdomain: input.receiveSubdomain } : {}),
 							...(input.installNewOrg ? { install_new_org: true } : {}),
 							...(input.returnTo ? { return_to: input.returnTo } : {}),
@@ -74,6 +78,42 @@ export function useConnectDeepdots(workspaceId: string) {
 	return useMutation({
 		mutationFn: (input: { email: string; password: string }) =>
 			api.integrations.connect(workspaceId, 'deepdots', input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Whether this workspace saved its own sign-in app for a tool, and its app id. */
+export function useOAuthApp(
+	workspaceId: string,
+	provider: string,
+	options?: { enabled?: boolean },
+) {
+	return useQuery({
+		queryKey: queryKeys.integrations.oauthApp(workspaceId, provider),
+		queryFn: () => api.integrations.oauthApp(workspaceId, provider),
+		enabled: options?.enabled ?? true,
+	})
+}
+
+/** Saves or replaces the workspace's own sign-in app. The secret is sent once and never read back. */
+export function useSaveOAuthApp(workspaceId: string, provider: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { clientId: string; clientSecret?: string; value?: string }) =>
+			api.integrations.saveOAuthApp(workspaceId, provider, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Removes the workspace's own sign-in app. Refused by the server while the tool is connected. */
+export function useDeleteOAuthApp(workspaceId: string, provider: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: () => api.integrations.deleteOAuthApp(workspaceId, provider),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
 		},
@@ -354,6 +394,14 @@ export function useRemoveAgentGrant(workspaceId: string, integrationId: string) 
 		workspaceId,
 		(actorId: string) => api.integrations.removeGrant(integrationId, workspaceId, actorId),
 		'Agent access removed',
+	)
+}
+
+export function useRemoveChatGrant(workspaceId: string, integrationId: string) {
+	return useGrantMutation(
+		workspaceId,
+		(grantId: string) => api.integrations.removeChatGrant(integrationId, workspaceId, grantId),
+		'Chat access removed',
 	)
 }
 
