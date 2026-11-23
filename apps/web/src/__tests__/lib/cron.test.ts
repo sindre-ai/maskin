@@ -115,8 +115,13 @@ describe('describeCronExpression', () => {
 		expect(describe_('0 0 8 * * *')).toBe('every day at 09:00')
 	})
 
-	it('falls back to the raw expression for a restricted month with a wildcard day', () => {
-		expect(describe_('0 9 * 6 *')).toBe('0 9 * 6 *')
+	it('describes a restricted month with the offset of that month', () => {
+		expect(describe_('0 9 * 6 *')).toBe('every day at 11:00 in June')
+		expect(describe_('0 9 * 12 *', summer)).toBe('every day at 10:00 in December')
+	})
+
+	it('falls back to the raw expression for a month list that mixes summer and winter time', () => {
+		expect(describe_('0 9 * 1,7 *')).toBe('0 9 * 1,7 *')
 	})
 
 	it('falls back to the raw expression for a restricted month and weekday', () => {

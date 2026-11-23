@@ -111,13 +111,26 @@ describe('describeCronExpression in plain words', () => {
 	it('reads a day of the month and a restricted month', () => {
 		expect(words('0 9 1 * *')).toBe('on day 1 of each month at 10:00')
 		expect(words('0 9 1,15 * *')).toBe('on days 1 and 15 of each month at 10:00')
-		expect(words('0 9 * 3-6 1-5')).toBe('Monday to Friday at 10:00 in March to June')
+		expect(words('0 9 * 4-6 1-5')).toBe('Monday to Friday at 11:00 in April to June')
+	})
+
+	it('uses the summer or winter offset of the months a schedule runs in, not of today', () => {
+		expect(words('0 9 * 6 *')).toBe('every day at 11:00 in June')
+		expect(words('0 9 * 6 *', summer)).toBe('every day at 11:00 in June')
+		expect(words('0 9 * 12 *', summer)).toBe('every day at 10:00 in December')
+		expect(words('0 9 * 11,12 *', summer)).toBe('every day at 10:00 in November and December')
+	})
+
+	it('reads a list of hours that does not divide the day as clock times', () => {
+		expect(words('0 */5 * * *')).toBe('every day at 01:00, 06:00, 11:00, 16:00 and 21:00')
 	})
 
 	it('hands back the raw expression when it cannot be put into words', () => {
 		expect(words('*/15 9-17 * * 1-5')).toBe('*/15 9-17 * * 1-5')
 		expect(words('0 9 1,15 * 1')).toBe('0 9 1,15 * 1')
-		expect(words('0 */5 * * *')).toBe('0 */5 * * *')
+		expect(words('0 9 * 1,7 *')).toBe('0 9 * 1,7 *')
+		expect(words('0 9 * 3 *')).toBe('0 9 * 3 *')
+		expect(words('0 9 * 10 *')).toBe('0 9 * 10 *')
 		expect(words('*/7 * * * *')).toBe('*/7 * * * *')
 		expect(words('0 9 * * 8')).toBe('0 9 * * 8')
 		expect(words('not a cron')).toBe('not a cron')

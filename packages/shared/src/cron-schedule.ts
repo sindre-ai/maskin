@@ -258,10 +258,20 @@ function describeWeekdays(days: number[]): string {
 	return describeRuns(positions, (position) => dayName(position + 1))
 }
 
+/** Minutes Copenhagen is ahead of UTC in the given months (1 to 12): 60 when all of them are
+ * winter time, 120 when all are summer time. `null` when they mix both, or include March or
+ * October, where the clocks change part way through, so one clock time would be wrong. */
+function restrictedMonthsOffset(months: number[]): number | null {
+	if (months.every((month) => month >= 4 && month <= 9)) return 120
+	if (months.every((month) => month <= 2 || month >= 11)) return 60
+	return null
+}
+
 /** Plain words for the cron shapes `parseCronExpression` rejects: steps, lists, ranges and
- * names. Times move from UTC to Copenhagen at `now`. `null` for anything it will not put into
- * words: a day of month together with a day of week, a step inside a restricted day, a
- * time it cannot read as a few clock times. */
+ * names. Times move from UTC to Copenhagen at `now`, or by the season of the months when the schedule
+ * names some. `null` for anything it will not put into words: a day of month together with a
+ * day of week, a step inside a restricted day, a month list that mixes summer and winter time,
+ * a time it cannot read as a few clock times. */
 function describeCronShapes(expr: string, now: Date): string | null {
 	const parts = expr.trim().split(/\s+/)
 	const fields = parts.length === 6 ? parts.slice(1) : parts
@@ -300,7 +310,8 @@ function describeCronShapes(expr: string, now: Date): string | null {
 
 	// A few fixed clock times, shifted to Copenhagen. The day moves with them when they cross midnight.
 	if (minutes.length * hours.length > 8) return null
-	const offset = copenhagenOffsetMinutes(now)
+	const offset = anyMonth ? copenhagenOffsetMinutes(now) : restrictedMonthsOffset(months)
+	if (offset === null) return null
 	const times = hours.flatMap((hour) => minutes.map((minute) => hour * 60 + minute + offset))
 	const dayShift = Math.floor((times[0] ?? 0) / 1440)
 	if (times.some((total) => Math.floor(total / 1440) !== dayShift)) return null
