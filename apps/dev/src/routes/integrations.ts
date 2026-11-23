@@ -63,7 +63,6 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { AZURE_DEVOPS_PROVIDER } from '../lib/integrations/providers/azure-devops/config'
 import { BOX_PROVIDER } from '../lib/integrations/providers/box/config'
 import { DEVELOPER_DATA_PROVIDERS } from '../lib/integrations/providers/developer-data'
-import { DINERO_PROVIDER } from '../lib/integrations/providers/dinero/config'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
@@ -340,7 +339,6 @@ const FLAGGED_PROVIDERS: ReadonlyMap<string, FlagId> = new Map([
 		FLAGS.SALES_AUTOMATION_INTEGRATIONS,
 	]),
 	[UNICONTA_PROVIDER, FLAGS.UNICONTA_CONNECT],
-	[DINERO_PROVIDER, FLAGS.DINERO],
 	...OWN_APP_PROVIDERS.map((name): [string, FlagId] => [name, FLAGS.OWN_APP_INTEGRATIONS]),
 ])
 
