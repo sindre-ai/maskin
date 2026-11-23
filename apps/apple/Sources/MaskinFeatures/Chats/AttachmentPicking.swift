@@ -71,6 +71,25 @@ extension ChatComposerModel {
 	}
 }
 
+/// The pictures on the clipboard, read in the order the clipboard lists them.
+enum ClipboardImages {
+	/// Every picture among `providers`. `unreadable` counts the ones that held a picture but gave no bytes.
+	@MainActor
+	static func load(_ providers: [NSItemProvider]) async -> (images: [Data], unreadable: Int) {
+		var images: [Data] = []
+		var unreadable = 0
+		for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+			let data: Data? = await withCheckedContinuation { continuation in
+				provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+					continuation.resume(returning: data)
+				}
+			}
+			if let data { images.append(data) } else { unreadable += 1 }
+		}
+		return (images, unreadable)
+	}
+}
+
 /// PhotosPickerItem is not declared Sendable; it is only ever used from the one loading task.
 private struct ItemBox: @unchecked Sendable { let item: PhotosPickerItem }
 
