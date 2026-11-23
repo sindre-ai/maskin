@@ -108,11 +108,12 @@ async function connect(s: Setup, fetchImpl: ReturnType<typeof vi.fn>) {
 	const send = async (args: Record<string, unknown>) => {
 		const res = await client.callTool({ name: 'outlook_send_mail', arguments: args })
 		const text = (res.content as Array<{ text: string }>)[0]?.text ?? ''
-		return {
-			res,
-			text,
-			body: JSON.parse(text) as { sent?: boolean; error: { code: string; message: string } },
-		}
+		// A refusal from the gate is plain text ("Access denied ..."), not the JSON the route answers with.
+		let body = {} as { sent?: boolean; error: { code: string; message: string } }
+		try {
+			body = JSON.parse(text)
+		} catch {}
+		return { res, text, body }
 	}
 	return { send, trackToolCalled }
 }
@@ -138,7 +139,7 @@ async function insertApprovalCard(
 				destructive: true,
 				recommended: true,
 			},
-			{ label: 'Hold', consequences: ['Nothing goes out'] },
+			{ label: 'Hold', consequences: ['Nothing goes out', 'The draft stays as it is'] },
 		],
 		draft: {
 			object_id: draftObject.id,
