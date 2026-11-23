@@ -28,6 +28,7 @@ import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { YoutubeActionsSweepJob } from './jobs/youtube-actions-sweep'
+import { agentBaseWarmupSkipReason } from './lib/agent-base-warmup'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -815,10 +816,11 @@ ${mcpSetup}
 	// canonical "install_completed" moment for the open-source launch bet.
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
-	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
-	// no Docker socket exists; the warm call below could only fail there.
-	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
-		logger.warn('Docker unavailable; skipping agent-base image warm-up')
+	// Production routes sessions to the agent servers and has no Docker socket, so
+	// the build could only fail; the no-Docker dev path is skipped the same way.
+	const warmupSkipReason = agentBaseWarmupSkipReason(process.env)
+	if (warmupSkipReason) {
+		logger.info('Skipping agent-base image warm-up', { reason: warmupSkipReason })
 		return
 	}
 	sessionManager.warmAgentBaseImage().catch((err) => {
