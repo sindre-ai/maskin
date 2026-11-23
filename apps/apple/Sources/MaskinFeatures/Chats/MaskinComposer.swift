@@ -529,22 +529,17 @@ struct MaskinComposer: View {
 
 	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
-	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field. The pictures come from
-	/// the system paste button, so iOS does not ask "Allow Paste".
+	/// The `+` menu's "Paste image" row: the same chips as a system paste on the field, one for every picture on the
+	/// clipboard. The pictures come from the system paste button, so iOS does not ask "Allow Paste".
 	fileprivate func pasteImages(_ providers: [NSItemProvider]) {
-		guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }) else {
-			model.notice = "Couldn't read an image from the clipboard."
-			return
-		}
 		let model = model
-		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-			Task { @MainActor in
-				if let data {
-					model.attach([.image(data)])
-				} else {
-					model.notice = "Couldn't read an image from the clipboard."
-				}
+		Task { @MainActor in
+			let pasted = await ClipboardImages.load(providers)
+			if pasted.images.isEmpty || pasted.unreadable > 0 {
+				model.notice = "Couldn't read an image from the clipboard."
 			}
+			// Past the attachment limit `attach` keeps up to the limit and shows its own notice instead.
+			model.attach(pasted.images.map { ComposerDrop.image($0) })
 		}
 	}
 
