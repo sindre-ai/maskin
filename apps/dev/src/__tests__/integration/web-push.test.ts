@@ -64,7 +64,7 @@ describe('web_push_subscriptions', () => {
 		expect(rows[0]?.p256dh).toBe(keys.p256dh)
 	})
 
-	it('moves the subscription to the new actor when another actor re-subscribes the endpoint', async () => {
+	it('moves the subscription when another actor re-subscribes it with the subscription keys (same browser)', async () => {
 		await appAs(actorA).request(
 			jsonRequest('POST', '/api/web-push/subscriptions', subscribeBody(endpoint)),
 		)
@@ -75,6 +75,23 @@ describe('web_push_subscriptions', () => {
 		const rows = await rowsFor(endpoint)
 		expect(rows).toHaveLength(1)
 		expect(rows[0]?.actorId).toBe(actorB)
+	})
+
+	it('refuses to move a subscription held by another actor when the keys do not match', async () => {
+		await appAs(actorA).request(
+			jsonRequest('POST', '/api/web-push/subscriptions', subscribeBody(endpoint)),
+		)
+		const res = await appAs(actorB).request(
+			jsonRequest('POST', '/api/web-push/subscriptions', {
+				endpoint,
+				keys: { p256dh: 'forged-p256dh-key', auth: 'forged-auth-secret' },
+			}),
+		)
+		expect(res.status).toBe(409)
+		const rows = await rowsFor(endpoint)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.actorId).toBe(actorA)
+		expect(rows[0]?.p256dh).toBe(keys.p256dh)
 	})
 
 	it('enforces UNIQUE(endpoint)', async () => {

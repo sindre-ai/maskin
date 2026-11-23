@@ -631,7 +631,7 @@ describe('Workspaces Routes', () => {
 			expect(body.onboardingEnabled).toBe(true)
 		})
 
-		it('returns 403 when caller is not the workspace owner', async () => {
+		it('returns 404, like a missing workspace, when caller is not the workspace owner', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
@@ -643,9 +643,9 @@ describe('Workspaces Routes', () => {
 				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
 			)
 
-			expect(res.status).toBe(403)
+			expect(res.status).toBe(404)
 			const body = await res.json()
-			expect(body.error.code).toBe('FORBIDDEN')
+			expect(body.error.code).toBe('NOT_FOUND')
 		})
 
 		it('returns 404 when workspace does not exist', async () => {

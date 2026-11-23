@@ -1431,15 +1431,20 @@ interface InitiatedFromBlock {
  * ON DELETE SET NULL cascade would normally have already nulled the id
  * column, but this covers the race window. One PK read per failed settle.
  */
-async function resolveInitiatedFromBlock(
+export async function resolveInitiatedFromBlock(
 	db: Database,
-	session: { initiatedFromObjectId: string | null },
+	session: { initiatedFromObjectId: string | null; workspaceId: string },
 ): Promise<InitiatedFromBlock | null> {
 	if (!session.initiatedFromObjectId) return null
 	const [obj] = await db
 		.select({ type: objects.type, title: objects.title })
 		.from(objects)
-		.where(eq(objects.id, session.initiatedFromObjectId))
+		.where(
+			and(
+				eq(objects.id, session.initiatedFromObjectId),
+				eq(objects.workspaceId, session.workspaceId),
+			),
+		)
 		.limit(1)
 	if (!obj) return null
 	return {

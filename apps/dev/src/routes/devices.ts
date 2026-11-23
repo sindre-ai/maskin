@@ -3,7 +3,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { deviceTokens, liveActivityTokens, workspaceMembers } from '@maskin/db/schema'
 import { deviceResponseSchema, registerDeviceSchema, unregisterDeviceSchema } from '@maskin/shared'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, isNotNull, ne, or } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { createWindowLimiter } from '../lib/fixed-window-limiter'
@@ -101,7 +101,7 @@ const registerDeviceRoute = createRoute({
 	tags: ['Devices'],
 	summary: 'Register (or refresh) a push device for the current actor',
 	description:
-		'Upserts on (apns_token, environment). Re-registering a token that belongs to another actor moves it to the caller.',
+		'Upserts on (apns_token, environment). A token that belongs to another actor is refused (409) unless the request carries the unregister_secret that token was registered with, which only the device itself holds.',
 	request: {
 		body: { content: { 'application/json': { schema: registerDeviceSchema } } },
 	},
@@ -112,6 +112,10 @@ const registerDeviceRoute = createRoute({
 		},
 		400: {
 			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The token is registered to another actor',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -148,11 +152,23 @@ app.openapi(registerDeviceRoute, async (c) => {
 				unregisterSecretHash,
 				lastSeenAt: now,
 			},
+			// A token held by another actor is only taken over by a caller that proves it is the
+			// same device: the secret it registered with (the phone signing in as someone else).
+			// The APNs token alone is not enough. A skipped update returns no row.
+			setWhere: or(
+				eq(deviceTokens.actorId, actorId),
+				unregisterSecretHash
+					? and(
+							isNotNull(deviceTokens.unregisterSecretHash),
+							eq(deviceTokens.unregisterSecretHash, unregisterSecretHash),
+						)
+					: undefined,
+			),
 		})
 		.returning()
 
 	if (!row) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to register device'), 400)
+		return c.json(createApiError('CONFLICT', 'This device is registered to another account'), 409)
 	}
 
 	// The token may have moved from another actor: their Live Activity tokens
