@@ -20,12 +20,18 @@ test('only e-conomic paths are accepted', () => {
 	assert.ok(buildUrl('customers', { pagesize: 2 }).startsWith(`${API_BASE}/customers?`))
 })
 
-test('the client can only issue GET', () => {
+test('the client has reads and exactly two writes, none of them generic', () => {
 	const methods = Object.getOwnPropertyNames(EconomicClient.prototype)
-	assert.deepEqual(methods.sort(), ['collection', 'constructor', 'get'])
+	assert.deepEqual(methods.sort(), [
+		'attachReceipt',
+		'collection',
+		'constructor',
+		'createVoucher',
+		'get',
+	])
 })
 
-test('no tool name suggests a write, and every tool is a check, list or get', () => {
+test('with writes off, no tool name suggests a write, and every tool is a check, list or get', () => {
 	const names = buildTools({ appSecretToken: 'a', agreementGrantToken: 'b' }).map((t) => t.name)
 	assert.ok(names.length > 20)
 	for (const name of names) {

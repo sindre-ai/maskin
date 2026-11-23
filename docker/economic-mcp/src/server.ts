@@ -5,11 +5,22 @@ import {
 	ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { Credentials } from './client.js'
-import { buildTools, explainFailure } from './tools.js'
+import { type ToolOptions, buildTools, explainFailure } from './tools.js'
+
+/**
+ * Draft save and receipt upload are listed only when ECONOMIC_WRITES is "on" in the container.
+ * Off by default, and turned on by a deploy change, which the CTO approves.
+ */
+export function writesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.ECONOMIC_WRITES === 'on'
+}
 
 /** One server per request: the tokens belong to that request only and are never stored. */
-export function buildServer(credentials: Credentials | null): Server {
-	const tools = new Map(buildTools(credentials).map((t) => [t.name, t]))
+export function buildServer(
+	credentials: Credentials | null,
+	options: ToolOptions = { writesEnabled: writesEnabled() },
+): Server {
+	const tools = new Map(buildTools(credentials, options).map((t) => [t.name, t]))
 	const server = new Server(
 		{ name: 'economic-mcp', version: '0.1.0' },
 		{ capabilities: { tools: {} } },
