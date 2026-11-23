@@ -248,18 +248,14 @@ private struct AdaptiveTabs: View {
 	@Bindable var runtime: AppRuntime
 	let badges: ShellBadges
 	@State private var showWorkspaces = false
+	@State private var sidebar = ShellSidebarState()
 	@State private var isPortrait = false
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
 		shell
 			.environment(\.shellIsPortrait, isPortrait)
-			.background {
-				GeometryReader { proxy in
-					Color.clear.onChange(of: proxy.size, initial: true) { _, size in
-						isPortrait = ChatsPadLayout.isPortrait(size)
-					}
-				}
-			}
 			.sheet(isPresented: $showWorkspaces) {
 				WorkspaceSwitcher(environment: environment)
 					.presentationDetents([.medium, .large])
@@ -270,15 +266,33 @@ private struct AdaptiveTabs: View {
 	@ViewBuilder private var shell: some View {
 		#if os(iOS)
 			if ShellIdiom.hasRail {
-				// The iPad: the rail (landscape) or our own bottom bar (portrait) picks the tab; the tab
-				// view only holds each tab's state, with its own bar hidden.
+				// The iPad: the sidebar (landscape), the rail (a narrow window) or our own bottom bar (portrait)
+				// picks the tab; the tab view only holds each tab's state, with its own bar hidden.
 				PadShell(runtime: runtime, badges: badges) {
-					ShellRail(
-						environment: environment, runtime: runtime, badges: badges, switchWorkspace: { showWorkspaces = true })
+					if !isPortrait && horizontalSizeClass == .regular {
+						ShellSidebar(
+							environment: environment, runtime: runtime, badges: badges, isExpanded: sidebar.isExpanded,
+							toggle: { sidebar.toggle() }, switchWorkspace: { showWorkspaces = true })
+					} else {
+						ShellRail(
+							environment: environment, runtime: runtime, badges: badges, switchWorkspace: { showWorkspaces = true })
+					}
 				} tabs: {
 					tabs
 						.tabViewStyle(.tabBarOnly)
 						.toolbarVisibility(.hidden, for: .tabBar)
+				}
+				.background {
+					GeometryReader { proxy in
+						Color.clear.onChange(of: proxy.size, initial: true) { _, size in
+							isPortrait = ChatsPadLayout.isPortrait(size)
+						}
+					}
+				}
+				.animation(reduceMotion ? nil : ShellSidebar.resize, value: sidebar.isExpanded)
+				// A chat open on the Chats tab folds the sidebar; any other screen gives it back.
+				.onChange(of: runtime.chatIsOpen && runtime.selectedTab == .chats, initial: true) { _, open in
+					sidebar.setChatOpen(open)
 				}
 			} else {
 				standardTabs

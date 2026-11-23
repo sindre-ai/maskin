@@ -491,9 +491,15 @@ final class MustKeepMoreTests: XCTestCase {
 	/// workspace picker. On an iPad in portrait this is the only way to change workspace (no sidebar).
 	func testMK20_ProfileSheetSwitchWorkspaceRow() throws {
 		openProfile()
-		let row = app.buttons["Switch workspace"].firstMatch
+		let row = app.buttons["switch-workspace-row"].firstMatch
 		expectExists(row, "the profile sheet offers Switch workspace", dump: "mk20-row", timeout: 5)
-		XCTAssertEqual(row.value as? String, "Northwind", "the row names the current workspace")
+		// The workspace list loads after sign-in, so the name may arrive a moment after the row.
+		let named = NSPredicate(format: "label == 'Switch workspace, Northwind'")
+		let wait = XCTNSPredicateExpectation(predicate: named, object: row)
+		if XCTWaiter().wait(for: [wait], timeout: 15) != .completed {
+			dumpScreen("mk20-name")
+			XCTFail("the row names the current workspace; its label reads '\(row.label)'")
+		}
 		row.tap()
 		expectExists(app.staticTexts["Workspaces"], "Switch workspace opens the workspace picker", dump: "mk20-picker", timeout: 10)
 	}

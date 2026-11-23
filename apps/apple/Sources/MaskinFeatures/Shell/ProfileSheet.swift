@@ -211,9 +211,15 @@ struct ProfileSheet: View {
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.maskinPressed)
-		.accessibilityLabel("Switch workspace")
-		.accessibilityValue(environment.workspaces.selected?.name ?? "")
+		.accessibilityIdentifier("switch-workspace-row")
+		.accessibilityLabel(switchWorkspaceLabel)
 		.filledCard(radius: MaskinRadius.tile)
+	}
+
+	/// The name rides in the label, not a separate value: a label is always read back, a value on a button is not.
+	private var switchWorkspaceLabel: String {
+		guard let name = environment.workspaces.selected?.name else { return "Switch workspace" }
+		return "Switch workspace, \(name)"
 	}
 
 	/// "Workspace name · Owner", else the email when no workspace is selected.

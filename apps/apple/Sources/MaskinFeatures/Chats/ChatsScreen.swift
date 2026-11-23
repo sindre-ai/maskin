@@ -135,10 +135,10 @@ private struct ChatsContainer: View {
 						message: "Chat with your team and your agents.")
 				}
 			}
-			.modifier(
-				ChatsListToggle(
-					removesSystemToggle: ShellIdiom.isPad && horizontalSizeClass == .regular,
-					showsButton: showsListToggle, onToggle: toggleList))
+			// The list stays beside the chat, so no panel button: the system's one goes too at regular
+			// width. A narrow window keeps its own back button.
+			.toolbar(
+				removing: ShellIdiom.isPad && horizontalSizeClass == .regular ? ToolbarDefaultItemKind.sidebarToggle : nil)
 		}
 		// Portrait pushes the thread aside for the list instead of drawing the list over it.
 		.modifier(PadSplitStyle())
@@ -212,6 +212,7 @@ private struct ChatsContainer: View {
 			await store.refresh()
 			await store.refreshLater()
 		}
+		.onChange(of: selection != nil, initial: true) { _, open in runtime?.chatIsOpen = open }
 		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
 			runtime?.teamPill.isCovered = covered
 		}
@@ -294,22 +295,11 @@ private struct ChatsContainer: View {
 		chatListV2 ? store.listGroupBy != .date : !store.displayOptions.isDefault
 	}
 
-	/// The panel button shows on an iPad with room for both columns; a collapsed split view keeps
-	/// its own back button.
-	private var showsListToggle: Bool {
-		ChatsPadLayout.showsListToggle(
-			isPad: ShellIdiom.isPad, regularWidth: horizontalSizeClass == .regular, portrait: isPortrait)
-	}
-
 	/// A chat is open beside the list in portrait, where the bottom bar shrinks to icons under the list.
 	private var barBesideList: Bool {
 		ShellIdiom.hasRail
 			&& PadBarLayout.usesBottomBar(portrait: isPortrait, regularWidth: horizontalSizeClass == .regular)
 			&& selection != nil
-	}
-
-	private func toggleList() {
-		columnVisibility = ChatsPadLayout.toggled(columnVisibility)
 	}
 
 	/// A flow row's selection key is `flow:<id>`; everything else is a conversation id.
@@ -377,30 +367,6 @@ extension ChatsContainer {
 		} catch {
 			newChat = NewChatRequest(prefill: text)
 		}
-	}
-}
-
-/// The panel button at the left of the thread's header (also with no chat selected) that hides or
-/// shows the list in landscape. It replaces the system sidebar toggle, so the two never show
-/// together; in portrait the list never hides, so neither shows.
-private struct ChatsListToggle: ViewModifier {
-	let removesSystemToggle: Bool
-	let showsButton: Bool
-	let onToggle: () -> Void
-
-	func body(content: Content) -> some View {
-		content
-			.toolbar(removing: removesSystemToggle ? ToolbarDefaultItemKind.sidebarToggle : nil)
-			.toolbar {
-				if showsButton {
-					ToolbarItem(placement: .shellLeading) {
-						Button(action: onToggle) {
-							Image(systemName: "sidebar.leading")
-						}
-						.accessibilityLabel("Show or hide chat list")
-					}
-				}
-			}
 	}
 }
 
