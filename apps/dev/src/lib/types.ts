@@ -19,5 +19,10 @@ export interface IntegrationConfig {
 	 * (webhooks, hooks) still use the stored credential. Absent means `true`.
 	 */
 	expose_to_agent_sessions?: boolean
+	/**
+	 * Dinero only: the owner's booking switch. Only `true` adds BookVoucher to the tools an agent
+	 * may call; absent or anything else keeps it draft-only. Set by our code, never by an agent.
+	 */
+	dinero_booking?: boolean
 	[key: string]: unknown
 }

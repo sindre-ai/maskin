@@ -18,11 +18,10 @@ const MCP_URL = 'https://mcp.dinero.dk'
  * no person involved.
  *
  * Dinero's tools that book, change or delete sit on the same server as the one that saves a
- * purchase voucher as a draft. Tools carry no curated read list: they are classified from the
- * server's own annotations and names, and an unknown tool is a write, so a Read agent reads and
- * nothing else. A Read & write agent can call every tool, booking included. The flow's agent must
- * stay on Read until a list of allowed tools (task "Limit the Dinero agent to draft-only tools")
- * can be set for this provider from a live tools/list.
+ * purchase voucher as a draft. The gateway therefore limits every agent to a fixed list of tool
+ * names (./allowed-tools.ts): reads and the draft tool, plus BookVoucher only when the owner's
+ * booking switch is on. A tool not on the list is refused and left out of tools/list, whatever the
+ * agent's access, so a Read & write agent cannot book, change or delete either.
  */
 export const config: ProviderConfig = {
 	name: DINERO_PROVIDER,

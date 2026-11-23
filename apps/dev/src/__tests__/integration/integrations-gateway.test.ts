@@ -642,3 +642,91 @@ describe('The gateway forwards the message it judged (Integration)', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
+
+describe('Dinero is limited to a fixed list of tools through the gateway (Integration)', () => {
+	const toolText = async (res: Response) =>
+		((await res.json()) as { result: { isError?: boolean; content: Array<{ text: string }> } })
+			.result
+
+	async function dinero(config?: Record<string, unknown>) {
+		const s = await setup({ provider: 'dinero', ...(config && { config }) })
+		return { ...s, app: appFor(s.writer.id) }
+	}
+
+	it('refuses booking, changing and deleting for a Read & write agent without reaching Dinero', async () => {
+		const s = await dinero()
+		for (const tool of [
+			'BookVoucher',
+			'CreateFinanceVoucher',
+			'book_finance_voucher',
+			'delete_purchase_voucher_draft',
+			'create_invoice',
+			'update_contact',
+			'add_purchase_payment',
+			'a_tool_dinero_adds_later',
+		]) {
+			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain(`${tool} is not one of the tools Dinero may use`)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('lets a Read & write agent save a purchase voucher draft and read', async () => {
+		const s = await dinero()
+		await post(s.app, s.ws.id, call('CreatePurchaseVoucher'), 'dinero')
+		await post(s.app, s.ws.id, call('list_vouchers'), 'dinero')
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://mcp.dinero.dk')
+	})
+
+	it('adds BookVoucher, and only it, when the owner switched booking on', async () => {
+		const s = await dinero({ dinero_booking: true })
+		const booked = await post(s.app, s.ws.id, call('BookVoucher'), 'dinero')
+		expect((await toolText(booked)).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+
+		fetchMock.mockClear()
+		for (const tool of ['CreateFinanceVoucher', 'book_finance_voucher']) {
+			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+			expect(result.isError).toBe(true)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('keeps booking off when the switch is anything but true', async () => {
+		const s = await dinero({ dinero_booking: 'true' })
+		const result = await toolText(await post(s.app, s.ws.id, call('BookVoucher'), 'dinero'))
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('leaves tools that are not allowed out of tools/list', async () => {
+		const s = await dinero()
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					result: {
+						tools: [
+							'CreatePurchaseVoucher',
+							'BookVoucher',
+							'CreateFinanceVoucher',
+							'list_vouchers',
+						].map((name) => ({ name, description: name })),
+					},
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const res = await post(
+			s.app,
+			s.ws.id,
+			{ jsonrpc: '2.0', id: 1, method: 'tools/list' },
+			'dinero',
+		)
+		const { result } = (await res.json()) as { result: { tools: Array<{ name: string }> } }
+		expect(result.tools.map((t) => t.name)).toEqual(['CreatePurchaseVoucher', 'list_vouchers'])
+	})
+})
