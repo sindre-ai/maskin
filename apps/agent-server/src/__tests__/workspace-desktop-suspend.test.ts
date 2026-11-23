@@ -313,6 +313,38 @@ describe('WorkspaceDesktopRegistry suspend and wake', () => {
 		expect(snapshotCalls(calls)).toBe(3)
 	})
 
+	it('backs off when a suspend throws instead of returning false', async () => {
+		const { msb, calls, clock } = makeSnapshotMsb()
+		let throwing = true
+		const registry = new WorkspaceDesktopRegistry({
+			msb,
+			image: 'd',
+			stateFile,
+			fetchImpl,
+			snapshots: {
+				dir: snapDir,
+				idleSuspendMs: IDLE_MS,
+				freeBytes: async () => {
+					if (throwing) throw new Error('statfs exploded')
+					return disk.free
+				},
+			},
+		})
+		await registry.ensure(WS_A, AGENT_A)
+		clock.t += IDLE_MS
+
+		await registry.sweepIdle()
+		throwing = false
+		clock.t += 5 * 60_000
+		await registry.sweepIdle()
+		expect(registry.get(WS_A, AGENT_A)?.status).toBe('running')
+		expect(snapshotCalls(calls)).toBe(0)
+
+		clock.t += 5 * 60_000
+		await registry.sweepIdle()
+		expect(registry.get(WS_A, AGENT_A)?.status).toBe('suspended')
+	})
+
 	it('skips the snapshot and backs off when the host disk is nearly full', async () => {
 		const { msb, calls, sandboxes, clock } = makeSnapshotMsb()
 		const registry = makeRegistry(msb)

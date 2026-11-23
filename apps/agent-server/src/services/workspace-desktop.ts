@@ -356,6 +356,9 @@ export class WorkspaceDesktopRegistry {
 			try {
 				await this.suspend(desktop.workspaceId, desktop.agentId)
 			} catch (err) {
+				// A suspend that throws (operation guard timeout, persist failure) never
+				// reaches the failure bookkeeping inside suspendInner, so back off here.
+				this.noteSuspendFailure(key)
 				logger.warn('workspace desktop suspend failed', {
 					workspaceId: desktop.workspaceId,
 					agentId: desktop.agentId,
