@@ -206,8 +206,8 @@ describe('recordMcpMisfire error_message on a real schema-validation failure', (
 		expect(kind).toBe('schema_validation_error')
 
 		const redacted = redactErrorMessage(rawMessage)
-		expect(redacted).toContain('workspace_id: invalid_type expected string')
 		expect(redacted).toContain('nodes: invalid_type expected array')
+		expect(redacted).not.toContain('workspace_id')
 		expect(redacted).not.toContain('Correct call')
 	})
 
@@ -248,6 +248,31 @@ describe('redactErrorMessage', () => {
 			path: [`field_${i}`],
 		}))
 		expect(redactErrorMessage(JSON.stringify(issues)).length).toBe(500)
+	})
+
+	it('keeps the text of a custom rule, so the row says which rule fired', () => {
+		const raw = JSON.stringify([
+			{
+				code: 'custom',
+				path: [],
+				message:
+					'Unrecognised argument name: file_id (use id). Missing required key: id. Accepted names: workspace_id, id, format. Nothing was written.',
+			},
+		])
+		expect(redactErrorMessage(raw)).toBe(
+			'(root): custom Unrecognised argument name: file_id (use id). Missing required key: id. Accepted names: workspace_id, id, format. Nothing was written.',
+		)
+	})
+
+	it('scrubs ids from a custom rule text', () => {
+		const raw = JSON.stringify([
+			{
+				code: 'custom',
+				path: [],
+				message: 'bad 123e4567-e89b-12d3-a456-426614174000 here',
+			},
+		])
+		expect(redactErrorMessage(raw)).toBe('(root): custom bad <id> here')
 	})
 
 	it('masks a path segment that is not a plain field name', () => {
