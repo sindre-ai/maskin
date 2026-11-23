@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CHAT_DRIVES_MAX, buildChatDrivesBlock } from '../../services/chat-drives'
 import { createTestContext } from '../setup'
 
@@ -81,6 +81,32 @@ describe('buildChatDrivesBlock', () => {
 		)
 		expect(block.match(/Book the room/g)).toHaveLength(1)
 		expect(block).toContain('Draft the invite')
+	})
+
+	describe('with MASKIN_READABLE_PROMPT on', () => {
+		afterEach(() => vi.unstubAllEnvs())
+
+		it('leaves the targets to the jobs block, so they are in the prompt once', async () => {
+			vi.stubEnv('MASKIN_READABLE_PROMPT', 'on')
+			const { db, mockResults } = createTestContext()
+			mockResults.selectQueue = [
+				[
+					loop('a1', 'Events', {
+						targets: [{ label: 'Registrations', source: 'manual', actual: 1, target: 100 }],
+						close_condition: 'The webinar has run.',
+					}),
+				],
+				[],
+				[{ subjectType: null, subjectId: null }],
+			]
+			const block = await buildChatDrivesBlock(db, session, FRONTEND)
+			expect(block).toContain(
+				`- [Events](${objectUrl('a1')}) (supervised). Closes when: The webinar has run.`,
+			)
+			expect(block).toContain('Flows:')
+			expect(block).not.toContain('Registrations')
+			expect(block).not.toContain('Targets')
+		})
 	})
 
 	it('skips target rows that are malformed', async () => {
