@@ -53,7 +53,7 @@ describe('bulk write replies', () => {
 		// restoreAllMocks in afterEach clears the factory's implementation, so set it again.
 		const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
 		vi.mocked(McpServer).mockImplementation(
-			() => ({ registerResource: vi.fn(), connect: vi.fn() }) as unknown as InstanceType<typeof McpServer>,
+			() => ({ registerResource: vi.fn(), connect: vi.fn() }) as never,
 		)
 		responseCap = await import('../response-cap')
 		const { createMcpServer } = await import('../server')
