@@ -14,9 +14,10 @@ Derived from https://github.com/available-dev/e-conomic-mcp, MIT, Copyright (c) 
 - Dynamic per-endpoint tools, the OpenAPI loader (it could fetch a URL), the CLI, the stored credentials file, the ECONOMIC_BASE_URL override.
 
 ## Added
-- One fixed host (restapi.e-conomic.com), relative paths only, GET only, redirects refused.
+- One fixed host (restapi.e-conomic.com), relative paths only, redirects refused. Reads are GET.
+- economic_save_voucher_draft and economic_attach_receipt: two narrow writes (POST a voucher to a journal, POST one file to one voucher), listed only with ECONOMIC_WRITES=on. Not from upstream. Nothing books, changes or deletes.
 - HTTP entry, stateless: the two tokens come from request headers (X-AppSecretToken, X-AgreementGrantToken) per call and are never stored or logged.
 - economic_check_connection, which says what to fix.
 
-## Not here yet
-Saving a draft voucher and attaching a receipt. Waits for the CTO to record e-conomic's answer on the bet.
+## Gate
+The two write tools stay off in production until the CTO records e-conomic's answer on headless use on the bet.

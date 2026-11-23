@@ -8,7 +8,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Credentials } from './client.js'
 import { buildServer } from './server.js'
 
-const MAX_BODY_BYTES = 1_000_000
+// Room for one receipt of up to 4 MB, base64 encoded, plus the call around it.
+const MAX_BODY_BYTES = 6_000_000
 
 export function credentialsFrom(headers: Record<string, string | string[] | undefined>) {
 	const one = (name: string): string => {
