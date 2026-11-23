@@ -810,11 +810,12 @@ const updateWorkspaceOnboardingRoute = createRoute({
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
 		403: {
-			description: 'Owner set enterprise_granted without ops rights',
+			description:
+				'Caller is a member but not the workspace owner, or set enterprise_granted without ops rights',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace not found, or the caller is not its owner',
+			description: 'Workspace not found, or the caller is not a member of it',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -834,11 +835,16 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
 
-	// A workspace the caller does not own answers 404 exactly like one that does not
-	// exist, so this route cannot be used to probe which workspace ids exist.
+	// A caller outside the workspace gets 404 exactly like for one that does not exist, so
+	// this route cannot be used to probe which workspace ids exist. A member who is not the
+	// owner already knows the workspace exists, so they keep the 403.
 	const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
-	if (!existing || !(await isWorkspaceOwner(db, actorId, id))) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	if (!(await isWorkspaceOwner(db, actorId, id))) {
+		if (!(await isWorkspaceMember(db, actorId, id))) {
+			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		}
+		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
 	}
 
 	// `enterprise_granted` is an ops grant, NOT an owner-settable preference: it is

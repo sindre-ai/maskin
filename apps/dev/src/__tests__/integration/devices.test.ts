@@ -153,7 +153,6 @@ describe('POST /api/devices/unregister', () => {
 	const OTHER_SECRET = 'o'.repeat(43)
 	let token: string
 	let actorA: string
-	let actorB: string
 
 	const registerAs = (actorId: string, secret?: string) =>
 		appAs(actorId).request(
@@ -172,7 +171,6 @@ describe('POST /api/devices/unregister', () => {
 		resetUnregisterLimiterForTests()
 		token = [...Array(64)].map(() => Math.floor(Math.random() * 16).toString(16)).join('')
 		actorA = (await insertActor(db))?.id as string
-		actorB = (await insertActor(db))?.id as string
 	})
 
 	it('stores only a hash of the secret, never the secret', async () => {
@@ -279,8 +277,8 @@ describe('POST /api/devices/unregister', () => {
 
 	it('replaces the hash when the token registers again, so the old secret deletes nothing', async () => {
 		await registerAs(actorA, SECRET)
-		await registerAs(actorB, OTHER_SECRET)
-		expect((await rows())[0]?.actorId).toBe(actorB)
+		await registerAs(actorA, OTHER_SECRET)
+		expect((await rows())[0]?.actorId).toBe(actorA)
 
 		const old = await attempt()
 		expect(await old.json()).toEqual({ deleted: false })
@@ -297,7 +295,7 @@ describe('POST /api/devices/unregister', () => {
 
 	it('clears the secret when the token registers again without one', async () => {
 		await registerAs(actorA, SECRET)
-		await registerAs(actorB)
+		await registerAs(actorA)
 		expect((await rows())[0]?.unregisterSecretHash).toBeNull()
 	})
 

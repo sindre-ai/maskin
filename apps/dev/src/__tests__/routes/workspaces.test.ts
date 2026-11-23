@@ -631,12 +631,31 @@ describe('Workspaces Routes', () => {
 			expect(body.onboardingEnabled).toBe(true)
 		})
 
-		it('returns 404, like a missing workspace, when caller is not the workspace owner', async () => {
+		it('returns 403 when caller is a member but not the workspace owner', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
 				[ws], // workspace exists
-				[], // isWorkspaceOwner → no owner row (caller is member, not owner)
+				[], // isWorkspaceOwner → no owner row
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember → member row found
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('FORBIDDEN')
+		})
+
+		it('returns 404, like a missing workspace, when caller is not a member', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[ws], // workspace exists
+				[], // isWorkspaceOwner → no owner row
+				[], // isWorkspaceMember → no member row
 			]
 
 			const res = await app.request(
