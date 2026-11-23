@@ -50,6 +50,11 @@ describe('bulk write replies', () => {
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, h) => {
 			handlers[name as string] = h as Handler
 		})
+		// restoreAllMocks in afterEach clears the factory's implementation, so set it again.
+		const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
+		vi.mocked(McpServer).mockImplementation(
+			() => ({ registerResource: vi.fn(), connect: vi.fn() }) as unknown as InstanceType<typeof McpServer>,
+		)
 		responseCap = await import('../response-cap')
 		const { createMcpServer } = await import('../server')
 		createMcpServer({
