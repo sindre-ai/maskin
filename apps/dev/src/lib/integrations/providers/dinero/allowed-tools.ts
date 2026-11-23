@@ -5,7 +5,7 @@ import type { IntegrationConfig } from '../../../types'
  * 23 Nov 2026). An exact-name list, not name rules: a tool Dinero adds later is refused until
  * someone lists it here. Everything that changes the books but is not on it stays refused for
  * every agent, Read & write included: CreateFinanceVoucher (its book flag books in the same call),
- * book_finance_voucher, the invoice, credit note, trade offer and contact writes, payments, the
+ * book_finance_voucher, the invoice, credit note, trade offer and contact writes, the
  * draft deletes, attach_file_to_voucher_card and submit_feedback.
  *
  * CreatePurchaseVoucher has no argument that books, so naming it is enough: it saves a draft and
@@ -33,10 +33,16 @@ export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'upload_file',
 ]
 
-/** The draft-only list plus BookVoucher, for an owner who switched booking on. */
+/**
+ * The draft-only list plus BookVoucher and the two tools that register a payment, for an owner
+ * who switched booking on. add_purchase_payment and add_invoice_payment need the voucher's
+ * current timestamp, so a payment cannot land on a version nobody looked at.
+ */
 export const DINERO_WITH_BOOKING_TOOLS: readonly string[] = [
 	...DINERO_DRAFT_ONLY_TOOLS,
 	'BookVoucher',
+	'add_purchase_payment',
+	'add_invoice_payment',
 ]
 
 /**

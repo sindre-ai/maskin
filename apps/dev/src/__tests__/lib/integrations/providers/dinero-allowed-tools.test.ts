@@ -12,7 +12,7 @@ describe('Dinero allowed tools', () => {
 		expect(new Set(DINERO_DRAFT_ONLY_TOOLS).size).toBe(16)
 	})
 
-	it('never lists a tool that books, changes or deletes, except BookVoucher behind the switch', () => {
+	it('never lists a tool that books, changes or deletes, except BookVoucher and the payments behind the switch', () => {
 		for (const tool of [
 			'BookVoucher',
 			'CreateFinanceVoucher',
@@ -25,7 +25,12 @@ describe('Dinero allowed tools', () => {
 		expect(
 			DINERO_DRAFT_ONLY_TOOLS.filter((t) => /^(create_|update_|delete_|add_|send_)/.test(t)),
 		).toEqual([])
-		expect(DINERO_WITH_BOOKING_TOOLS).toEqual([...DINERO_DRAFT_ONLY_TOOLS, 'BookVoucher'])
+		expect(DINERO_WITH_BOOKING_TOOLS).toEqual([
+			...DINERO_DRAFT_ONLY_TOOLS,
+			'BookVoucher',
+			'add_purchase_payment',
+			'add_invoice_payment',
+		])
 		expect(DINERO_WITH_BOOKING_TOOLS).not.toContain('CreateFinanceVoucher')
 		expect(DINERO_WITH_BOOKING_TOOLS).not.toContain('book_finance_voucher')
 	})
