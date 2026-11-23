@@ -29,6 +29,9 @@ function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 		DESKTOP_RELAY_PORT_START: 20000,
 		DESKTOP_RELAY_PORT_END: 21999,
 		DESKTOP_RELAY_BLOCK_SIZE: 8,
+		HEALTH_MIN_FREE_PERCENT: 0,
+		HEALTH_MIN_FREE_GB: 0,
+		HEALTH_STORAGE_TIMEOUT_MS: 3000,
 		DESKTOP_SNAPSHOTS: false,
 		DESKTOP_IDLE_MINUTES: 10,
 		SESSION_MAX_DURATION: '8h',
@@ -109,6 +112,85 @@ describe('GET /health', () => {
 			ok: false,
 			backend: 'microsandbox',
 			msb_version: null,
+		})
+	})
+
+	it('reports unhealthy (503 with a reason) when free disk is below the floor', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			// No disk has this much free, so the floor is always missed.
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot, HEALTH_MIN_FREE_GB: 1024 ** 3 }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await app.request('/health')
+		expect(res.status).toBe(503)
+		const body = (await res.json()) as { ok: boolean; reason: string }
+		expect(body.ok).toBe(false)
+		expect(body.reason).toMatch(/^disk_low/)
+	})
+
+	it('reports unhealthy when the free share of the disk is below the percent floor', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot, HEALTH_MIN_FREE_PERCENT: 101 }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await app.request('/health')
+		expect(res.status).toBe(503)
+		expect(((await res.json()) as { reason: string }).reason).toMatch(/^disk_low/)
+	})
+
+	it('reports unhealthy (503 with a reason) when the storage read fails', async () => {
+		const { run } = makeRunner()
+		const storage = {
+			exists: vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
+		} as unknown as StorageProvider
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await app.request('/health')
+		expect(res.status).toBe(503)
+		const body = (await res.json()) as { reason: string }
+		expect(body.reason).toMatch(/^storage_unavailable.*ECONNREFUSED/)
+	})
+
+	it('reports unhealthy when the storage read hangs past the timeout', async () => {
+		const { run } = makeRunner()
+		const storage = {
+			exists: vi.fn(() => new Promise<boolean>(() => {})),
+		} as unknown as StorageProvider
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot, HEALTH_STORAGE_TIMEOUT_MS: 100 }),
+			storage,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await app.request('/health')
+		expect(res.status).toBe(503)
+		expect(((await res.json()) as { reason: string }).reason).toMatch(/timed out/)
+	})
+
+	it('stays healthy, with the plain body, when disk and storage are fine', async () => {
+		const { run } = makeRunner()
+		const storage = { exists: vi.fn().mockResolvedValue(false) } as unknown as StorageProvider
+		const app = buildApp({
+			env: makeEnv({
+				AGENT_SESSION_ROOT: join(sessionRoot, 'not-created-yet'),
+				HEALTH_MIN_FREE_PERCENT: 0.0001,
+				HEALTH_MIN_FREE_GB: 0.0001,
+			}),
+			storage,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await app.request('/health')
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			ok: true,
+			backend: 'microsandbox',
+			msb_version: '0.5.4',
 		})
 	})
 })

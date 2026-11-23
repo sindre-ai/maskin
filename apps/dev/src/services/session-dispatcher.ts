@@ -8,6 +8,7 @@ import {
 	AgentServerAuthError,
 	AgentServerClient,
 	type AgentServerRow,
+	type ServerHealth,
 	type StartSessionRequest,
 } from './agent-server-client'
 import type { DispatchResult } from './session-dispatch-queue'
@@ -72,6 +73,12 @@ export interface SessionDispatcherDeps {
 	clientFactory?: AgentServerClientFactory
 	/** See `SeedInteractiveTurnFn`. Optional so tests that don't exercise interactive dispatch can omit it. */
 	seedInteractiveTurn?: SeedInteractiveTurnFn
+	/**
+	 * Asked once per candidate when a fresh server is picked. A server that answers
+	 * `red` is skipped; `green` and `unknown` are used. Omitted → no health check,
+	 * which is how every server was picked before this existed.
+	 */
+	checkServerHealth?: (server: { id: string; url: string }) => Promise<ServerHealth>
 }
 
 export interface PickedServer {
@@ -85,12 +92,14 @@ export class SessionDispatcher {
 	private readonly buildStartRequest: StartSessionRequestBuilder
 	private readonly clientFactory: AgentServerClientFactory
 	private readonly seedInteractiveTurn?: SeedInteractiveTurnFn
+	private readonly checkServerHealth?: SessionDispatcherDeps['checkServerHealth']
 
 	constructor(deps: SessionDispatcherDeps) {
 		this.db = deps.db
 		this.buildStartRequest = deps.buildStartRequest
 		this.clientFactory = deps.clientFactory ?? ((server) => new AgentServerClient({ server }))
 		this.seedInteractiveTurn = deps.seedInteractiveTurn
+		this.checkServerHealth = deps.checkServerHealth
 	}
 
 	/**
@@ -341,25 +350,31 @@ export class SessionDispatcher {
 			.from(agentServers)
 			.where(eq(agentServers.status, 'active'))
 
-		let best: PickedServer | null = null
+		const candidates: PickedServer[] = []
 		for (const row of rows) {
 			const active = Number(row.active) || 0
 			const max = row.max
 			if (max <= 0 || active >= max) continue
-			const load = active / max
-			if (
-				!best ||
-				load < best.active / best.max ||
-				(load === best.active / best.max && row.id < best.server.id)
-			) {
-				best = {
-					server: { id: row.id, url: row.url },
-					active,
-					max,
-				}
-			}
+			candidates.push({ server: { id: row.id, url: row.url }, active, max })
 		}
-		return best
+		// Least loaded first; ties break by id so equally-loaded hosts don't pingpong.
+		candidates.sort(
+			(a, b) => a.active / a.max - b.active / b.max || (a.server.id < b.server.id ? -1 : 1),
+		)
+
+		if (!this.checkServerHealth) return candidates[0] ?? null
+		// Walk down the list until one is not red. All red → null, so the caller parks
+		// the start like a full pool and tries again on the queue's backoff.
+		for (const candidate of candidates) {
+			const health = await this.checkServerHealth(candidate.server)
+			if (health.status !== 'red') return candidate
+			logger.warn('Skipping agent-server that reports red', {
+				agentServerId: candidate.server.id,
+				agentServerUrl: candidate.server.url,
+				reason: health.reason,
+			})
+		}
+		return null
 	}
 
 	private async fetchSecret(serverId: string): Promise<string | null> {

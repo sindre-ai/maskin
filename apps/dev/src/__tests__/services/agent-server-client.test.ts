@@ -11,6 +11,7 @@ import {
 	AgentServerHttpError,
 	type AgentServerRow,
 	STOP_SESSION_TIMEOUT_MS,
+	fetchServerHealth,
 } from '../../services/agent-server-client'
 
 const SERVER: AgentServerRow = {
@@ -447,5 +448,58 @@ describe('AgentServerClient.sendInput', () => {
 			content: 'Done.',
 			images: [{ media_type: 'image/jpeg', data: 'QUJD' }],
 		})
+	})
+})
+
+describe('fetchServerHealth', () => {
+	const json = (body: unknown, status: number) =>
+		new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+	it('is green on a 200 and calls /health without a bearer token', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(json({ ok: true }, 200))
+		await expect(fetchServerHealth(SERVER, { fetchImpl })).resolves.toEqual({ status: 'green' })
+		expect(calls[0]?.url).toBe(`${SERVER.url}/health`)
+		expect(calls[0]?.init?.headers).toBeUndefined()
+	})
+
+	it('is red on a 503 that carries a reason', async () => {
+		const { fetchImpl } = makeFetchSpy(json({ ok: false, reason: 'disk_low: 2.0% free' }, 503))
+		await expect(fetchServerHealth(SERVER, { fetchImpl })).resolves.toEqual({
+			status: 'red',
+			reason: 'disk_low: 2.0% free',
+		})
+	})
+
+	it("is unknown on a 503 with no reason (a plain msb failure keeps today's behaviour)", async () => {
+		const { fetchImpl } = makeFetchSpy(json({ ok: false, msb_version: null }, 503))
+		await expect(fetchServerHealth(SERVER, { fetchImpl })).resolves.toEqual({ status: 'unknown' })
+	})
+
+	it('is unknown on a 401 or a 500', async () => {
+		for (const status of [401, 500]) {
+			const { fetchImpl } = makeFetchSpy(json({ reason: 'x' }, status))
+			await expect(fetchServerHealth(SERVER, { fetchImpl })).resolves.toEqual({ status: 'unknown' })
+		}
+	})
+
+	it('is unknown on a network error or an unreadable body', async () => {
+		const failing = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as unknown as typeof fetch
+		await expect(fetchServerHealth(SERVER, { fetchImpl: failing })).resolves.toEqual({
+			status: 'unknown',
+		})
+		const { fetchImpl } = makeFetchSpy(new Response('not json', { status: 503 }))
+		await expect(fetchServerHealth(SERVER, { fetchImpl })).resolves.toEqual({ status: 'unknown' })
+	})
+
+	it('gives up after the timeout instead of hanging a session start', async () => {
+		const hanging = ((_url: string, init?: RequestInit) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+			})) as unknown as typeof fetch
+		await expect(fetchServerHealth(SERVER, { fetchImpl: hanging, timeoutMs: 20 })).resolves.toEqual(
+			{
+				status: 'unknown',
+			},
+		)
 	})
 })
