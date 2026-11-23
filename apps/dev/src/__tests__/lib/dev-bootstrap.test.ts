@@ -18,6 +18,7 @@ import { MARKET_WATCH_LOOP } from '../../lib/marketplace-loops/market-watch-loop
 import { MEETING_LOOP } from '../../lib/marketplace-loops/meeting-loop'
 import { PRODUCT_RELEASE_LOOP } from '../../lib/marketplace-loops/product-release-loop'
 import { PRODUCT_USAGE_LOOP } from '../../lib/marketplace-loops/product-usage-loop'
+import { SIGNAL_INTAKE_LOOP } from '../../lib/marketplace-loops/signal-intake-loop'
 import { createTestContext } from '../setup'
 
 const ALL_PACKAGES = [
@@ -29,6 +30,7 @@ const ALL_PACKAGES = [
 	KNOWLEDGE_WIKI_LOOP,
 	PRODUCT_USAGE_LOOP,
 	ACCOUNTING_LOOP,
+	SIGNAL_INTAKE_LOOP,
 ]
 
 function matchingMarketplaceRows() {
