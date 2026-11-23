@@ -145,7 +145,7 @@ describe('GET /health', () => {
 	it('reports unhealthy (503 with a reason) when the storage read fails', async () => {
 		const { run } = makeRunner()
 		const storage = {
-			exists: vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
+			headObject: vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
 		} as unknown as StorageProvider
 		const app = buildApp({
 			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
@@ -161,7 +161,7 @@ describe('GET /health', () => {
 	it('reports unhealthy when the storage read hangs past the timeout', async () => {
 		const { run } = makeRunner()
 		const storage = {
-			exists: vi.fn(() => new Promise<boolean>(() => {})),
+			headObject: vi.fn(() => new Promise<{ size: number } | null>(() => {})),
 		} as unknown as StorageProvider
 		const app = buildApp({
 			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot, HEALTH_STORAGE_TIMEOUT_MS: 100 }),
@@ -175,7 +175,7 @@ describe('GET /health', () => {
 
 	it('stays healthy, with the plain body, when disk and storage are fine', async () => {
 		const { run } = makeRunner()
-		const storage = { exists: vi.fn().mockResolvedValue(false) } as unknown as StorageProvider
+		const storage = { headObject: vi.fn().mockResolvedValue(null) } as unknown as StorageProvider
 		const app = buildApp({
 			env: makeEnv({
 				AGENT_SESSION_ROOT: join(sessionRoot, 'not-created-yet'),

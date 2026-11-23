@@ -16,7 +16,8 @@ export type HostHealthOptions = {
 	storageTimeoutMs: number
 }
 
-// Key that never exists: a healthy store answers "not found", a failing one throws.
+// Key that never exists: a healthy store answers "not found" (null), a failing one throws.
+// headObject, not exists(): exists() swallows every error, so it could never report a down store.
 const STORAGE_PROBE_KEY = '.health-probe'
 
 /**
@@ -46,7 +47,7 @@ export async function checkHostHealth(opts: HostHealthOptions): Promise<HostHeal
 
 	if (opts.storage) {
 		try {
-			await withTimeout(opts.storage.exists(STORAGE_PROBE_KEY), opts.storageTimeoutMs)
+			await withTimeout(opts.storage.headObject(STORAGE_PROBE_KEY), opts.storageTimeoutMs)
 		} catch (err) {
 			return {
 				ok: false,
