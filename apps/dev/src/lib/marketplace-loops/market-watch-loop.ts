@@ -36,7 +36,7 @@ const MARKET_WATCH_CHECKLIST: LoopChecklist = {
 	items: [
 		{
 			title: 'Name 3 to 5 direct competitors',
-			body: `Needed: 3 to 5 direct competitors. Research is always about their products, pricing and positioning. This one needs the owner: propose a best-guess list from what the workspace says about its own product and buyers, then ask the owner to confirm or correct it, at most 3 questions at a time. ${METHOD_NOTE}`,
+			body: `Needed: 3 to 5 direct competitors. Research is always about their products, pricing and positioning. This one needs the owner: propose a best-guess list from what the workspace says about its own product and buyers, then ask the owner to confirm or correct it, at most 3 questions at a time. Create each confirmed competitor as a company with role competitor and lane weekly, unless the owner asks for another lane. ${METHOD_NOTE}`,
 		},
 		{
 			title: 'Use the same fields for each competitor',
