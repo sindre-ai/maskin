@@ -9008,6 +9008,7 @@ export function createMcpServer(config: McpConfig) {
 					'POST',
 					'/api/integrations/gmail/send',
 					{
+						account: args.account,
 						to: args.to,
 						cc: args.cc,
 						subject: args.subject,
@@ -9056,6 +9057,7 @@ export function createMcpServer(config: McpConfig) {
 					'POST',
 					'/api/integrations/gmail/save-attachment',
 					{
+						account: args.account,
 						message_id: args.message_id,
 						attachment_id: args.attachment_id,
 						part_id: args.part_id,

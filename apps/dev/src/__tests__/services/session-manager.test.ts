@@ -172,6 +172,7 @@ vi.mock('../../lib/analytics/agent-session-events', async (importOriginal) => ({
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
+import { listAgentAccess } from '../../lib/integrations/agent-access'
 import { getProvider } from '../../lib/integrations/registry'
 import {
 	CREDENTIAL_RESOLUTION_TIMEOUT_MS,
@@ -2747,6 +2748,118 @@ describe('SessionManager', () => {
 					expect(createArgs.env.MCP_SERVERS_JSON).toContain('/api/integrations/resend/gateway')
 				},
 			)
+		})
+
+		describe('several accounts of one gateway provider (Gmail)', () => {
+			const gmailProviderConfig = {
+				config: {
+					name: 'gmail',
+					mcp: {
+						envKey: 'GMAIL_TOKEN',
+						server: {
+							type: 'http' as const,
+							url: 'https://gmailmcp.googleapis.com/mcp/v1',
+							headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+						},
+					},
+				},
+			}
+
+			type Access = 'none' | 'read' | 'read_write'
+
+			async function launchWithTwoAccounts(accessFirst: Access, accessSecond: Access) {
+				const first = buildIntegration({
+					provider: 'gmail',
+					externalId: 'sebastian@meshfirm.com',
+					createdAt: new Date('2026-01-01'),
+				})
+				const second = buildIntegration({
+					provider: 'gmail',
+					externalId: 'krumhausen@gmail.com',
+					createdAt: new Date('2026-02-01'),
+				})
+				const fixtures = buildLaunchFixtures([first, second])
+				vi.mocked(getProvider).mockReturnValue(gmailProviderConfig as never)
+				mockGetValidToken.mockResolvedValue('ya29.gmail-token')
+				const row = (integration: typeof first, access: Access) => ({
+					integrationId: integration.id,
+					provider: 'gmail',
+					providerMode: 'registered',
+					displayName: null,
+					access,
+					source: 'grant',
+					chatCount: 0,
+					defaultAgentAccess: 'none',
+					status: 'active',
+					createdBy: randomUUID(),
+					exposed: true,
+					gated: false,
+					accountLabel: integration.externalId,
+				})
+				vi.mocked(listAgentAccess).mockResolvedValueOnce([
+					row(first, accessFirst),
+					row(second, accessSecond),
+				] as never)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const env = (
+					mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }
+				).env
+				const servers = env.MCP_SERVERS_JSON
+					? (
+							JSON.parse(env.MCP_SERVERS_JSON) as {
+								mcpServers: Record<string, { url?: string }>
+							}
+						).mcpServers
+					: {}
+				return { first, second, env, servers }
+			}
+
+			const gmailKeys = (servers: Record<string, unknown>) =>
+				Object.keys(servers).filter((key) => key.startsWith('integration-gmail'))
+
+			it('gives an agent with access to both accounts one server per account, named by address', async () => {
+				const { first, second, servers } = await launchWithTwoAccounts('read', 'read')
+
+				expect(gmailKeys(servers).sort()).toEqual([
+					'integration-gmail-krumhausen-gmail-com',
+					'integration-gmail-sebastian-meshfirm-com',
+				])
+				expect(servers['integration-gmail-sebastian-meshfirm-com']?.url).toBe(
+					`\${MASKIN_API_URL}/api/integrations/gmail/gateway/${first.id}`,
+				)
+				expect(servers['integration-gmail-krumhausen-gmail-com']?.url).toBe(
+					`\${MASKIN_API_URL}/api/integrations/gmail/gateway/${second.id}`,
+				)
+			})
+
+			it('keeps the old key and the plain address for an agent that only has the first account', async () => {
+				const { servers, env } = await launchWithTwoAccounts('read', 'none')
+
+				expect(gmailKeys(servers)).toEqual(['integration-gmail'])
+				expect(servers['integration-gmail']?.url).toBe(
+					'${MASKIN_API_URL}/api/integrations/gmail/gateway',
+				)
+				// The token stays on the server.
+				expect(JSON.stringify(env)).not.toContain('ya29.gmail-token')
+			})
+
+			it('keeps the old key but points it at the account the agent has, when that is not the first', async () => {
+				const { second, servers } = await launchWithTwoAccounts('none', 'read_write')
+
+				expect(gmailKeys(servers)).toEqual(['integration-gmail'])
+				expect(servers['integration-gmail']?.url).toBe(
+					`\${MASKIN_API_URL}/api/integrations/gmail/gateway/${second.id}`,
+				)
+			})
+
+			it('attaches no Gmail server to an agent with no access to either account', async () => {
+				const { servers } = await launchWithTwoAccounts('none', 'none')
+
+				expect(gmailKeys(servers)).toEqual([])
+			})
 		})
 
 		describe('integration tokens only reach agents that use them', () => {

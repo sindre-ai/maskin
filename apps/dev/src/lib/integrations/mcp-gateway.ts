@@ -118,15 +118,30 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 
 export const GATEWAY_BODY_LIMIT_BYTES = 1_000_000
 
-export function gatewayPath(provider: string): string {
-	return `/api/integrations/${provider}/gateway`
+/**
+ * The gateway address. Without an integration id it is the provider's default connection (the
+ * oldest active one); with an id it is exactly that connection.
+ */
+export function gatewayPath(provider: string, integrationId?: string): string {
+	return `/api/integrations/${provider}/gateway${integrationId ? `/${integrationId}` : ''}`
+}
+
+/** A short, stable word for an account (an email address, say) to put in an MCP server key. */
+export function accountSlug(account: string): string {
+	return account
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
 }
 
 /** The MCP server entry an agent uses to reach a provider through Maskin. */
-export function gatewayServerSpec(provider: string): Record<string, unknown> {
+export function gatewayServerSpec(
+	provider: string,
+	integrationId?: string,
+): Record<string, unknown> {
 	return {
 		type: 'http',
-		url: `\${MASKIN_API_URL}${gatewayPath(provider)}`,
+		url: `\${MASKIN_API_URL}${gatewayPath(provider, integrationId)}`,
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
@@ -352,6 +367,8 @@ export function annotateToolsList(
 		access: AgentAccess
 		/** A custom server's allowed tools. Set, every other tool is left out of the list. */
 		allowedTools?: readonly string[]
+		/** The account behind this server (an email address), named in every tool description. */
+		account?: string
 	},
 ): { result: Record<string, unknown>; upstreamAnnotations: Map<string, ToolAnnotationsLike> } {
 	const upstreamAnnotations = new Map<string, ToolAnnotationsLike>()
@@ -364,7 +381,10 @@ export function annotateToolsList(
 		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
 		const note = TOOL_DESCRIPTION_NOTES[ctx.provider]?.[tool.name]
 		const upstream = tool.description ?? ''
-		const description = note ? `${upstream} ${note}`.trim() : upstream
+		const described = note ? `${upstream} ${note}`.trim() : upstream
+		const description = ctx.account
+			? `${described} (${ctx.providerLabel} account: ${ctx.account}.)`.trim()
+			: described
 		return {
 			...tool,
 			annotations: { ...tool.annotations, readOnlyHint: kind === 'read' },

@@ -24,6 +24,15 @@ function gatewayUpstreamUrls(): Map<string, string> {
 	}
 	return out
 }
+
+/** A provider's MCP settings, or undefined for one this build does not register. */
+function safeProviderMcp(provider: string) {
+	try {
+		return getProvider(provider)?.config.mcp
+	} catch {
+		return undefined
+	}
+}
 import { issueApiKey, revokeSessionKeys } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
@@ -152,7 +161,12 @@ import {
 	linkedInIdentityServer,
 	withSessionHeader,
 } from '../lib/integrations/mcp-attach'
-import { GATEWAY_PROVIDERS, rewriteMcpServersForGateway } from '../lib/integrations/mcp-gateway'
+import {
+	GATEWAY_PROVIDERS,
+	accountSlug,
+	gatewayServerSpec,
+	rewriteMcpServersForGateway,
+} from '../lib/integrations/mcp-gateway'
 import {
 	mcpServersReferenceEnvKey,
 	serverSpecReferencesEnvKey,
@@ -3382,7 +3396,7 @@ ${cont.continues_prompt}
 					eq(integrations.providerMode, 'registered'),
 				),
 			)
-			.orderBy(asc(integrations.createdAt))
+			.orderBy(asc(integrations.createdAt), asc(integrations.id))
 
 		const tokenManager = new TokenManager()
 		// MCP servers injected by virtue of a workspace having an active
@@ -3403,6 +3417,50 @@ ${cont.continues_prompt}
 		// entries), so a duplicate of an entry the agent already carries can be dropped.
 		const attachedKeys = new Set<string>()
 		const accessByIntegration = new Map(accessRows.map((a) => [a.integrationId, a.access]))
+		// What this agent may do with one integration. Access is what attaches its tools:
+		// whoever grants it should not also have to open each agent and add the server.
+		const accessFor = (integration: typeof integrations.$inferSelect) =>
+			accessByIntegration.get(integration.id) ??
+			effectiveAccess(
+				{
+					providerMode: 'registered',
+					defaultAgentAccess: integration.defaultAgentAccess ?? 'read',
+				},
+				null,
+			)
+		// A workspace can connect several accounts of one gateway provider (two Gmail inboxes). The
+		// ones this agent gets tools for, oldest first; the oldest of all is the one the plain
+		// gateway address answers from. With one such account the server keeps its old key; with
+		// several, each gets its own key and its own address by integration id.
+		const gatewayDefaultId = new Map<string, string>()
+		const gatewayAttached = new Map<string, string[]>()
+		for (const integration of activeIntegrations) {
+			if (!GATEWAY_PROVIDERS.has(integration.provider)) continue
+			if (!gatewayDefaultId.has(integration.provider)) {
+				gatewayDefaultId.set(integration.provider, integration.id)
+			}
+			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				continue
+			}
+			const hasServer = Boolean(safeProviderMcp(integration.provider)?.server)
+			if (
+				hasServer &&
+				attachesServer(
+					{
+						providerMode: 'registered',
+						status: 'active',
+						exposed: true,
+						access: accessFor(integration),
+					},
+					true,
+				)
+			) {
+				gatewayAttached.set(integration.provider, [
+					...(gatewayAttached.get(integration.provider) ?? []),
+					integration.id,
+				])
+			}
+		}
 		const integrationTokens: Record<string, string> = {}
 		// Custom extension MCPs (extension-<slug>). Only extensions this agent holds a
 		// grant on are attached. Each key is read through Keychain for this agent and
@@ -3470,17 +3528,7 @@ ${cont.continues_prompt}
 				continue
 			}
 			const mcp = resolved.config.mcp
-			// What this agent may do with the integration. Access is what attaches its tools:
-			// whoever grants it should not also have to open each agent and add the server.
-			const access =
-				accessByIntegration.get(integration.id) ??
-				effectiveAccess(
-					{
-						providerMode: 'registered',
-						defaultAgentAccess: integration.defaultAgentAccess ?? 'read',
-					},
-					null,
-				)
+			const access = accessFor(integration)
 			const autoInjectServer =
 				mcp?.server &&
 				attachesServer(
@@ -3665,9 +3713,27 @@ ${cont.continues_prompt}
 				}
 			}
 			if (autoInjectServer) {
-				autoInjectedMcpServers[`integration-${integration.provider}`] =
-					withSessionHeader(autoInjectServer)
-				attachedKeys.add(`integration-${integration.provider}`)
+				let serverKey = `integration-${integration.provider}`
+				let serverSpec: unknown = withSessionHeader(autoInjectServer)
+				const accounts = gatewayAttached.get(integration.provider) ?? []
+				if (accounts.length > 1) {
+					// Several accounts: one server each, named by the address.
+					const slug = accountSlug(integration.externalId ?? '') || integration.id.slice(0, 8)
+					serverKey = `integration-${integration.provider}-${slug}`
+					if (serverKey in autoInjectedMcpServers) {
+						serverKey = `${serverKey}-${integration.id.slice(0, 4)}`
+					}
+					serverSpec = gatewayServerSpec(integration.provider, integration.id)
+				} else if (
+					accounts.length === 1 &&
+					integration.id !== gatewayDefaultId.get(integration.provider)
+				) {
+					// The only account this agent has is not the oldest one, which is what the plain
+					// address answers from. Same key as ever, pointed at its own account.
+					serverSpec = gatewayServerSpec(integration.provider, integration.id)
+				}
+				autoInjectedMcpServers[serverKey] = serverSpec
+				attachedKeys.add(serverKey)
 				logger.info('Auto-injected MCP server for active integration', {
 					sessionId: session.id,
 					workspaceId: session.workspaceId,

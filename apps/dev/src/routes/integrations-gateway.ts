@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { isPilotHeldIntegrationTool } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
 import { countReceiptDraft, receiptDraftConnector } from '../lib/analytics/receipt-events'
 import { createApiError } from '../lib/errors'
@@ -140,6 +141,8 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const provider = c.req.param('provider') ?? ''
+	// Set when the agent was given one specific connection of a provider (a second Gmail account).
+	const integrationId = c.req.param('integrationId')
 	const workspaceId = c.req.header('x-workspace-id')
 
 	if (!GATEWAY_PROVIDERS.has(provider)) {
@@ -162,8 +165,17 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 	}
 	const label = resolved.config.displayName
 
+	if (integrationId !== undefined && !z.string().uuid().safeParse(integrationId).success) {
+		return jsonRpcError(404, -32001, `${label} is not connected to this workspace.`)
+	}
+	// Without an id, the oldest active connection: the same rule as lookup.ts, so a workspace
+	// with two accounts never answers from whichever row the database returns first.
 	const [integration] = await db
-		.select({ id: integrations.id, config: integrations.config })
+		.select({
+			id: integrations.id,
+			config: integrations.config,
+			externalId: integrations.externalId,
+		})
 		.from(integrations)
 		.where(
 			and(
@@ -171,8 +183,10 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 				eq(integrations.provider, provider),
 				eq(integrations.providerMode, 'registered'),
 				eq(integrations.status, 'active'),
+				...(integrationId ? [eq(integrations.id, integrationId)] : []),
 			),
 		)
+		.orderBy(asc(integrations.createdAt), asc(integrations.id))
 		.limit(1)
 	if (!integration) {
 		return jsonRpcError(404, -32001, `${label} is not connected to this workspace.`)
@@ -261,6 +275,8 @@ export interface ProxyContext {
 	access: AgentAccess
 	/** Remembers each server's own tool annotations between a tools/list and a later call. */
 	cacheKey: string
+	/** The account behind this server (an email address), named in each tool description. Optional. */
+	account?: string
 	upstreamUrl: string
 	/** A fixed list of allowed tools (a custom server's, or Dinero's): any other tool is refused and left out of tools/list. */
 	allowedTools?: readonly string[]
@@ -577,6 +593,7 @@ export async function proxyMcp(
 			providerLabel: label,
 			access,
 			allowedTools: ctx.allowedTools,
+			account: ctx.account,
 		})
 		rememberAnnotations(cacheKey, out.upstreamAnnotations)
 		rememberToolNames(
@@ -599,5 +616,9 @@ export async function proxyMcp(
 app.post('/:provider/gateway', handle)
 app.get('/:provider/gateway', handle)
 app.delete('/:provider/gateway', handle)
+// One specific connection of the provider, by integration id.
+app.post('/:provider/gateway/:integrationId', handle)
+app.get('/:provider/gateway/:integrationId', handle)
+app.delete('/:provider/gateway/:integrationId', handle)
 
 export default app
