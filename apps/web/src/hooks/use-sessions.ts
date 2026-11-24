@@ -20,8 +20,8 @@ import {
 import { toast } from 'sonner'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
-const ACTIVE_CONVERSATION_POLL_MS = 5_000
-const IDLE_CONVERSATION_POLL_MS = 30_000
+const ACTIVE_CONVERSATION_POLL_MS = 15_000
+const IDLE_CONVERSATION_POLL_MS = 120_000
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
@@ -46,6 +46,9 @@ export function useWorkspaceSessions(workspaceId: string) {
 		queryKey: queryKeys.sessions.all(workspaceId),
 		queryFn: () => api.sessions.list(workspaceId, { verbose: 'true', limit: '100' }),
 		enabled: !!workspaceId,
+		// The stream refetches it once per window while sessions change; a remount in between
+		// reads the cache.
+		staleTime: 2 * 60_000,
 	})
 }
 
@@ -178,6 +181,7 @@ export function useActiveSessionsForActor(actorId: string, workspaceId: string) 
 export function useActiveSessionsForConversation(
 	workspaceId: string,
 	conversationId: string | null,
+	{ poll = false }: { poll?: boolean } = {},
 ) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byConversation(workspaceId, conversationId ?? ''),
@@ -195,10 +199,16 @@ export function useActiveSessionsForConversation(
 		// session in this conversation is live (that is when the transcript is
 		// changing); an idle chat falls back to a slow floor. Background tabs do
 		// not poll (refetchIntervalInBackground defaults to false).
-		refetchInterval: (query) =>
-			query.state.data?.some((s) => ACTIVE_STATUSES.has(s.status))
-				? ACTIVE_CONVERSATION_POLL_MS
-				: IDLE_CONVERSATION_POLL_MS,
+		//
+		// Around ten components read this list for one chat, and every observer runs its own
+		// interval timer, so polling from all of them multiplied the requests. Only the chat
+		// transcript passes `poll`; the rest read the shared cache.
+		refetchInterval: poll
+			? (query) =>
+					query.state.data?.some((s) => ACTIVE_STATUSES.has(s.status))
+						? ACTIVE_CONVERSATION_POLL_MS
+						: IDLE_CONVERSATION_POLL_MS
+			: false,
 	})
 }
 

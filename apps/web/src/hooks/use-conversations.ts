@@ -71,6 +71,8 @@ export function useConversationsInfinite(
 		getNextPageParam: (lastPage, allPages) =>
 			lastPage.has_more ? allPages.length * pageSize : undefined,
 		enabled: !!workspaceId && (options?.enabled ?? true),
+		// Conversation events refetch the list family once per window.
+		staleTime: 2 * 60_000,
 	})
 }
 

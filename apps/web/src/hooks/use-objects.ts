@@ -64,11 +64,17 @@ export function useObjects(
 	})
 }
 
+// Object reads are the app's most frequent call. The stream invalidates a detail or graph when
+// its object changes (and marks everything stale on reconnect), so a surface that mounts one
+// again within this window reads the cache instead of asking again.
+const OBJECT_STALE_MS = 5 * 60_000
+
 export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
 		enabled: !!id && (options?.enabled ?? true),
+		staleTime: OBJECT_STALE_MS,
 	})
 }
 
@@ -294,6 +300,7 @@ export function useObjectGraph(
 		queryKey: queryKeys.objects.graph(id),
 		queryFn: () => api.objects.graph(id, workspaceId),
 		enabled: enabled && !!id && !!workspaceId,
+		staleTime: OBJECT_STALE_MS,
 	})
 }
 
