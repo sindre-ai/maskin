@@ -516,6 +516,29 @@ describe('classifyUnclassifiedExit', () => {
 	it('has no verbatim output for an empty tail', () => {
 		expect(classifyUnclassifiedExit('').verbatim_output).toBeNull()
 	})
+
+	it('skips a trailing user message line and saves the real line before it', () => {
+		const userLine = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'Mentioned in a comment: run 42 please' },
+		})
+		expect(
+			classifyUnclassifiedExit(`starting\nSegmentation fault\n${userLine}\n`).verbatim_output,
+		).toBe('Segmentation fault')
+	})
+
+	it('saves no verbatim output when only input messages are left', () => {
+		const userLine = JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } })
+		expect(classifyUnclassifiedExit(`${userLine}\n`).verbatim_output).toBeNull()
+	})
+
+	it('gives the same fingerprint to deaths that differ only in the input message', () => {
+		const tailFor = (prompt: string) =>
+			`Segmentation fault\n${JSON.stringify({ type: 'user', message: { content: prompt } })}\n`
+		const a = classifyUnclassifiedExit(tailFor('Mentioned in a comment: alpha')).verbatim_output
+		const b = classifyUnclassifiedExit(tailFor('Another prompt entirely')).verbatim_output
+		expect(unclassifiedFingerprint(a)).toBe(unclassifiedFingerprint(b))
+	})
 })
 
 describe('unclassifiedFingerprint', () => {

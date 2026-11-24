@@ -414,6 +414,7 @@ type StripeEventName =
 	| 'customer.tax_id.updated'
 	| 'customer.tax_id.deleted'
 	| 'charge.dispute.created'
+	| 'charge.refunded'
 
 // Front-door acceptance list for `POST /api/webhooks/stripe`. An event type
 // not in this Set is 200-acked with `unhandled_event_type` and applyEvent
@@ -434,6 +435,8 @@ const HANDLED_EVENTS = new Set<string>([
 	'customer.tax_id.updated',
 	'customer.tax_id.deleted',
 	'charge.dispute.created',
+	// Analytics only (refund_issued); it changes no workspace state.
+	'charge.refunded',
 ])
 
 export function isHandledStripeEvent(eventType: string): eventType is StripeEventName {

@@ -31,6 +31,9 @@ const READABLE_TEXTS = [
 	KNOWLEDGE_WIKI_LOOP.description,
 	KNOWLEDGE_WIKI_LOOP.settings.entryCondition,
 	KNOWLEDGE_WIKI_LOOP.settings.closeCondition,
+	KNOWLEDGE_WIKI_LOOP.settings.checklist?.title,
+	KNOWLEDGE_WIKI_LOOP.settings.checklist?.body,
+	...(KNOWLEDGE_WIKI_LOOP.settings.checklist?.items ?? []).map((i) => `${i.title} ${i.body}`),
 	...ACTOR_TEXTS,
 	...TRIGGER_TEXTS,
 	...SKILL_TEXTS,
@@ -41,7 +44,7 @@ describe('Knowledge Wiki flow definition', () => {
 		expect(KNOWLEDGE_WIKI_LOOP.slug).toBe('knowledge-wiki-loop')
 		expect(KNOWLEDGE_WIKI_LOOP.name).toBe('Knowledge Wiki')
 		expect(KNOWLEDGE_WIKI_LOOP.useCase).toBe('Context')
-		expect(KNOWLEDGE_WIKI_LOOP.version).toBe('1.0.0')
+		expect(KNOWLEDGE_WIKI_LOOP.version).toBe('1.1.0')
 		expect(KNOWLEDGE_WIKI_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -58,6 +61,37 @@ describe('Knowledge Wiki flow definition', () => {
 			expect(prune?.actionPrompt).toContain(target.label)
 			expect(target).not.toHaveProperty('ownerActorId')
 		}
+	})
+
+	it('ships a parent checklist and one child per open prerequisite, driven by the Curator', () => {
+		const settings = loopSettingsSchema.parse(KNOWLEDGE_WIKI_LOOP.settings)
+		expect(settings.checklist?.title).toBe('Knowledge onboarding checklist')
+		expect(settings.checklist?.driverSourceItemId).toBe(KNOWLEDGE_WIKI_ACTOR_IDS[0])
+		expect(settings.checklist?.items.map((i) => i.title)).toEqual([
+			'Say who the main people are and what each is accountable for',
+			'Name the function, mandate and decision makers',
+			'Describe the company: legal entity, owners, size',
+			'List products and pricing',
+			'Name the ideal customers and top accounts',
+			'Name closest competitors and the market',
+			"State this year's strategy, current projects and deadlines",
+			'Add brand and voice with writing examples',
+			'Map the systems and sources the wiki can read',
+			'Write down constraints: compliance, do-not-contact, approval rules, budget limits',
+			'Connect at least one knowledge source (drive, mail, chat)',
+		])
+		const titles = (settings.checklist?.items ?? []).map((i) => i.title)
+		expect(new Set(titles).size).toBe(titles.length)
+	})
+
+	it('starts the daily heartbeat with the checklist and its three-question limit', () => {
+		const heartbeat = KNOWLEDGE_WIKI_TRIGGER_IDS.map(getTriggerData).find((t) =>
+			t.name.startsWith('Owner heartbeat'),
+		)
+		expect(heartbeat?.actionPrompt).toMatch(/^First read the flow's onboarding checklist/)
+		expect(heartbeat?.actionPrompt).toContain('Work every open child task')
+		expect(heartbeat?.actionPrompt).toContain('at most 3 questions at a time')
+		expect(heartbeat?.actionPrompt).toContain('only when every child task is done or discarded')
 	})
 
 	it('ships one agent, four triggers, three skills and two tabs, no duplicates', () => {

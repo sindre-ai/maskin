@@ -130,6 +130,61 @@ test.describe('Settings — Dinero review', () => {
 		await expect(page.getByRole('button', { name: 'Approve the books' })).toBeDisabled()
 	})
 
+	test('before approval there is no filing hand-off, and it says why', async ({
+		page,
+		account,
+	}) => {
+		await mock(page, { log: log() })
+		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await expect(
+			page.getByText('The filing hand-off is available after you approve the books.'),
+		).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Get the filing hand-off' })).toHaveCount(0)
+	})
+
+	test('after approval the hand-off shows figures and steps, and never says filed', async ({
+		page,
+		account,
+	}) => {
+		await mock(page, {
+			log: log({
+				approval: {
+					approved_by: '00000000-0000-4000-8000-000000000001',
+					approved_at: '2026-11-23T10:00:00.000Z',
+					figures_hash: 'a'.repeat(64),
+				},
+			}),
+		})
+		let body: unknown = null
+		await page.route('**/api/dinero-review/filing-handoff', async (route) => {
+			body = route.request().postDataJSON()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					from: '2026-10-24',
+					to: '2026-11-23',
+					approved_by: '00000000-0000-4000-8000-000000000001',
+					approved_at: '2026-11-23T10:00:00.000Z',
+					figures_hash: 'a'.repeat(64),
+					figures: [{ vat_code: 'I25', lines: 2, amount_incl_vat: 1250 }],
+					figures_note: 'These are not the VAT return.',
+					steps: ['Open Dinero and go to its own VAT filing.'],
+					year_end_steps: ['Only if the company is an ApS: open the year-end.'],
+					notice: 'Nothing has been filed. You file in Dinero with your own MitID.',
+				}),
+			})
+		})
+		await page.goto(`/${account.workspaceId}/settings/dinero-review`)
+		await page.getByRole('button', { name: 'Get the filing hand-off' }).click()
+		await expect(page.getByRole('region', { name: 'Filing hand-off' })).toContainText(
+			'VAT I25: 1.250,00 incl. VAT, 2 lines',
+		)
+		await expect(page.getByText('Open Dinero and go to its own VAT filing.')).toBeVisible()
+		await expect(page.getByText('Nothing has been filed.')).toBeVisible()
+		expect(body).toEqual({ from: '2026-10-24', to: '2026-11-23' })
+	})
+
 	test('an empty period says so', async ({ page, account }) => {
 		await mock(page, { log: log({ items: [] }) })
 		await page.goto(`/${account.workspaceId}/settings/dinero-review`)

@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import type { RelationshipResponse } from '../shared/types'
@@ -56,7 +57,7 @@ function RelationshipListRow({ rel }: { rel: RelationshipResponse }) {
 				{rel.sourceId.slice(0, 8)}
 			</span>
 			<span className="text-accent-foreground font-medium text-xs">
-				{rel.type.replace(/_/g, ' ')}
+				{relationshipTypeLabel(rel.type)}
 			</span>
 			<span className="text-muted-foreground">→</span>
 			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">
@@ -87,7 +88,7 @@ function RelationshipCreatedView({ relationship }: { relationship: RelationshipR
 				<span className="text-muted-foreground font-mono text-xs">
 					{relationship.sourceId.slice(0, 8)}
 				</span>
-				<span className="text-primary text-xs">{relationship.type.replace(/_/g, ' ')}</span>
+				<span className="text-primary text-xs">{relationshipTypeLabel(relationship.type)}</span>
 				<span className="text-muted-foreground">→</span>
 				<span className="text-muted-foreground font-mono text-xs">
 					{relationship.targetId.slice(0, 8)}

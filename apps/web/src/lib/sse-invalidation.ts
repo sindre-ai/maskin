@@ -47,6 +47,11 @@ const GRAPH_REFETCH_MS = 5_000
 // refetch them. Our own edits still refresh them at once (mutation onSuccess hooks invalidate
 // the whole objects prefix); only the SSE-driven path waits for the window to end.
 const FACETS_REFETCH_MS = 5_000
+// The sessions of one chat (?conversation_id=...) feed the transcript's live state, and the
+// chat's delegation strip rides on its messages. A running agent emits a session_updated for
+// every step, so each open chat used to refetch both once per step. Routine updates now trail
+// one window; terminal and brand-new session events still refetch at once.
+const SESSION_CHAT_REFETCH_MS = 5_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -110,6 +115,14 @@ function scheduleTrailingRefetch(
 // carries yet is only worth a chat refetch when it is new.
 const NEW_SESSION_ACTIONS = new Set(['created', 'session_created', 'session_started'])
 
+// Session events a chat must show at once: a session appearing, ending or changing state.
+// Everything else (the per-step session_updated stream) waits for the trailing window.
+const isUrgentSessionAction = (action: string) =>
+	action === 'session.state_changed' ||
+	NEW_SESSION_ACTIONS.has(action) ||
+	SESSION_COMPLETION_ACTIONS.has(action) ||
+	BILLING_INVALIDATING_ACTIONS.has(action)
+
 // A session event comes as a generic frame, then (for a handed-off sub-session) a
 // `session.state_changed` frame with the same event id. The first one refreshes the chat; the
 // second must not start a second fetch of the same page.
@@ -142,8 +155,17 @@ function syncChatsForSession(queryClient: QueryClient, event: SSEEvent, sessionI
 	lastSessionChatSyncId = event.id ?? null
 	const owners = conversationsCarryingSession(queryClient, sessionId)
 	if (owners.size > 0) {
+		const urgent = isUrgentSessionAction(event.action)
 		for (const conversationId of owners) {
-			invalidate(queryClient, { queryKey: queryKeys.conversations.messagesPrefix(conversationId) })
+			const filters = { queryKey: queryKeys.conversations.messagesPrefix(conversationId) }
+			if (urgent) invalidate(queryClient, filters)
+			else
+				scheduleTrailingRefetch(
+					queryClient,
+					`chat-strip:${conversationId}`,
+					filters,
+					SESSION_CHAT_REFETCH_MS,
+				)
 		}
 		return
 	}
@@ -179,6 +201,17 @@ function scheduleForYouRefetch(queryClient: QueryClient, workspaceId: string) {
 		`for-you:${workspaceId}`,
 		{ queryKey: queryKeys.forYou.list(workspaceId) },
 		LIST_REFETCH_MS,
+	)
+}
+
+// Each graph is a dozen database queries on the server, so every graph trigger (a relationship,
+// a comment, an object edit) shares one trailing refetch of the mounted graphs per window.
+function scheduleGraphsRefetch(queryClient: QueryClient, workspaceId: string) {
+	scheduleTrailingRefetch(
+		queryClient,
+		`graphs:${workspaceId}`,
+		{ queryKey: ['objects', 'graph'] },
+		GRAPH_REFETCH_MS,
 	)
 }
 
@@ -244,7 +277,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		})
 		// Also refresh the detail/graph so unread_count + subscriber_count update.
 		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
-		invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
+		scheduleGraphsRefetch(queryClient, workspaceId)
 	}
 
 	// Invalidate based on entity type
@@ -266,7 +299,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 				FACETS_REFETCH_MS,
 			)
 			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
-			invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
+			scheduleGraphsRefetch(queryClient, workspaceId)
 			if (event.entity_type === 'bet') {
 				invalidate(queryClient, { queryKey: queryKeys.bets.all(workspaceId) })
 			}
@@ -276,12 +309,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		case 'relationship':
 			invalidate(queryClient, { queryKey: queryKeys.relationships.all(workspaceId) })
-			scheduleTrailingRefetch(
-				queryClient,
-				`graphs:${workspaceId}`,
-				{ queryKey: ['objects', 'graph'] },
-				GRAPH_REFETCH_MS,
-			)
+			scheduleGraphsRefetch(queryClient, workspaceId)
 			break
 		case 'trigger':
 			invalidate(queryClient, { queryKey: queryKeys.triggers.all(workspaceId) })
@@ -304,6 +332,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// A per-session query (detail, logs) is only stale when the event is about that
 			// session — otherwise every mounted `useSession` refetches on every event for
 			// every other session in the workspace.
+			const urgent = isUrgentSessionAction(event.action)
 			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
@@ -311,9 +340,19 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					if (key[1] === 'detail') return key[2] === event.entity_id
 					if (key[2] === 'logs') return key[1] === event.entity_id
 					if (key[1] !== workspaceId) return true
+					// The per-chat session lists trail below on routine updates.
+					if (!urgent && key[2] === 'conversation') return false
 					return !(key.length === 2 || (key.length === 3 && key[2] === 'stats'))
 				},
 			})
+			if (!urgent) {
+				scheduleTrailingRefetch(
+					queryClient,
+					`sessions-chats:${workspaceId}`,
+					{ queryKey: [...queryKeys.sessions.all(workspaceId), 'conversation'] },
+					SESSION_CHAT_REFETCH_MS,
+				)
+			}
 			scheduleTrailingRefetch(
 				queryClient,
 				`sessions:${workspaceId}`,

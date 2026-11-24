@@ -161,7 +161,7 @@ jobs:
     # alone is skipped by the plan job.
     needs: plan
     if: github.event_name == 'push' && needs.plan.outputs.upload == 'true'
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 90
     outputs:
       build_number: ${{ steps.archive.outputs.build_number }}
@@ -190,13 +190,13 @@ jobs:
       - uses: actions/checkout@v6
         if: steps.gate.outputs.enabled == 'true'
 
-      - name: Select Xcode 26
+      - name: Select Xcode 27
         if: steps.gate.outputs.enabled == 'true'
         run: |
           set -euo pipefail
-          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$xcode" ]; then
-            echo "::error::No Xcode 26.x on this runner image."
+            echo "::error::No Xcode 27.x on this runner image."
             ls -d /Applications/Xcode*.app || true
             exit 1
           fi

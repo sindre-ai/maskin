@@ -160,6 +160,7 @@ struct ThreadScreen: View {
 				store.displayName(for: id).map { (id: id, name: $0) }
 			},
 			questionAnswers: message.questions.isEmpty ? nil : message.serverID.flatMap { store.questionAnswerIndex[$0] },
+			questionNote: message.questions.isEmpty ? nil : message.serverID.flatMap { store.questionNoteIndex[$0] },
 			sendStatus: message.isPending ? MessageSendStatus.of(message, readBy: nil) : nil,
 			actions: actions, onRetrySend: { store.retrySend(message.id) },
 			onToggleReaction: { emoji in Task { await store.toggleReaction(emoji, on: message) } },

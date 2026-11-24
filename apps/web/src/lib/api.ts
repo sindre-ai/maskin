@@ -50,7 +50,7 @@ export type {
 }
 import { DATA_QUERY_MAX_PAGE_SIZE, parseRelativeBound } from '@maskin/shared'
 import { getApiKey } from './auth'
-import { API_BASE } from './constants'
+import { API_BASE, SAME_ORIGIN_API_BASE } from './constants'
 import { readEveryPage } from './data-query-pages'
 import { reportApiFailure } from './faro'
 import { limitConcurrency } from './limit-concurrency'
@@ -125,7 +125,9 @@ type RequestOptions = {
 	workspaceId?: string
 	/** Send/receive cookies cross-origin. Only the OAuth connect call needs
 	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
-	 *  requires it back to prove the same browser started the flow. */
+	 *  requires it back to prove the same browser started the flow. The cookie
+	 *  is host-only and the callback lands on the page's own host, so a call
+	 *  that sets this always goes to the page's host, never API_ORIGIN. */
 	credentials?: RequestCredentials
 	/** Lets the caller cancel the request (TanStack Query passes its abort signal here). */
 	signal?: AbortSignal
@@ -170,7 +172,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 	let res: Response
 	try {
-		res = await fetch(`${API_BASE}${path}`, {
+		res = await fetch(`${credentials ? SAME_ORIGIN_API_BASE : API_BASE}${path}`, {
 			method,
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -887,6 +889,12 @@ export const api = {
 			}),
 		approve: (workspaceId: string, body: { from: string; to: string; figures_hash: string }) =>
 			request<DineroReviewLog>('/dinero-review/approve', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		filingHandoff: (workspaceId: string, body: { from: string; to: string }) =>
+			request<DineroFilingHandoff>('/dinero-review/filing-handoff', {
 				method: 'POST',
 				body,
 				workspaceId,
@@ -3977,6 +3985,19 @@ export interface DineroReviewLog {
 	figures_hash: string
 	approval: { approved_by: string; approved_at: string; figures_hash: string } | null
 	truncated: boolean
+}
+
+export interface DineroFilingHandoff {
+	from: string
+	to: string
+	approved_by: string
+	approved_at: string
+	figures_hash: string
+	figures: Array<{ vat_code: string | null; lines: number; amount_incl_vat: number }>
+	figures_note: string
+	steps: string[]
+	year_end_steps: string[]
+	notice: string
 }
 
 export interface DineroReverseResult {

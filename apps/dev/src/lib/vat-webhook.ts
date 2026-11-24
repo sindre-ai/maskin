@@ -23,6 +23,7 @@ import type { AwaitingViesRow } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import { checkoutSessionCompletedProps } from './analytics/billing-events'
 import { capturePosthogEvent } from './analytics/posthog'
 import { creditedAmountUsdMinor } from './credit-billing'
 import { logger } from './logger'
@@ -440,13 +441,15 @@ async function emitCompletedEvent(
 ): Promise<void> {
 	const customerId = customerIdOf(session.customer)
 	if (!customerId) return
-	await capturePosthogEvent('checkout_session_completed', customerId, {
-		session_id: session.id,
-		mode: session.mode,
-		amount_total: session.amount_total ?? 0,
-		currency: session.currency ?? null,
-		awaiting_vies: awaitingVies,
-	})
+	await capturePosthogEvent(
+		'checkout_session_completed',
+		customerId,
+		checkoutSessionCompletedProps(
+			session,
+			session.client_reference_id ?? session.metadata?.workspace_id ?? null,
+			awaitingVies,
+		),
+	)
 }
 
 /**

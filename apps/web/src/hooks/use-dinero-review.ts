@@ -38,3 +38,11 @@ export function useApproveDineroBooks(workspaceId: string) {
 		},
 	})
 }
+
+export function useDineroFilingHandoff(workspaceId: string) {
+	return useMutation({
+		mutationFn: (body: { from: string; to: string }) =>
+			api.dineroReview.filingHandoff(workspaceId, body),
+		onError: (err: Error) => toast.error(err.message),
+	})
+}

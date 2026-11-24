@@ -440,32 +440,40 @@ describe('useActiveSessionsForConversation polling', () => {
 		vi.useRealTimers()
 	})
 
-	async function mount(sessions: SessionResponse[]) {
+	async function mount(sessions: SessionResponse[], options?: { poll?: boolean }) {
 		vi.mocked(api.sessions.list).mockResolvedValue(sessions)
-		renderHook(() => useActiveSessionsForConversation(workspaceId, 'conv-1'), {
+		renderHook(() => useActiveSessionsForConversation(workspaceId, 'conv-1', options), {
 			wrapper: TestWrapper,
 		})
 		await vi.advanceTimersByTimeAsync(0)
 		return vi.mocked(api.sessions.list)
 	}
 
-	it('polls every few seconds while a session in the conversation is live', async () => {
-		const list = await mount([buildSession({ id: 's1', status: 'running' })])
+	it('polls every 15 seconds while a session in the conversation is live', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'running' })], { poll: true })
 		expect(list).toHaveBeenCalledTimes(1)
 
-		await vi.advanceTimersByTimeAsync(5_000)
+		await vi.advanceTimersByTimeAsync(15_000)
 		expect(list).toHaveBeenCalledTimes(2)
-		await vi.advanceTimersByTimeAsync(5_000)
+		await vi.advanceTimersByTimeAsync(15_000)
 		expect(list).toHaveBeenCalledTimes(3)
 	})
 
-	it('falls back to a slow floor when no session in the conversation is live', async () => {
-		const list = await mount([buildSession({ id: 's1', status: 'completed' })])
+	it('falls back to a two-minute floor when no session in the conversation is live', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'completed' })], { poll: true })
 		expect(list).toHaveBeenCalledTimes(1)
 
-		await vi.advanceTimersByTimeAsync(20_000)
+		await vi.advanceTimersByTimeAsync(100_000)
 		expect(list).toHaveBeenCalledTimes(1)
-		await vi.advanceTimersByTimeAsync(10_000)
+		await vi.advanceTimersByTimeAsync(20_000)
 		expect(list).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not poll from an observer that did not ask to, so extra readers add no requests', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'running' })])
+		expect(list).toHaveBeenCalledTimes(1)
+
+		await vi.advanceTimersByTimeAsync(300_000)
+		expect(list).toHaveBeenCalledTimes(1)
 	})
 })

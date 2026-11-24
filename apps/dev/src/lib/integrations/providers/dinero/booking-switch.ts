@@ -4,7 +4,7 @@
  */
 export const DINERO_BOOKING_STATEMENT = [
 	'With booking on, the flow books the vouchers it is sure about and registers payments on its own, with no tap per item.',
-	'It can also email a booked invoice to your customer and send payment reminders, from Dinero. Those emails reach your customers and cannot be taken back.',
+	'It can also book payroll postings from Dinero templates such as A-skat and ATP, create quotes, turn a quote into an invoice, email a booked invoice or a quote to your customer and send payment reminders, from Dinero. Those emails reach your customers and cannot be taken back.',
 	'Everything it does in Dinero is logged: what, when, the amounts, the account, the VAT code, the counterparty and why.',
 	'Anything it doubts stays a draft with a flag. Nothing is filed with SKAT or Erhvervsstyrelsen by the flow.',
 	'A booked voucher cannot be deleted in Dinero. It is corrected with a counter-posting, until you approve the books.',

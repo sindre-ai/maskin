@@ -2,6 +2,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useToolResult, useWebAppContext } from '../shared/mcp-app-provider'
 import { isArray, isObject, safeParseJson, unwrapEnvelope } from '../shared/parse'
 import { renderMcpApp } from '../shared/render'
@@ -222,7 +223,7 @@ function RelationshipTypeList({ types }: { types: string[] }) {
 			<div className="flex flex-wrap gap-1">
 				{types.map((rt) => (
 					<span key={rt} className="px-2 py-0.5 text-xs rounded bg-muted text-foreground">
-						{rt.replace(/_/g, ' ')}
+						{relationshipTypeLabel(rt)}
 					</span>
 				))}
 			</div>

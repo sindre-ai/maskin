@@ -62,6 +62,11 @@ ARG VITE_POSTHOG_KEY=""
 ARG VITE_POSTHOG_HOST=""
 ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
+# Second hostname that reaches this server without the Cloudflare Worker (for example
+# https://api.maskin.io). When set, the SPA sends API calls and loads /assets and /fonts from it.
+# Empty keeps everything on the page's own host. Public by design, it ships in the bundle.
+ARG VITE_API_ORIGIN=""
+ENV VITE_API_ORIGIN=$VITE_API_ORIGIN
 # Grafana Faro. VITE_FARO_URL carries the app key and is public by design (it
 # ships in the bundle, like a Sentry DSN). VITE_MASKIN_COMMIT_SHA becomes the
 # app version, which is what distinguishes one release from another in Grafana.

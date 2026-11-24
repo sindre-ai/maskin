@@ -242,6 +242,28 @@ describe('QuestionOptions', () => {
 		expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'API token' })).not.toBeInTheDocument()
 	})
+	it('keeps the question, the pick, who answered and when once answered', () => {
+		render(
+			<QuestionOptions
+				conversationId="conv-1"
+				workspaceId="ws-1"
+				questionMessageId={7}
+				question={QUESTION}
+				answered
+				answer={{
+					picks: [{ header: QUESTION.questions[0].header, selected: ['API token'] }],
+					text: null,
+					actorName: 'Sebastian',
+					createdAt: '2026-11-24T08:04:00Z',
+				}}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('API token')).toBeInTheDocument()
+		expect(screen.getByText('Sebastian')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Send answer' })).not.toBeInTheDocument()
+	})
+
 	it('turns "or type your reply" into a text box that sends a free-text answer', async () => {
 		sendMutate.mockClear()
 		const user = userEvent.setup()

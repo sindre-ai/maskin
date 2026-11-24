@@ -148,7 +148,9 @@ export function ThreadMessages({
 	// `config.conversation.message_id` — the message that triggered its spawn.
 	// Building the map here keeps MessageBubble stateless about sessions and
 	// the query cache-shared with useConversationActivity above (same key).
-	const { data: sessionList } = useActiveSessionsForConversation(workspaceId, conversationId)
+	const { data: sessionList } = useActiveSessionsForConversation(workspaceId, conversationId, {
+		poll: true,
+	})
 	const spawnByMessageId = useMemo<Map<number, MessageSpawnInfo>>(
 		() => deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]),
 		[sessionList],
@@ -595,7 +597,7 @@ export function ThreadMessages({
 									<MessageBubble
 										workspaceId={workspaceId}
 										message={bubbleMessage}
-										questionAnswered={answeredQuestionIds.has(message.id)}
+										questionAnswer={answeredQuestionIds.get(message.id)}
 										spawnInfo={spawnByMessageId.get(message.id)}
 										onRetried={handleRetried}
 										editRequestNonce={

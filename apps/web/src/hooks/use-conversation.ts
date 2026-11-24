@@ -20,6 +20,8 @@ export function useConversation(id: string, workspaceId: string, options?: { ena
 		queryKey: queryKeys.conversations.detail(id),
 		queryFn: () => api.conversations.get(id, workspaceId),
 		enabled: !!id && !!workspaceId && (options?.enabled ?? true),
+		// A conversation event invalidates its detail at once, so remounts can read the cache.
+		staleTime: 5 * 60_000,
 	})
 }
 

@@ -29,7 +29,7 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
-import { logoDomainFor } from '@/lib/integration-catalog'
+import { descriptionFor, logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
@@ -49,19 +49,6 @@ const INTRO_SUBTITLES: Record<IntegrationToolState, string> = {
 	sharing_off: 'Connected to the workspace',
 	needs_reconnect: 'Needs reconnecting',
 	missing: 'Not connected yet',
-}
-
-/** What each tool is for, in a few words (mockup Settings, Integrations). */
-const PROVIDER_TAGLINES: Record<string, string> = {
-	github: 'Pull requests',
-	gmail: 'Drafts and sending',
-	'google-drive': 'Files',
-	'linkedin-unipile': 'Posting and outreach',
-	linear: 'Issues',
-	microsoft: 'Teams transcripts',
-	posthog: 'Product analytics',
-	resend: 'Email sending',
-	slack: 'Channels and triggers',
 }
 
 export function ProviderRow({
@@ -192,6 +179,8 @@ export function ProviderRow({
 			? integration.config.status_note
 			: null
 
+	const tagline = variant === 'settings' ? descriptionFor(provider.name) : undefined
+
 	const connectedLabel = isConnected
 		? needsReconnect
 			? missingSlackHistoryScopes
@@ -201,9 +190,9 @@ export function ProviderRow({
 				? `Connected as ${integration.externalId}`
 				: integration.externalId
 					? `Connected · Installation ${integration.externalId}`
-					: (variant === 'settings' && PROVIDER_TAGLINES[provider.name]) || 'Connected'
-		: variant === 'settings' && PROVIDER_TAGLINES[provider.name]
-			? PROVIDER_TAGLINES[provider.name]
+					: tagline || 'Connected'
+		: tagline
+			? tagline
 			: provider.events.length > 0
 				? `${provider.events.length} event types available`
 				: 'Available to connect'

@@ -25,7 +25,7 @@ const forbiddenDb = new Proxy(
 
 let staticDir: string
 
-function buildApp() {
+function buildApp(corsOrigins?: string[]) {
 	const deps: AppDeps = {
 		db: forbiddenDb,
 		notifyBridge: {} as unknown as PgNotifyBridge,
@@ -33,12 +33,14 @@ function buildApp() {
 		agentStorage: {} as unknown as AgentStorageManager,
 		storageProvider: {} as unknown as StorageProvider,
 	}
-	return createApp(deps, { includeExtensions: false, staticDir })
+	return createApp(deps, { includeExtensions: false, staticDir, corsOrigins })
 }
 
 beforeAll(() => {
 	staticDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maskin-static-'))
 	fs.mkdirSync(path.join(staticDir, 'assets'))
+	fs.mkdirSync(path.join(staticDir, 'fonts'))
+	fs.writeFileSync(path.join(staticDir, 'fonts', 'real.woff2'), 'font')
 	fs.writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><title>app</title>')
 	fs.writeFileSync(path.join(staticDir, 'assets', 'index-real.js'), 'export default 1')
 })
@@ -71,5 +73,57 @@ describe('SPA static fallback', () => {
 		expect(res.status).toBe(404)
 		expect(res.headers.get('cache-control')).toBe('no-store')
 		expect(res.headers.get('content-type')).not.toContain('text/html')
+	})
+})
+
+/**
+ * The web app can load /assets and /fonts from a second host (VITE_API_ORIGIN) that has no CDN in
+ * front, so the app itself sends the CORS and cache headers the browser needs.
+ */
+describe('static files loaded from the API host', () => {
+	const webOrigin = 'https://maskin.io'
+
+	it('allows the web origin on a built asset and a font, without credentials', async () => {
+		for (const url of ['/assets/index-real.js', '/fonts/real.woff2']) {
+			const res = await buildApp([webOrigin]).request(url, { headers: { Origin: webOrigin } })
+			expect(res.status).toBe(200)
+			expect(res.headers.get('access-control-allow-origin')).toBe(webOrigin)
+			expect(res.headers.get('access-control-allow-credentials')).toBeNull()
+		}
+	})
+
+	it('does not allow another origin', async () => {
+		const res = await buildApp([webOrigin]).request('/assets/index-real.js', {
+			headers: { Origin: 'https://evil.example' },
+		})
+		expect(res.headers.get('access-control-allow-origin')).not.toBe('https://evil.example')
+	})
+
+	it('caches a hashed asset for a year and a font for a day', async () => {
+		const asset = await buildApp().request('/assets/index-real.js')
+		expect(asset.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+		const font = await buildApp().request('/fonts/real.woff2')
+		expect(font.headers.get('cache-control')).toBe('public, max-age=86400')
+	})
+
+	it('answers an API preflight with a cache time, and exposes the headers the client reads', async () => {
+		const pre = await buildApp([webOrigin]).request('/api/objects', {
+			method: 'OPTIONS',
+			headers: {
+				Origin: webOrigin,
+				'Access-Control-Request-Method': 'GET',
+				'Access-Control-Request-Headers': 'authorization,x-workspace-id',
+			},
+		})
+		expect(pre.status).toBe(204)
+		expect(pre.headers.get('access-control-allow-origin')).toBe(webOrigin)
+		expect(pre.headers.get('access-control-allow-credentials')).toBe('true')
+		expect(pre.headers.get('access-control-max-age')).toBe('7200')
+		const health = await buildApp([webOrigin]).request('/api/health', {
+			headers: { Origin: webOrigin },
+		})
+		expect(health.headers.get('access-control-expose-headers')).toBe(
+			'Retry-After,Content-Disposition',
+		)
 	})
 })
