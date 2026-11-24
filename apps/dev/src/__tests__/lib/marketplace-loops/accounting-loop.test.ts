@@ -187,11 +187,11 @@ describe('Accounting loop definition', () => {
 				.split('\n')
 				.filter((l) => /^R\d+ \| /.test(l))
 
-		it('lists 31 rules, each with a severity, a status, a source and an owner line', () => {
+		it('lists 32 rules, each with a severity, a status, a source and an owner line', () => {
 			const rows = ruleRows()
-			expect(rows.length).toBe(31)
+			expect(rows.length).toBe(32)
 			expect(rows.map((r) => r.split(' | ')[0])).toEqual(
-				Array.from({ length: 31 }, (_, i) => `R${i + 1}`),
+				Array.from({ length: 32 }, (_, i) => `R${i + 1}`),
 			)
 			for (const row of rows) {
 				const parts = row.split(' | ')
@@ -203,10 +203,19 @@ describe('Accounting loop definition', () => {
 
 		it('flags confirm-with-adviser rules instead of passing them', () => {
 			const unsourced = ruleRows().filter((r) => r.includes(' | confirm with adviser | '))
-			expect(unsourced.length).toBe(4)
+			expect(unsourced.length).toBe(5)
 			expect(ruleCheck()).toMatch(/flags whenever the situation it describes is present/)
 			expect(ruleCheck()).toMatch(/not flagged by a rule just because the rule is unsourced/)
 			for (const row of unsourced) expect(row.split(' | ')[1]).toBe('flag')
+		})
+
+		it('flags a missing receipt once and an odd amount by its own rule', () => {
+			const text = ruleCheck()
+			expect(text).toMatch(/write R5 and say the rules that need the receipt/)
+			expect(ruleRows().find((r) => r.startsWith('R32 | '))).toMatch(
+				/usual amount for the same payee/,
+			)
+			expect(ruleRows().find((r) => r.startsWith('R21 | '))).toMatch(/within 14 days/)
 		})
 
 		it('writes one clear or flagged row per entry in a fixed table', () => {
