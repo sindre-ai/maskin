@@ -7,13 +7,23 @@ import type { TestAPI } from './api.helper'
  * page offers Add, loop rows are the ones the spec made, and deleting a flow
  * object fails on the install's foreign key. Uninstalling the install removes
  * the install row, its agents, triggers and skills, and the flow object
- * together, which restores that baseline.
+ * together; the checklist tasks it created are deleted too. That restores the
+ * baseline.
  */
 export async function uninstallSeededFlows(api: TestAPI, workspaceId: string): Promise<void> {
 	const installs = await api.listInstalledLoops(workspaceId)
 	for (const install of installs) {
 		await api.uninstallLoop(install.id, workspaceId)
 	}
+
+	// The install's onboarding checklist tasks stay behind when it is removed.
+	// They would count on the Tasks chip and push it into More on narrow widths.
+	const objects = await api.listObjects(workspaceId)
+	await Promise.all(
+		objects
+			.filter((object) => object.type === 'task' && object.metadata?.checklist_install_id)
+			.map((object) => api.deleteObject(object.id, workspaceId)),
+	)
 }
 
 /**
