@@ -121,6 +121,7 @@ describe('invalidateFromSSE', () => {
 		vi.advanceTimersByTime(5_000)
 		expect(qc.invalidateQueries).toHaveBeenCalledWith(
 			expect.objectContaining({ queryKey: ['objects', 'graph'] }),
+			{ cancelRefetch: false },
 		)
 		expect(qc.invalidateQueries).not.toHaveBeenCalledWith({
 			queryKey: queryKeys.bets.all(workspaceId),
@@ -795,7 +796,7 @@ describe('invalidateFromSSE request counts for a burst of events', () => {
 		const lists = await mountAll(qc)
 
 		invalidateFromSSE(qc, workspaceId, {
-			id: 'e-1',
+			id: 'e-2',
 			entity_type: 'session',
 			entity_id: 'sess-open',
 			action: 'session_completed',
