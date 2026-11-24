@@ -1,6 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+	chmod,
+	mkdir,
+	readFile,
+	readdir,
+	rename,
+	rm,
+	stat,
+	statfs,
+	writeFile,
+} from 'node:fs/promises'
 import type { IncomingMessage } from 'node:http'
 import { connect } from 'node:net'
 import { dirname, join } from 'node:path'
@@ -65,6 +75,16 @@ const DESKTOP_STOP_TIMEOUT_MS = 30_000
 // settles: without it that desktop's queue would wedge for good.
 const DESKTOP_OPERATION_GUARD_MS = 300_000
 const IDLE_SWEEP_INTERVAL_MS = 30_000
+// Every `msb snapshot create --full` on a live sandbox leaves a layer in that
+// sandbox's own checkpoint store that is only freed when the sandbox is removed.
+// A suspend that snapshots but then can't stop the VM therefore leaks a layer per
+// attempt (one a minute with the 30s sweep: 150+ GB in a few hours). After a failed
+// suspend the idle sweep leaves that desktop alone for a growing while.
+const SUSPEND_BACKOFF_BASE_MS = 10 * 60_000
+const SUSPEND_BACKOFF_MAX_MS = 24 * 60 * 60_000
+// Below this much free space on the archive volume a snapshot is skipped: it would
+// fail halfway and starve everything else on the host (logs, DB, new sessions).
+const DEFAULT_MIN_FREE_BYTES = 20 * 1024 ** 3
 
 export type DesktopStatus = 'running' | 'suspended'
 
@@ -134,6 +154,21 @@ export type DesktopSnapshotConfig = {
 	// Suspend a desktop after this long with no viewer and no agent call. 0 never
 	// suspends automatically.
 	idleSuspendMs: number
+	// Skip a suspend when the archive volume has less than this free. Default 20 GiB.
+	minFreeBytes?: number
+	// Free bytes on the volume holding `dir`, or null if unknown. Defaults to statfs.
+	freeBytes?: (dir: string) => Promise<number | null>
+}
+
+async function statfsFreeBytes(dir: string): Promise<number | null> {
+	// The directory is created on the first suspend, so fall back to its parent.
+	for (const path of [dir, dirname(dir)]) {
+		try {
+			const s = await statfs(path)
+			return Number(s.bavail) * Number(s.bsize)
+		} catch {}
+	}
+	return null
 }
 
 export type DesktopRelayConfig = {
@@ -192,6 +227,10 @@ export class WorkspaceDesktopRegistry {
 	// desktop run one at a time, so a wake can't interleave with a suspend.
 	private readonly queues = new Map<string, Promise<unknown>>()
 	private readonly lastActivity = new Map<string, number>()
+	// Consecutive failed suspends per desktop, and when the idle sweep may try again.
+	// In memory only: a restart gives every desktop one fresh attempt.
+	private readonly suspendFailures = new Map<string, number>()
+	private readonly suspendRetryAt = new Map<string, number>()
 	private readonly viewers = new Map<string, number>()
 	// Live tunnels per desktop. In memory only: a restarted agent-server loses its
 	// tunnel processes, and the agent simply exposes the port again.
@@ -276,6 +315,7 @@ export class WorkspaceDesktopRegistry {
 			this.stopAllRelays(key)
 			const had = this.desktops.delete(key)
 			this.lastActivity.delete(key)
+			this.clearSuspendFailures(key)
 			await this.persist()
 			await this.removeQuietly(name)
 			await this.removeArchive(name)
@@ -312,6 +352,7 @@ export class WorkspaceDesktopRegistry {
 		for (const desktop of [...this.desktops.values()]) {
 			const key = desktopKey(desktop.workspaceId, desktop.agentId)
 			if (!this.isIdle(key, config.idleSuspendMs)) continue
+			if (this.now() < (this.suspendRetryAt.get(key) ?? 0)) continue
 			try {
 				await this.suspend(desktop.workspaceId, desktop.agentId)
 			} catch (err) {
@@ -414,6 +455,20 @@ export class WorkspaceDesktopRegistry {
 		return (this.deps.msb.now ?? Date.now)()
 	}
 
+	// Records a failed suspend: the next automatic attempt waits 10 min, then 20, 40…
+	// up to a day. A successful suspend (or the desktop being removed) clears it.
+	private noteSuspendFailure(key: string): void {
+		const failures = (this.suspendFailures.get(key) ?? 0) + 1
+		this.suspendFailures.set(key, failures)
+		const wait = Math.min(SUSPEND_BACKOFF_BASE_MS * 2 ** (failures - 1), SUSPEND_BACKOFF_MAX_MS)
+		this.suspendRetryAt.set(key, this.now() + wait)
+	}
+
+	private clearSuspendFailures(key: string): void {
+		this.suspendFailures.delete(key)
+		this.suspendRetryAt.delete(key)
+	}
+
 	private isIdle(key: string, idleMs: number): boolean {
 		const desktop = this.desktops.get(key)
 		if (!desktop || desktop.status !== 'running') return false
@@ -491,6 +546,18 @@ export class WorkspaceDesktopRegistry {
 		const archive = this.archivePath(desktop.name)
 		const partial = join(config.dir, `${desktop.name}.partial.msb`)
 		const ref = { workspaceId: desktop.workspaceId, agentId: desktop.agentId }
+
+		const minFree = config.minFreeBytes ?? DEFAULT_MIN_FREE_BYTES
+		const free = await (config.freeBytes ?? statfsFreeBytes)(config.dir)
+		if (free !== null && free < minFree) {
+			logger.warn('workspace desktop suspend skipped, host disk is nearly full', {
+				...ref,
+				freeBytes: free,
+				minFreeBytes: minFree,
+			})
+			this.noteSuspendFailure(key)
+			return false
+		}
 		try {
 			await mkdir(config.dir, { recursive: true, mode: 0o700 })
 			// mkdir leaves an existing directory's mode alone, so set it explicitly.
@@ -513,6 +580,7 @@ export class WorkspaceDesktopRegistry {
 				error: String(err),
 			})
 			await rm(partial, { force: true })
+			this.noteSuspendFailure(key)
 			return false
 		}
 
@@ -526,9 +594,11 @@ export class WorkspaceDesktopRegistry {
 				error: String(err),
 			})
 			await this.removeArchive(desktop.name)
+			this.noteSuspendFailure(key)
 			return false
 		}
 		await this.removeQuietly(desktop.name)
+		this.clearSuspendFailures(key)
 		desktop.status = 'suspended'
 		await this.persist()
 		logger.info('workspace desktop suspended', ref)

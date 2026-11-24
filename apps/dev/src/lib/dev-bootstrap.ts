@@ -13,6 +13,12 @@ import type { SessionManager } from '../services/session-manager'
 import { provisionWorkspace } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import {
+	ACCOUNTING_LOOP,
+	ACCOUNTING_LOOP_ACTOR_IDS,
+	ACCOUNTING_LOOP_SKILL_IDS,
+	ACCOUNTING_LOOP_TRIGGER_IDS,
+} from './marketplace-loops/accounting-loop'
+import {
 	CUSTOMER_VOICE_ACTOR_IDS,
 	CUSTOMER_VOICE_LOOP,
 	CUSTOMER_VOICE_SKILL_IDS,
@@ -67,9 +73,21 @@ import {
 	PRODUCT_USAGE_TRIGGER_IDS,
 	PRODUCT_USAGE_VIEW_IDS,
 } from './marketplace-loops/product-usage-loop'
+import {
+	SIGNAL_INTAKE_ACTOR_IDS,
+	SIGNAL_INTAKE_LOOP,
+	SIGNAL_INTAKE_SKILL_IDS,
+	SIGNAL_INTAKE_TRIGGER_IDS,
+} from './marketplace-loops/signal-intake-loop'
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
+	{
+		loop: ACCOUNTING_LOOP,
+		actorIds: ACCOUNTING_LOOP_ACTOR_IDS,
+		triggerIds: ACCOUNTING_LOOP_TRIGGER_IDS,
+		skillIds: ACCOUNTING_LOOP_SKILL_IDS,
+	},
 	{
 		loop: MARKET_WATCH_LOOP,
 		actorIds: MARKET_WATCH_ACTOR_IDS,
@@ -116,6 +134,12 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		skillIds: PRODUCT_USAGE_SKILL_IDS,
 		viewIds: PRODUCT_USAGE_VIEW_IDS,
 	},
+	{
+		loop: SIGNAL_INTAKE_LOOP,
+		actorIds: SIGNAL_INTAKE_ACTOR_IDS,
+		triggerIds: SIGNAL_INTAKE_TRIGGER_IDS,
+		skillIds: SIGNAL_INTAKE_SKILL_IDS,
+	},
 ]
 
 export interface MarketplaceSyncResult {
@@ -128,7 +152,7 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage, Signal Intake), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.

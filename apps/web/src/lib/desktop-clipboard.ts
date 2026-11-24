@@ -20,8 +20,14 @@ const XK_V = 0x76
 // x11vnc takes the text in asynchronously; Ctrl+V sent at once would paste the old clipboard.
 const REMOTE_SETTLE_MS = 150
 
-/** How long after Ctrl/Cmd+C the computer's clipboard is still taken as the answer to that key press. */
-export const COPY_WINDOW_MS = 3000
+/**
+ * How long after Ctrl/Cmd+C the computer's clipboard is still taken as the answer to that key press.
+ * Matches how long a browser lets a page write the clipboard after a key press.
+ */
+export const COPY_WINDOW_MS = 5000
+
+/** Shown when the computer answered Ctrl/Cmd+C with nothing, e.g. the text did not change since the last copy. */
+export const NO_NEW_COPY = 'Nothing new was copied on the computer.'
 
 /** Presses Ctrl+<key> on the computer. The computer is Linux, so this is Ctrl even when the person pressed Cmd. */
 function pressCtrl(rfb: ClipboardRfb, keysym: number, code: string) {
@@ -76,6 +82,10 @@ export function createCopyArming(now: () => number = Date.now) {
 		},
 		disarm() {
 			armedUntil = 0
+		},
+		/** True from the copy key press until the computer answers or the person is told it did not. */
+		waiting() {
+			return armedUntil !== 0
 		},
 		/** True once per copy key press, and only within the window. */
 		take() {

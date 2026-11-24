@@ -1,6 +1,6 @@
 // Shared constants for the Product Discovery Loop marketplace bundle.
 //
-// The bundle contains the Product Discovery Agent, the CPO and the Strategist,
+// The bundle contains the Product Discovery Lead, the CPO and the Strategist,
 // plus every trigger they drive: triage of new insights, an insight synthesis
 // sweep, a backlog drain, a weekly briefing, weekly and daily upkeep of the
 // Discovery understanding and Bet intelligence pages, the evidence base and
@@ -56,7 +56,7 @@ const DISCOVERY_SETTINGS: LoopSettings = {
 export const DISCOVERY_LOOP = {
 	slug: 'product-discovery-loop',
 	name: 'Product Discovery Flow',
-	version: '1.6.0',
+	version: '1.7.0',
 	useCase: 'Discovery',
 	settings: DISCOVERY_SETTINGS,
 	description:
@@ -79,9 +79,9 @@ export const DISCOVERY_SKILL_IDS: readonly string[] = [
 	...new Set(DISCOVERY_ACTOR_IDS.flatMap(skillIdsForActor)),
 ]
 
-// The loop page's tabs, in order. Radar, Learning, Briefing, Opportunities and
-// Opportunity shortlist ship as empty starter pages for the agents to fill in; Pipeline
-// reads live counts and works in any workspace. See data/discovery-views.json.
+// The loop page's tabs, in order. Radar, Learning, Briefing and Opportunity shortlist ship
+// as empty starter pages for the agents to fill in; Opportunities and Pipeline read live
+// counts and work in any workspace. See data/discovery-views.json.
 export const DISCOVERY_VIEW_IDS: readonly string[] = Object.values(discoveryViewsData)
 	.sort((a, b) => a.position - b.position)
 	.map((view) => view.id)

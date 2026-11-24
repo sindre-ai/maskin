@@ -6,8 +6,10 @@ import SwiftUI
 /// An agent's ask for access to an integration that is connected but not allowed for it (the web's
 /// `IntegrationAccessRequestCard`). Allow sets the agent's access on the server, the same as
 /// Settings → Integrations, stops its idle session and posts a short hidden message that starts a
-/// fresh one. Not now only tells the agent. Whether it was allowed is read from the integration
-/// list, so a card scrolled back to says so.
+/// fresh one. For Calendar and Meet the card can also allow write in this chat only, for a few hours.
+/// Not now is counted for the Allow rate, then tells the agent. Whether it was allowed is read from
+/// the integration list (or, for this chat only, from the stored answer), so a card scrolled back to
+/// says so.
 struct IntegrationAccessCard: View {
 	let request: IntegrationAccessRequest
 	let agentID: String
@@ -24,6 +26,7 @@ struct IntegrationAccessCard: View {
 	@State private var error: String?
 	@State private var declinedNow = false
 	@State private var allowedNow = false
+	@State private var chatAllowedNow = false
 	@State private var stillRunning = false
 	/// What the person will grant: the ask, or lower. Nil until they touch the picker.
 	@State private var chosenLevel: IntegrationAccessRequest.Level?
@@ -31,6 +34,9 @@ struct IntegrationAccessCard: View {
 	private var level: IntegrationAccessRequest.Level { chosenLevel ?? request.level }
 
 	private var declined: Bool { declinedNow || answered == .declined }
+
+	/// This chat only, for a few hours: said by the server, and only for a write ask.
+	private var chatAllowed: Bool { request.lift != nil && (chatAllowedNow || answered == .done) }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
@@ -46,13 +52,22 @@ struct IntegrationAccessCard: View {
 			} else {
 				RequestCardTitle(
 					title: "Allow \(request.displayName)?",
-					subtitle: ["For \(agentName ?? "this agent")." , request.reason].compactMap { $0 }
+					subtitle: ["For \(agentName ?? "this agent").", request.lift?.text ?? request.reason].compactMap { $0 }
 						.filter { !$0.isEmpty }.joined(separator: " "),
 					symbol: "key")
 				accessRows
 				if let error { Text(error).maskinText(.caption).foregroundStyle(MaskinColor.ink3) }
 				VStack(spacing: MaskinSpace.s4) {
-					RequestCardButton(title: "Allow", primary: true, disabled: busy) { Task { await allow() } }
+					if let lift = request.lift, level == .readWrite {
+						RequestCardButton(title: "Allow in this chat for \(lift.hours) hours", primary: true, disabled: busy) {
+							Task { await allow(scope: .chat) }
+						}
+						RequestCardButton(title: "Always allow", disabled: busy) { Task { await allow() } }
+					} else {
+						RequestCardButton(title: request.lift == nil ? "Allow" : "Always allow", primary: true, disabled: busy) {
+							Task { await allow() }
+						}
+					}
 					RequestCardButton(title: "Not now", disabled: busy) { decline() }
 				}
 			}
@@ -64,6 +79,16 @@ struct IntegrationAccessCard: View {
 	/// How much and how long, as two rows. The level can be lowered to Read before Allow.
 	private var accessRows: some View {
 		VStack(spacing: 0) {
+			if let lift = request.lift {
+				if let tool = lift.tool {
+					infoRow("Tool asked for", tool)
+					Rectangle().fill(MaskinSurface.separator).frame(height: 1)
+				}
+				if let reason = request.reason, !reason.isEmpty {
+					infoRow("The agent says", reason)
+					Rectangle().fill(MaskinSurface.separator).frame(height: 1)
+				}
+			}
 			HStack(spacing: MaskinSpace.s4) {
 				Text("Access").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
 				Spacer(minLength: 0)
@@ -79,21 +104,30 @@ struct IntegrationAccessCard: View {
 			}
 			.frame(minHeight: MaskinSpace.touchMin)
 			Rectangle().fill(MaskinSurface.separator).frame(height: 1)
-			HStack(spacing: MaskinSpace.s4) {
-				Text("Lasts").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
-				Spacer(minLength: 0)
-				Text("Until you remove it").maskinText(.subhead).foregroundStyle(MaskinColor.ink)
-			}
-			.frame(minHeight: MaskinSpace.touchMin)
+			infoRow(
+				"Lasts",
+				request.lift.map { "Allow in this chat: \($0.hours) hours. Always allow: until you remove it" }
+					?? "Until you remove it")
 		}
 		.padding(.horizontal, MaskinSpace.s6)
 		.background(MaskinSurface.grouped, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+	}
+
+	/// A label and its value on one line; a long value wraps under the label's row height.
+	private func infoRow(_ label: String, _ value: String) -> some View {
+		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
+			Text(label).maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
+			Spacer(minLength: 0)
+			Text(value).maskinText(.subhead).foregroundStyle(MaskinColor.ink).multilineTextAlignment(.trailing)
+		}
+		.frame(minHeight: MaskinSpace.touchMin)
 	}
 
 	private var settledLine: String? {
 		if allowedNow || state == .allowed {
 			return request.allowedLine(agentName: agentName)
 		}
+		if chatAllowed { return request.chatAllowedLine(agentName: agentName) }
 		if declined { return request.declinedLine(agentName: agentName) }
 		if state == .gone { return "\(request.displayName) is no longer connected." }
 		return nil
@@ -113,21 +147,22 @@ struct IntegrationAccessCard: View {
 		state = await access.state(for: request, agentID: agentID)
 	}
 
-	private func allow() async {
+	private func allow(scope: IntegrationAccessScope = .always) async {
 		guard let (access, helper) = source() else { return }
 		busy = true
 		error = nil
 		defer { busy = false }
 		do {
-			let granted = request.with(level: level)
-			let result = try await access.allow(granted)
-			allowedNow = true
+			// Allow in this chat is always the full level; a standing Allow takes the picked one.
+			let granted = scope == .chat ? request.with(level: .readWrite) : request.with(level: level)
+			let result = try await access.allow(granted, scope: scope)
+			if scope == .chat { chatAllowedNow = true } else { allowedNow = true }
 			if result.changed, !result.relaunched {
 				// The idle session could not be stopped, so it still has the old access.
 				stillRunning = true
 				return
 			}
-			let reply = granted.allowedReply(changed: result.changed)
+			let reply = scope == .chat ? request.chatAllowedReply() : granted.allowedReply(changed: result.changed)
 			if request.replyToSession {
 				do {
 					// Stopped to take the new access, so its follow-up carries on; not stopped, so write into it.
@@ -145,7 +180,9 @@ struct IntegrationAccessCard: View {
 					stillRunning = true
 				}
 			} else {
-				onReply(reply, ChatSendMetadata(hiddenFromChat: true))
+				// A chat Allow leaves the standing level as it was, so the card reads its answer from here.
+				let card = scope == .chat ? messageID.map { ChatCardAnswer(messageID: $0, outcome: .done) } : nil
+				onReply(reply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
 			}
 		} catch let failure as KeychainAccessError {
 			error = failure.message
@@ -158,10 +195,15 @@ struct IntegrationAccessCard: View {
 		let card = messageID.map { ChatCardAnswer(messageID: $0, outcome: .declined) }
 		guard request.replyToSession else {
 			declinedNow = true
-			onReply(request.declinedReply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
+			Task {
+				// Counted for the Allow rate. Never blocks the decline: the message below is what the
+				// agent and a reload read, so it posts whether or not the count was recorded.
+				await source()?.0.recordDecline(request)
+				onReply(request.declinedReply, ChatSendMetadata(hiddenFromChat: true, cardAnswer: card))
+			}
 			return
 		}
-		guard let card, let (_, helper) = source() else {
+		guard let card, let (access, helper) = source() else {
 			error = "Couldn't tell the agent. Try again."
 			return
 		}
@@ -169,6 +211,7 @@ struct IntegrationAccessCard: View {
 		error = nil
 		Task {
 			defer { busy = false }
+			await access.recordDecline(request)
 			do {
 				try await helper.sendInput(sessionID: request.sessionID, content: request.declinedReply, cardAnswer: card)
 				declinedNow = true

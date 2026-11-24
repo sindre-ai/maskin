@@ -5,7 +5,7 @@ import SwiftUI
 /// reaches the same pages through `ProfileMenuItem`.
 enum SettingsRoute: Hashable, Identifiable {
 	var id: Self { self }
-	case profile, notifications, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
+	case profile, notifications, permissions, workspace, skills, objectTypes, deleteAccount, deleteWorkspace
 	case members, integrations, files, keys, triggers, billing
 	case deviceSignIn, appLock, workspaces, advanced, nativeSurfaces
 	/// `maskin://connect?code=`: Sign in a device with the code already typed.
@@ -158,7 +158,22 @@ struct SettingsServices {
 			let webAuth: (any WebAuthenticating)? = nil  // connecting stays on the web
 		#endif
 		return IntegrationsStore(
-			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth)
+			api: source ?? NoSettingsSource(), currentRole: role, webAuth: webAuth, ownApp: ownAppSource)
+	}
+
+	/// Nil without a workspace. Saving the app is a hand-built request, so it needs the base URL.
+	private var ownAppSource: APIOwnAppSource? {
+		workspaceId.map {
+			APIOwnAppSource(
+				client: environment.client, workspaceID: $0, baseURL: environment.baseURL,
+				clientSource: environment.clientSource, credentials: environment.auth.credentialsProvider)
+		}
+	}
+
+	/// The paste form for a tool's own sign-in app. Nil without a workspace.
+	func ownAppStore(prompt: OwnAppPrompt) -> OwnAppStore? {
+		guard let ownAppSource else { return nil }
+		return OwnAppStore(prompt: prompt, api: ownAppSource)
 	}
 
 	/// The figures beside the rows of the account menu and the Settings page; nil without a workspace.

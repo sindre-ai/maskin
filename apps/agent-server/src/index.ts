@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
 import { resolveBuildInfo } from './lib/build-info'
 import { type AgentServerEnv, parseEnv } from './lib/env'
+import { checkHostHealth } from './lib/host-health'
 import { logger } from './lib/logger'
 import { startMetricsServer } from './lib/metrics'
 import { Sentry } from './lib/sentry'
@@ -757,12 +758,24 @@ export function buildApp(deps: AppDeps): Hono {
 		// is not healthy, even though the process is up. readMsbVersion returns
 		// null on any failure, so a null version is an unhealthy box (503).
 		const msbVersion = await readMsbVersion({ msbBin: deps.msb.msbBin, run: deps.msb.run })
-		const ok = msbVersion !== null
+		const msbOk = msbVersion !== null
+		// A box that answers but cannot write or read is worse than a down one: it keeps
+		// being given sessions. Red carries a `reason` so apps/dev can tell this apart
+		// from a plain msb failure.
+		const host = await checkHostHealth({
+			sessionRoot: deps.env.AGENT_SESSION_ROOT,
+			storage: deps.storage,
+			minFreePercent: deps.env.HEALTH_MIN_FREE_PERCENT,
+			minFreeBytes: deps.env.HEALTH_MIN_FREE_GB * 1024 ** 3,
+			storageTimeoutMs: deps.env.HEALTH_STORAGE_TIMEOUT_MS,
+		})
+		const ok = msbOk && host.ok
 		return c.json(
 			{
 				ok,
 				backend: 'microsandbox',
 				msb_version: msbVersion,
+				...(host.ok ? {} : { reason: host.reason }),
 			},
 			ok ? 200 : 503,
 		)

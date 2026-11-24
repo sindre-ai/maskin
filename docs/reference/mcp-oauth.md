@@ -1,11 +1,11 @@
 ---
-title: MCP sign-in for Claude (OAuth)
+title: MCP sign-in for Claude and ChatGPT (OAuth)
 slug: mcp-oauth
-description: How Claude discovers and completes Maskin's MCP sign-in, what /mcp answers without a credential, the pinned Claude client record, the consent and token routes, how a connection ends, and the switch that controls it.
-last_updated: 2026-11-04
+description: How Claude and ChatGPT discover and complete Maskin's MCP sign-in, what /mcp answers without a credential, the pinned client records, the consent and token routes, how a connection ends, and the switch that controls it.
+last_updated: 2026-11-22
 ---
 
-# MCP sign-in for Claude (OAuth)
+# MCP sign-in for Claude and ChatGPT (OAuth)
 
 The MCP server at `/mcp` accepts API keys (`ank_`) and, when the switch below is on, Claude connector tokens (`mat_`). This page covers what Claude needs in order to find the sign-in, the routes that complete it, and how a connection ends. Token acceptance lives in `packages/auth`.
 
@@ -43,9 +43,11 @@ An invalid or expired `mat_` token gets the same 401 with `error="invalid_token"
 
 Behaviour change to know about: an unauthenticated `initialize` or `tools/list` used to succeed and now gets the 401.
 
-## The pinned Claude client record
+## The pinned client records
 
-`MCP_OAUTH_PINNED_CLIENTS` in `packages/shared/src/constants/mcp-oauth.ts` is the only source for the client id, name and redirect addresses in v1. Claude only. `resolvePinnedClient` (`apps/dev/src/lib/oauth-server/client-record.ts`) matches the `client_id` and the `redirect_uri` by exact string equality, checks the client id first, and makes no outbound request.
+`MCP_OAUTH_PINNED_CLIENTS` in `packages/shared/src/constants/mcp-oauth.ts` is the only source for the client id, name and redirect addresses. Two entries: Claude and ChatGPT. ChatGPT's client id is `https://chatgpt.com/oauth/client.json` and its one return address is `https://chatgpt.com/connector_platform_oauth_redirect`. There is no client sign-up endpoint, so any other client is turned away. ChatGPT's own document lists `private_key_jwt` as its default and `none` as supported; the server advertises only `none`, and `none` is what is pinned. `resolvePinnedClient` (`apps/dev/src/lib/oauth-server/client-record.ts`) matches the `client_id` and the `redirect_uri` by exact string equality, checks the client id first, and makes no outbound request.
+
+The weekly drift check covers Claude only. ChatGPT's pin was read live on 2026-11-22.
 
 `scripts/checks/claude-client-drift.ts` runs weekly from `.github/workflows/claude-client-drift.yml`. It compares the pin with the document Claude publishes and opens an insight when they differ. It does not change runtime behaviour and always finishes green. To let it open the insight, set the repository secrets `MASKIN_DRIFT_API_URL`, `MASKIN_DRIFT_API_KEY` and `MASKIN_DRIFT_WORKSPACE_ID`; without them it only prints the difference.
 
@@ -56,12 +58,16 @@ All under `/api/oauth`, behind `authMiddleware` with the person's own `ank_` key
 - `GET /authorize/preview` checks the request in a fixed order (client id, then redirect address, both exact matches against the pinned record, then everything else) and returns the client, the person's workspaces with their role, and the scope.
 - `POST /authorize/approve` takes the same parameters plus `workspace_id`. It creates the connection and a 60 second one-time code and returns `redirect_url` with `code`, `state` and `iss` (RFC 9207). One live connection per person, workspace and client: approving again ends the old one and its tokens in the same transaction.
 - `POST /authorize/deny` takes the same parameters (and optionally the `workspace_id` the person had picked, used only for the funnel) and returns the `access_denied` redirect. It writes no database rows.
-- `GET /grants` lists the person's connections to the pinned Claude client across their workspaces, one row per workspace: `id`, `client_id`, `client_name`, `workspace_id`, `workspace_name` (joined from the workspace), `created_at`, `last_used_at`. A row appears only when the connection is not revoked, its refresh token can still be used (the same check the token endpoint runs, `isGrantRefreshable` in `apps/dev/src/lib/oauth-server/grants.ts`) and the person still belongs to the workspace. `last_used_at` is null until the first tool call.
+- `GET /grants` lists the person's connections to any pinned client (Claude or ChatGPT) across their workspaces, one row per workspace: `id`, `client_id`, `client_name`, `workspace_id`, `workspace_name` (joined from the workspace), `created_at`, `last_used_at`. A row appears only when the connection is not revoked, its refresh token can still be used (the same check the token endpoint runs, `isGrantRefreshable` in `apps/dev/src/lib/oauth-server/grants.ts`) and the person still belongs to the workspace. `last_used_at` is null until the first tool call.
 - `DELETE /grants/:id` ends one of the caller's own connections and every token on it at once.
 
 Preview, approve and deny answer 404 when the switch is off and 403 `access_denied` when the caller is not a person. They are limited to 30 calls a minute per person.
 
 Errors from preview, approve and deny are `{ error, error_description, redirect_url? }` with one of seven codes. `client_not_allowlisted` and `bad_redirect_uri` are identity codes and never carry a link. `pkce_missing`, `invalid_request`, `unsupported_response_type`, `invalid_scope` and `invalid_target` carry `redirect_url`: built from the pinned redirect address, never from the request's, with the matching OAuth error (`pkce_missing` goes back as `invalid_request`) and `state` only if it is 8 to 512 printable characters, always as an encoded query parameter. The field is absent, not empty, when there is no verified link.
+
+## The ChatGPT domain proof
+
+OpenAI asks for a token at `/.well-known/openai-apps-challenge` before an app can be listed. `GET` on that path (`apps/dev/src/routes/openai-apps-challenge.ts`) returns the value of `OPENAI_APPS_CHALLENGE`, trimmed, as `text/plain`, and 404 while it is unset or blank. Set the variable after deploy once OpenAI has issued the token; it is passed through `turbo.json` and listed on the `apps/dev` service in `docker-compose.yml` and `docker-compose.prod.yml`. It does not depend on the sign-in switch.
 
 ## The consent page and the Claude tab
 
@@ -87,7 +93,7 @@ Codes expired for over a day and tokens expired for over a week are deleted hour
 
 Every change is an `events` row with `entity_type` `oauth_grant` through `recordEvent`: `oauth_grant_created`, `oauth_token_issued`, `oauth_token_refreshed`, `oauth_grant_revoked`, `oauth_code_reuse_detected`, `oauth_refresh_reuse_detected`. No token, code or hash is ever in `data`.
 
-PostHog events are sent from the route that makes each decision, always after sign-in (the page sends none, and no server route sees anyone before sign-in, so drop-off before sign-in is not measured; the funnel starts at `mcp_oauth_authorize_started`). Every event carries `client` (the fixed label for the pinned client, `claude_ai`) and the distinct id is the actor id:
+PostHog events are sent from the route that makes each decision, always after sign-in (the page sends none, and no server route sees anyone before sign-in, so drop-off before sign-in is not measured; the funnel starts at `mcp_oauth_authorize_started`). Every event carries `client` (the fixed label for the pinned client: `claude_ai` or `chatgpt`) and the distinct id is the actor id:
 
 - `mcp_oauth_authorize_started`: preview succeeded. Also `workspace_count`.
 - `mcp_oauth_preview_rejected`: preview refused. `reason` is one of the seven request codes or `rate_limited`; `client` is left out when the `client_id` did not match the pin. A caller turned away by the switch or the person check is not an event.

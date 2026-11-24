@@ -4,9 +4,16 @@ import { isPilotHeldIntegrationTool } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { trackIntegrationToolCalled } from '../lib/analytics/integration-events'
+import { countReceiptDraft, receiptDraftConnector } from '../lib/analytics/receipt-events'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
 import { type AgentAccess, resolveAgentAccess } from '../lib/integrations/agent-access'
+import { resolveCallerChat } from '../lib/integrations/chat-lift'
+import {
+	CustomerValueError,
+	fillCustomerValue,
+	hasCustomerValueToken,
+} from '../lib/integrations/customer-value'
 import {
 	GATEWAY_BODY_LIMIT_BYTES,
 	GATEWAY_PROVIDERS,
@@ -22,9 +29,27 @@ import {
 	toolsCallName,
 	withReadOnlyHeaders,
 } from '../lib/integrations/mcp-gateway'
+import { loadOAuthApp } from '../lib/integrations/oauth-app'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
+import {
+	DINERO_LOGGED_TOOLS,
+	dineroCallRefusal,
+	recordDineroAction,
+} from '../lib/integrations/providers/dinero/action-log'
+import { fixedAllowedTools } from '../lib/integrations/providers/dinero/allowed-tools'
+import {
+	DINERO_BRIDGE_TOOLS,
+	callDineroBridge,
+	isDineroBridgeTool,
+} from '../lib/integrations/providers/dinero/bridge'
+import {
+	DINERO_LOCKED_MESSAGE,
+	isDineroPeriodLocked,
+} from '../lib/integrations/providers/dinero/review'
+import { assertPublicHost } from '../lib/integrations/public-host'
 import { getProvider } from '../lib/integrations/registry'
 import type { ToolAnnotationsLike } from '../lib/integrations/tool-kinds'
+import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { checkPilotHold } from '../lib/pilot-hold'
 import { decideSend, pilotIsReason } from '../lib/send-gate'
@@ -85,9 +110,23 @@ function rememberAnnotations(key: string, annotations: Map<string, ToolAnnotatio
 	annotationCache.set(key, annotations)
 }
 
+// The tool names each server listed last, so a refused call can say whether the name is one the
+// provider really has (an agent can send any name in tools/call). Bounded the same way.
+const toolNameCache = new Map<string, Set<string>>()
+
+function rememberToolNames(key: string, names: Set<string>): void {
+	if (names.size === 0) return
+	if (toolNameCache.size >= ANNOTATION_CACHE_MAX && !toolNameCache.has(key)) {
+		const oldest = toolNameCache.keys().next().value
+		if (oldest !== undefined) toolNameCache.delete(oldest)
+	}
+	toolNameCache.set(key, names)
+}
+
 /** Test seam. */
 export function clearGatewayAnnotationCache(): void {
 	annotationCache.clear()
+	toolNameCache.clear()
 }
 
 function jsonRpcError(status: 400 | 403 | 404 | 413 | 502, code: number, message: string) {
@@ -142,7 +181,40 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		return jsonRpcError(403, -32001, `${label} is switched off for agent sessions.`)
 	}
 
-	const access = (await resolveAgentAccess(db, workspaceId, integration.id, actorId)) ?? 'none'
+	// A tool at a per-customer address: the server URL carries a place for the workspace's saved
+	// value. It is checked again here, so a stored value that no longer passes is never called.
+	let upstreamUrl = server.url
+	if (resolved.config.auth.type === 'oauth2') {
+		try {
+			const app = resolved.config.auth.config.customerValue
+				? await loadOAuthApp(db, getKmsProvider(), workspaceId, provider)
+				: null
+			upstreamUrl = fillCustomerValue(
+				server.url,
+				resolved.config.auth.config.customerValue,
+				app?.value,
+			)
+			// Looked up on every call: a name that now points inside our network is never called.
+			if (hasCustomerValueToken(server.url)) await assertPublicHost(new URL(upstreamUrl).hostname)
+		} catch (err) {
+			if (!(err instanceof CustomerValueError)) throw err
+			return jsonRpcError(
+				400,
+				-32001,
+				`${label} cannot be called: ${err.message} Check it under Settings → Integrations.`,
+			)
+		}
+	}
+
+	// The chat the call comes from, so an Allow in this chat counts. Unchecked header: no lift.
+	const chat = await resolveCallerChat(db, c.req.header('x-maskin-session-id'), {
+		workspaceId,
+		actorId,
+	})
+	const access =
+		(await resolveAgentAccess(db, workspaceId, integration.id, actorId, {
+			conversationId: chat?.conversationId ?? null,
+		})) ?? 'none'
 
 	return proxyMcp(c, {
 		workspaceId,
@@ -152,7 +224,8 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		integrationId: integration.id,
 		access,
 		cacheKey: `${workspaceId}:${provider}`,
-		upstreamUrl: server.url,
+		upstreamUrl,
+		allowedTools: fixedAllowedTools(provider, integration.config as IntegrationConfig | null),
 		upstreamHeaders: async () => {
 			let token: string
 			try {
@@ -189,6 +262,8 @@ export interface ProxyContext {
 	/** Remembers each server's own tool annotations between a tools/list and a later call. */
 	cacheKey: string
 	upstreamUrl: string
+	/** A fixed list of allowed tools (a custom server's, or Dinero's): any other tool is refused and left out of tools/list. */
+	allowedTools?: readonly string[]
 	/** The headers that sign in upstream. Throws GatewayUpstreamError when it cannot. */
 	upstreamHeaders: () => Promise<Record<string, string>>
 }
@@ -246,6 +321,7 @@ export async function proxyMcp(
 			args: rpc?.params?.arguments,
 			access,
 			annotations: annotationCache.get(cacheKey)?.get(toolName),
+			allowedTools: ctx.allowedTools,
 		})
 		// Read & write lets an agent use Resend's send tools, unless its send setting for emails holds
 		// or turns off its sends: then they are refused and it is pointed at resend_send_email.
@@ -271,6 +347,26 @@ export async function proxyMcp(
 					message: resendSendRefusal(toolName, send, pilot),
 				}
 			}
+		}
+		// Dinero: a booking or payment must carry the version stamp of the voucher the agent read, and a
+		// group voucher only saves a draft while booking is off.
+		if (decision.allowed && provider === 'dinero') {
+			const refusal = dineroCallRefusal(
+				toolName,
+				rpc?.params?.arguments,
+				ctx.allowedTools?.includes('BookVoucher') === true,
+			)
+			if (refusal) decision = { ...decision, allowed: false, message: refusal }
+		}
+		// Dinero: once the owner approved the books for a period that includes today, nothing the
+		// flow does can change them. Reads still work.
+		if (
+			decision.allowed &&
+			provider === 'dinero' &&
+			DINERO_LOGGED_TOOLS.has(toolName) &&
+			(await isDineroPeriodLocked(db, { workspaceId, integrationId: integration.id }))
+		) {
+			decision = { ...decision, allowed: false, message: DINERO_LOCKED_MESSAGE }
 		}
 		// A write waits for a person while the calling session runs under a flow in pilot, unless the
 		// provider has a hold of its own (Gmail, Resend). Asked on every call, so a flow moved out of
@@ -304,6 +400,8 @@ export async function proxyMcp(
 						tool: toolName,
 						kind: decision.kind,
 						access,
+						// Only a name the provider listed may be shown on an access card.
+						tool_listed: toolNameCache.get(cacheKey)?.has(toolName) === true,
 						// The inner tool only, never the json input: it can hold personal data.
 						...(decision.innerTool ? { command_tool: decision.innerTool } : {}),
 					},
@@ -347,6 +445,40 @@ export async function proxyMcp(
 		throw err
 	}
 
+	// Dinero's public API has tools its hosted server lacks (email an invoice, chase a late one).
+	// They were judged above like any other tool, and are answered here, never sent upstream.
+	if (provider === 'dinero' && toolName && allowed && isDineroBridgeTool(toolName)) {
+		const done = await callDineroBridge(
+			toolName,
+			rpc?.params?.arguments,
+			upstreamHeaders.Authorization ?? upstreamHeaders.authorization ?? '',
+		)
+		countToolCall(done.isError ? 'API_ERROR' : null)
+		const answer = new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: rpc?.id ?? null,
+				result: { isError: done.isError, content: [{ type: 'text', text: done.text }] },
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		)
+		if (DINERO_LOGGED_TOOLS.has(toolName)) {
+			void recordDineroAction({
+				db,
+				upstream: answer,
+				requestId: rpc?.id,
+				tool: toolName,
+				args: rpc?.params?.arguments,
+				booking: ctx.allowedTools?.includes('BookVoucher') === true,
+				integrationId: integration.id,
+				workspaceId,
+				actorId,
+				sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+			})
+		}
+		return answer
+	}
+
 	const headers = new Headers()
 	for (const name of FORWARDED_REQUEST_HEADERS) {
 		const value = c.req.header(name)
@@ -377,6 +509,35 @@ export async function proxyMcp(
 		return jsonRpcError(502, -32002, `${label} could not be reached. Try again shortly.`)
 	}
 	countToolCall(upstream.ok ? null : `HTTP_${upstream.status}`)
+	// A draft saved in the customer's accounting system is counted once, when the vendor says it worked.
+	const draftConnector = toolName && allowed ? receiptDraftConnector(server.url, toolName) : null
+	if (draftConnector) {
+		void countReceiptDraft({
+			db,
+			upstream,
+			requestId: rpc?.id,
+			connector: draftConnector,
+			workspaceId,
+			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+	}
+
+	// A Dinero call that changes something goes in the owner's action log once Dinero has answered.
+	if (provider === 'dinero' && toolName && allowed && DINERO_LOGGED_TOOLS.has(toolName)) {
+		void recordDineroAction({
+			db,
+			upstream,
+			requestId: rpc?.id,
+			tool: toolName,
+			args: rpc?.params?.arguments,
+			booking: ctx.allowedTools?.includes('BookVoucher') === true,
+			integrationId: integration.id,
+			workspaceId,
+			actorId,
+			sessionId: callingSessionId(c.get('apiKeySessionId'), c.get('maskinSessionId')),
+		})
+	}
 
 	const responseHeaders = new Headers()
 	for (const name of FORWARDED_RESPONSE_HEADERS) {
@@ -401,12 +562,31 @@ export async function proxyMcp(
 	const rewritten = payloads.map((p) => {
 		const m = p as { result?: { tools?: unknown[] } }
 		if (!m?.result || !Array.isArray(m.result.tools)) return p
-		const out = annotateToolsList(m.result as Parameters<typeof annotateToolsList>[0], {
+		// The bridge tools are added before the list is judged, so the fixed list leaves them out
+		// while booking is off, and each is marked a write.
+		const upstreamResult = m.result as Parameters<typeof annotateToolsList>[0]
+		const withBridge =
+			provider === 'dinero'
+				? {
+						...upstreamResult,
+						tools: [...(upstreamResult.tools ?? []), ...DINERO_BRIDGE_TOOLS],
+					}
+				: upstreamResult
+		const out = annotateToolsList(withBridge as Parameters<typeof annotateToolsList>[0], {
 			provider,
 			providerLabel: label,
 			access,
+			allowedTools: ctx.allowedTools,
 		})
 		rememberAnnotations(cacheKey, out.upstreamAnnotations)
+		rememberToolNames(
+			cacheKey,
+			new Set(
+				(m.result.tools as Array<{ name?: unknown }>)
+					.map((t) => t?.name)
+					.filter((n): n is string => typeof n === 'string'),
+			),
+		)
 		return { ...m, result: out.result }
 	})
 	responseHeaders.delete('content-length')

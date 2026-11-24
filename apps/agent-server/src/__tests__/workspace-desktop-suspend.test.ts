@@ -95,15 +95,19 @@ describe('WorkspaceDesktopRegistry suspend and wake', () => {
 		await rm(dir, { recursive: true, force: true })
 	})
 
+	// Plenty of free space unless a test says otherwise, so results never depend on the CI disk.
+	const disk = { free: 500 * 1024 ** 3 }
 	function makeRegistry(msb: MicrosandboxDeps, idleSuspendMs = IDLE_MS) {
 		return new WorkspaceDesktopRegistry({
 			msb,
 			image: 'd',
 			stateFile,
 			fetchImpl,
-			snapshots: { dir: snapDir, idleSuspendMs },
+			snapshots: { dir: snapDir, idleSuspendMs, freeBytes: async () => disk.free },
 		})
 	}
+	const snapshotCalls = (calls: string[][]) =>
+		calls.filter((c) => c[0] === 'snapshot' && c[1] === 'create').length
 	const archiveFor = (ws: string, agent = AGENT_A) => join(snapDir, `${desktopName(ws, agent)}.msb`)
 	const exists = (path: string) =>
 		stat(path).then(
@@ -279,6 +283,57 @@ describe('WorkspaceDesktopRegistry suspend and wake', () => {
 		expect(calls.some((c) => c[0] === 'stop')).toBe(false)
 		expect(sandboxes.size).toBe(1)
 		expect(await exists(archiveFor(WS_A))).toBe(false)
+	})
+
+	it('backs off after a failed suspend instead of snapshotting on every sweep', async () => {
+		const { msb, calls, clock } = makeSnapshotMsb({ failSnapshot: true })
+		const registry = makeRegistry(msb)
+		await registry.ensure(WS_A, AGENT_A)
+		clock.t += IDLE_MS
+
+		await registry.sweepIdle()
+		expect(snapshotCalls(calls)).toBe(1)
+
+		// Sweeps every 30s for the next 9 minutes must not try again.
+		for (let i = 0; i < 18; i++) {
+			clock.t += 30_000
+			await registry.sweepIdle()
+		}
+		expect(snapshotCalls(calls)).toBe(1)
+
+		// After the first 10 min back-off it tries once more, then waits twice as long.
+		clock.t += 60_000
+		await registry.sweepIdle()
+		expect(snapshotCalls(calls)).toBe(2)
+		clock.t += 15 * 60_000
+		await registry.sweepIdle()
+		expect(snapshotCalls(calls)).toBe(2)
+		clock.t += 5 * 60_000
+		await registry.sweepIdle()
+		expect(snapshotCalls(calls)).toBe(3)
+	})
+
+	it('skips the snapshot and backs off when the host disk is nearly full', async () => {
+		const { msb, calls, sandboxes, clock } = makeSnapshotMsb()
+		const registry = makeRegistry(msb)
+		await registry.ensure(WS_A, AGENT_A)
+		clock.t += IDLE_MS
+		disk.free = 1024 ** 3
+
+		await registry.sweepIdle()
+
+		expect(snapshotCalls(calls)).toBe(0)
+		expect(registry.get(WS_A, AGENT_A)?.status).toBe('running')
+		expect(sandboxes.size).toBe(1)
+
+		// Space freed, but the back-off still holds until it expires.
+		disk.free = 500 * 1024 ** 3
+		clock.t += 5 * 60_000
+		await registry.sweepIdle()
+		expect(snapshotCalls(calls)).toBe(0)
+		clock.t += 5 * 60_000
+		await registry.sweepIdle()
+		expect(registry.get(WS_A, AGENT_A)?.status).toBe('suspended')
 	})
 
 	it('keeps the archive and stays suspended when a restore fails', async () => {

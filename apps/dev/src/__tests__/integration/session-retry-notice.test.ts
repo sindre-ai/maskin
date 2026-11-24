@@ -88,6 +88,41 @@ describe('limit hit in a chat: notice at settle, answer after the reset', () => 
 		expect(row.retriedSessionId).toBe(retried.sessionId)
 	})
 
+	it('words the note for a start that never ran, not as a usage limit', async () => {
+		const conversation = await insertConversation(db, workspaceId, actorId)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			conversationId: conversation.id,
+		})
+
+		await settleSession(
+			session.id,
+			{
+				kind: 'fail',
+				classification: 'dispatch_failure',
+				source: 'dispatch-queue',
+				failureReason: {
+					provider: 'agent-server',
+					reason_code: 'dispatch_failed',
+					human_message: 'no agent server accepted it',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: null,
+				},
+				retryAt: new Date(Date.now() + 10 * 60_000),
+			},
+			makeDeps(),
+		)
+
+		const posted = await db
+			.select()
+			.from(messages)
+			.where(eq(messages.conversationId, conversation.id))
+		expect(posted).toHaveLength(1)
+		expect(posted[0].content).toContain('could not be started')
+		expect(posted[0].content).not.toContain('usage limit')
+	})
+
 	it('posts nothing for a limit hit with no chat', async () => {
 		const session = await insertSession(db, workspaceId, actorId, actorId, { status: 'running' })
 		await settleSession(

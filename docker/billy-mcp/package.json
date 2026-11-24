@@ -1,0 +1,20 @@
+{
+	"name": "billy-mcp",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Billy tool server for the accounting flow: reads, one draft bill, one receipt upload. Written fresh over Billy's official API.",
+	"type": "module",
+	"engines": { "node": ">=20" },
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"start": "node dist/http.js",
+		"test": "node --test dist/test/*.test.js"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.29.0"
+	},
+	"devDependencies": {
+		"@types/node": "22.10.0",
+		"typescript": "5.7.2"
+	}
+}

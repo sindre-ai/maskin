@@ -14,6 +14,9 @@
 // are merged into one lookup per entity type below — every loop config calls
 // the same getActorData/getTriggerData/getSkillData.
 
+import accountingActorsData from './data/accounting-actors.json'
+import accountingSkillsData from './data/accounting-skills.json'
+import accountingTriggersData from './data/accounting-triggers.json'
 import customerVoiceActorsData from './data/customer-voice-actors.json'
 import customerVoiceSkillsData from './data/customer-voice-skills.json'
 import customerVoiceTriggersData from './data/customer-voice-triggers.json'
@@ -39,6 +42,9 @@ import productUsageActorsData from './data/product-usage-actors.json'
 import productUsageSkillsData from './data/product-usage-skills.json'
 import productUsageTriggersData from './data/product-usage-triggers.json'
 import productUsageViewsData from './data/product-usage-views.json'
+import signalIntakeActorsData from './data/signal-intake-actors.json'
+import signalIntakeSkillsData from './data/signal-intake-skills.json'
+import signalIntakeTriggersData from './data/signal-intake-triggers.json'
 import type { LoopSettings } from './loop-settings'
 import type {
 	ActorSnapshotSource,
@@ -72,7 +78,7 @@ export interface ViewData extends ViewSnapshotSource {
 }
 
 // Shape shared by every marketplace Loop bundle (./discovery-loop,
-// ./market-watch-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop, ./product-usage-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
+// ./market-watch-loop, ./signal-intake-loop, ./meeting-loop, ./product-release-loop, ./customer-voice-loop, ./product-usage-loop, ./accounting-loop) so dev-bootstrap.ts's MARKETPLACE_SEED_CONFIGS can treat
 // them uniformly.
 export interface MarketplaceLoopSeedConfig {
 	loop: {
@@ -92,6 +98,7 @@ export interface MarketplaceLoopSeedConfig {
 }
 
 const actorsById: Record<string, ActorData> = {
+	...(accountingActorsData as Record<string, ActorData>),
 	...(marketWatchActorsData as Record<string, ActorData>),
 	...(meetingLoopActorsData as Record<string, ActorData>),
 	...(discoveryActorsData as Record<string, ActorData>),
@@ -99,9 +106,11 @@ const actorsById: Record<string, ActorData> = {
 	...(customerVoiceActorsData as Record<string, ActorData>),
 	...(knowledgeWikiActorsData as Record<string, ActorData>),
 	...(productUsageActorsData as Record<string, ActorData>),
+	...(signalIntakeActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
+	...(accountingTriggersData as Record<string, TriggerData>),
 	...(marketWatchTriggersData as Record<string, TriggerData>),
 	...(meetingLoopTriggersData as Record<string, TriggerData>),
 	...(discoveryTriggersData as Record<string, TriggerData>),
@@ -109,9 +118,11 @@ const triggersById: Record<string, TriggerData> = {
 	...(customerVoiceTriggersData as Record<string, TriggerData>),
 	...(knowledgeWikiTriggersData as Record<string, TriggerData>),
 	...(productUsageTriggersData as Record<string, TriggerData>),
+	...(signalIntakeTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
+	...(accountingSkillsData as Record<string, SkillData>),
 	...(marketWatchSkillsData as Record<string, SkillData>),
 	...(meetingLoopSkillsData as Record<string, SkillData>),
 	...(discoverySkillsData as Record<string, SkillData>),
@@ -119,6 +130,7 @@ const skillsById: Record<string, SkillData> = {
 	...(customerVoiceSkillsData as Record<string, SkillData>),
 	...(knowledgeWikiSkillsData as Record<string, SkillData>),
 	...(productUsageSkillsData as Record<string, SkillData>),
+	...(signalIntakeSkillsData as Record<string, SkillData>),
 }
 
 const viewsById: Record<string, ViewData> = {

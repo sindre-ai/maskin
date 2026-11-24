@@ -8,6 +8,7 @@ import SwiftUI
 struct IntegrationAccessView: View {
 	@State private var store: IntegrationAccessStore
 	@State private var target: IntegrationAccessStore.AgentRef?
+	@State private var chatTarget: ChatGrant?
 	let title: String
 	/// Granted and requested permissions above the agent list (nil hides them).
 	let scopes: IntegrationScopesStore?
@@ -33,6 +34,10 @@ struct IntegrationAccessView: View {
 				} else {
 					PageGroupLabel(text: "Agent access")
 					PageCard(rows: store.agents.map(row))
+				}
+				if !store.chatGrants.isEmpty {
+					PageGroupLabel(text: "Allowed in a chat")
+					PageCard(rows: store.chatGrants.map(chatRow))
 				}
 				if let error = store.actionError { FormError(error) }
 				PageFootnote(
@@ -60,6 +65,26 @@ struct IntegrationAccessView: View {
 				Button(level.label) { Task { await store.set(level, for: agent) } }
 			}
 		}
+		.confirmationDialog(
+			chatTarget.map { "Remove chat access for \(agentName($0))?" } ?? "Chat access",
+			isPresented: Binding(get: { chatTarget != nil }, set: { if !$0 { chatTarget = nil } }),
+			titleVisibility: .visible, presenting: chatTarget
+		) { grant in
+			Button("Remove", role: .destructive) { Task { await store.removeChatGrant(grant) } }
+		}
+	}
+
+	private func agentName(_ grant: ChatGrant) -> String {
+		store.agents.first { $0.id == grant.actorId }?.name ?? "this agent"
+	}
+
+	private func chatRow(_ grant: ChatGrant) -> PageRowModel {
+		let name = store.agents.first { $0.id == grant.actorId }?.name ?? "An agent"
+		return PageRowModel(
+			id: grant.id, title: name, subtitle: grant.detail, avatar: (name, true),
+			accessory: store.busyIDs.contains(grant.id)
+				? .state(PageState("Removing", .muted)) : store.canManage ? .state(PageState("Remove", .plain)) : .none,
+			action: store.canManage ? { chatTarget = grant } : nil)
 	}
 
 	private func row(_ agent: IntegrationAccessStore.AgentRef) -> PageRowModel {

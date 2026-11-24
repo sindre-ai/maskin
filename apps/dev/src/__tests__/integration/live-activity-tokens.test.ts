@@ -236,12 +236,16 @@ describe('live_activity_tokens routes (real Postgres)', () => {
 
 	it('drops the previous owner’s Live Activity tokens when the device changes hands', async () => {
 		const token = hex()
+		// A real phone sends the same unregister secret on every upload, which is what lets the
+		// token move to the next account that signs in on it.
+		const unregisterSecret = 's'.repeat(43)
 		const reg = (actorId: string) =>
 			appAs(actorId).request(
 				jsonRequest('POST', '/api/devices', {
 					platform: 'ios',
 					apns_token: token,
 					environment: 'sandbox',
+					unregister_secret: unregisterSecret,
 				}),
 			)
 		const device = (await (await reg(human)).json()) as { id: string }

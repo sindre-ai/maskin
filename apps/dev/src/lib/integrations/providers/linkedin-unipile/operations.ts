@@ -1104,6 +1104,14 @@ type ReplyPayload = {
 const IDEMPOTENCY_KEY_MAX = 128
 
 /**
+ * A body of only spaces or line breaks passes the length check but reaches the person as a blank
+ * bubble. Every send and reply, an approved draft's included, goes through the two validators
+ * below, so this is refused once, before LinkedIn is called.
+ */
+const BLANK_BODY_MESSAGE =
+	'body is blank: it has no text besides spaces or line breaks. Nothing was sent.'
+
+/**
  * What a caller gets for passing raw `attachments` to `send_message`. A file only goes out
  * on a message a person approved, through the object it is filed on.
  */
@@ -1125,6 +1133,7 @@ function validateSendPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	if (input.body.trim().length === 0) return { ok: false, error: BLANK_BODY_MESSAGE }
 	if (
 		typeof input.idempotency_key !== 'string' ||
 		input.idempotency_key.length === 0 ||
@@ -1154,6 +1163,7 @@ function validateReplyPayload(input: {
 	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
 		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
 	}
+	if (input.body.trim().length === 0) return { ok: false, error: BLANK_BODY_MESSAGE }
 	// The key is built here, from the chat and the inbound message being
 	// answered, so the webhook path and the sweep path claim the same slot no
 	// matter what a prompt tells the agent. A supplied idempotency_key is

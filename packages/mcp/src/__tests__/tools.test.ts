@@ -181,14 +181,20 @@ describe('create_objects schema', () => {
 		expect(result.edges).toEqual([])
 	})
 
-	it('requires workspace_id', () => {
-		const result = schema.safeParse({
+	it("does not require workspace_id: the call runs in the caller's own workspace", () => {
+		const result = schema.parse({
 			nodes: [{ $id: 'task-1', type: 'task', status: 'todo' }],
 		})
-		expect(result.success).toBe(false)
-		if (!result.success) {
-			expect(result.error.issues[0]?.path).toEqual(['workspace_id'])
-		}
+		expect(result.workspace_id).toBeUndefined()
+	})
+
+	it('still rejects a workspace_id that is not a uuid', () => {
+		expect(() =>
+			schema.parse({
+				workspace_id: 'nope',
+				nodes: [{ $id: 'task-1', type: 'task', status: 'todo' }],
+			}),
+		).toThrow()
 	})
 
 	it('rejects empty nodes array', () => {
@@ -885,9 +891,10 @@ describe('create_notification schema', () => {
 describe('list_for_you schema', () => {
 	const schema = tools.list_for_you.inputSchema
 
-	it('requires an actor id and defaults limit to 10', () => {
-		expect(() => schema.parse({})).toThrow()
+	it("leaves actor id out for the caller's own list and defaults limit to 10", () => {
+		expect(schema.parse({}).actor_id).toBeUndefined()
 		expect(schema.parse({ actor_id: uuid }).limit).toBe(10)
+		expect(() => schema.parse({ actor_id: 'nope' })).toThrow()
 	})
 
 	it('rejects a limit above 50', () => {
@@ -1680,15 +1687,9 @@ describe('empty input schema tools', () => {
 	})
 })
 
-describe('workspace_id required on create_objects', () => {
-	it('create_objects requires workspace_id', () => {
-		const shape = tools.create_objects.inputSchema.shape
-		expect(shape.workspace_id.isOptional()).toBe(false)
-	})
-})
-
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
+		'create_objects',
 		'get_objects',
 		'update_objects',
 		'delete_object',

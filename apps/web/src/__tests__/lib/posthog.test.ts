@@ -13,6 +13,8 @@ import {
 	setWorkspaceGroup,
 	signupSourceFrom,
 	siteAreaForPath,
+	utmSourceFrom,
+	utmSourceProps,
 	withSharedProperties,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
@@ -385,6 +387,41 @@ describe('signupSourceFrom', () => {
 	it('keeps free text off the person', () => {
 		expect(signupSourceFrom('?utm_source=a%20b%3Cscript%3E', '', 'app.maskin.io')).toBe('abscript')
 		expect(signupSourceFrom(`?utm_source=${'x'.repeat(200)}`, '', 'app.maskin.io')).toHaveLength(60)
+	})
+})
+
+describe('utmSourceFrom', () => {
+	it('reads the tag from the page, then from the first visit', () => {
+		expect(utmSourceFrom('?utm_source=Slack', { utmSource: 'linkedin' })).toBe('slack')
+		expect(utmSourceFrom('', { utmSource: 'Cursor' })).toBe('cursor')
+		expect(utmSourceFrom('?utm_source=linkedin')).toBe('linkedin')
+	})
+
+	it('is empty when there is no tag, and never falls back to a referrer', () => {
+		expect(utmSourceFrom('')).toBe('')
+		expect(utmSourceFrom('?utm_source=', { referringDomain: 'google.com' })).toBe('')
+		expect(utmSourceFrom('', { utmSource: 42 })).toBe('')
+	})
+
+	it('keeps free text out', () => {
+		expect(utmSourceFrom('?utm_source=a%20b%3Cscript%3E')).toBe('abscript')
+		expect(utmSourceFrom(`?utm_source=${'x'.repeat(200)}`)).toHaveLength(60)
+	})
+})
+
+describe('utmSourceProps', () => {
+	afterEach(() => {
+		window.history.replaceState({}, '', '/')
+	})
+
+	it('sends the tag on the page', () => {
+		window.history.replaceState({}, '', '/signup?utm_source=Test_Marketplace')
+		expect(utmSourceProps()).toEqual({ utm_source: 'test_marketplace' })
+	})
+
+	it('sends nothing, not an empty string, when there is no tag', () => {
+		window.history.replaceState({}, '', '/signup')
+		expect(utmSourceProps()).toEqual({})
 	})
 })
 

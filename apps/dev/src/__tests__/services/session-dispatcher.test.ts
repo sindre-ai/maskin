@@ -6,6 +6,7 @@ import {
 	type AgentServerClient,
 	AgentServerHttpError,
 	type AgentServerRow,
+	type ServerHealth,
 	type StartSessionRequest,
 	type StartSessionResponse,
 } from '../../services/agent-server-client'
@@ -285,6 +286,78 @@ describe('SessionDispatcher.pickLeastLoadedServer', () => {
 			buildStartRequest: async () => null,
 		})
 		await expect(dispatcher.pickLeastLoadedServer()).resolves.toBeNull()
+	})
+})
+
+describe('SessionDispatcher.pickLeastLoadedServer with health checks', () => {
+	const twoServers = (): ServerStub[] => [
+		{ id: 'a', url: 'https://a.test', secret: 'sa', status: 'active' as never, max: 4 },
+		{ id: 'b', url: 'https://b.test', secret: 'sb', status: 'active' as never, max: 4 },
+	]
+	const make = (
+		checkServerHealth: (server: { id: string; url: string }) => Promise<ServerHealth>,
+	) =>
+		new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: fakeDb(twoServers(), []) as any,
+			buildStartRequest: async () => null,
+			checkServerHealth,
+		})
+
+	it('skips a server that reports red and takes the next one', async () => {
+		const dispatcher = make(async (s) =>
+			s.id === 'a' ? { status: 'red', reason: 'disk_low' } : { status: 'green' },
+		)
+		const picked = await dispatcher.pickLeastLoadedServer()
+		expect(picked?.server.id).toBe('b')
+	})
+
+	it('uses the server again once it answers green', async () => {
+		let aHealth: ServerHealth = { status: 'red', reason: 'storage_unavailable' }
+		const dispatcher = make(async (s) => (s.id === 'a' ? aHealth : { status: 'green' }))
+		expect((await dispatcher.pickLeastLoadedServer())?.server.id).toBe('b')
+		aHealth = { status: 'green' }
+		expect((await dispatcher.pickLeastLoadedServer())?.server.id).toBe('a')
+	})
+
+	it('treats an unknown answer (timeout, network error) like green', async () => {
+		const dispatcher = make(async () => ({ status: 'unknown' }))
+		expect((await dispatcher.pickLeastLoadedServer())?.server.id).toBe('a')
+	})
+
+	it('parks the start (null) when every server is red', async () => {
+		const dispatcher = make(async () => ({ status: 'red', reason: 'disk_low' }))
+		await expect(dispatcher.pickLeastLoadedServer()).resolves.toBeNull()
+	})
+
+	it('dispatch returns no_capacity when every server is red', async () => {
+		const dispatcher = make(async () => ({ status: 'red', reason: 'disk_low' }))
+		await expect(dispatcher.dispatch('sess-1', 'key-1')).resolves.toEqual({ kind: 'no_capacity' })
+	})
+
+	it('does not ask a server that is already full', async () => {
+		const seen: string[] = []
+		const servers = twoServers()
+		const db = fakeDb(servers, [
+			...Array.from({ length: 4 }, (_, i) => ({
+				id: `pin-a-${i}`,
+				status: 'running',
+				agentServerId: 'a',
+				containerId: null,
+				startedAt: null,
+			})),
+		])
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async () => null,
+			checkServerHealth: async (s) => {
+				seen.push(s.id)
+				return { status: 'green' }
+			},
+		})
+		expect((await dispatcher.pickLeastLoadedServer())?.server.id).toBe('b')
+		expect(seen).toEqual(['b'])
 	})
 })
 

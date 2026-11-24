@@ -136,6 +136,8 @@ struct MaskinComposer: View {
 	@State private var showScanner = false
 	@Environment(\.openURL) private var openURL
 	#endif
+	/// Present in the app; absent in previews, where the alert falls back to iOS Settings.
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	/// 40pt circles, each inside a 44pt hit frame.
@@ -527,26 +529,31 @@ struct MaskinComposer: View {
 
 	fileprivate func addFiles(_ drops: [ComposerDrop]) { model.attach(drops) }
 
-	/// The `+` menu's "Paste image" row: the same chip as a system paste on the field. The pictures come from
-	/// the system paste button, so iOS does not ask "Allow Paste".
+	/// The `+` menu's "Paste image" row: the same chips as a system paste on the field, one for every picture on the
+	/// clipboard. The pictures come from the system paste button, so iOS does not ask "Allow Paste".
 	fileprivate func pasteImages(_ providers: [NSItemProvider]) {
-		guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }) else {
-			model.notice = "Couldn't read an image from the clipboard."
-			return
-		}
 		let model = model
-		provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-			Task { @MainActor in
-				if let data {
-					model.attach([.image(data)])
-				} else {
-					model.notice = "Couldn't read an image from the clipboard."
-				}
+		Task { @MainActor in
+			let pasted = await ClipboardImages.load(providers)
+			if pasted.images.isEmpty || pasted.unreadable > 0 {
+				model.notice = "Couldn't read an image from the clipboard."
 			}
+			// Past the attachment limit `attach` keeps up to the limit and shows its own notice instead.
+			model.attach(pasted.images.map { ComposerDrop.image($0) })
 		}
 	}
 
 	#if os(iOS)
+	/// The Permissions page in Settings, where every phone permission is fixed. Without the app's
+	/// runtime (a preview) it goes to iOS Settings directly.
+	fileprivate func openPermissions() {
+		if let runtime {
+			runtime.openPermissions()
+		} else if let url = URL(string: UIApplication.openSettingsURLString) {
+			openURL(url)
+		}
+	}
+
 	fileprivate func addPhoto(_ data: Data) {
 		let name = AttachmentLoading.photoName(index: 0)
 		model.attach(name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.image(data: data, name: name))
@@ -632,10 +639,11 @@ struct MaskinComposer: View {
 				.onChange(of: composer.photoItems) { _, items in
 					guard !items.isEmpty else { return }
 					for (index, item) in items.enumerated() {
-						let name = AttachmentLoading.photoName(index: index)
+						let isMovie = AttachmentLoading.isMovie(item)
 						composer.model.attach(
-							name: name, mimeType: AttachmentLoading.isMovie(item) ? "video/quicktime" : "image/jpeg",
-							prepare: AttachmentLoading.media(item, name: name))
+							name: isMovie ? AttachmentLoading.videoName(index: index) : AttachmentLoading.photoName(index: index),
+							mimeType: isMovie ? "video/quicktime" : "image/jpeg",
+							prepare: AttachmentLoading.media(item, index: index))
 					}
 					composer.photoItems = []
 				}
@@ -686,9 +694,7 @@ struct MaskinComposer: View {
 				.alert(
 					"Microphone", isPresented: Binding(get: { composer.voiceProblem != nil }, set: { if !$0 { composer.voiceProblem = nil } })
 				) {
-					Button("Open Settings") {
-						if let url = URL(string: UIApplication.openSettingsURLString) { composer.openURL(url) }
-					}
+					Button("Open Permissions") { composer.openPermissions() }
 					Button("OK", role: .cancel) {}
 				} message: {
 					Text(composer.voiceProblem ?? "")

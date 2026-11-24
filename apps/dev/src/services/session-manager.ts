@@ -148,7 +148,11 @@ import {
 	stripSessionLevelMcps,
 } from '../lib/integrations/keychain-mcp-guard'
 import { getCredential } from '../lib/integrations/lookup'
-import { dropAlreadyConfigured, linkedInIdentityServer } from '../lib/integrations/mcp-attach'
+import {
+	dropAlreadyConfigured,
+	linkedInIdentityServer,
+	withSessionHeader,
+} from '../lib/integrations/mcp-attach'
 import { GATEWAY_PROVIDERS, rewriteMcpServersForGateway } from '../lib/integrations/mcp-gateway'
 import {
 	mcpServersReferenceEnvKey,
@@ -168,7 +172,9 @@ import {
 	type TokenMetadata,
 	stampTokenMetadata,
 } from '../lib/integrations/providers/github/token-metadata'
+import { withPostHogProjectPin } from '../lib/integrations/providers/posthog/project-pin'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
+import { sweepYoutubeSessionLogs } from '../lib/integrations/providers/youtube/purge'
 import { getProvider } from '../lib/integrations/registry'
 import {
 	CredentialResolutionTimeoutError,
@@ -3507,7 +3513,9 @@ ${cont.continues_prompt}
 					{ providerMode: 'registered', status: 'active', exposed: true, access },
 					true,
 				)
-					? mcp.server
+					? integration.provider === 'posthog'
+						? withPostHogProjectPin(mcp.server, integration.config)
+						: mcp.server
 					: null
 
 			// A custom tool server is one row, one server: attached when the agent has access, and
@@ -3683,7 +3691,8 @@ ${cont.continues_prompt}
 				}
 			}
 			if (autoInjectServer) {
-				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
+				autoInjectedMcpServers[`integration-${integration.provider}`] =
+					withSessionHeader(autoInjectServer)
 				attachedKeys.add(`integration-${integration.provider}`)
 				logger.info('Auto-injected MCP server for active integration', {
 					sessionId: session.id,
@@ -4174,7 +4183,10 @@ ${cont.continues_prompt}
 		session: typeof sessions.$inferSelect,
 	): Promise<ActorIntegrationAccess[]> {
 		try {
-			return await listAgentAccess(this.db, session.workspaceId, session.actorId)
+			// The conversation, so an Allow for just this chat shows in the access block.
+			return await listAgentAccess(this.db, session.workspaceId, session.actorId, {
+				conversationId: session.conversationId,
+			})
 		} catch (err) {
 			logger.warn('Could not load the agent integration access', {
 				sessionId: session.id,
@@ -7724,6 +7736,14 @@ ${cont.continues_prompt}
 		const now = Date.now()
 		if (now - this.lastLogPruneAt < SessionManager.LOG_PRUNE_INTERVAL_MS) return
 		this.lastLogPruneAt = now
+
+		// YouTube data has its own retention (30 days even for chats, all of it once the integration
+		// is gone). Isolated so a failure here never stops the general sweep below.
+		await sweepYoutubeSessionLogs(this.db).catch((err) =>
+			logger.warn('YouTube session log sweep failed', {
+				error: err instanceof Error ? err.message : String(err),
+			}),
+		)
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
 		let checked = 0

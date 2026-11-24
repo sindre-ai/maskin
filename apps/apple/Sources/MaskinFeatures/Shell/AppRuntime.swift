@@ -55,8 +55,20 @@ public final class AppRuntime {
 		chiefChatRequested = true
 	}
 
+	/// A chat or flow room is open in the Chats tab. `ChatsScreen` sets it; the iPad's landscape
+	/// sidebar folds to icons while it is true and Chats is on show.
+	var chatIsOpen = false
+
 	/// The Team filter pill the tab bar carries as its bottom accessory (iPhone, iOS 26.1+).
 	let teamPill = TeamPillModel()
+
+	/// iPad portrait: a chat is open beside the chat list. `ChatsScreen` sets it; the bottom bar
+	/// reads it to shrink to icons under the list.
+	var chatOpenBesideList = false
+
+	/// Screens on top of a tab's root (a pushed detail, the New conversation sheet) that take the
+	/// iPad bottom bar away while they show. See `View.hidesPadBar(_:)`.
+	var padBarHiders: Set<UUID> = []
 
 	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
 	/// presentations requested in the same tick (a tap that opens an object) replace each

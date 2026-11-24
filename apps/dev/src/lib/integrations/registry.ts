@@ -2,22 +2,38 @@ import type { ResolvedProvider } from './types'
 
 import { config as airtableConfig } from './providers/airtable/config'
 import { config as amplitudeConfig } from './providers/amplitude/config'
+import { config as apolloConfig } from './providers/apollo/config'
+import { config as asanaConfig } from './providers/asana/config'
 import { config as atlassianConfig } from './providers/atlassian/config'
 import { config as attioConfig } from './providers/attio/config'
 import {
 	config as azureDevopsConfig,
 	parseTokenResponse as azureDevopsParseTokenResponse,
 } from './providers/azure-devops/config'
+import { config as boxConfig } from './providers/box/config'
+import { config as brevoConfig } from './providers/brevo/config'
+import { config as brexConfig } from './providers/brex/config'
+import { config as calendlyConfig } from './providers/calendly/config'
 import { config as canvaConfig } from './providers/canva/config'
+import { config as clayConfig } from './providers/clay/config'
 import { config as clickupConfig } from './providers/clickup/config'
 import { config as cloudflareConfig } from './providers/cloudflare/config'
+import { config as codaConfig } from './providers/coda/config'
 import { config as customMcpConfig } from './providers/custom-mcp/config'
 import { config as datadogConfig } from './providers/datadog/config'
+import { config as deelConfig } from './providers/deel/config'
 import { deepdotsAuth } from './providers/deepdots/auth'
 import { config as deepdotsConfig } from './providers/deepdots/config'
+import { config as dineroConfig } from './providers/dinero/config'
+import { config as docusignConfig } from './providers/docusign/config'
+import { config as drataConfig } from './providers/drata/config'
+import { config as dropboxConfig } from './providers/dropbox/config'
 // Import provider configs
 import { config as fathomConfig } from './providers/fathom/config'
+import { config as figmaConfig } from './providers/figma/config'
 import { config as firefliesConfig } from './providers/fireflies/config'
+import { config as framerConfig } from './providers/framer/config'
+import { config as freshbooksConfig } from './providers/freshbooks/config'
 import { githubAuth } from './providers/github/auth'
 import { config as githubConfig } from './providers/github/config'
 import { githubEventNormalizer } from './providers/github/webhooks'
@@ -25,6 +41,7 @@ import { config as gmailConfig } from './providers/gmail/config'
 import { resolveExternalId as gmailResolveExternalId } from './providers/gmail/resolve-id'
 import { fanOutGmailHistory, setupGmailWatch, stopGmailWatch } from './providers/gmail/watch'
 import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/webhooks'
+import { config as gongConfig } from './providers/gong/config'
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import { config as googleDriveConfig } from './providers/google-drive/config'
@@ -44,7 +61,13 @@ import {
 import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
 import { startGscBackfill } from './providers/google-search-console/sync'
 import { config as granolaConfig } from './providers/granola/config'
+import { config as greenhouseConfig } from './providers/greenhouse/config'
+import { config as gustoConfig } from './providers/gusto/config'
 import { config as hexConfig } from './providers/hex/config'
+import { config as hubspotConfig } from './providers/hubspot/config'
+import { config as intercomConfig } from './providers/intercom/config'
+import { config as klaviyoConfig } from './providers/klaviyo/config'
+import { config as latticeConfig } from './providers/lattice/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -52,6 +75,10 @@ import {
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
+import { config as lookerConfig } from './providers/looker/config'
+import { config as mailchimpConfig } from './providers/mailchimp/config'
+import { config as makeConfig } from './providers/make/config'
+import { config as mercuryConfig } from './providers/mercury/config'
 import {
 	config as microsoftConfig,
 	parseTokenResponse as microsoftParseTokenResponse,
@@ -60,16 +87,24 @@ import { resolveExternalId as microsoftResolveExternalId } from './providers/mic
 import { setupMicrosoftInstall } from './providers/microsoft/sync'
 import { config as miroConfig } from './providers/miro/config'
 import { config as mixpanelConfig } from './providers/mixpanel/config'
+import { config as mondayConfig } from './providers/monday/config'
+import { config as muralConfig } from './providers/mural/config'
 import { config as neonConfig } from './providers/neon/config'
 import { config as netlifyConfig } from './providers/netlify/config'
 import { config as newRelicConfig } from './providers/new-relic/config'
 import { config as notionConfig } from './providers/notion/config'
+import { config as numinaConfig } from './providers/numina/config'
 import { config as otterConfig } from './providers/otter/config'
+import { config as outreachConfig } from './providers/outreach/config'
 import { config as pagerdutyConfig } from './providers/pagerduty/config'
+import { config as pipedriveConfig } from './providers/pipedrive/config'
 import { config as planetscaleConfig } from './providers/planetscale/config'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as powerBiConfig } from './providers/power-bi/config'
+import { config as rampConfig } from './providers/ramp/config'
 import { config as resendConfig } from './providers/resend/config'
 import { config as retoolConfig } from './providers/retool/config'
+import { config as salesforceConfig } from './providers/salesforce/config'
 import { config as sentryConfig } from './providers/sentry/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -87,14 +122,25 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { config as squarespaceConfig } from './providers/squarespace/config'
 import { config as stripeConfig } from './providers/stripe/config'
 import { config as supabaseConfig } from './providers/supabase/config'
+import { config as trelloConfig } from './providers/trello/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
+import { config as unicontaConfig } from './providers/uniconta/config'
+import { config as vantaConfig } from './providers/vanta/config'
 import { config as vercelConfig } from './providers/vercel/config'
 import { config as webflowConfig } from './providers/webflow/config'
+import { config as wixConfig } from './providers/wix/config'
+import { config as xeroConfig } from './providers/xero/config'
+import { config as youtubeConfig } from './providers/youtube/config'
+import { revokeYoutubeGrant } from './providers/youtube/disconnect'
+import { resolveExternalId as youtubeResolveExternalId } from './providers/youtube/resolve-id'
 import { config as zapierConfig } from './providers/zapier/config'
+import { config as zendeskConfig } from './providers/zendesk/config'
 import { config as zoomConfig } from './providers/zoom/config'
+import { config as zoominfoConfig } from './providers/zoominfo/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -239,6 +285,10 @@ providers.set('notion', {
 	config: notionConfig,
 })
 
+providers.set('numina', {
+	config: numinaConfig,
+})
+
 providers.set('airtable', {
 	config: airtableConfig,
 })
@@ -272,8 +322,41 @@ providers.set('zapier', {
 	config: zapierConfig,
 })
 
+// youtube — read-only, own channel. Workspace-scoped like Meet (deliberately NOT in
+// `actorScopedProviders`). No webhook, postInstall or watch hooks: reads are on demand.
+// `preDisconnect` revokes the Google grant and purges cached reads and session logs.
+providers.set('youtube', {
+	config: youtubeConfig,
+	resolveExternalId: youtubeResolveExternalId,
+	preDisconnect: revokeYoutubeGrant,
+})
+
 providers.set('zoom', {
 	config: zoomConfig,
+})
+
+providers.set('salesforce', {
+	config: salesforceConfig,
+})
+
+providers.set('box', {
+	config: boxConfig,
+})
+
+providers.set('lattice', {
+	config: latticeConfig,
+})
+
+providers.set('looker', {
+	config: lookerConfig,
+})
+
+providers.set('power-bi', {
+	config: powerBiConfig,
+})
+
+providers.set('zendesk', {
+	config: zendeskConfig,
 })
 
 providers.set('fireflies', {
@@ -332,6 +415,86 @@ providers.set('hex', {
 	config: hexConfig,
 })
 
+providers.set('apollo', {
+	config: apolloConfig,
+})
+
+providers.set('zoominfo', {
+	config: zoominfoConfig,
+})
+
+providers.set('outreach', {
+	config: outreachConfig,
+})
+
+providers.set('gong', {
+	config: gongConfig,
+})
+
+providers.set('clay', {
+	config: clayConfig,
+})
+
+providers.set('calendly', {
+	config: calendlyConfig,
+})
+
+providers.set('monday', {
+	config: mondayConfig,
+})
+
+providers.set('make', {
+	config: makeConfig,
+})
+
+providers.set('uniconta', {
+	config: unicontaConfig,
+})
+
+providers.set('dinero', {
+	config: dineroConfig,
+})
+
+providers.set('hubspot', {
+	config: hubspotConfig,
+})
+
+providers.set('asana', {
+	config: asanaConfig,
+})
+
+providers.set('docusign', {
+	config: docusignConfig,
+})
+
+providers.set('figma', {
+	config: figmaConfig,
+})
+
+providers.set('dropbox', {
+	config: dropboxConfig,
+})
+
+providers.set('intercom', {
+	config: intercomConfig,
+})
+
+providers.set('pipedrive', {
+	config: pipedriveConfig,
+})
+
+providers.set('ramp', {
+	config: rampConfig,
+})
+
+providers.set('squarespace', {
+	config: squarespaceConfig,
+})
+
+providers.set('xero', {
+	config: xeroConfig,
+})
+
 providers.set('stripe', {
 	config: stripeConfig,
 })
@@ -385,6 +548,69 @@ providers.set('linkedin-unipile', {
 	// Closes the recurring-cost leak from insight (3) "Unipile pile-up on
 	// disconnect". Same helper is exported for P3-H (reconnect-orphan cleanup).
 	preDisconnect: deleteUnipileAccountOnDisconnect,
+})
+providers.set('klaviyo', {
+	config: klaviyoConfig,
+})
+
+providers.set('mailchimp', {
+	config: mailchimpConfig,
+})
+
+providers.set('brevo', {
+	config: brevoConfig,
+})
+
+providers.set('mercury', {
+	config: mercuryConfig,
+})
+
+providers.set('brex', {
+	config: brexConfig,
+})
+
+providers.set('gusto', {
+	config: gustoConfig,
+})
+
+providers.set('deel', {
+	config: deelConfig,
+})
+
+providers.set('greenhouse', {
+	config: greenhouseConfig,
+})
+
+providers.set('vanta', {
+	config: vantaConfig,
+})
+
+providers.set('drata', {
+	config: drataConfig,
+})
+
+providers.set('trello', {
+	config: trelloConfig,
+})
+
+providers.set('mural', {
+	config: muralConfig,
+})
+
+providers.set('framer', {
+	config: framerConfig,
+})
+
+providers.set('wix', {
+	config: wixConfig,
+})
+
+providers.set('coda', {
+	config: codaConfig,
+})
+
+providers.set('freshbooks', {
+	config: freshbooksConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

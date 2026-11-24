@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// MUST-KEEP features of the iPhone app, part two: rows MK-10 and up of `docs/must-keep-features.md`.
@@ -200,6 +201,11 @@ final class MustKeepMoreTests: XCTestCase {
 		for _ in 0..<4 where !option.exists { app.swipeUp() }
 		expectExists(option, "For you shows the decision option 'Send all 7'", dump: "mk12-option")
 		option.tap()
+		// Undo is free for 6 seconds after the pick (the toast and the receipt row both drop it then), and each
+		// query on a Mac runner can take a second or more. Look for Undo first, before the slower checks.
+		let undo = app.buttons["Undo"].firstMatch
+		let offeredUndo = undo.waitForExistence(timeout: 4)
+		if !offeredUndo { dumpScreen("mk12-undo") }
 		let left = option.waitForNonExistence(timeout: 10)
 		if !left { dumpScreen("mk12-after-pick") }
 		XCTAssertTrue(left, "the card leaves the open list once an option is picked")
@@ -208,7 +214,7 @@ final class MustKeepMoreTests: XCTestCase {
 		).firstMatch
 		if !chosen.waitForExistence(timeout: 15) { dumpScreen("mk12-receipt") }
 		XCTAssertTrue(chosen.exists, "the choice shows as a receipt or toast ('You chose Send all 7')")
-		XCTAssertTrue(app.buttons["Undo"].firstMatch.waitForExistence(timeout: 5), "the choice offers Undo")
+		XCTAssertTrue(offeredUndo, "the choice offers Undo")
 	}
 
 	// MARK: MK-13 @mention someone
@@ -350,6 +356,41 @@ final class MustKeepMoreTests: XCTestCase {
 		expectExists(app.staticTexts["edited"].firstMatch, "the comment carries the edited mark", dump: "mk18-mark", timeout: 5)
 	}
 
+	// MARK: MK-19 Edit your own reply in a thread
+
+	/// Contoso renewal chat → the thread under "Which clause did Legal flag?" → long-press your own reply → Edit.
+	/// The reply bar shows the "Editing message" strip with the reply's words in it; changing them and tapping
+	/// Send shows the new words in the thread. The first reply (the agent's) is not yours, so it is not touched.
+	func testMK19_EditOwnReplyInThread() throws {
+		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
+		dismissNotNow()
+		let pill = app.buttons.matching(NSPredicate(format: "label CONTAINS '2 replies'")).firstMatch
+		expectExists(pill, "the root message shows a '2 replies' pill", dump: "mk19-pill")
+		pill.tap()
+		let reply = anyLabel(containing: "Thanks, I will raise it with Contoso")
+		expectExists(reply, "the thread shows your reply", dump: "mk19-thread", timeout: 10)
+		openMessageMenu(on: reply)
+		let edit = element(labelled: "Edit")
+		expectExists(edit, "your reply's menu offers Edit", dump: "mk19-menu", timeout: 5)
+		edit.tap()
+		expectExists(app.staticTexts["Editing message"], "the reply bar shows the Editing message strip", dump: "mk19-strip", timeout: 5)
+		let kinds = [XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue]
+		let field = app.descendants(matching: .any).matching(
+			NSPredicate(format: "(elementType == %d OR elementType == %d) AND label BEGINSWITH 'Reply in thread'", kinds[0], kinds[1])
+		).firstMatch
+		XCTAssertTrue(field.waitForExistence(timeout: 5), "the thread's reply field shows")
+		// Editing puts the cursor at the end of the words and focuses the field: type there, without tapping.
+		let focused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+		_ = XCTWaiter().wait(for: [focused], timeout: 5)
+		field.typeText(" (edited by the test)")
+		let send = app.buttons["Send"].firstMatch
+		XCTAssertTrue(send.waitForExistence(timeout: 5), "the reply bar offers Send for the edit")
+		send.tap()
+		expectExists(
+			anyLabel(containing: "Thanks, I will raise it with Contoso. (edited by the test)"), "the thread shows the edited words",
+			dump: "mk19-after", timeout: 15)
+	}
+
 	/// MK-15b: a message's menu offers quick reactions; picking an emoji puts a count chip under the message.
 	func testMK15b_ReactToMessage() throws {
 		openChat(with: "Chief of Staff", preview: "Draft the counter offer for Contoso")
@@ -448,5 +489,32 @@ final class MustKeepMoreTests: XCTestCase {
 		connected.tap()
 		let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'PostHog'")).firstMatch
 		expectExists(row, "PostHog is in the Connected list", dump: "mk17-connected", timeout: 15)
+	}
+
+	// MARK: MK-20 The profile sheet's Switch workspace row is iPad only
+
+	/// For you → Account. On an iPad the first row is Switch workspace with the current workspace's name, and tapping
+	/// it opens the workspace picker (in portrait it is the only way to change workspace: no sidebar). On an iPhone the
+	/// sheet is unchanged: no such row, and the Switch button on the workspace card opens the picker.
+	func testMK20_ProfileSheetSwitchWorkspaceRow() throws {
+		openProfile()
+		let row = app.buttons["switch-workspace-row"].firstMatch
+		if UIDevice.current.userInterfaceIdiom == .pad {
+			expectExists(row, "the profile sheet offers Switch workspace", dump: "mk20-row", timeout: 5)
+			// The workspace list loads after sign-in, so the name may arrive a moment after the row.
+			let named = NSPredicate(format: "label == 'Switch workspace, Northwind'")
+			let wait = XCTNSPredicateExpectation(predicate: named, object: row)
+			if XCTWaiter().wait(for: [wait], timeout: 15) != .completed {
+				dumpScreen("mk20-name")
+				XCTFail("the row names the current workspace; its label reads '\(row.label)'")
+			}
+			row.tap()
+		} else {
+			XCTAssertFalse(row.exists, "iPhone keeps its profile sheet: no Switch workspace row")
+			let switchButton = app.buttons["Switch"].firstMatch
+			expectExists(switchButton, "the workspace card has a Switch button", dump: "mk20-switch", timeout: 5)
+			switchButton.tap()
+		}
+		expectExists(app.staticTexts["Workspaces"], "Switch opens the workspace picker", dump: "mk20-picker", timeout: 10)
 	}
 }

@@ -37,6 +37,7 @@ public struct ForYouScreen: View {
 			feed(openObject: isWide ? { path.append($0) } : openObject)
 				.navigationDestination(for: String.self) { id in
 					ForYouObjectDetail(environment: environment, objectId: id) { path.append($0) }
+						.hidesPadBar()
 				}
 		}
 	}
@@ -173,7 +174,7 @@ struct ForYouFeedView: View {
 					ForYouGreetingView(text: ForYouHeader.greeting(name: greetingName, at: fixedNow ?? Date()))
 					.modifier(ReadableRow(width: rowWidth, inset: rowInset))
 					if let stories, !stories.cards.isEmpty {
-						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics)
+						StoryRow(stories: stories, open: { card in openStory = card }, metrics: storyMetrics, fadesEdge: ShellIdiom.isPad)
 						.listRowSeparator(.hidden)
 						.listRowBackground(Color.clear)
 						.listRowInsets(EdgeInsets(top: MaskinSpace.s3, leading: rowInset, bottom: MaskinSpace.s3, trailing: rowInset))

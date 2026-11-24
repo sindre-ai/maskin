@@ -642,3 +642,312 @@ describe('The gateway forwards the message it judged (Integration)', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 })
+
+const stamped = (name: string, extra: Record<string, unknown> = {}) => ({
+	jsonrpc: '2.0',
+	id: 1,
+	method: 'tools/call',
+	params: { name, arguments: { organizationId: 1, timestamp: 'v1', ...extra } },
+})
+
+describe('Dinero is limited to a fixed list of tools through the gateway (Integration)', () => {
+	const toolText = async (res: Response) =>
+		((await res.json()) as { result: { isError?: boolean; content: Array<{ text: string }> } })
+			.result
+
+	async function dinero(config?: Record<string, unknown>) {
+		const s = await setup({ provider: 'dinero', ...(config && { config }) })
+		return { ...s, app: appFor(s.writer.id) }
+	}
+
+	it('refuses booking, changing and deleting for a Read & write agent without reaching Dinero', async () => {
+		const s = await dinero()
+		for (const tool of [
+			'BookVoucher',
+			'book_finance_voucher',
+			'delete_purchase_voucher_draft',
+			'create_invoice',
+			'update_contact',
+			'add_purchase_payment',
+			'a_tool_dinero_adds_later',
+		]) {
+			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain(`${tool} is not one of the tools Dinero may use`)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('lets a Read & write agent save a purchase voucher draft and read', async () => {
+		const s = await dinero()
+		await post(s.app, s.ws.id, call('CreatePurchaseVoucher'), 'dinero')
+		await post(s.app, s.ws.id, call('list_vouchers'), 'dinero')
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://mcp.dinero.dk')
+	})
+
+	it('adds BookVoucher and the two payment tools, and no others, when the owner switched booking on', async () => {
+		const s = await dinero({ dinero_booking: true })
+		const booked = await post(s.app, s.ws.id, stamped('BookVoucher'), 'dinero')
+		expect((await toolText(booked)).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+
+		fetchMock.mockClear()
+		const result = await toolText(
+			await post(s.app, s.ws.id, call('book_finance_voucher'), 'dinero'),
+		)
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('saves a group voucher as a draft only, and refuses it when the call asks to book', async () => {
+		const s = await dinero()
+		const finance = (args: Record<string, unknown>) => ({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'CreateFinanceVoucher', arguments: { organizationId: 1, ...args } },
+		})
+		for (const args of [{ book: true }, {}, { book: 'false' }, { book: false, autoBook: true }]) {
+			const result = await toolText(await post(s.app, s.ws.id, finance(args), 'dinero'))
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('booking is off')
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+
+		const draft = await post(s.app, s.ws.id, finance({ book: false }), 'dinero')
+		expect((await toolText(draft)).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const sent = JSON.parse((fetchMock.mock.calls[0] as [string, { body: string }])[1].body)
+		expect(sent.params.arguments.book).toBe(false)
+	})
+
+	it('lets a group voucher book in one call only when the owner switched booking on', async () => {
+		const s = await dinero({ dinero_booking: true })
+		const res = await post(
+			s.app,
+			s.ws.id,
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name: 'CreateFinanceVoucher', arguments: { organizationId: 1, book: true } },
+			},
+			'dinero',
+		)
+		expect((await toolText(res)).isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+	})
+
+	it('keeps booking off when the switch is anything but true', async () => {
+		const s = await dinero({ dinero_booking: 'true' })
+		const result = await toolText(await post(s.app, s.ws.id, call('BookVoucher'), 'dinero'))
+		expect(result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('leaves tools that are not allowed out of tools/list', async () => {
+		const s = await dinero()
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					result: {
+						tools: [
+							'CreatePurchaseVoucher',
+							'BookVoucher',
+							'CreateFinanceVoucher',
+							'list_vouchers',
+						].map((name) => ({ name, description: name })),
+					},
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const res = await post(
+			s.app,
+			s.ws.id,
+			{ jsonrpc: '2.0', id: 1, method: 'tools/list' },
+			'dinero',
+		)
+		const { result } = (await res.json()) as { result: { tools: Array<{ name: string }> } }
+		expect(result.tools.map((t) => t.name)).toEqual([
+			'CreatePurchaseVoucher',
+			'CreateFinanceVoucher',
+			'list_vouchers',
+		])
+	})
+})
+
+describe('Dinero booking is stamped and logged through the gateway (Integration)', () => {
+	async function booking() {
+		const s = await setup({ provider: 'dinero', config: { dinero_booking: true } })
+		return { ...s, app: appFor(s.writer.id) }
+	}
+	const logged = async (integrationId: string) => {
+		for (let i = 0; i < 20; i++) {
+			const rows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, integrationId), eq(events.action, 'dinero_action')))
+			if (rows.length > 0) return rows
+			await new Promise((r) => setTimeout(r, 25))
+		}
+		return []
+	}
+
+	it('registers a payment with the booking switch on, and refuses it with the switch off', async () => {
+		const on = await booking()
+		for (const tool of ['add_purchase_payment', 'add_invoice_payment']) {
+			const res = await post(on.app, on.ws.id, stamped(tool, { amount: 100 }), 'dinero')
+			expect(
+				((await res.json()) as { result: { isError?: boolean } }).result.isError,
+			).toBeUndefined()
+		}
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+
+		fetchMock.mockClear()
+		const off = await setup({ provider: 'dinero' })
+		const res = await post(
+			appFor(off.writer.id),
+			off.ws.id,
+			stamped('add_invoice_payment'),
+			'dinero',
+		)
+		expect(((await res.json()) as { result: { isError?: boolean } }).result.isError).toBe(true)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses a booking or payment with no version stamp, before Dinero', async () => {
+		const s = await booking()
+		for (const tool of ['BookVoucher', 'add_purchase_payment']) {
+			const res = await post(
+				s.app,
+				s.ws.id,
+				{ ...call(tool), params: { name: tool, arguments: { organizationId: 1, timestamp: ' ' } } },
+				'dinero',
+			)
+			const { result } = (await res.json()) as {
+				result: { isError?: boolean; content: Array<{ text: string }> }
+			}
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('needs the timestamp')
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	const ORG = '11111111-2222-3333-4444-555555555555'
+	const INVOICE = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+	const bridge = (name: string, extra: Record<string, unknown> = {}) => ({
+		jsonrpc: '2.0',
+		id: 1,
+		method: 'tools/call',
+		params: {
+			name,
+			arguments: { organizationId: ORG, invoiceGuid: INVOICE, timestamp: 'v1', ...extra },
+		},
+	})
+
+	it('emails an invoice through the Dinero public API with the sign-in token, and logs it', async () => {
+		const s = await booking()
+		fetchMock.mockResolvedValueOnce(new Response('{"sent":true}', { status: 200 }))
+		const res = await post(s.app, s.ws.id, bridge('send_invoice_email'), 'dinero')
+		const { result } = (await res.json()) as {
+			result: { isError?: boolean; content: Array<{ text: string }> }
+		}
+		expect(result.isError).toBe(false)
+		expect(result.content[0].text).toBe('{"sent":true}')
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const [url, init] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }]
+		expect(url).toBe(`https://api.dinero.dk/v1/${ORG}/invoices/${INVOICE}/email`)
+		expect(init.headers.Authorization).toMatch(/^Bearer /)
+
+		const rows = await logged(s.linear.id)
+		expect(rows).toHaveLength(1)
+		expect(rows[0].data).toMatchObject({
+			tool: 'send_invoice_email',
+			outcome: 'success',
+			booking_switch: true,
+		})
+	})
+
+	it('keeps the bridge tools out of the list and refuses them while booking is off', async () => {
+		const off = await setup({ provider: 'dinero' })
+		const offApp = appFor(off.writer.id)
+		for (const tool of [
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		]) {
+			const res = await post(offApp, off.ws.id, bridge(tool), 'dinero')
+			const { result } = (await res.json()) as { result: { isError?: boolean } }
+			expect(result.isError).toBe(true)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('adds the bridge tools to tools/list as writes only when booking is on', async () => {
+		const s = await booking()
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					result: { tools: [{ name: 'list_vouchers', description: 'list' }] },
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const res = await post(
+			s.app,
+			s.ws.id,
+			{ jsonrpc: '2.0', id: 1, method: 'tools/list' },
+			'dinero',
+		)
+		const { result } = (await res.json()) as {
+			result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> }
+		}
+		expect(result.tools.map((t) => t.name)).toEqual([
+			'list_vouchers',
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		])
+		expect(result.tools.slice(1).every((t) => t.annotations.readOnlyHint === false)).toBe(true)
+	})
+
+	it('refuses a bridge call with no version stamp, before Dinero', async () => {
+		const s = await booking()
+		const res = await post(
+			s.app,
+			s.ws.id,
+			bridge('send_invoice_email', { timestamp: ' ' }),
+			'dinero',
+		)
+		const { result } = (await res.json()) as {
+			result: { isError?: boolean; content: Array<{ text: string }> }
+		}
+		expect(result.isError).toBe(true)
+		expect(result.content[0].text).toContain('needs the timestamp')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('logs a draft save and a booking with the arguments and the answer, and a read not at all', async () => {
+		const s = await booking()
+		await post(s.app, s.ws.id, stamped('BookVoucher', { voucherGuid: 'g-1' }), 'dinero')
+		await post(s.app, s.ws.id, call('list_vouchers'), 'dinero')
+		const rows = await logged(s.linear.id)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]).toMatchObject({ actorId: s.writer.id })
+		expect(rows[0].data).toMatchObject({
+			tool: 'BookVoucher',
+			outcome: 'success',
+			result: 'ok',
+			booking_switch: true,
+			arguments: { voucherGuid: 'g-1', timestamp: 'v1' },
+		})
+	})
+})

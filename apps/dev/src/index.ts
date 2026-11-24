@@ -27,6 +27,8 @@ import { StripePaymentSyncJob } from './jobs/stripe-payment-sync'
 import { TelnyxRecordingSyncJob } from './jobs/telnyx-recording-sync'
 import { UpgradeLegacyCredentialsJob } from './jobs/upgrade-legacy-credentials'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
+import { YoutubeActionsSweepJob } from './jobs/youtube-actions-sweep'
+import { agentBaseWarmupSkipReason } from './lib/agent-base-warmup'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { configurePosthogPrivacy, warnIfPosthogKeyUnset } from './lib/analytics/posthog'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -53,6 +55,7 @@ import { createRouteTimingStore } from './lib/route-timing-store'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
+import { fetchServerHealth } from './services/agent-server-client'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
@@ -79,6 +82,7 @@ import { MicrosoftSyncScheduler } from './services/microsoft-sync-scheduler'
 import { NextStepSweep } from './services/next-step-sweep'
 import { NotificationPushFanout } from './services/notification-push'
 import { OAuthSweeper } from './services/oauth-sweeper'
+import { OpenRouterBalanceMonitor } from './services/openrouter-balance-monitor'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { PosthogAccountSync } from './services/posthog-account-sync'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
@@ -120,11 +124,13 @@ const db = createDb(databaseUrl, {
 	poolSize: dbPoolSize,
 	inFlight: dbLoad,
 	onQuery: recordDbTime,
-	onPoolRecycled: ({ runningQueries, sql }) => {
-		logger.warn('DB pool replaced: a query got no answer and the database was not busy', {
-			runningQueries,
-			sql,
-		})
+	onPoolRecycled: ({ runningQueries, sql, reason }) => {
+		logger.warn(
+			reason === 'read_only'
+				? 'DB pool replaced: a write was refused as read-only, so the connections are on a node that is no longer the primary'
+				: 'DB pool replaced: a query got no answer and the database was not busy',
+			{ runningQueries, sql, reason },
+		)
 	},
 	onQueryTimeout: ({ timeoutMs, inFlight, sql }) => {
 		logger.error('DB query got no response', {
@@ -379,6 +385,10 @@ const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
 
+const openRouterBalanceMonitor = new OpenRouterBalanceMonitor(db)
+openRouterBalanceMonitor.start()
+logger.info('OpenRouter balance monitor started')
+
 const posthogAccountSync = new PosthogAccountSync(db)
 posthogAccountSync.start()
 logger.info('PostHog account sync started')
@@ -435,6 +445,8 @@ logger.info('Webhook deliveries reconciler started')
 
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
+const youtubeActionsSweepJob = new YoutubeActionsSweepJob(db, undefined, storageProvider)
+youtubeActionsSweepJob.start()
 logger.info('Purge idempotency job started')
 
 // Direct uploads: aborts uploads nobody finished and settles ones whose complete
@@ -630,6 +642,12 @@ if (process.env.NODE_ENV === 'production') {
 				...(spec.skillsManifest.length > 0 && { skills: spec.skillsManifest }),
 			}
 		},
+		// A server whose disk or file storage is failing answers /health with 503 and a
+		// reason; the dispatcher then picks another server. SKIP_RED_AGENT_SERVERS=0
+		// turns this off without a deploy (default on).
+		...(!['0', 'false'].includes((process.env.SKIP_RED_AGENT_SERVERS ?? '').toLowerCase()) && {
+			checkServerHealth: (server) => fetchServerHealth(server),
+		}),
 		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
 		// interactive branch reads its first turn from stdin, fed by whatever
 		// POSTs /sessions/:id/input. Mirrors session-manager.ts's launchContainer()
@@ -689,6 +707,7 @@ const shutdown = async (signal: string, exitCode = 0) => {
 	decisionDefaultWake.stop()
 	stopMcpRateLimit()
 	purgeIdempotencyJob.stop()
+	youtubeActionsSweepJob.stop()
 	oauthSweeper.stop()
 	keychainUndoSweeperJob.stop()
 	fileUploadReaperJob.stop()
@@ -804,10 +823,11 @@ ${mcpSetup}
 	// canonical "install_completed" moment for the open-source launch bet.
 	// Fire-and-forget — never blocks or throws.
 	emitInstallCompleted().catch(() => {})
-	// scripts/lib/docker-absent-guard.sh sets this on the no-Docker dev path when
-	// no Docker socket exists; the warm call below could only fail there.
-	if (process.env.MASKIN_DOCKER_UNAVAILABLE === '1') {
-		logger.warn('Docker unavailable; skipping agent-base image warm-up')
+	// Production routes sessions to the agent servers and has no Docker socket, so
+	// the build could only fail; the no-Docker dev path is skipped the same way.
+	const warmupSkipReason = agentBaseWarmupSkipReason(process.env)
+	if (warmupSkipReason) {
+		logger.info('Skipping agent-base image warm-up', { reason: warmupSkipReason })
 		return
 	}
 	sessionManager.warmAgentBaseImage().catch((err) => {

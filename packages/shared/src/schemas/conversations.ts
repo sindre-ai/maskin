@@ -63,6 +63,8 @@ export const messageFinalOutputSchema = z.object({
 	 * apps/dev/src/lib/turn-error-classifier.ts.
 	 */
 	error_kind: z.enum(['transient', 'permanent']).optional(),
+	/** The provider's own error text for a permanent failure; the message body stays plain. */
+	error_detail: z.string().max(4000).optional(),
 	/** Replays spent before giving up on a transient failure. */
 	retries: z.number().int().min(0).max(10).optional(),
 	/**
@@ -318,6 +320,17 @@ export const messageIntegrationAccessRequestSchema = z.object({
 	level: z.enum(INTEGRATION_ACCESS_REQUEST_LEVELS),
 	/** One line on what the agent needs it for. */
 	reason: z.string().min(1).max(300).optional(),
+	/**
+	 * Set by the server, never the agent, when the card can also offer "Allow in this chat" for a
+	 * limited time. The text is fixed per provider; the tool is the one the refused call used.
+	 */
+	chat_lift: z
+		.object({
+			hours: z.number().int().positive(),
+			text: z.string().min(1).max(500),
+			tool: z.string().min(1).max(80).optional(),
+		})
+		.optional(),
 })
 
 /**

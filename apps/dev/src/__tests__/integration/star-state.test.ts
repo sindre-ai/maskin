@@ -240,7 +240,7 @@ describe('Star state — D5 backend', () => {
 	})
 
 	describe('cross-workspace guard', () => {
-		it('returns 403 when the object is in a workspace the caller is not scoped to', async () => {
+		it('returns 404 when the object is in a workspace the caller is not scoped to', async () => {
 			// Create a second workspace with a different actor; A tries to star
 			// its object using their own workspace header. authMiddleware in prod
 			// verifies the caller's workspace membership before this handler runs;
@@ -268,16 +268,16 @@ describe('Star state — D5 backend', () => {
 					'x-workspace-id': workspaceId,
 				}),
 			)
-			expect(starRes.status).toBe(403)
+			expect(starRes.status).toBe(404)
 
 			const unstarRes = await appA.request(
 				jsonDelete(`/api/objects/${otherObj.id}/star`, {
 					'x-workspace-id': workspaceId,
 				}),
 			)
-			expect(unstarRes.status).toBe(403)
+			expect(unstarRes.status).toBe(404)
 
-			// The 403 must not persist a row. Belt-and-braces read against
+			// The 404 must not persist a row. Belt-and-braces read against
 			// star_state — the composite PK would swallow a duplicate on retry,
 			// so this asserts the endpoint refused BEFORE the insert.
 			const leaked = await db

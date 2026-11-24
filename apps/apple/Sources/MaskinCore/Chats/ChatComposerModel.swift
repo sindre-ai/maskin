@@ -508,6 +508,7 @@ public final class ChatComposerModel {
 		jobs[id] = Task { [weak self] in
 			do {
 				let file = try await prepare()
+				self?.adopt(id, file)
 				// A file on disk is ours to remove once this attempt is over; a retry prepares it again.
 				defer { if let url = file.fileURL { try? FileManager.default.removeItem(at: url) } }
 				guard file.sizeBytes <= ChatLimits.maxFileBytes else {
@@ -533,6 +534,14 @@ public final class ChatComposerModel {
 				self?.finish(id, .failed(Self.reason(error)))
 			}
 		}
+	}
+
+	/// The chip was named before the file was read. What was actually prepared (a picked item that
+	/// turned out to be a video, say) gives it its real name and type.
+	private func adopt(_ id: String, _ file: PreparedChatFile) {
+		guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
+		attachments[index].name = file.name
+		attachments[index].mimeType = file.mimeType
 	}
 
 	private func finish(_ id: String, _ state: ChatAttachmentDraft.State) {

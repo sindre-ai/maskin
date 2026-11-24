@@ -7,7 +7,9 @@
  * enforcement.
  *
  * Extension tools are registered as `${ext.id}_${tool.name}` at runtime. They are
- * dynamic, have no entry here, and are not annotated.
+ * dynamic and have no row here, on purpose: a row would make assertNotHeldByPilot
+ * (server.ts) treat them as classified. They get the title and annotations from
+ * extensionToolTitle and EXTENSION_TOOL_ANNOTATIONS at the end of this file instead.
  *
  * This table is deliberately separate from READ_TOOL_NAMES (read-error.ts) and
  * MUTATION_TOOL_KINDS (telemetry.ts). READ_TOOL_NAMES also decides whether a
@@ -73,24 +75,20 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 
 interface Row {
 	title: string
-	destructive: boolean
 	idempotent: boolean
 	openWorld: boolean
 }
 
-function row(
-	title: string,
-	flags: { destructive?: true; idempotent?: true; openWorld?: true } = {},
-): Row {
+function row(title: string, flags: { idempotent?: true; openWorld?: true } = {}): Row {
 	return {
 		title,
-		destructive: flags.destructive ?? false,
 		idempotent: flags.idempotent ?? false,
 		openWorld: flags.openWorld ?? false,
 	}
 }
 
-// destructive: delete_*, stop_session, stop_chat_agent, disconnect_integration, desktop_run (runs any command).
+// destructiveHint is not a row flag: Claude's directory asks for it on every tool that modifies or deletes
+// data, so it is true for every tool that is not read-only (see TOOL_ANNOTATIONS below).
 // idempotent: update_*, delete_*, pause_session, mark_read.
 // openWorld: create_sub_chat and create_chat (start an agent), the integration tools, and the two tools that
 // send a message out (gmail_send_email, resend_send_email, approve_object_draft, approve_draft_from_chat).
@@ -99,7 +97,7 @@ const ROWS: Record<string, Row> = {
 	create_objects: row('Create objects'),
 	get_objects: row('Get objects'),
 	update_objects: row('Update objects', { idempotent: true }),
-	delete_object: row('Delete object', { destructive: true, idempotent: true }),
+	delete_object: row('Delete object', { idempotent: true }),
 	set_next_step: row('Set next step'),
 	schedule_next_step: row('Schedule next step'),
 	update_next_step: row('Update next step', { idempotent: true }),
@@ -111,12 +109,12 @@ const ROWS: Record<string, Row> = {
 	create_relationship: row('Create relationship'),
 	list_relationships: row('List relationships'),
 	traverse_graph: row('Traverse graph'),
-	delete_relationship: row('Delete relationship', { destructive: true, idempotent: true }),
+	delete_relationship: row('Delete relationship', { idempotent: true }),
 	// Actors
 	create_actor: row('Create actor'),
 	list_actors: row('List actors'),
 	get_actor: row('Get actor'),
-	delete_agent: row('Delete agent', { destructive: true, idempotent: true }),
+	delete_agent: row('Delete agent', { idempotent: true }),
 	update_actor: row('Update actor', { idempotent: true }),
 	// Workspaces
 	create_workspace: row('Create workspace'),
@@ -125,13 +123,13 @@ const ROWS: Record<string, Row> = {
 	get_workspace_schema: row('Get workspace schema'),
 	create_workspace_field: row('Create workspace field'),
 	update_workspace_field: row('Update workspace field', { idempotent: true }),
-	delete_workspace_field: row('Delete workspace field', { destructive: true, idempotent: true }),
+	delete_workspace_field: row('Delete workspace field', { idempotent: true }),
 	// Workspace skills
 	list_workspace_skills: row('List workspace skills'),
 	get_workspace_skill: row('Get workspace skill'),
 	create_workspace_skill: row('Create workspace skill'),
 	update_workspace_skill: row('Update workspace skill', { idempotent: true }),
-	delete_workspace_skill: row('Delete workspace skill', { destructive: true, idempotent: true }),
+	delete_workspace_skill: row('Delete workspace skill', { idempotent: true }),
 	// Files
 	create_file: row('Create file'),
 	list_files: row('List files'),
@@ -144,7 +142,7 @@ const ROWS: Record<string, Row> = {
 	transcribe_file: row('Transcribe file'),
 	update_file: row('Update file', { idempotent: true }),
 	propose_file_changes: row('Propose file changes'),
-	delete_file: row('Delete file', { destructive: true, idempotent: true }),
+	delete_file: row('Delete file', { idempotent: true }),
 	// Events + comments + conversations
 	get_events: row('Get events'),
 	get_comments: row('Get comments'),
@@ -157,13 +155,13 @@ const ROWS: Record<string, Row> = {
 	add_chat_participant: row('Add chat participant'),
 	remove_chat_participant: row('Remove chat participant'),
 	get_chat_activity: row('Get chat activity'),
-	stop_chat_agent: row('Stop chat agent', { destructive: true }),
+	stop_chat_agent: row('Stop chat agent'),
 	// Triggers
 	create_trigger: row('Create trigger'),
 	list_triggers: row('List triggers'),
 	get_trigger: row('Get trigger'),
 	update_trigger: row('Update trigger', { idempotent: true }),
-	delete_trigger: row('Delete trigger', { destructive: true, idempotent: true }),
+	delete_trigger: row('Delete trigger', { idempotent: true }),
 	// Loops
 	create_loop: row('Create loop'),
 	update_loop: row('Update loop', { idempotent: true }),
@@ -172,7 +170,7 @@ const ROWS: Record<string, Row> = {
 	fork_loop: row('Fork loop'),
 	set_loop_view: row('Set loop view', { idempotent: true }),
 	query_data: row('Query data'),
-	delete_loop: row('Delete loop', { destructive: true, idempotent: true }),
+	delete_loop: row('Delete loop', { idempotent: true }),
 	// Subscriptions
 	mark_read: row('Mark read', { idempotent: true }),
 	list_unread: row('List unread'),
@@ -181,7 +179,7 @@ const ROWS: Record<string, Row> = {
 	list_sessions: row('List sessions'),
 	get_session: row('Get session'),
 	get_session_logs: row('Get session logs'),
-	stop_session: row('Stop session', { destructive: true }),
+	stop_session: row('Stop session'),
 	pause_session: row('Pause session', { idempotent: true }),
 	resume_session: row('Resume session'),
 	send_session_message: row('Send session message'),
@@ -190,12 +188,12 @@ const ROWS: Record<string, Row> = {
 	list_integrations: row('List integrations', { openWorld: true }),
 	list_integration_providers: row('List integration providers', { openWorld: true }),
 	connect_integration: row('Connect integration', { openWorld: true }),
-	disconnect_integration: row('Disconnect integration', { destructive: true, openWorld: true }),
+	disconnect_integration: row('Disconnect integration', { openWorld: true }),
 	// Extensions
 	list_extensions: row('List extensions'),
 	create_extension: row('Create extension'),
 	update_extension: row('Update extension', { idempotent: true }),
-	delete_extension: row('Delete extension', { destructive: true, idempotent: true }),
+	delete_extension: row('Delete extension', { idempotent: true }),
 	// Notifications
 	create_notification: row('Create notification'),
 	list_notifications: row('List notifications'),
@@ -229,7 +227,7 @@ const ROWS: Record<string, Row> = {
 	desktop_type: row('Desktop type'),
 	desktop_key: row('Desktop key'),
 	desktop_attach_file: row('Desktop attach file'),
-	desktop_run: row('Desktop run command', { destructive: true }),
+	desktop_run: row('Desktop run command'),
 	desktop_put_file: row('Desktop put file'),
 	desktop_apply_settings: row('Desktop apply settings'),
 	desktop_settings: row('Desktop settings'),
@@ -249,10 +247,34 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotationEntry>> = O
 			{
 				title: r.title,
 				readOnlyHint: READ_ONLY_TOOLS.has(name),
-				destructiveHint: r.destructive,
+				destructiveHint: !READ_ONLY_TOOLS.has(name),
 				idempotentHint: r.idempotent,
 				openWorldHint: r.openWorld,
 			},
 		]),
 	),
 )
+
+/**
+ * Plain title for an extension tool, from its own name: "create_contact" is "Create contact".
+ * The extension id prefix is left off, the same way the platform rows above read.
+ */
+export function extensionToolTitle(toolName: string): string {
+	const [first, ...rest] = toolName.split(/[_\-\s]+/).filter(Boolean)
+	if (first === undefined) return toolName
+	return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(' ')
+}
+
+/**
+ * Annotations every extension tool carries. Unmarked means write everywhere else in our code, so
+ * the default is the changes-data label: not read-only, and destructiveHint true, which is the hint
+ * Claude's directory asks for on a tool that modifies data. Nothing an extension says about itself
+ * lowers it.
+ */
+export const EXTENSION_TOOL_ANNOTATIONS: Readonly<Omit<ToolAnnotationEntry, 'title'>> =
+	Object.freeze({
+		readOnlyHint: false,
+		destructiveHint: true,
+		idempotentHint: false,
+		openWorldHint: false,
+	})
