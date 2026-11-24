@@ -30,7 +30,7 @@ describe('Gmail provider config', () => {
 			expect(config.auth.config.scopes).toContain('https://www.googleapis.com/auth/userinfo.email')
 			expect(config.auth.config.extraAuthParams).toMatchObject({
 				access_type: 'offline',
-				prompt: 'consent',
+				prompt: 'select_account consent',
 			})
 		}
 	})
