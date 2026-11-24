@@ -59,7 +59,7 @@ private struct ChatsContainer: View {
 	@State private var searchPresented = false
 	@State private var newChat: NewChatRequest?
 	@State private var showThreads = false
-	/// iPad: which columns show. Portrait hides the list while a chat is open; the panel button in the thread header toggles it.
+	/// iPad: which columns show. Regular width keeps the list beside the chat.
 	@State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 	@State private var isPortrait = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -135,8 +135,13 @@ private struct ChatsContainer: View {
 						message: "Chat with your team and your agents.")
 				}
 			}
-			.modifier(ChatsListToggle(showsButton: showsListToggle, onToggle: toggleList))
+			// The list stays beside the chat, so no panel button: the system's one goes too at regular
+			// width. A narrow window keeps its own back button.
+			.toolbar(
+				removing: ShellIdiom.isPad && horizontalSizeClass == .regular ? ToolbarDefaultItemKind.sidebarToggle : nil)
 		}
+		// Portrait pushes the thread aside for the list instead of drawing the list over it.
+		.modifier(PadSplitStyle())
 		.background {
 			GeometryReader { proxy in
 				Color.clear.onChange(of: proxy.size, initial: true) { _, size in
@@ -146,13 +151,28 @@ private struct ChatsContainer: View {
 		}
 		.onChange(of: isPortrait, initial: true) {
 			guard ShellIdiom.isPad else { return }
-			columnVisibility = ChatsPadLayout.visibility(portrait: isPortrait, hasSelection: selection != nil)
+			columnVisibility = ChatsPadLayout.visibility(
+				portrait: isPortrait, hasSelection: selection != nil, regularWidth: horizontalSizeClass == .regular)
 		}
 		.onChange(of: selection) {
-			// Landscape keeps whatever the person chose; portrait gives a chat the whole width.
+			// Landscape keeps whatever the person chose. In portrait the list stays beside the chat at
+			// regular width; a narrow window gives an open chat the whole width.
 			guard ShellIdiom.isPad, isPortrait else { return }
-			columnVisibility = ChatsPadLayout.visibility(portrait: true, hasSelection: selection != nil)
+			columnVisibility = ChatsPadLayout.visibility(
+				portrait: true, hasSelection: selection != nil, regularWidth: horizontalSizeClass == .regular)
 		}
+		// The bottom bar under the list: it knows when a chat is open beside the list and leaves when a
+		// sheet of ours is up. Leaving Chats from that bar closes the chat.
+		.onChange(of: barBesideList, initial: true) { runtime?.chatOpenBesideList = barBesideList }
+		.onChange(of: runtime?.selectedTab) {
+			// Only where the bottom bar replaces the rail. Slide Over and a one-third split are portrait
+			// at compact width, keep the rail, and keep their open chat when the tab changes.
+			guard ShellIdiom.isPad, horizontalSizeClass == .regular, isPortrait,
+				runtime?.selectedTab != .chats
+			else { return }
+			selection = nil
+		}
+		.hidesPadBar(newChat != nil || showDisplay || showThreads)
 		.onChange(of: requestedConversationId, initial: true) {
 			ChatsScreen.consume(request: &requestedConversationId, into: &selection)
 		}
@@ -192,6 +212,7 @@ private struct ChatsContainer: View {
 			await store.refresh()
 			await store.refreshLater()
 		}
+		.onChange(of: selection != nil, initial: true) { _, open in runtime?.chatIsOpen = open }
 		.onChange(of: selection != nil || showThreads, initial: true) { _, covered in
 			runtime?.teamPill.isCovered = covered
 		}
@@ -199,6 +220,7 @@ private struct ChatsContainer: View {
 		.onDisappear {
 			store.stop()
 			runtime?.teamPill.detach(store)
+			runtime?.chatOpenBesideList = false
 		}
 		.sheet(isPresented: $showThreads) {
 			ThreadsSheet(environment: environment, conversations: store)
@@ -231,7 +253,13 @@ private struct ChatsContainer: View {
 				.safeAreaInset(edge: .top, spacing: 0) {
 					ChatsListHeader(
 						search: $search, displayActive: displayActive,
-						onDisplay: { showDisplay = true }, onNew: { newChat = NewChatRequest() })
+						onDisplay: { showDisplay = true }, onNew: { newChat = NewChatRequest() },
+						onAccount: showsAccountAvatar ? { runtime?.showProfile = true } : nil,
+						accountName: session?.name ?? "", accountActorID: session?.actorId)
+				}
+				// The compact bar floats over the foot of this column: leave it room.
+				.safeAreaInset(edge: .bottom, spacing: 0) {
+					if barBesideList { Color.clear.frame(height: PadBarLayout.reserve) }
 				}
 				#if os(iOS)
 					.toolbar(.hidden, for: .navigationBar)
@@ -239,7 +267,7 @@ private struct ChatsContainer: View {
 				.sheet(isPresented: $showDisplay) { ChatsDisplaySheet(store: store, chatListV2: chatListV2) }
 				.navigationSplitViewColumnWidth(
 					min: ChatsPadLayout.portraitListWidth, ideal: ChatsPadLayout.listWidth(portrait: isPortrait),
-					max: 520)
+					max: isPortrait ? ChatsPadLayout.portraitListWidth : 520)
 		} else {
 			list
 				.shellToolbar(
@@ -257,17 +285,24 @@ private struct ChatsContainer: View {
 		}
 	}
 
+	/// The bottom bar's layout has no sidebar or rail to hold the account, so the list header carries the avatar.
+	private var showsAccountAvatar: Bool {
+		runtime != nil && session != nil
+			&& ShellIdiom.barShowsAvatar(
+				hasRail: ShellIdiom.hasRail,
+				bottomBar: PadBarLayout.usesBottomBar(portrait: isPortrait, regularWidth: horizontalSizeClass == .regular))
+	}
+
 	/// The Display options differ from the defaults.
 	private var displayActive: Bool {
 		chatListV2 ? store.listGroupBy != .date : !store.displayOptions.isDefault
 	}
 
-	/// The panel button shows on an iPad with room for both columns; a collapsed split view keeps
-	/// its own back button.
-	private var showsListToggle: Bool { ShellIdiom.isPad && horizontalSizeClass == .regular }
-
-	private func toggleList() {
-		columnVisibility = ChatsPadLayout.toggled(columnVisibility)
+	/// A chat is open beside the list in portrait, where the bottom bar shrinks to icons under the list.
+	private var barBesideList: Bool {
+		ShellIdiom.hasRail
+			&& PadBarLayout.usesBottomBar(portrait: isPortrait, regularWidth: horizontalSizeClass == .regular)
+			&& selection != nil
 	}
 
 	/// A flow row's selection key is `flow:<id>`; everything else is a conversation id.
@@ -338,25 +373,15 @@ extension ChatsContainer {
 	}
 }
 
-/// The panel button at the left of the thread's header (also with no chat selected) that hides or
-/// shows the list. It replaces the system sidebar toggle, so the two never show together.
-private struct ChatsListToggle: ViewModifier {
-	let showsButton: Bool
-	let onToggle: () -> Void
-
+/// On the iPad the detail column pushes aside for the list; the system default overlays the list in portrait.
+private struct PadSplitStyle: ViewModifier {
+	@ViewBuilder
 	func body(content: Content) -> some View {
-		content
-			.toolbar(removing: showsButton ? ToolbarDefaultItemKind.sidebarToggle : nil)
-			.toolbar {
-				if showsButton {
-					ToolbarItem(placement: .shellLeading) {
-						Button(action: onToggle) {
-							Image(systemName: "sidebar.leading")
-						}
-						.accessibilityLabel("Show or hide chat list")
-					}
-				}
-			}
+		if ShellIdiom.isPad {
+			content.navigationSplitViewStyle(.balanced)
+		} else {
+			content
+		}
 	}
 }
 
