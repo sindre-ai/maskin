@@ -41,8 +41,7 @@ describe('request routing with an API origin', () => {
 	it('sends an ordinary call to the API origin with the bearer key', async () => {
 		const { api } = await load('https://api.example.test')
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(ok())
-		await api.integrations.connect('ws-1', 'github').catch(() => {})
-		await api.actors.get('a-1', 'ws-1').catch(() => {})
+		await api.actors.get('a-1').catch(() => {})
 		const urls = fetchSpy.mock.calls.map((c) => String(c[0]))
 		expect(urls).toContain('https://api.example.test/api/actors/a-1')
 	})
