@@ -204,7 +204,8 @@ describe('Accounting loop definition', () => {
 		it('flags confirm-with-adviser rules instead of passing them', () => {
 			const unsourced = ruleRows().filter((r) => r.includes(' | confirm with adviser | '))
 			expect(unsourced.length).toBe(4)
-			expect(ruleCheck()).toMatch(/always flags when its test applies/)
+			expect(ruleCheck()).toMatch(/flags whenever the situation it describes is present/)
+			expect(ruleCheck()).toMatch(/not flagged by a rule just because the rule is unsourced/)
 			for (const row of unsourced) expect(row.split(' | ')[1]).toBe('flag')
 		})
 
@@ -213,6 +214,7 @@ describe('Accounting loop definition', () => {
 			expect(text).toContain('| entry | result | rules | why |')
 			expect(text).toMatch(/exactly clear or flagged/)
 			expect(text).toMatch(/treats every entry that is not exactly clear as flagged/)
+			expect(text).toMatch(/An entry on that list is never clear/)
 		})
 
 		it('never changes a draft to make it pass and never books', () => {
