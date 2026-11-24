@@ -7,7 +7,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { PAID_PLANS, workspaceSettingsSchema } from '@maskin/shared'
+import { PAID_PLANS, isPaidPlan, workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { AUTO_TOP_UP_INVOICE_KIND, creditPaidAutoTopUp } from '../lib/auto-top-up'
@@ -45,6 +45,19 @@ function isAddonSubscription(
 	)
 }
 
+import {
+	type BillingEvent,
+	PLAN_BILLING_INTERVAL,
+	billingTerms,
+	checkoutSessionCompletedProps,
+	refundIssuedEvent,
+	renewalPaidEvent,
+	sendBillingEvents,
+	subscriptionCancelledEvent,
+	subscriptionChangedEvent,
+	subscriptionStartedEvent,
+	trialConvertedEvent,
+} from '../lib/analytics/billing-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { creditedAmountUsdMinor } from '../lib/credit-billing'
 import { recordEvent } from '../lib/events/record-event'
@@ -286,6 +299,17 @@ async function applyEvent(
 	const vatDispatch = await applyVatEventIfHandled(db, workspaceId, event, stripe)
 	if (vatDispatch.handled) return
 
+	// A refund changes no workspace state: it only becomes the refund_issued analytics event.
+	if (event.type === 'charge.refunded') {
+		await sendRefundEvent(db, workspaceId, event)
+		return
+	}
+
+	// Analytics events built while the delivery is applied, sent once it has committed. A delivery
+	// that rolls back (Stripe retries it) must not send them twice.
+	const billingEvents: BillingEvent[] = []
+	const isAddonPrice = (priceId: string | null) => isLinkedInAddonPrice(priceId, stripeEnv)
+
 	// Concurrent webhook deliveries on the same workspace each do a
 	// SELECT -> mutate JSON -> UPDATE. Without serialization, a later writer
 	// that read before an earlier writer's UPDATE silently clobbers fields
@@ -340,15 +364,15 @@ async function applyEvent(
 				const posthogDistinctId =
 					(typeof session.customer === 'string' ? session.customer : session.customer?.id) ??
 					session.id
-				await capturePosthogEvent('checkout_session_completed', posthogDistinctId, {
-					session_id: session.id,
-					mode: session.mode ?? null,
-					amount_total: session.amount_total ?? null,
-					currency: session.currency ?? null,
-					// Task 1 scope: always false. Task 2 will re-fire this event from
+				// `kind` tells a credit top-up from a subscription payment, and `livemode` a test
+				// payment from real money.
+				await capturePosthogEvent(
+					'checkout_session_completed',
+					posthogDistinctId,
+					// Task 1 scope: awaiting_vies is always false. Task 2 will re-fire this event from
 					// the held-branch write site with awaiting_vies=true.
-					awaiting_vies: false,
-				})
+					checkoutSessionCompletedProps(session, workspaceId, false),
+				)
 				if (session.mode === 'payment' && session.metadata?.kind === CREDIT_TOPUP_METADATA_KIND) {
 					// Prepaid usage-credits top-up: money has already been captured
 					// by Stripe — credit the balance unconditionally (eligibility
@@ -485,10 +509,18 @@ async function applyEvent(
 					// only: the plan name, the currency and whether this was the trial's
 					// first purchase. `from_trial` reads the plan before this write.
 					const checkoutPlan = session.metadata?.plan
-					await capturePosthogEvent('checkout_completed', posthogDistinctId, {
-						plan: PAID_PLANS.find((p) => p === checkoutPlan) ?? 'unknown',
-						currency: session.currency ?? null,
-						from_trial: (current.plan ?? 'trial') === 'trial',
+					billingEvents.push({
+						name: 'checkout_completed',
+						distinctId: posthogDistinctId,
+						props: {
+							workspace_id: workspaceId,
+							plan: PAID_PLANS.find((p) => p === checkoutPlan) ?? 'unknown',
+							interval: PLAN_BILLING_INTERVAL,
+							amount_minor: session.amount_total ?? null,
+							currency: session.currency ?? null,
+							livemode: session.livemode ?? null,
+							from_trial: (current.plan ?? 'trial') === 'trial',
+						},
 					})
 				}
 				// Clear stale period bounds so the billing route's fallback shows a
@@ -542,6 +574,14 @@ async function applyEvent(
 						priceIds: priceIdsFromSubscription(sub),
 					})
 				}
+				addSubscriptionEvents(billingEvents, {
+					event,
+					sub,
+					workspaceId,
+					current,
+					matchedPlan: matched?.plan ?? null,
+					isAddonPrice,
+				})
 				planMutated = true
 				next = {
 					...next,
@@ -575,6 +615,20 @@ async function applyEvent(
 					}
 					break
 				}
+				const endedAt = sub.ended_at ?? sub.canceled_at ?? event.created
+				billingEvents.push(
+					subscriptionCancelledEvent({
+						workspaceId,
+						plan: planFromSubscription(sub, stripeEnv)?.plan ?? current.plan,
+						terms: billingTerms(sub.items?.data ?? [], isAddonPrice),
+						livemode: event.livemode,
+						reason: sub.cancellation_details?.reason ?? null,
+						daysSubscribed:
+							typeof sub.start_date === 'number'
+								? Math.max(0, Math.floor((endedAt - sub.start_date) / DAY_SECONDS))
+								: null,
+					}),
+				)
 				planMutated = true
 				// `plan: 'enterprise'` is NOT safe to write unconditionally here.
 				// It sits at the top of PLAN_TIER_ORDER with null (unlimited)
@@ -606,6 +660,24 @@ async function applyEvent(
 					// whole-settings save below must not run after it.
 					autoTopUpCredited = await creditPaidAutoTopUpInvoice(tx, workspaceId, invoice)
 					return
+				}
+				// A recurring payment of the plan (not the first payment, not a proration on its own).
+				if (invoice.billing_reason === 'subscription_cycle') {
+					const terms = billingTerms(
+						(invoice.lines?.data ?? []).filter((line) => !line.proration),
+						isAddonPrice,
+					)
+					if (terms.amountMinor !== null) {
+						billingEvents.push(
+							renewalPaidEvent({
+								workspaceId,
+								plan: current.plan,
+								terms,
+								amountPaidMinor: invoice.amount_paid,
+								livemode: event.livemode,
+							}),
+						)
+					}
 				}
 				const periodStart = invoice.period_start ?? invoice.lines?.data?.[0]?.period?.start
 				const periodEnd = invoice.period_end ?? invoice.lines?.data?.[0]?.period?.end
@@ -678,6 +750,119 @@ async function applyEvent(
 	})
 	// After the commit, so a usage read in between cannot re-cache the old balance.
 	if (autoTopUpCredited) evictBillingUsage(workspaceId)
+	await sendBillingEvents(billingEvents)
+}
+
+const DAY_SECONDS = 24 * 60 * 60
+
+/** The stored billing fields the subscription events read. */
+interface StoredBilling {
+	plan?: string | null
+	stripe_subscription_id?: string | null
+	period_start?: number | null
+	trial_state?: string | null
+}
+
+/**
+ * The analytics events of a plan subscription event: started (and trial converted) when it goes live,
+ * changed when its plan or price moves. Add-on items never count as the plan. Nothing here writes state.
+ */
+function addSubscriptionEvents(
+	out: BillingEvent[],
+	p: {
+		event: Stripe.Event
+		sub: Stripe.Subscription
+		workspaceId: string
+		current: StoredBilling
+		matchedPlan: string | null
+		isAddonPrice: (priceId: string | null) => boolean
+	},
+): void {
+	const { event, sub, workspaceId, current, isAddonPrice } = p
+	const status = mapSubscriptionStatus(sub.status)
+	if (status !== 'active' && status !== 'past_due') return
+	const terms = billingTerms(sub.items?.data ?? [], isAddonPrice)
+	const plan = p.matchedPlan ?? current.plan
+	const previous = event.data.previous_attributes as Partial<Stripe.Subscription> | undefined
+
+	// A subscription that was created unpaid goes live on a later update, with no second created event.
+	const startedNow =
+		event.type === 'customer.subscription.created' || previous?.status === 'incomplete'
+	if (startedNow) {
+		out.push(subscriptionStartedEvent({ workspaceId, plan, terms, livemode: event.livemode }))
+		if ((current.plan ?? 'trial') === 'trial') {
+			out.push(
+				trialConvertedEvent({
+					workspaceId,
+					plan,
+					terms,
+					livemode: event.livemode,
+					daysInTrial:
+						current.trial_state === 'started' && typeof current.period_start === 'number'
+							? Math.max(0, Math.floor((event.created - current.period_start) / DAY_SECONDS))
+							: null,
+				}),
+			)
+		}
+		return
+	}
+
+	// Changed: the same live subscription moved to another plan or another price.
+	if (event.type !== 'customer.subscription.updated' || current.stripe_subscription_id !== sub.id) {
+		return
+	}
+	if (!isPaidPlan(current.plan)) return
+	const planIds = (items: readonly { price?: { id: string } | null }[] | undefined) =>
+		(items ?? [])
+			.map((item) => item.price?.id ?? null)
+			.filter((id): id is string => id !== null && !isAddonPrice(id))
+			.sort()
+			.join(',')
+	const previousItems = previous?.items?.data
+	const priceChanged =
+		previousItems !== undefined && planIds(previousItems) !== planIds(sub.items?.data)
+	if ((p.matchedPlan !== null && p.matchedPlan !== current.plan) || priceChanged) {
+		out.push(
+			subscriptionChangedEvent({
+				workspaceId,
+				plan,
+				planBefore: current.plan,
+				terms,
+				livemode: event.livemode,
+			}),
+		)
+	}
+}
+
+/** `refund_issued` from `charge.refunded`. Stripe sends the running total, so this sends the difference. */
+async function sendRefundEvent(
+	db: Database,
+	workspaceId: string,
+	event: Stripe.Event,
+): Promise<void> {
+	const charge = event.data.object as Stripe.Charge
+	const previous = event.data.previous_attributes as Partial<Stripe.Charge> | undefined
+	const amountMinor =
+		charge.amount_refunded -
+		(typeof previous?.amount_refunded === 'number' ? previous.amount_refunded : 0)
+	if (!(amountMinor > 0)) return
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const billing = workspaceSettingsSchema.partial().safeParse(row?.settings ?? {}).data?.billing
+	await sendBillingEvents([
+		refundIssuedEvent({
+			workspaceId,
+			plan: billing?.plan ?? null,
+			amountMinor,
+			currency: charge.currency,
+			livemode: event.livemode,
+			kind: charge.invoice ? 'subscription' : 'one_time',
+			fullyRefunded: charge.refunded,
+		}),
+	])
 }
 
 async function creditPaidAutoTopUpInvoice(

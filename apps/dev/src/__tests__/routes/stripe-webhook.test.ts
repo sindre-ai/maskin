@@ -1313,6 +1313,8 @@ describe('POST /api/webhooks/stripe', () => {
 					id: 'cs_starter_1',
 					mode: 'subscription',
 					currency: 'dkk',
+					amount_total: 9900,
+					livemode: false,
 					client_reference_id: workspaceId,
 					customer: 'cus_42',
 					subscription: 'sub_42',
@@ -1324,8 +1326,12 @@ describe('POST /api/webhooks/stripe', () => {
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
 		expect(capturePosthogEvent).toHaveBeenCalledWith('checkout_completed', 'cus_42', {
+			workspace_id: workspaceId,
 			plan: 'starter',
+			interval: 'month',
+			amount_minor: 9900,
 			currency: 'dkk',
+			livemode: false,
 			from_trial: true,
 		})
 	})
@@ -1347,6 +1353,8 @@ describe('POST /api/webhooks/stripe', () => {
 					id: 'cs_ultra_1',
 					mode: 'subscription',
 					currency: 'dkk',
+					amount_total: 149900,
+					livemode: true,
 					client_reference_id: workspaceId,
 					customer: 'cus_42',
 					subscription: 'sub_42',
@@ -1358,8 +1366,12 @@ describe('POST /api/webhooks/stripe', () => {
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
 		expect(capturePosthogEvent).toHaveBeenCalledWith('checkout_completed', 'cus_42', {
+			workspace_id: workspaceId,
 			plan: 'ultra',
+			interval: 'month',
+			amount_minor: 149900,
 			currency: 'dkk',
+			livemode: true,
 			from_trial: false,
 		})
 	})
@@ -1392,5 +1404,378 @@ describe('POST /api/webhooks/stripe', () => {
 		expect((await postWebhook(app, {})).status).toBe(200)
 		const names = vi.mocked(capturePosthogEvent).mock.calls.map((c) => c[0])
 		expect(names).not.toContain('checkout_completed')
+	})
+})
+
+// Billing events for the revenue tiles (bet "Product analytics for web and iPhone").
+describe('billing analytics events', () => {
+	const planPrice = (id: string, unit_amount: number, interval = 'month', interval_count = 1) => ({
+		id,
+		unit_amount,
+		currency: 'dkk',
+		recurring: { interval, interval_count },
+	})
+
+	const eventNames = () => vi.mocked(capturePosthogEvent).mock.calls.map((c) => c[0])
+	const eventProps = (name: string) =>
+		vi.mocked(capturePosthogEvent).mock.calls.find((c) => c[0] === name)?.[2]
+
+	async function deliver(
+		billing: Record<string, unknown> | null,
+		event: Record<string, unknown>,
+	): Promise<string> {
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-billing-events' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [[{ id: workspaceId, settings: billing ? { billing } : {} }]]
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: `evt_${randomUUID()}`,
+			livemode: false,
+			created: 1_700_000_000 + 3 * 86_400,
+			...event,
+		} as unknown as Stripe.Event)
+		expect((await postWebhook(app, {})).status).toBe(200)
+		return workspaceId
+	}
+
+	it('sends subscription_started and trial_converted when a trial workspace starts a plan', async () => {
+		const workspaceId = randomUUID()
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		mockResults.insertQueue = [[{ id: 'claim-started' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'trial',
+							status: 'active',
+							trial_state: 'started',
+							period_start: 1_700_000_000,
+						},
+					},
+				},
+			],
+		]
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_created_billing',
+			type: 'customer.subscription.created',
+			livemode: false,
+			created: 1_700_000_000 + 3 * 86_400 + 50,
+			data: {
+				object: {
+					id: 'sub_new',
+					customer: 'cus_new',
+					status: 'active',
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ quantity: 1, price: planPrice('price_pro_dkk', 24900) }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		expect((await postWebhook(app, {})).status).toBe(200)
+		expect(capturePosthogEvent).toHaveBeenCalledWith('subscription_started', workspaceId, {
+			workspace_id: workspaceId,
+			plan: 'pro',
+			interval: 'month',
+			amount_minor: 24900,
+			currency: 'dkk',
+			livemode: false,
+			monthly_amount_minor: 24900,
+		})
+		expect(capturePosthogEvent).toHaveBeenCalledWith('trial_converted', workspaceId, {
+			workspace_id: workspaceId,
+			plan: 'pro',
+			interval: 'month',
+			amount_minor: 24900,
+			currency: 'dkk',
+			livemode: false,
+			monthly_amount_minor: 24900,
+			days_in_trial: 3,
+		})
+	})
+
+	it('does not send trial_converted when the workspace was already on a paid plan', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active', stripe_subscription_id: 'sub_old' },
+			{
+				type: 'customer.subscription.created',
+				data: {
+					object: {
+						id: 'sub_new2',
+						customer: 'cus_1',
+						status: 'active',
+						metadata: { workspace_id: randomUUID() },
+						items: { data: [{ price: planPrice('price_team_dkk', 54900) }] },
+					},
+				},
+			},
+		)
+		expect(eventNames()).toContain('subscription_started')
+		expect(eventNames()).not.toContain('trial_converted')
+	})
+
+	it('normalises a yearly price to a monthly value', async () => {
+		await deliver(
+			{ plan: 'trial', status: 'active' },
+			{
+				type: 'customer.subscription.created',
+				data: {
+					object: {
+						id: 'sub_year',
+						customer: 'cus_1',
+						status: 'active',
+						metadata: { workspace_id: randomUUID() },
+						items: { data: [{ price: planPrice('price_pro_dkk', 249000, 'year') }] },
+					},
+				},
+			},
+		)
+		expect(eventProps('subscription_started')).toMatchObject({
+			interval: 'year',
+			amount_minor: 249000,
+			monthly_amount_minor: 20750,
+		})
+	})
+
+	it('sends no subscription events for the LinkedIn add-on subscription', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active', stripe_subscription_id: 'sub_plan' },
+			{
+				type: 'customer.subscription.created',
+				data: {
+					object: {
+						id: 'sub_addon_only',
+						customer: 'cus_1',
+						status: 'active',
+						metadata: { workspace_id: randomUUID(), kind: 'linkedin_identity_addon' },
+						items: { data: [{ price: planPrice('price_linkedin', 4900) }] },
+					},
+				},
+			},
+		)
+		expect(eventNames()).not.toContain('subscription_started')
+	})
+
+	it('sends subscription_changed when the plan moves, with the new monthly value', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active', stripe_subscription_id: 'sub_c' },
+			{
+				type: 'customer.subscription.updated',
+				data: {
+					object: {
+						id: 'sub_c',
+						customer: 'cus_1',
+						status: 'active',
+						metadata: { workspace_id: randomUUID() },
+						items: { data: [{ price: planPrice('price_team_dkk', 54900) }] },
+					},
+					previous_attributes: { items: { data: [{ price: { id: 'price_pro_dkk' } }] } },
+				},
+			},
+		)
+		expect(eventNames()).toContain('subscription_changed')
+		expect(eventNames()).not.toContain('subscription_started')
+		expect(eventProps('subscription_changed')).toMatchObject({
+			plan: 'team',
+			plan_before: 'pro',
+			monthly_amount_minor: 54900,
+		})
+	})
+
+	it('sends nothing extra on an update that changes neither plan nor price', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active', stripe_subscription_id: 'sub_c' },
+			{
+				type: 'customer.subscription.updated',
+				data: {
+					object: {
+						id: 'sub_c',
+						customer: 'cus_1',
+						status: 'active',
+						metadata: { workspace_id: randomUUID() },
+						items: { data: [{ price: planPrice('price_pro_dkk', 24900) }] },
+					},
+					previous_attributes: { cancel_at_period_end: true },
+				},
+			},
+		)
+		expect(eventNames().filter((n) => n.startsWith('subscription_'))).toEqual([])
+	})
+
+	it('sends subscription_started when an unpaid subscription goes live on an update', async () => {
+		await deliver(
+			{ plan: 'trial', status: 'active' },
+			{
+				type: 'customer.subscription.updated',
+				data: {
+					object: {
+						id: 'sub_late',
+						customer: 'cus_1',
+						status: 'active',
+						metadata: { workspace_id: randomUUID() },
+						items: { data: [{ price: planPrice('price_pro_dkk', 24900) }] },
+					},
+					previous_attributes: { status: 'incomplete' },
+				},
+			},
+		)
+		expect(eventNames()).toContain('subscription_started')
+	})
+
+	it('sends subscription_cancelled with the lost monthly value and Stripe reason, never the comment', async () => {
+		await deliver(
+			{ plan: 'team', status: 'active', stripe_subscription_id: 'sub_x' },
+			{
+				type: 'customer.subscription.deleted',
+				data: {
+					object: {
+						id: 'sub_x',
+						customer: 'cus_x',
+						status: 'canceled',
+						start_date: 1_700_000_000,
+						canceled_at: 1_700_000_000 + 40 * 86_400,
+						cancellation_details: { reason: 'cancellation_requested', comment: 'Too dear' },
+						metadata: { workspace_id: randomUUID() },
+						items: { data: [{ price: planPrice('price_team_dkk', 54900) }] },
+					},
+				},
+			},
+		)
+		const props = eventProps('subscription_cancelled')
+		expect(props).toMatchObject({
+			plan: 'team',
+			interval: 'month',
+			amount_minor: 54900,
+			monthly_amount_minor: 54900,
+			currency: 'dkk',
+			reason: 'cancellation_requested',
+			days_subscribed: 40,
+		})
+		expect(JSON.stringify(props)).not.toContain('Too dear')
+	})
+
+	it('sends renewal_paid for a recurring invoice with the amount paid', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active', stripe_subscription_id: 'sub_r' },
+			{
+				type: 'invoice.paid',
+				data: {
+					object: {
+						billing_reason: 'subscription_cycle',
+						amount_paid: 31125,
+						currency: 'dkk',
+						metadata: { workspace_id: randomUUID() },
+						lines: {
+							data: [{ proration: false, quantity: 1, price: planPrice('price_pro_dkk', 24900) }],
+						},
+					},
+				},
+			},
+		)
+		expect(eventProps('renewal_paid')).toMatchObject({
+			plan: 'pro',
+			interval: 'month',
+			amount_minor: 31125,
+			monthly_amount_minor: 24900,
+			currency: 'dkk',
+			livemode: false,
+		})
+	})
+
+	it('sends no renewal_paid for the first invoice of a subscription', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active' },
+			{
+				type: 'invoice.paid',
+				data: {
+					object: {
+						billing_reason: 'subscription_create',
+						amount_paid: 24900,
+						metadata: { workspace_id: randomUUID() },
+						lines: { data: [{ price: planPrice('price_pro_dkk', 24900) }] },
+					},
+				},
+			},
+		)
+		expect(eventNames()).not.toContain('renewal_paid')
+	})
+
+	it('tells a credit top-up from a subscription payment with kind, and carries workspace_id and livemode', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active', credit_balance_cents: 0 },
+			{
+				type: 'checkout.session.completed',
+				data: {
+					object: {
+						id: 'cs_topup',
+						mode: 'payment',
+						currency: 'usd',
+						amount_total: 5000,
+						livemode: true,
+						customer: 'cus_1',
+						client_reference_id: randomUUID(),
+						metadata: { kind: 'credit_topup', amount_usd_cents: '5000' },
+					},
+				},
+			},
+		)
+		expect(eventProps('checkout_session_completed')).toMatchObject({
+			kind: 'credit_topup',
+			livemode: true,
+			amount_total: 5000,
+			currency: 'usd',
+		})
+		expect(eventProps('checkout_session_completed')?.workspace_id).toEqual(expect.any(String))
+	})
+
+	it('sends refund_issued with only this refund, not the running total', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active' },
+			{
+				type: 'charge.refunded',
+				data: {
+					object: {
+						amount_refunded: 12000,
+						currency: 'dkk',
+						refunded: false,
+						invoice: 'in_1',
+						customer: 'cus_1',
+						metadata: { workspace_id: randomUUID() },
+					},
+					previous_attributes: { amount_refunded: 5000 },
+				},
+			},
+		)
+		expect(eventProps('refund_issued')).toMatchObject({
+			plan: 'pro',
+			interval: null,
+			amount_minor: 7000,
+			currency: 'dkk',
+			kind: 'subscription',
+			fully_refunded: false,
+			livemode: false,
+		})
+	})
+
+	it('acks a charge.refunded with nothing new refunded without an event', async () => {
+		await deliver(
+			{ plan: 'pro', status: 'active' },
+			{
+				type: 'charge.refunded',
+				data: {
+					object: {
+						amount_refunded: 5000,
+						currency: 'dkk',
+						refunded: false,
+						metadata: { workspace_id: randomUUID() },
+					},
+					previous_attributes: { amount_refunded: 5000 },
+				},
+			},
+		)
+		expect(eventNames()).not.toContain('refund_issued')
 	})
 })

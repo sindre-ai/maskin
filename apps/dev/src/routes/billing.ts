@@ -17,6 +17,8 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
+import { PLAN_BILLING_INTERVAL } from '../lib/analytics/billing-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { AUTO_TOP_UP_EVENT, autoTopUpClosedForPlans } from '../lib/auto-top-up'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { USAGE_BREAKDOWN_MAX_ROWS, readUsageBreakdown } from '../lib/billing-usage-breakdown'
@@ -591,6 +593,16 @@ app.openapi(checkoutRoute, async (c) => {
 			logger.error('Stripe checkout session missing url', { sessionId: session.id })
 			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
 		}
+		// The person is about to see Stripe's page. Started over completed is the checkout drop-off.
+		// Ids, the plan and the price only; `livemode` tells a test checkout from real money.
+		void capturePosthogEvent('checkout_started', c.get('actorId'), {
+			workspace_id: workspaceId,
+			plan,
+			interval: PLAN_BILLING_INTERVAL,
+			amount_minor: session.amount_total ?? null,
+			currency: session.currency ?? null,
+			livemode: session.livemode ?? null,
+		})
 		return c.json({ url: session.url, session_id: session.id }, 200)
 	} catch (err) {
 		logger.error('Stripe checkout session creation failed', {
