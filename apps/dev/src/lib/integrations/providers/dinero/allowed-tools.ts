@@ -1,26 +1,35 @@
 import type { IntegrationConfig } from '../../../types'
-import { DINERO_BRIDGE_TOOL_NAMES } from './bridge'
+import { DINERO_BRIDGE_BOOKING_TOOL_NAMES, DINERO_BRIDGE_DRAFT_TOOL_NAMES } from './bridge'
 
 /**
  * The only tools an agent may use on Dinero's hosted server (48 tools, read from the live list on
- * 23 Nov 2026). An exact-name list, not name rules: a tool Dinero adds later is refused until
- * someone lists it here. Everything that changes the books but is not on it stays refused for
- * every agent, Read & write included: book_finance_voucher, the invoice, credit note, trade offer and contact writes, the
- * draft deletes, attach_file_to_voucher_card and submit_feedback.
+ * 23 Nov 2026), plus the public API tools the gateway answers itself (./bridge.ts). An exact-name
+ * list, not name rules: a tool Dinero adds later is refused until someone lists it here.
+ * Everything that changes the books for good or reaches a customer but is not on it stays refused
+ * for every agent, Read & write included: book_finance_voucher, the trade offer tools and
+ * submit_feedback. BookVoucher, the payments and the emails sit behind the owner's booking switch
+ * (DINERO_WITH_BOOKING_TOOLS).
  *
- * CreatePurchaseVoucher has no argument that books, so naming it is enough: it saves a draft and
- * BookVoucher is a separate tool. upload_file puts a receipt in the archive, which does not touch
- * the books, and gives the fileGuid the draft attaches.
- *
- * CreateFinanceVoucher is on the list because it is the only way to save a draft on a group or
- * balance account, but its book argument books in the same call. The name is not enough: the
- * gateway checks the arguments (dineroCallRefusal in action-log.ts) and refuses it unless book is
- * false, or the owner's booking switch is on.
- *
- * get_report reads the Result, Balance or Saldo report for one whole accounting year.
+ * The list holds only what makes, edits or removes a draft, or reads:
+ * - CreatePurchaseVoucher has no argument that books, so naming it is enough: it saves a draft and
+ *   BookVoucher is a separate tool. upload_file puts a receipt in the archive, which does not touch
+ *   the books, and gives the fileGuid the draft attaches. attach_file_to_voucher_card puts a
+ *   receipt on an existing voucher card.
+ * - CreateFinanceVoucher is on the list because it is the only way to save a draft on a group or
+ *   balance account, but its book argument books in the same call. The name is not enough: the
+ *   gateway checks the arguments (dineroCallRefusal in action-log.ts) and refuses it unless book is
+ *   false, or the owner's booking switch is on. create_invoice and create_sales_credit_note get a
+ *   looser version of the same check (no book or send argument set to anything but false).
+ * - The four draft deletes only remove a draft: Dinero refuses a booked document, which is
+ *   corrected with a credit note or counter-posting. delete_finance_voucher_draft is the bridge's,
+ *   and reads the voucher first because Dinero's own delete of a booked one books an offset entry.
+ * - Contacts and products are not part of the books. Nothing here emails or sends to a customer.
+ * - get_report reads the Result, Balance or Saldo report for one whole accounting year;
+ *   list_posted_entries reads the posted entries for any range inside one year.
  *
  * The listing text (accounting-loop.ts) names the first 16, for the custom-server route that has
- * no argument check. CreateFinanceVoucher and get_report are not in it and must not be added to a custom server's list.
+ * no argument check. Everything after the first 16 must not be added to a custom server's list:
+ * several of them (CreateFinanceVoucher, create_invoice, create_sales_credit_note) need the check.
  */
 export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'CreatePurchaseVoucher',
@@ -41,6 +50,31 @@ export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'upload_file',
 	'CreateFinanceVoucher',
 	'get_report',
+	// Receipts: put a receipt on a voucher card, and find the inbox address receipts are mailed to.
+	'attach_file_to_voucher_card',
+	'GetInboxEmailAddresses',
+	// Sales drafts. create_invoice and create_sales_credit_note are argument-checked like
+	// CreateFinanceVoucher (dineroCallRefusal). The PDFs and get_invoice only read.
+	'create_invoice',
+	'create_sales_credit_note',
+	'get_invoice',
+	'get_invoice_pdf',
+	'get_sales_credit_note_pdf',
+	// Contacts and products.
+	'create_contact',
+	'update_contact',
+	'create_product',
+	'list_products',
+	// Customer and supplier position.
+	'get_state_of_account',
+	'get_state_of_account_pdf',
+	// Cleaning up its own mistakes: each deletes a draft only. Dinero refuses a booked document.
+	'delete_invoice_draft',
+	'delete_sales_credit_note_draft',
+	'delete_purchase_voucher_draft',
+	'delete_purchase_credit_note_draft',
+	// Public API tools the gateway answers itself (./bridge.ts): a read, a draft edit and a draft delete.
+	...DINERO_BRIDGE_DRAFT_TOOL_NAMES,
 ]
 
 /**
@@ -54,7 +88,7 @@ export const DINERO_WITH_BOOKING_TOOLS: readonly string[] = [
 	'BookVoucher',
 	'add_purchase_payment',
 	'add_invoice_payment',
-	...DINERO_BRIDGE_TOOL_NAMES,
+	...DINERO_BRIDGE_BOOKING_TOOL_NAMES,
 ]
 
 /**

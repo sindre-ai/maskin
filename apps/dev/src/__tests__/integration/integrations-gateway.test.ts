@@ -665,9 +665,10 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		for (const tool of [
 			'BookVoucher',
 			'book_finance_voucher',
-			'delete_purchase_voucher_draft',
-			'create_invoice',
-			'update_contact',
+			'send_trade_offer',
+			'create_trade_offer',
+			'generate_invoice_from_trade_offer',
+			'submit_feedback',
 			'add_purchase_payment',
 			'a_tool_dinero_adds_later',
 		]) {
@@ -746,6 +747,114 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
+	it('lets the rest of the draft tools through while booking is off', async () => {
+		const s = await dinero()
+		for (const tool of [
+			'attach_file_to_voucher_card',
+			'GetInboxEmailAddresses',
+			'get_invoice',
+			'get_invoice_pdf',
+			'get_sales_credit_note_pdf',
+			'create_contact',
+			'update_contact',
+			'create_product',
+			'list_products',
+			'get_state_of_account',
+			'delete_invoice_draft',
+			'delete_sales_credit_note_draft',
+			'delete_purchase_voucher_draft',
+			'delete_purchase_credit_note_draft',
+		]) {
+			fetchMock.mockClear()
+			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+			expect(result.isError).toBeUndefined()
+			expect(fetchMock).toHaveBeenCalledOnce()
+		}
+	})
+
+	it('saves an invoice or credit note as a draft only, and refuses a call that asks to book or send', async () => {
+		const s = await dinero()
+		const sales = (name: string, args: Record<string, unknown>) => ({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name, arguments: { organizationId: 1, ...args } },
+		})
+		for (const name of ['create_invoice', 'create_sales_credit_note']) {
+			for (const args of [
+				{ book: true },
+				{ autoBook: true },
+				{ sendEmail: true },
+				{ send: 'yes' },
+			]) {
+				const result = await toolText(await post(s.app, s.ws.id, sales(name, args), 'dinero'))
+				expect(result.isError).toBe(true)
+				expect(result.content[0].text).toContain('booking is off')
+			}
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+
+		for (const name of ['create_invoice', 'create_sales_credit_note']) {
+			const draft = await post(s.app, s.ws.id, sales(name, { contactGuid: 'c-1' }), 'dinero')
+			expect((await toolText(draft)).isError).toBeUndefined()
+		}
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('answers the public API draft tools itself while booking is off', async () => {
+		const s = await dinero()
+		const ORG = '11111111-2222-3333-4444-555555555555'
+		const VOUCHER = '99999999-8888-7777-6666-555555555555'
+		const bridgeCall = (name: string, args: Record<string, unknown>) => ({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name, arguments: { organizationId: ORG, ...args } },
+		})
+		fetchMock.mockResolvedValueOnce(new Response('[{"Amount":100}]', { status: 200 }))
+		const read = await toolText(
+			await post(
+				s.app,
+				s.ws.id,
+				bridgeCall('list_posted_entries', { fromDate: '2026-01-01', toDate: '2026-03-31' }),
+				'dinero',
+			),
+		)
+		expect(read.isError).toBe(false)
+		expect(read.content[0].text).toBe('[{"Amount":100}]')
+		expect((fetchMock.mock.calls[0] as [string])[0]).toContain(
+			`/v1/${ORG}/entries?fromDate=2026-01-01`,
+		)
+
+		fetchMock.mockClear()
+		fetchMock
+			.mockResolvedValueOnce(new Response('{"Status":"Booked","Timestamp":"t1"}', { status: 200 }))
+			.mockResolvedValueOnce(new Response('{"Status":"Draft","Timestamp":"t2"}', { status: 200 }))
+			.mockResolvedValueOnce(new Response('', { status: 200 }))
+		const booked = await toolText(
+			await post(
+				s.app,
+				s.ws.id,
+				bridgeCall('delete_finance_voucher_draft', { voucherGuid: VOUCHER }),
+				'dinero',
+			),
+		)
+		expect(booked.isError).toBe(true)
+		expect(fetchMock).toHaveBeenCalledOnce()
+
+		const draft = await toolText(
+			await post(
+				s.app,
+				s.ws.id,
+				bridgeCall('delete_finance_voucher_draft', { voucherGuid: VOUCHER }),
+				'dinero',
+			),
+		)
+		expect(draft.isError).toBe(false)
+		const methods = fetchMock.mock.calls.map((c) => (c[1] as { method: string }).method)
+		expect(methods).toEqual(['GET', 'GET', 'DELETE'])
+	})
+
 	it('leaves tools that are not allowed out of tools/list', async () => {
 		const s = await dinero()
 		fetchMock.mockResolvedValueOnce(
@@ -776,6 +885,9 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 			'CreatePurchaseVoucher',
 			'CreateFinanceVoucher',
 			'list_vouchers',
+			'list_posted_entries',
+			'update_purchase_voucher_draft',
+			'delete_finance_voucher_draft',
 		])
 	})
 })
@@ -915,8 +1027,15 @@ describe('Dinero booking is stamped and logged through the gateway (Integration)
 			'add_invoice_reminder',
 			'book_invoice_reminder',
 			'send_invoice_reminder_email',
+			'list_posted_entries',
+			'update_purchase_voucher_draft',
+			'delete_finance_voucher_draft',
 		])
-		expect(result.tools.slice(1).every((t) => t.annotations.readOnlyHint === false)).toBe(true)
+		const writes = result.tools.slice(1).filter((t) => t.name !== 'list_posted_entries')
+		expect(writes.every((t) => t.annotations.readOnlyHint === false)).toBe(true)
+		expect(
+			result.tools.find((t) => t.name === 'list_posted_entries')?.annotations.readOnlyHint,
+		).toBe(true)
 	})
 
 	it('refuses a bridge call with no version stamp, before Dinero', async () => {
@@ -933,6 +1052,41 @@ describe('Dinero booking is stamped and logged through the gateway (Integration)
 		expect(result.isError).toBe(true)
 		expect(result.content[0].text).toContain('needs the timestamp')
 		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('logs a draft delete done through the public API with booking off, and the read of entries not at all', async () => {
+		const s = await setup({ provider: 'dinero' })
+		const app = appFor(s.writer.id)
+		const VOUCHER = '99999999-8888-7777-6666-555555555555'
+		const bridgeCall = (name: string, args: Record<string, unknown>) => ({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name, arguments: { organizationId: ORG, ...args } },
+		})
+		fetchMock
+			.mockResolvedValueOnce(new Response('[]', { status: 200 }))
+			.mockResolvedValueOnce(new Response('{"Status":"Draft","Timestamp":"t2"}', { status: 200 }))
+			.mockResolvedValueOnce(new Response('', { status: 200 }))
+		await post(
+			app,
+			s.ws.id,
+			bridgeCall('list_posted_entries', { fromDate: '2026-01-01', toDate: '2026-01-31' }),
+			'dinero',
+		)
+		await post(
+			app,
+			s.ws.id,
+			bridgeCall('delete_finance_voucher_draft', { voucherGuid: VOUCHER }),
+			'dinero',
+		)
+		const rows = await logged(s.linear.id)
+		expect(rows).toHaveLength(1)
+		expect(rows[0].data).toMatchObject({
+			tool: 'delete_finance_voucher_draft',
+			outcome: 'success',
+			booking_switch: false,
+		})
 	})
 
 	it('logs a draft save and a booking with the arguments and the answer, and a read not at all', async () => {
