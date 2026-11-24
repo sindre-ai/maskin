@@ -69,12 +69,15 @@ export interface StartSignupWelcomeChatInput {
  * in conversation-responder.ts). The welcome carries no `mentions` and no session, so
  * it raises no notification and no For You card.
  *
+ * Returns the welcome message id so the caller can anchor the Researcher's first-pass session
+ * to it: that anchor is what draws the handed-off agent card under the welcome.
+ *
  * Best effort: the sign-up has already committed, so a missing Chief of Staff or a
  * failure here is logged and returns null, and the caller falls back to New Chat.
  */
 export async function startSignupWelcomeChat(
 	input: StartSignupWelcomeChatInput,
-): Promise<{ conversationId: string } | null> {
+): Promise<{ conversationId: string; welcomeMessageId: number } | null> {
 	const { db, workspaceId, humanActorId, knowledgeObjectId, metadata } = input
 
 	const chiefOfStaffId = await resolveAgentIdByName(db, workspaceId, CHIEF_OF_STAFF_NAME)
@@ -142,5 +145,5 @@ export async function startSignupWelcomeChat(
 	})
 	if (!welcome) throw new Error('Failed to post signup welcome message')
 
-	return { conversationId: conversation.id }
+	return { conversationId: conversation.id, welcomeMessageId: welcome.id }
 }
