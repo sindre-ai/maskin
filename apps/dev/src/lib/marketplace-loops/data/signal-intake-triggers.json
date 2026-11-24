@@ -1,0 +1,50 @@
+{
+	"9b980494-77e4-4058-a571-1135352d60cd": {
+		"id": "9b980494-77e4-4058-a571-1135352d60cd",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Community sweep (Mon, Wed, Fri 22:15 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "15 22 * * 1,3,5"
+		},
+		"actionPrompt": "Run the community sweep for the flow named Signal Intake Flow (find it with list_loops) for the last 24 hours across the topics on the Listening topics page. Read public discussion sites, launch sites with their comments, and public professional posts. Dedupe across all tags first. File one note per notable idea. Post one summary comment grouped by lane with DEMAND, PAIN, SENTIMENT and LAUNCH AND REACTION. State which sources were read and which failed.",
+		"targetActorId": "24a7ebfe-6054-4c73-8ba7-53e34b5881d9",
+		"enabled": true
+	},
+	"ce4b4120-e50b-456a-8ea7-3340eb94ebbe": {
+		"id": "ce4b4120-e50b-456a-8ea7-3340eb94ebbe",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Influencer sweep (Mon, Wed, Fri 22:30 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "30 22 * * 1,3,5"
+		},
+		"actionPrompt": "Run the influencer sweep for the flow named Signal Intake Flow (find it with list_loops). Build the set from the rows with status watched on the Watchlist page (do not rely on flow membership). For each, read the last 24 to 48 hours of public output via the handle or link filled in. File one note per notable distinct idea, linked to the Watchlist page. One summary comment grouped by theme. Silence when nothing is notable.",
+		"targetActorId": "24a7ebfe-6054-4c73-8ba7-53e34b5881d9",
+		"enabled": true
+	},
+	"39aaffcd-a75c-4f50-bbaa-0b571eacbdb1": {
+		"id": "39aaffcd-a75c-4f50-bbaa-0b571eacbdb1",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Weekly open-source sweep (Mon 09:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 9 * * 1"
+		},
+		"actionPrompt": "Run the weekly open-source sweep for the flow named Signal Intake Flow (find it with list_loops). Sweep what is trending this week in the topics' languages, star-velocity movers, releases from the repos listed on the Listening topics page, and awesome-list changes. Read enough to have a take (readme plus a skim). One note per notable find, tagged oss-radar plus sub-tag. One summary comment grouped by Product inspiration, Harness upgrade, Trend signal, Competitor-adjacent.",
+		"targetActorId": "24a7ebfe-6054-4c73-8ba7-53e34b5881d9",
+		"enabled": true
+	},
+	"f2f50fdd-75a1-4bcf-8d1a-e836c56a9a95": {
+		"id": "f2f50fdd-75a1-4bcf-8d1a-e836c56a9a95",
+		"workspaceId": "00000000-0000-0000-0000-000000000000",
+		"name": "Monthly watchlist check (1st, 04:00 UTC)",
+		"type": "cron",
+		"config": {
+			"expression": "0 4 1 * *"
+		},
+		"actionPrompt": "Run the monthly watchlist check for the flow named Signal Intake Flow (find it with list_loops). Re-derive the watchlist on the Watchlist page, find rising voices to add and accounts that went quiet. One comment with two sections, ADD and DROP, one line and one reason each. Apply changes only after a person confirms.",
+		"targetActorId": "24a7ebfe-6054-4c73-8ba7-53e34b5881d9",
+		"enabled": true
+	}
+}

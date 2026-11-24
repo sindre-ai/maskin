@@ -124,6 +124,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		'knowledge-wiki-loop',
 		'product-usage-loop',
 		'accounting-loop',
+		'signal-intake-flow',
 	] as const
 
 	for (const slug of BUNDLE_SLUGS) {
@@ -222,5 +223,45 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		expect(fold?.actionPrompt).toContain('list_loops')
 		expect(fold?.actionPrompt).toContain('in_loop')
 		for (const row of rows) expect(row.actionPrompt).toContain(flow?.title)
+	})
+
+	// Every sweep trigger finds the flow by its name, and the first sweep files a note into it with an
+	// in_loop edge. The install must carry that name and wire all four triggers to the one agent.
+	it('installs the signal-intake-flow flow under the name its triggers look it up by', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'signal-intake-flow')
+		if (!loop) throw new Error('seeded loop signal-intake-flow not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as {
+			objectId: string | null
+			provisioned: { actors: number; triggers: number }
+		}
+		expect(body.provisioned).toMatchObject({ actors: 1, triggers: 4 })
+		const [flow] = await db
+			.select({ title: objects.title, type: objects.type, metadata: objects.metadata })
+			.from(objects)
+			.where(eq(objects.id, body.objectId as string))
+		expect(flow?.type).toBe('loop')
+		expect(flow?.title).toBe('Signal Intake Flow')
+
+		const meta = flow?.metadata as { trigger_ids: string[] }
+		const rows = await db
+			.select({ name: triggers.name, actionPrompt: triggers.actionPrompt })
+			.from(triggers)
+			.where(inArray(triggers.id, meta.trigger_ids))
+		expect(rows).toHaveLength(4)
+		for (const row of rows) {
+			expect(row.actionPrompt).toContain(flow?.title)
+			expect(row.actionPrompt).toContain('list_loops')
+		}
 	})
 })

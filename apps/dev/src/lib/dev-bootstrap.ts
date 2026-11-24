@@ -73,6 +73,12 @@ import {
 	PRODUCT_USAGE_TRIGGER_IDS,
 	PRODUCT_USAGE_VIEW_IDS,
 } from './marketplace-loops/product-usage-loop'
+import {
+	SIGNAL_INTAKE_ACTOR_IDS,
+	SIGNAL_INTAKE_LOOP,
+	SIGNAL_INTAKE_SKILL_IDS,
+	SIGNAL_INTAKE_TRIGGER_IDS,
+} from './marketplace-loops/signal-intake-loop'
 import { viewSnapshot } from './marketplace-loops/view-snapshot'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
@@ -128,6 +134,12 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		skillIds: PRODUCT_USAGE_SKILL_IDS,
 		viewIds: PRODUCT_USAGE_VIEW_IDS,
 	},
+	{
+		loop: SIGNAL_INTAKE_LOOP,
+		actorIds: SIGNAL_INTAKE_ACTOR_IDS,
+		triggerIds: SIGNAL_INTAKE_TRIGGER_IDS,
+		skillIds: SIGNAL_INTAKE_SKILL_IDS,
+	},
 ]
 
 export interface MarketplaceSyncResult {
@@ -140,7 +152,7 @@ export interface MarketplaceSyncResult {
 
 /**
  * Syncs the global marketplace with the installable Loop bundles (Product
- * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
+ * Discovery, Competitor watch, Meeting Loop, Product release, Customer voice, Knowledge Wiki, Product Usage, Signal Intake), upserting by slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
  * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
