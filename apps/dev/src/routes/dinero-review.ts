@@ -11,6 +11,11 @@ import {
 } from '../lib/integrations/providers/dinero/action-log'
 import { DINERO_PROVIDER } from '../lib/integrations/providers/dinero/config'
 import {
+	FILING_FIGURES_CHANGED_MESSAGE,
+	FILING_NOT_APPROVED_MESSAGE,
+	buildFilingHandoff,
+} from '../lib/integrations/providers/dinero/filing-handoff'
+import {
 	approvalSubject,
 	callDineroAsOwner,
 	counterPostingArguments,
@@ -460,5 +465,116 @@ app.openapi(approveRoute, (async (c) => {
 	})
 	return c.json(await buildLog(db, workspaceId, row.id, { from: body.from, to: body.to }), 200)
 }) as RouteHandler<typeof approveRoute, Env>)
+
+const handoffSchema = z.object({
+	from: z.string(),
+	to: z.string(),
+	approved_by: z.string().uuid(),
+	approved_at: z.string(),
+	figures_hash: z.string(),
+	figures: z.array(
+		z.object({
+			vat_code: z.string().nullable(),
+			lines: z.number(),
+			amount_incl_vat: z.number(),
+		}),
+	),
+	figures_note: z.string(),
+	steps: z.array(z.string()),
+	year_end_steps: z.array(z.string()),
+	notice: z.string(),
+})
+
+const handoffRoute = createRoute({
+	method: 'post',
+	path: '/filing-handoff',
+	'x-viewer-policy': 'writer',
+	tags: ['integrations'],
+	summary:
+		'The filing hand-off for an approved period: figures and steps for filing in Dinero (a person)',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ from: dateString, to: dateString }).strict(),
+				},
+			},
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'The hand-off',
+			content: { 'application/json': { schema: handoffSchema } },
+		},
+		...errorResponses,
+	},
+})
+
+// The lock: no hand-off exists for a period the owner has not approved, and none for a log that
+// moved after the approval. It reads the approval record (lib/owner-approval.ts) and nothing else
+// decides. It never calls Dinero's filing, SKAT or Erhvervsstyrelsen, and never says "filed".
+app.openapi(handoffRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	if (
+		!(await requireOwnerPerson(
+			db,
+			{
+				actorId: c.get('actorId'),
+				actorType: c.get('actorType'),
+				workspaceRole: c.get('workspaceRole'),
+			},
+			workspaceId,
+		))
+	) {
+		return c.json(createApiError('FORBIDDEN', FORBIDDEN_TEXT), 403)
+	}
+	const body = c.req.valid('json')
+	if (body.from > body.to) return c.json(createApiError('BAD_REQUEST', 'from is after to'), 400)
+	const row = await loadDinero(db, workspaceId)
+	if (!row) return c.json(createApiError('NOT_FOUND', 'Dinero is not connected'), 404)
+
+	const approval = await findPeriodApproval(db, {
+		workspaceId,
+		integrationId: row.id,
+		from: body.from,
+		to: body.to,
+	})
+	if (!approval) {
+		return c.json(createApiError('CONFLICT', FILING_NOT_APPROVED_MESSAGE), 409)
+	}
+	const view = await buildLog(db, workspaceId, row.id, { from: body.from, to: body.to })
+	if (view.figures_hash !== approval.figuresHash) {
+		return c.json(createApiError('CONFLICT', FILING_FIGURES_CHANGED_MESSAGE), 409)
+	}
+	const handoff = buildFilingHandoff({
+		from: body.from,
+		to: body.to,
+		items: view.items,
+		approvedBy: approval.approvedBy,
+		approvedAt: approval.approvedAt,
+		figuresHash: approval.figuresHash,
+	})
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'dinero_filing_handoff',
+		entityType: 'integration',
+		entityId: row.id,
+		data: {
+			from: body.from,
+			to: body.to,
+			approval_id: approval.id,
+			approved_by: approval.approvedBy,
+			approved_at: approval.approvedAt.toISOString(),
+			figures_hash: approval.figuresHash,
+			produced_for: actorId,
+		},
+	})
+	return c.json(handoff, 200)
+}) as RouteHandler<typeof handoffRoute, Env>)
 
 export default app
