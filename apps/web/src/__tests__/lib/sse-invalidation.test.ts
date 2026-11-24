@@ -114,9 +114,15 @@ describe('invalidateFromSSE', () => {
 		expect(qc.invalidateQueries).toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.detail(entityId),
 		})
-		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+		// Graphs trail one window instead of refetching per event.
+		expect(qc.invalidateQueries).not.toHaveBeenCalledWith({
 			queryKey: queryKeys.objects.graph(entityId),
 		})
+		vi.advanceTimersByTime(5_000)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith(
+			expect.objectContaining({ queryKey: ['objects', 'graph'] }),
+			{ cancelRefetch: false },
+		)
 		expect(qc.invalidateQueries).not.toHaveBeenCalledWith({
 			queryKey: queryKeys.bets.all(workspaceId),
 		})
@@ -426,11 +432,27 @@ describe('invalidateFromSSE session batching', () => {
 		expect(invalidated(keys.detail)).toBe(true)
 		expect(invalidated(keys.logs)).toBe(true)
 		expect(invalidated(keys.byActor)).toBe(true)
-		expect(invalidated(keys.byConversation)).toBe(true)
 		// The coalesced lists and billing wait / are skipped.
+		expect(invalidated(keys.byConversation)).toBe(false)
 		expect(invalidated(keys.list)).toBe(false)
 		expect(invalidated(keys.stats)).toBe(false)
 		expect(invalidated(keys.billing)).toBe(false)
+	})
+
+	it('refetches the per-chat session lists once per window for routine updates', () => {
+		const { qc, keys, invalidated } = seededClient()
+		for (let i = 0; i < 25; i++) invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated'))
+		expect(invalidated(keys.byConversation)).toBe(false)
+		vi.advanceTimersByTime(5_000)
+		expect(invalidated(keys.byConversation)).toBe(true)
+	})
+
+	it('refreshes the per-chat session lists at once when a session ends or starts', () => {
+		for (const action of ['session_completed', 'session_failed', 'session_started']) {
+			const { qc, keys, invalidated } = seededClient()
+			invalidateFromSSE(qc, workspaceId, sessionEvent(action))
+			expect(invalidated(keys.byConversation), action).toBe(true)
+		}
 	})
 
 	it('leaves another session’s detail and logs alone', () => {
@@ -745,7 +767,7 @@ describe('invalidateFromSSE request counts for a burst of events', () => {
 		expect(lists.unreadChats.n).toBe(1)
 	})
 
-	it('a session event refetches only the chat whose strip carries it, at once', async () => {
+	it('a routine session update refetches only the chat whose strip carries it, once per window', async () => {
 		const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } })
 		const lists = await mountAll(qc)
 
@@ -760,6 +782,24 @@ describe('invalidateFromSSE request counts for a burst of events', () => {
 			id: 'e-1',
 			action: 'session.state_changed',
 			session_id: 'sess-open',
+		} as never)
+		await vi.advanceTimersByTimeAsync(0)
+		expect(lists.openChat.n).toBe(0)
+
+		await vi.advanceTimersByTimeAsync(WINDOW_MS)
+		expect(lists.openChat.n).toBe(1)
+		expect(lists.otherChat.n).toBe(0)
+	})
+
+	it('a session ending refetches the chat whose strip carries it at once', async () => {
+		const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } })
+		const lists = await mountAll(qc)
+
+		invalidateFromSSE(qc, workspaceId, {
+			id: 'e-2',
+			entity_type: 'session',
+			entity_id: 'sess-open',
+			action: 'session_completed',
 		} as never)
 		await vi.advanceTimersByTimeAsync(0)
 
