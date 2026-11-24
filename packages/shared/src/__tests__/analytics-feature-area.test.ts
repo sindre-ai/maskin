@@ -32,6 +32,11 @@ describe('featureAreaForEvent', () => {
 		['voice_session_started', 'voice'],
 		['checkout_session_completed', 'billing'],
 		['trial_started', 'billing'],
+		['trial_converted', 'billing'],
+		['subscription_started', 'billing'],
+		['subscription_cancelled', 'billing'],
+		['renewal_paid', 'billing'],
+		['refund_issued', 'billing'],
 		['trial_card_rejected_duplicate', 'billing'],
 		['workspace_member_joined', 'settings'],
 	])('puts %s in %s', (event, area) => {

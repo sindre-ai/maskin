@@ -3,6 +3,12 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 describe('TypeBadge', () => {
+	it('says flow for the stored loop type', () => {
+		render(<TypeBadge type="loop" variant="mono" />)
+		expect(screen.getByText('flow')).toBeInTheDocument()
+		expect(screen.queryByText('loop')).not.toBeInTheDocument()
+	})
+
 	it('renders type text', () => {
 		render(<TypeBadge type="insight" />)
 		expect(screen.getByText('insight')).toBeInTheDocument()

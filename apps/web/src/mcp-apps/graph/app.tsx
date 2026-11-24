@@ -1,5 +1,6 @@
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useToolResult } from '../shared/mcp-app-provider'
 import { renderMcpApp } from '../shared/render'
 import { useWebAppHref } from '../shared/web-app-link'
@@ -98,7 +99,7 @@ function GraphEdgeRow({ edge }: { edge: GraphEdge }) {
 				{edge.source.slice(0, 8)}
 			</span>
 			<span className="text-accent-foreground font-medium text-xs">
-				{edge.type.replace(/_/g, ' ')}
+				{relationshipTypeLabel(edge.type)}
 			</span>
 			<span className="text-muted-foreground">→</span>
 			<span className="text-muted-foreground font-mono text-xs truncate max-w-24">

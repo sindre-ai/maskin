@@ -1,5 +1,6 @@
 import { useCanWrite } from '@/hooks/use-can-write'
 import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
 import { useMemo } from 'react'
@@ -66,7 +67,7 @@ export function RelationshipsTable({
 			{grouped.map(({ type, rows }) => (
 				<section key={type}>
 					<h4 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1">
-						{type.replace(/_/g, ' ')}
+						{relationshipTypeLabel(type)}
 						<span className="ml-1 text-muted-foreground/70 normal-case">({rows.length})</span>
 					</h4>
 					<div className="rounded border border-border divide-y divide-border">

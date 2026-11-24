@@ -6,6 +6,7 @@ import {
 	defaultTypeColor,
 	getStatusColor,
 	getTypeColor,
+	relationshipTypeLabel,
 	statusColors,
 	statusStage,
 	typeColors,
@@ -97,5 +98,15 @@ describe('statusStage', () => {
 	it('keeps flow statuses on the plain ring', () => {
 		expect(statusStage('supervised')).toBe('unknown')
 		expect(statusStage('pilot')).toBe('unknown')
+	})
+})
+
+describe('relationshipTypeLabel', () => {
+	it('turns underscores into spaces', () => {
+		expect(relationshipTypeLabel('breaks_into')).toBe('breaks into')
+	})
+
+	it('says flow where the stored type says loop', () => {
+		expect(relationshipTypeLabel('in_loop')).toBe('in flow')
 	})
 })

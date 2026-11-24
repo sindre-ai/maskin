@@ -1,5 +1,6 @@
 import { test as base, expect } from '@playwright/test'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
+import { uninstallSeededFlows } from '../helpers/seed.helper'
 
 interface TestAccount {
 	apiKey: string
@@ -34,6 +35,8 @@ export const test = base.extend<AuthFixtures>({
 		if (!workspace) {
 			throw new Error('No workspace found after actor creation')
 		}
+
+		await uninstallSeededFlows(api, workspace.id)
 
 		// Inject auth into localStorage before any page navigation.
 		await page.addInitScript(

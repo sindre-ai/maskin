@@ -20,6 +20,10 @@ export function TypeBadge({
 	/** `tile` only: 30px in card headers, 38px in list rows and detail headers. */
 	size?: 'sm' | 'lg'
 }) {
+	// The stored type value is loop; people read Flow.
+	const typeName = type === 'loop' ? 'flow' : type
+	const name = label ?? typeName
+
 	// The smallest form the type takes: a solid dot in the type's own colour,
 	// for places that need the type present but not read — a citation chip
 	// where the object's name is the content and the type is only a category
@@ -43,8 +47,8 @@ export function TypeBadge({
 		return (
 			<span
 				role="img"
-				title={label ?? type}
-				aria-label={label ?? type}
+				title={name}
+				aria-label={name}
 				className={cn('grid size-4 shrink-0 place-items-center text-muted-foreground', className)}
 			>
 				<Icon aria-hidden="true" className="size-[15px]" />
@@ -65,7 +69,7 @@ export function TypeBadge({
 		return (
 			<span
 				aria-hidden="true"
-				title={type}
+				title={typeName}
 				className={cn(
 					'grid shrink-0 place-items-center rounded-lg',
 					size === 'lg' ? 'size-[38px]' : 'size-[30px]',
@@ -83,7 +87,7 @@ export function TypeBadge({
 							size === 'lg' ? 'text-[15px]' : 'text-[12px]',
 						)}
 					>
-						{type.charAt(0).toUpperCase()}
+						{typeName.charAt(0).toUpperCase()}
 					</span>
 				)}
 			</span>
@@ -99,14 +103,14 @@ export function TypeBadge({
 	if (variant === 'pill') {
 		return (
 			<span
-				title={label ?? type}
+				title={name}
 				className={cn(
 					'inline-block w-22 shrink-0 truncate rounded-[5px] bg-muted px-2 py-0.5 text-center',
 					'text-[10.5px] font-semibold text-muted-foreground/70',
 					className,
 				)}
 			>
-				{label ?? type}
+				{name}
 			</span>
 		)
 	}
@@ -121,13 +125,13 @@ export function TypeBadge({
 					className,
 				)}
 			>
-				{type}
+				{name}
 			</span>
 		)
 	}
 	return (
 		<Badge variant="ghost" className={cn('font-medium', className)}>
-			{type}
+			{name}
 		</Badge>
 	)
 }

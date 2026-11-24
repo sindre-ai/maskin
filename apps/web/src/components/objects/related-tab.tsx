@@ -12,6 +12,7 @@ import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relati
 import type { ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor, getTypeColor, statusLabel } from '@/lib/constants'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
 import { X } from 'lucide-react'
@@ -107,7 +108,7 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 					<div key={group.type}>
 						<div className="mb-[7px] flex items-baseline gap-[7px]">
 							<span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
-								{group.type.replace(/_/g, ' ')}
+								{relationshipTypeLabel(group.type)}
 							</span>
 							<span className="text-[10.5px] font-semibold tabular-nums text-border-strong">
 								{group.rows.length}
@@ -262,7 +263,7 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 						>
 							<ViewerTooltip className="flex">
 								<CTA
-									aria-label={`Link an item as ${group.type.replace(/_/g, ' ')}`}
+									aria-label={`Link an item as ${relationshipTypeLabel(group.type)}`}
 									disabled={!canWrite}
 									onClick={() =>
 										setPickerOpenForType((prev) => (prev === group.type ? null : group.type))
@@ -273,7 +274,7 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 							</ViewerTooltip>
 							<ViewerTooltip className="flex">
 								<CTA
-									aria-label={`Upload a file as ${group.type.replace(/_/g, ' ')}`}
+									aria-label={`Upload a file as ${relationshipTypeLabel(group.type)}`}
 									onClick={() => fileInputRef.current?.click()}
 									disabled={isUploading || !canWrite}
 								>
