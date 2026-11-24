@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.0.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.0.1')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -37,6 +37,26 @@ describe('Accounting loop definition', () => {
 		expect(settings.closeCondition).toMatch(/draft voucher/)
 		expect(settings.tags).toEqual(['Finance'])
 		expect(settings.targets).toBeUndefined()
+	})
+
+	it('ships a setup checklist of seven children, driven by the Bookkeeper', () => {
+		const settings = loopSettingsSchema.parse(ACCOUNTING_LOOP.settings)
+		expect(settings.checklist?.title).toBe('Accounting setup checklist')
+		expect(settings.checklist?.driverSourceItemId).toBe(ACCOUNTING_LOOP_ACTOR_BOOKKEEPER)
+		const items = settings.checklist?.items ?? []
+		expect(items.map((i) => i.title)).toEqual([
+			'Connect Dinero as a custom tool',
+			'Run the first connection check',
+			'Say which Dinero plan you have',
+			'Upload one test receipt',
+			'Name the adviser',
+			'Confirm the financial year end',
+			'Confirm the VAT period',
+		])
+		for (const item of [{ title: settings.checklist?.title ?? '' }, ...items]) {
+			expect(item.title.split(' ').length).toBeLessThanOrEqual(8)
+		}
+		expect(settings.checklist?.body).toContain('at most 3 questions at a time')
 	})
 
 	it('ships one actor, one trigger and two skills, no duplicates', () => {
@@ -60,6 +80,36 @@ describe('Accounting loop definition', () => {
 			expect(attached.length).toBeGreaterThan(0)
 			for (const actorId of attached) expect(actorIds.has(actorId)).toBe(true)
 		}
+	})
+
+	// The one trigger is the daily check: it reads the checklist every day and keeps the connection
+	// check to Mondays, so no second trigger is needed and the checklist never waits more than a day.
+	it('runs the daily check, reading the checklist first and the connection check on Mondays', () => {
+		const [id] = ACCOUNTING_LOOP_TRIGGER_IDS
+		const trigger = getTriggerData(id as string)
+		expect(trigger.name).toBe('Daily check (06:00 UTC)')
+		expect(trigger.config).toMatchObject({ expression: '0 6 * * *' })
+		const prompt = trigger.actionPrompt ?? ''
+		expect(prompt).toMatch(/^First read the flow's setup checklist/)
+		expect(prompt).toContain('Accounting setup checklist')
+		expect(prompt).toContain('at most 3 questions at a time')
+		expect(prompt).toContain('only when every child task is done or discarded')
+		expect(prompt).toContain('report it once')
+		expect(prompt).toContain('only if today is Monday (UTC)')
+		expect(prompt).toContain('On any other day you are done: stay silent.')
+		expect(prompt.indexOf('Accounting setup checklist')).toBeLessThan(
+			prompt.indexOf('only if today is Monday (UTC)'),
+		)
+		expect(prompt.indexOf('only if today is Monday (UTC)')).toBeLessThan(
+			prompt.indexOf('weekly connection check'),
+		)
+	})
+
+	it('tells the Bookkeeper about its checklist and the three-question limit', () => {
+		const prompt = actorTexts().join('\n')
+		expect(prompt).toContain('# Setup checklist')
+		expect(prompt).toContain('Accounting setup checklist')
+		expect(prompt).toMatch(/at most 3 questions at a time/)
 	})
 
 	it('names the flow Accounting in the trigger prompt', () => {
@@ -164,6 +214,9 @@ describe('Accounting loop definition', () => {
 			ACCOUNTING_LOOP.description,
 			ACCOUNTING_LOOP.settings.entryCondition,
 			ACCOUNTING_LOOP.settings.closeCondition,
+			ACCOUNTING_LOOP.settings.checklist?.title,
+			ACCOUNTING_LOOP.settings.checklist?.body,
+			...(ACCOUNTING_LOOP.settings.checklist?.items ?? []).map((i) => `${i.title} ${i.body}`),
 			...actorTexts(),
 			...triggerTexts(),
 			...skillTexts(),
@@ -177,7 +230,13 @@ describe('Accounting loop definition', () => {
 	})
 
 	it('says flow, not loop, in the text a person reads', () => {
-		const texts = [ACCOUNTING_LOOP.description, ...actorTexts(), ...triggerTexts(), ...skillTexts()]
+		const texts = [
+			ACCOUNTING_LOOP.description,
+			...(ACCOUNTING_LOOP.settings.checklist?.items ?? []).map((i) => `${i.title} ${i.body}`),
+			...actorTexts(),
+			...triggerTexts(),
+			...skillTexts(),
+		]
 		for (const text of texts) expect(text).not.toMatch(/\b[Ll]oops?\b/)
 	})
 })
