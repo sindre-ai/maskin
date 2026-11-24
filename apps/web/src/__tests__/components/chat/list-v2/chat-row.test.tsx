@@ -90,9 +90,9 @@ describe('ChatRow', () => {
 		expect(screen.getByText(copy)).toBeInTheDocument()
 	})
 
-	it('marks needs you with the amber dot and keeps the question as the preview', () => {
+	it('shows no Needs you marker, whatever the server says, and keeps the preview', () => {
 		renderRow(chat({ needs_you: true }))
-		expect(screen.getByRole('img', { name: 'Needs you' })).toBeInTheDocument()
+		expect(screen.queryByRole('img', { name: 'Needs you' })).not.toBeInTheDocument()
 		expect(screen.getByText('Can you approve the retry window?')).toBeInTheDocument()
 	})
 

@@ -35,10 +35,11 @@ private func ids(_ groups: [ChatListGroup]) -> [[String]] { groups.map { $0.item
 
 @Suite("Chat list markers")
 struct ChatListMarkerTests {
-	@Test("one marker per row, in the order error, needs you, working")
+	@Test("one marker per row, in the order error, working, and none for the needs_you flag")
 	func order() {
 		#expect(chat("a", needsYou: true, working: true, stop: .usageLimit).previewMarker == .error(.usageLimit))
-		#expect(chat("b", needsYou: true, working: true).previewMarker == .needsYou)
+		#expect(chat("b", needsYou: true, working: true).previewMarker == .working)
+		#expect(chat("b2", needsYou: true).previewMarker == nil)
 		#expect(chat("c", working: true).previewMarker == .working)
 		#expect(chat("d", unread: 3).previewMarker == nil)
 	}
@@ -61,7 +62,7 @@ struct ChatListMarkerTests {
 	@Test("the tracked marker is the preview marker, else later, else unread, else none")
 	func tracked() {
 		#expect(ChatListTracking.marker(of: chat("a", stop: .other)) == .error)
-		#expect(ChatListTracking.marker(of: chat("b", needsYou: true)) == .needsYou)
+		#expect(ChatListTracking.marker(of: chat("b", needsYou: true)) == .none)
 		#expect(ChatListTracking.marker(of: chat("c", working: true)) == .working)
 		#expect(ChatListTracking.marker(of: chat("d", unread: 1, later: true)) == .later)
 		#expect(ChatListTracking.marker(of: chat("e", unread: 1)) == .unread)
@@ -76,11 +77,10 @@ struct ChatListPillTests {
 		chat("unread", unread: 2), chat("later", unread: 1, needsYou: true, later: true), chat("plain"),
 	]
 
-	@Test("a stopped chat counts under Needs you, a Later chat only under Later")
+	@Test("a Later chat is only under Later, and the needs_you flag puts no chat in a pill")
 	func filters() {
 		func pick(_ f: ChatListFilter) -> [String] { rows.filter { f.includes($0) }.map { $0.id } }
 		#expect(pick(.all) == ["wait", "stopped", "run", "unread", "plain"])
-		#expect(pick(.needsYou) == ["wait", "stopped"])
 		#expect(pick(.unread) == ["unread"])
 		#expect(pick(.working) == ["run"])
 		#expect(pick(.later) == ["later"])
@@ -89,7 +89,6 @@ struct ChatListPillTests {
 	@Test("counts exclude All and follow the same rules")
 	func counts() {
 		let counts = ChatListLayout.counts(rows)
-		#expect(counts[.needsYou] == 2)
 		#expect(counts[.unread] == 1)
 		#expect(counts[.working] == 1)
 		#expect(counts[.later] == 1)
@@ -98,8 +97,7 @@ struct ChatListPillTests {
 
 	@Test("the pills and their empty copy are the addendum's")
 	func copy() {
-		#expect(ChatListFilter.allCases.map(\.label) == ["All", "Needs you", "Unread", "Working", "Later"])
-		#expect(ChatListFilter.needsYou.emptyText == "Nothing waits on you.")
+		#expect(ChatListFilter.allCases.map(\.label) == ["All", "Unread", "Working", "Later"])
 		#expect(ChatListFilter.unread.emptyText == "You are all caught up.")
 		#expect(ChatListFilter.working.emptyText == "No agent is working right now.")
 		#expect(ChatListFilter.all.emptyText == "No chats yet. Start one with an agent.")
@@ -131,7 +129,7 @@ struct ChatListGroupTests {
 		#expect(result.map(\.section) == [.pinned, .today, .earlier])
 	}
 
-	@Test("by status: stopped chats lead Needs you, and no chat shows twice")
+	@Test("by status: no Needs you group, a stopped chat sits in Earlier, and no chat shows twice")
 	func status() {
 		let rows = [
 			chat("ask", hours: 1, needsYou: true), chat("err", hours: 3, stop: .usageLimit),
@@ -140,8 +138,8 @@ struct ChatListGroupTests {
 			chat("later", hours: 1, later: true),
 		]
 		let result = groups(rows, .status)
-		#expect(result.map(\.label) == ["Pinned", "Needs you", "Working", "Unread", "Earlier"])
-		#expect(ids(result) == [["pin"], ["err", "ask"], ["run"], ["unread"], ["quiet"]])
+		#expect(result.map(\.label) == ["Pinned", "Working", "Unread", "Earlier"])
+		#expect(ids(result) == [["pin"], ["run"], ["unread"], ["ask", "err", "quiet"]])
 		#expect(result.flatMap(\.items).count == Set(result.flatMap(\.items).map(\.id)).count)
 	}
 
@@ -189,7 +187,7 @@ struct ChatListGroupTests {
 	@Test("the pill narrows the list before it is grouped")
 	func pill() {
 		let rows = [chat("ask", needsYou: true), chat("quiet"), chat("later", later: true)]
-		#expect(ids(groups(rows, .date, filter: .needsYou)) == [["ask"]])
+		#expect(groups(rows, .date, filter: .unread).isEmpty)
 		#expect(ids(groups(rows, .date, filter: .later)) == [["later"]])
 		#expect(groups(rows, .date, filter: .working).isEmpty)
 	}
@@ -246,16 +244,16 @@ struct ChatListEventTests {
 
 		analytics.chatOpenedFromList(
 			.init(
-				source: .list, section: .needsYou, position: 2, marker: .error, filter: .needsYou,
+				source: .list, section: .earlier, position: 2, marker: .error, filter: .unread,
 				groupBy: .status))
 		analytics.chatRowAction(.retry, via: .swipe)
 		analytics.chatListSearchUsed(resultCount: 3, operators: [.agent, .is])
 		analytics.chatListSearchUsed(resultCount: 0)
 
 		let opened = sink.events[0].properties
-		#expect(opened["section"] == "needs_you")
+		#expect(opened["section"] == "earlier")
 		#expect(opened["marker"] == "error")
-		#expect(opened["filter"] == "needs_you")
+		#expect(opened["filter"] == "unread")
 		#expect(opened["group_by"] == "status")
 		#expect(opened["surface"] == "iphone")
 		let action = sink.events[1]

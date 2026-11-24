@@ -32,7 +32,6 @@ import { ChatRow } from './chat-row'
 /** Verbatim from the states addendum. */
 export const EMPTY_COPY: Record<ChatPill, string> = {
 	all: 'No chats yet. Start one with an agent.',
-	needs_you: 'Nothing waits on you.',
 	unread: 'You are all caught up.',
 	working: 'No agent is working right now.',
 	later: 'Nothing is on Later. Move a chat here to hide it until it gets a new message.',

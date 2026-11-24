@@ -580,7 +580,6 @@ export type ChatListSection =
 	| 'today'
 	| 'yesterday'
 	| 'earlier'
-	| 'needs_you'
 	| 'working'
 	| 'tag'
 	| 'type_direct'
@@ -588,8 +587,8 @@ export type ChatListSection =
 	| 'type_group'
 export type ChatListOpenSource = 'list' | 'search'
 // What the row's preview-line marker said when it was opened. At most one, error first.
-export type ChatListMarker = 'none' | 'unread' | 'needs_you' | 'working' | 'later' | 'error'
-export type ChatListFilter = 'all' | 'needs_you' | 'unread' | 'working' | 'later'
+export type ChatListMarker = 'none' | 'unread' | 'working' | 'later' | 'error'
+export type ChatListFilter = 'all' | 'unread' | 'working' | 'later'
 export type ChatListGroupBy = 'date' | 'status' | 'agent' | 'tag' | 'type' | 'none'
 export type ChatRowAction = 'done' | 'later' | 'undo' | 'retry'
 export type ChatRowActionVia = 'swipe' | 'hover' | 'menu'
