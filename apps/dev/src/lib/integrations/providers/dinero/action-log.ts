@@ -4,6 +4,7 @@ import { toolCallSucceeded } from '../../../analytics/receipt-events'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { parseSseData } from '../../mcp-gateway'
+import { DINERO_BRIDGE_TOOL_NAMES } from './bridge'
 
 /** The event action every logged Dinero call is written under. */
 export const DINERO_ACTION_EVENT = 'dinero_action'
@@ -19,13 +20,15 @@ export const DINERO_LOGGED_TOOLS: ReadonlySet<string> = new Set([
 	'BookVoucher',
 	'add_purchase_payment',
 	'add_invoice_payment',
+	...DINERO_BRIDGE_TOOL_NAMES,
 ])
 
-/** The tools that book a voucher or register a payment: they act on one version of a voucher. */
+/** The tools that book, pay, email or chase: they act on one version of a voucher. */
 const VERSIONED_TOOLS: ReadonlySet<string> = new Set([
 	'BookVoucher',
 	'add_purchase_payment',
 	'add_invoice_payment',
+	...DINERO_BRIDGE_TOOL_NAMES,
 ])
 
 const RESULT_LIMIT = 4000

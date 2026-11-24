@@ -22,13 +22,25 @@ describe('Dinero action log', () => {
 			'CreateFinanceVoucher',
 			'CreatePurchaseVoucher',
 			'add_invoice_payment',
+			'add_invoice_reminder',
 			'add_purchase_payment',
+			'book_invoice_reminder',
+			'send_invoice_email',
+			'send_invoice_reminder_email',
 			'upload_file',
 		])
 	})
 
 	it('needs the version stamp on a booking or payment, and on nothing else', () => {
-		for (const tool of ['BookVoucher', 'add_purchase_payment', 'add_invoice_payment']) {
+		for (const tool of [
+			'BookVoucher',
+			'add_purchase_payment',
+			'add_invoice_payment',
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		]) {
 			expect(dineroCallRefusal(tool, {})).toContain('needs the timestamp')
 			expect(dineroCallRefusal(tool, { timestamp: null })).toContain('needs the timestamp')
 			expect(dineroCallRefusal(tool, { timestamp: '  ' })).toContain('needs the timestamp')

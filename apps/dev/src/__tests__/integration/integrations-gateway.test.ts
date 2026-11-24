@@ -837,6 +837,104 @@ describe('Dinero booking is stamped and logged through the gateway (Integration)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
+	const ORG = '11111111-2222-3333-4444-555555555555'
+	const INVOICE = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+	const bridge = (name: string, extra: Record<string, unknown> = {}) => ({
+		jsonrpc: '2.0',
+		id: 1,
+		method: 'tools/call',
+		params: {
+			name,
+			arguments: { organizationId: ORG, invoiceGuid: INVOICE, timestamp: 'v1', ...extra },
+		},
+	})
+
+	it('emails an invoice through the Dinero public API with the sign-in token, and logs it', async () => {
+		const s = await booking()
+		fetchMock.mockResolvedValueOnce(new Response('{"sent":true}', { status: 200 }))
+		const res = await post(s.app, s.ws.id, bridge('send_invoice_email'), 'dinero')
+		const { result } = (await res.json()) as {
+			result: { isError?: boolean; content: Array<{ text: string }> }
+		}
+		expect(result.isError).toBe(false)
+		expect(result.content[0].text).toBe('{"sent":true}')
+		expect(fetchMock).toHaveBeenCalledOnce()
+		const [url, init] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }]
+		expect(url).toBe(`https://api.dinero.dk/v1/${ORG}/invoices/${INVOICE}/email`)
+		expect(init.headers.Authorization).toMatch(/^Bearer /)
+
+		const rows = await logged(s.linear.id)
+		expect(rows).toHaveLength(1)
+		expect(rows[0].data).toMatchObject({
+			tool: 'send_invoice_email',
+			outcome: 'success',
+			booking_switch: true,
+		})
+	})
+
+	it('keeps the bridge tools out of the list and refuses them while booking is off', async () => {
+		const off = await setup({ provider: 'dinero' })
+		const offApp = appFor(off.writer.id)
+		for (const tool of [
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		]) {
+			const res = await post(offApp, off.ws.id, bridge(tool), 'dinero')
+			const { result } = (await res.json()) as { result: { isError?: boolean } }
+			expect(result.isError).toBe(true)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('adds the bridge tools to tools/list as writes only when booking is on', async () => {
+		const s = await booking()
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					result: { tools: [{ name: 'list_vouchers', description: 'list' }] },
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const res = await post(
+			s.app,
+			s.ws.id,
+			{ jsonrpc: '2.0', id: 1, method: 'tools/list' },
+			'dinero',
+		)
+		const { result } = (await res.json()) as {
+			result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> }
+		}
+		expect(result.tools.map((t) => t.name)).toEqual([
+			'list_vouchers',
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		])
+		expect(result.tools.slice(1).every((t) => t.annotations.readOnlyHint === false)).toBe(true)
+	})
+
+	it('refuses a bridge call with no version stamp, before Dinero', async () => {
+		const s = await booking()
+		const res = await post(
+			s.app,
+			s.ws.id,
+			bridge('send_invoice_email', { timestamp: ' ' }),
+			'dinero',
+		)
+		const { result } = (await res.json()) as {
+			result: { isError?: boolean; content: Array<{ text: string }> }
+		}
+		expect(result.isError).toBe(true)
+		expect(result.content[0].text).toContain('needs the timestamp')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
 	it('logs a draft save and a booking with the arguments and the answer, and a read not at all', async () => {
 		const s = await booking()
 		await post(s.app, s.ws.id, stamped('BookVoucher', { voucherGuid: 'g-1' }), 'dinero')
