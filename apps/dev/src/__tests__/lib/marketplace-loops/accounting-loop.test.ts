@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.0.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.1.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -39,13 +39,14 @@ describe('Accounting loop definition', () => {
 		expect(settings.targets).toBeUndefined()
 	})
 
-	it('ships one actor, one trigger and two skills, no duplicates', () => {
+	it('ships one actor, one trigger and three skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
 		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(1)
-		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(2)
+		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(3)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([
 			'accounting-connection-check',
+			'accounting-rule-check',
 			'bookkeeping-draft-method',
 		])
 	})
@@ -174,6 +175,75 @@ describe('Accounting loop definition', () => {
 			expect(text).not.toMatch(/https?:\/\//)
 			expect(text).not.toMatch(/@[a-z0-9-]+\.[a-z]{2,}/i)
 		}
+	})
+
+	// The rule check: a written, sourced rule list and a clear or flagged result for every entry,
+	// in a fixed table another step (such as a booking step) can read.
+	describe('rule check', () => {
+		const ruleCheck = () =>
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-rule-check')) ?? ''
+		const ruleRows = () =>
+			ruleCheck()
+				.split('\n')
+				.filter((l) => /^R\d+ \| /.test(l))
+
+		it('lists 32 rules, each with a severity, a status, a source and an owner line', () => {
+			const rows = ruleRows()
+			expect(rows.length).toBe(32)
+			expect(rows.map((r) => r.split(' | ')[0])).toEqual(
+				Array.from({ length: 32 }, (_, i) => `R${i + 1}`),
+			)
+			for (const row of rows) {
+				const parts = row.split(' | ')
+				expect(['flag', 'note']).toContain(parts[1])
+				expect(['sourced', 'confirm with adviser']).toContain(parts[2])
+				expect(row).toMatch(/Source: .+\. \| Owner line: .+/)
+			}
+		})
+
+		it('flags confirm-with-adviser rules instead of passing them', () => {
+			const unsourced = ruleRows().filter((r) => r.includes(' | confirm with adviser | '))
+			expect(unsourced.length).toBe(5)
+			expect(ruleCheck()).toMatch(/flags whenever the situation it describes is present/)
+			expect(ruleCheck()).toMatch(/not flagged by a rule just because the rule is unsourced/)
+			for (const row of unsourced) expect(row.split(' | ')[1]).toBe('flag')
+		})
+
+		it('flags a missing receipt once and an odd amount by its own rule', () => {
+			const text = ruleCheck()
+			expect(text).toMatch(/write R5 and say the rules that need the receipt/)
+			expect(ruleRows().find((r) => r.startsWith('R32 | '))).toMatch(
+				/usual amount for the same payee/,
+			)
+			expect(ruleRows().find((r) => r.startsWith('R21 | '))).toMatch(/within 14 days/)
+		})
+
+		it('writes one clear or flagged row per entry in a fixed table', () => {
+			const text = ruleCheck()
+			expect(text).toContain('| entry | result | rules | why |')
+			expect(text).toMatch(/exactly clear or flagged/)
+			expect(text).toMatch(/treats every entry that is not exactly clear as flagged/)
+			expect(text).toMatch(/An entry on that list is never clear/)
+		})
+
+		it('never changes a draft to make it pass and never books', () => {
+			const text = ruleCheck()
+			expect(text).toMatch(/never changes a voucher and never books one/)
+			expect(text).toMatch(/Never change an amount, an account or a VAT code to make an entry pass/)
+			expect(text).toMatch(/clear does not mean approved/)
+		})
+
+		it('is run by the Bookkeeper after every draft', () => {
+			const prompt = actorTexts().join('\n')
+			const method =
+				skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
+			expect(prompt).toMatch(/Run the rule check on the draft \(skill accounting-rule-check\)/)
+			expect(method).toMatch(/Step 3: run the rule check/)
+			expect(method).toMatch(
+				/Never save a second draft, or change the first, to make an entry pass/,
+			)
+			expect(ACCOUNTING_LOOP.description).toMatch(/clear or flagged with the rule it broke/)
+		})
 	})
 
 	it('says flow, not loop, in the text a person reads', () => {
