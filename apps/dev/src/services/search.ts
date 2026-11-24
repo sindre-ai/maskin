@@ -46,9 +46,9 @@ const TYPO_CANDIDATE_CAP = 5000
 
 /**
  * The filters of the chat list's search, already read out of the typed text (see
- * parseChatSearch). Values are lower-case. `needsIds` and `workingIds` are the chats the caller
- * must be in for is:needs and is:working, worked out before the search because those states are
- * read from messages and sessions, not from a column.
+ * parseChatSearch). Values are lower-case. `workingIds` are the chats the caller
+ * must be in for is:working, worked out before the search because that state is read from
+ * sessions, not from a column.
  */
 export interface ChatSearchFilter {
 	agent: string[]
@@ -58,7 +58,6 @@ export interface ChatSearchFilter {
 	is: ChatSearchIsValue[]
 	phrases: string[]
 	exclude: string[]
-	needsIds: string[]
 	workingIds: string[]
 }
 
@@ -140,8 +139,6 @@ function chatFilterClause(callerId: string, filter: ChatSearchFilter | undefined
 			parts.push(sql`cp.archived`)
 		} else if (v === 'later') {
 			parts.push(sql`(cp.later_at IS NOT NULL AND cp.later_at >= c.last_message_at)`)
-		} else if (v === 'needs') {
-			parts.push(chatIdIn(filter.needsIds))
 		} else {
 			parts.push(chatIdIn(filter.workingIds))
 		}

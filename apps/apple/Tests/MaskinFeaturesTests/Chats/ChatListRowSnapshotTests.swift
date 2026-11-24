@@ -32,8 +32,6 @@ private let states: [(name: String, chat: ConversationSummary)] = {
 	plain.snippet = "Done. The importer fix is merged."
 	var unread = chat("unread", unread: 3)
 	unread.snippet = "Two options below."
-	var needs = chat("needs")
-	needs.needsYou = true
 	var working = chat("working")
 	working.working = [ChatWorkingAgent(agentID: "relay", sessionID: "s1"), ChatWorkingAgent(agentID: "sage", sessionID: "s2")]
 	var stopped = chat("stopped")
@@ -42,7 +40,7 @@ private let states: [(name: String, chat: ConversationSummary)] = {
 	var pinnedChat = chat("pinned", pinned: true)
 	pinnedChat.snippet = nil
 	return [
-		("plain", plain), ("unread", unread), ("needs-you", needs), ("working", working), ("stopped", stopped),
+		("plain", plain), ("unread", unread), ("working", working), ("stopped", stopped),
 		("pinned-empty", pinnedChat),
 	]
 }()
@@ -85,7 +83,7 @@ struct ChatListRowSnapshotTests {
 
 	@Test("the pills render with counts, and with the selected pill filled")
 	func pills() throws {
-		let counts: [ChatListFilter: Int] = [.needsYou: 2, .unread: 5, .working: 1, .later: 0]
+		let counts: [ChatListFilter: Int] = [.unread: 5, .working: 1, .later: 0]
 		for pill in ChatListFilter.allCases {
 			let image = try render(
 				ChatListPills(filter: .constant(pill), counts: counts), width: 375, dark: false, name: "pills-\(pill.rawValue)")

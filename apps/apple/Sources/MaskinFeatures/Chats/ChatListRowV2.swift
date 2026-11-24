@@ -6,7 +6,7 @@ import SwiftUI
 /// One chat in the new list (chat list design spec v12 and its states addendum): three lines like
 /// Apple Mail. Line 1 is the agent names and the time, line 2 the chat title, line 3 the preview
 /// (one line). A direct message has no title, so it has two lines. The row dot is for unread only. The preview line carries at most one marker,
-/// in the order error, needs you, working; nothing animates.
+/// in the order error, working; nothing animates.
 struct ChatListRowV2: View {
 	let conversation: ConversationSummary
 	let currentActorID: String?
@@ -93,10 +93,6 @@ struct ChatListRowV2: View {
 					.font(MaskinTypeface.sans(MaskinFontSize.t15, weight: .medium, relativeTo: .subheadline))
 					.foregroundStyle(MaskinColor.danger)
 					.lineLimit(1)
-			case .needsYou:
-				Circle().fill(MaskinColor.warning).frame(width: Self.markerDot, height: Self.markerDot)
-					.padding(.top, MaskinSpace.s3).accessibilityHidden(true)
-				previewText.fontWeight(.medium).foregroundStyle(MaskinColor.ink).lineLimit(1)
 			case .working:
 				// A still ring with the top edge in ink: no animation in the list.
 				Circle()
@@ -136,11 +132,10 @@ struct ChatListRowV2: View {
 		var parts = [names] + (title.map { [$0] } ?? [])
 		switch conversation.previewMarker {
 		case .error(let reason): parts.append(reason.accessibilityLabel)
-		case .needsYou: parts.append("Needs you")
 		case .working: parts.append(workingText)
 		case nil: break
 		}
-		if let snippet = conversation.snippet, conversation.previewMarker == nil || conversation.previewMarker == .needsYou {
+		if let snippet = conversation.snippet, conversation.previewMarker == nil {
 			parts.append(ChatPreviewText.plain(snippet))
 		}
 		if conversation.isUnread { parts.append("Unread") }
@@ -153,7 +148,7 @@ struct ChatListRowV2: View {
 	static let ring: CGFloat = 11
 }
 
-/// The pills above the list: All, Needs you, Unread, Working, Later. 32pt pills with a 44pt tap
+/// The pills above the list: All, Unread, Working, Later. 32pt pills with a 44pt tap
 /// area; the selected one is filled ink with inverted text; the others show their count when it is
 /// above 0. They scroll sideways in one row.
 struct ChatListPills: View {

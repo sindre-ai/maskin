@@ -109,11 +109,11 @@ describe('ChatListV2', () => {
 		vi.mocked(api.conversations.list).mockReturnValue(new Promise(() => {}))
 		renderList()
 		expect(screen.getByLabelText('Loading chats').children).toHaveLength(6)
-		expect(screen.getByRole('button', { name: 'Needs you' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Needs you' }).textContent).toBe('Needs you')
+		expect(screen.getByRole('button', { name: 'Unread' }).textContent).toBe('Unread')
+		expect(screen.queryByRole('button', { name: /Needs you/ })).not.toBeInTheDocument()
 	})
 
-	it('counts the inactive pills and counts a stopped chat under Needs you', async () => {
+	it('counts the inactive pills and has no Needs you pill', async () => {
 		mockList({
 			priority: [
 				chat({ id: 'ask', needs_you: true }),
@@ -124,21 +124,11 @@ describe('ChatListV2', () => {
 		})
 		renderList()
 		await screen.findByRole('heading', { name: 'Today' })
-		expect(screen.getByRole('button', { name: /Needs you/ }).textContent).toBe('Needs you2')
+		expect(screen.queryByRole('button', { name: /Needs you/ })).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Unread/ }).textContent).toBe('Unread1')
 		// The row's own Later button shares the name; only the pills carry aria-pressed.
 		expect(screen.getByRole('button', { name: /Later/, pressed: false }).textContent).toBe('Later1')
 		expect(screen.getByRole('button', { name: 'All' }).textContent).toBe('All')
-	})
-
-	it('lists only the chats that wait on the person under Needs you', async () => {
-		mockList({
-			priority: [chat({ id: 'ask', title: 'Needs an answer', needs_you: true })],
-			recent: [chat({ id: 'quiet', title: 'Quiet chat' })],
-		})
-		renderList({ pill: 'needs_you' })
-		expect(await screen.findByText('Needs an answer')).toBeInTheDocument()
-		expect(screen.queryByText('Quiet chat')).not.toBeInTheDocument()
 	})
 
 	it('keeps a Later chat out of All and shows it under Later', async () => {
@@ -160,7 +150,6 @@ describe('ChatListV2', () => {
 
 	it.each([
 		['all', 'No chats yet. Start one with an agent.'],
-		['needs_you', 'Nothing waits on you.'],
 		['unread', 'You are all caught up.'],
 		['working', 'No agent is working right now.'],
 		['later', 'Nothing is on Later. Move a chat here to hide it until it gets a new message.'],
@@ -182,18 +171,20 @@ describe('ChatListV2', () => {
 
 	it('reports the marker, filter and group_by when a row is opened', async () => {
 		const user = userEvent.setup()
-		mockList({ priority: [chat({ id: 'ask', needs_you: true })] })
-		renderList({ pill: 'needs_you', groupBy: 'status' })
+		mockList({
+			priority: [chat({ id: 'stopped', error: { reason: 'other', last_person_message_id: 1 } })],
+		})
+		renderList({ groupBy: 'status' })
 		await user.click(
 			await screen.findByTestId('chat-row').then((row) => within(row).getByRole('link')),
 		)
 		await waitFor(() => expect(trackOpened).toHaveBeenCalled())
 		expect(trackOpened).toHaveBeenCalledWith({
 			source: 'list',
-			section: 'needs_you',
+			section: 'earlier',
 			position: 1,
-			marker: 'needs_you',
-			filter: 'needs_you',
+			marker: 'error',
+			filter: 'all',
 			group_by: 'status',
 		})
 	})

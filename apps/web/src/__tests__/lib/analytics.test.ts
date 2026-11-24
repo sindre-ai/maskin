@@ -1365,19 +1365,19 @@ describe('chat list use', () => {
 
 		trackChatOpenedFromList({
 			source: 'list',
-			section: 'needs_you',
+			section: 'earlier',
 			position: 1,
 			marker: 'error',
-			filter: 'needs_you',
+			filter: 'unread',
 			group_by: 'type',
 		})
 
 		expect(capture).toHaveBeenCalledWith('chat_opened_from_list', {
 			source: 'list',
-			section: 'needs_you',
+			section: 'earlier',
 			position_bucket: '1',
 			marker: 'error',
-			filter: 'needs_you',
+			filter: 'unread',
 			group_by: 'type',
 			feature_area: 'chats',
 		})

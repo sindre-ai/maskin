@@ -5,7 +5,7 @@
  *   from:name    a chat that person or agent has written in (me, agent and human also work)
  *   with:name    a chat that person or agent is in
  *   team:name    a chat tagged with that team
- *   is:value     unread, needs, working, later or archived
+ *   is:value     unread, working, later or archived
  *   "a phrase"   the exact words must appear
  *   -word        the word must not appear (also -"a phrase")
  *
@@ -15,7 +15,7 @@
  * can use it to say which filters a search used (never the text itself).
  */
 
-export const CHAT_SEARCH_IS_VALUES = ['unread', 'needs', 'working', 'later', 'archived'] as const
+export const CHAT_SEARCH_IS_VALUES = ['unread', 'working', 'later', 'archived'] as const
 export type ChatSearchIsValue = (typeof CHAT_SEARCH_IS_VALUES)[number]
 
 /** The fixed list the chat_list_search_used event names. */
