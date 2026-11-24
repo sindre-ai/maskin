@@ -45,6 +45,7 @@ import {
 } from '../lib/workspace-capacity'
 import { sealWorkspaceLlmSecrets } from '../lib/workspace-secrets'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { startLoopChecklistSession } from './loop-checklist-provisioning'
 import { installLoopInTransaction } from './loop-install'
 import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
@@ -743,6 +744,10 @@ const DEFAULT_MARKETPLACE_LOOP_SLUGS = [KNOWLEDGE_WIKI_LOOP_SLUG] as const
  *
  * A slug missing from `marketplace_loops` (the marketplace seed has not run) is
  * logged and skipped as well.
+ *
+ * With `startChecklist`, a flow that ships a checklist gets its driver started on it right after
+ * the install commits (best effort, never throws). Off by default: the caller turns it on only
+ * when the workspace may run sessions yet, so a workspace waiting for its card starts nothing.
  */
 export async function installDefaultMarketplaceLoops(
 	db: Database,
@@ -750,6 +755,7 @@ export async function installDefaultMarketplaceLoops(
 	storageProvider: StorageProvider,
 	workspaceId: string,
 	actorId: string,
+	options: { startChecklist?: boolean } = {},
 ): Promise<void> {
 	for (const slug of DEFAULT_MARKETPLACE_LOOP_SLUGS) {
 		try {
@@ -784,7 +790,7 @@ export async function installDefaultMarketplaceLoops(
 				.from(marketplaceLoopItems)
 				.where(eq(marketplaceLoopItems.loopId, loop.id))
 
-			const { installed, provisioned } = await db.transaction((tx) =>
+			const { installed, provisioned, checklistStart } = await db.transaction((tx) =>
 				installLoopInTransaction(tx, {
 					workspaceId,
 					actorId,
@@ -811,6 +817,23 @@ export async function installDefaultMarketplaceLoops(
 				installedLoopId: installed.id,
 				provisioned,
 			})
+
+			if (
+				options.startChecklist &&
+				checklistStart &&
+				installed.objectId &&
+				!shouldSkipOnboardingKickoff()
+			) {
+				await startLoopChecklistSession({
+					db,
+					workspaceId,
+					installerId: actorId,
+					installId: installed.id,
+					loop: { objectId: installed.objectId, name: loop.name },
+					parentTaskId: checklistStart.parentTaskId,
+					driverActorId: checklistStart.driverActorId,
+				})
+			}
 		} catch (err) {
 			logger.error('Failed to install default marketplace flow during workspace bootstrap', {
 				workspaceId,
@@ -1020,6 +1043,9 @@ export async function provisionWorkspace(params: {
 				storageProvider,
 				workspace.id,
 				ownerActorId,
+				// Same gate as the Chief of Staff welcome below: no sessions without a session
+				// manager, and none while the workspace waits for its card.
+				{ startChecklist: Boolean(sessionManager) && !awaitingCard },
 			)
 		} else {
 			logger.warn('provisionWorkspace: no storageProvider — skipped default marketplace flows', {

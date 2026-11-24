@@ -40,7 +40,9 @@ import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { startLoopChecklistSession } from '../services/loop-checklist-provisioning'
 import {
+	type ChecklistStart,
 	type ProvisionedCounts,
 	SkillNameConflictError,
 	installLoopInTransaction,
@@ -305,8 +307,9 @@ app.openapi(installLoopRoute, async (c) => {
 
 	let installed: typeof installedLoops.$inferSelect
 	let provisioned: ProvisionedCounts
+	let checklistStart: ChecklistStart | null
 	try {
-		;({ installed, provisioned } = await db.transaction((tx) =>
+		;({ installed, provisioned, checklistStart } = await db.transaction((tx) =>
 			installLoopInTransaction(tx, {
 				workspaceId,
 				actorId,
@@ -382,6 +385,21 @@ app.openapi(installLoopRoute, async (c) => {
 				error: String(err),
 			}),
 		)
+	}
+
+	// Start the checklist's driver on the list now, so the installer does not wait for the next
+	// owner check. Best effort and awaited, so a failed start is noted on the flow before the reply.
+	// Skipped in E2E stacks for the same reason as above.
+	if (checklistStart && installed.objectId && !shouldSkipOnboardingKickoff()) {
+		await startLoopChecklistSession({
+			db,
+			workspaceId,
+			installerId: actorId,
+			installId: installed.id,
+			loop: { objectId: installed.objectId, name: loop.name },
+			parentTaskId: checklistStart.parentTaskId,
+			driverActorId: checklistStart.driverActorId,
+		})
 	}
 
 	return c.json(
