@@ -239,6 +239,61 @@ function IntegrationsPage() {
 	const nothingMatches =
 		filtered && yoursCount === 0 && !showTools && availableMatching.length === 0
 
+	// Search and pills stay pinned under the floating top bar while the page scrolls. The scroll
+	// area (MainScrollArea) pads its top by the bar height plus a gap and a sticky element is held
+	// inside that padding, so the offset is minus the gap: the bar then sits right under it.
+	// No side bleed: a negative margin pushed the bar 8px past the page column and the page
+	// scrolled sideways. On phones the chips are 44px tall.
+	const pinnedBar = (
+		<div className="sticky top-[calc(var(--app-header-gap,1rem)*-1)] z-10 mb-6 bg-background pt-1 pb-3">
+			<div className="relative">
+				<Search
+					aria-hidden="true"
+					className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+				/>
+				<Input
+					type="search"
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key !== 'Escape') return
+						// Text first: Esc clears it. On an empty field Esc leaves the field.
+						// preventDefault so Chrome and Safari's own clear does not double up.
+						if (query) {
+							e.preventDefault()
+							setQuery('')
+						} else {
+							e.currentTarget.blur()
+						}
+					}}
+					placeholder="Search integrations and tools"
+					aria-label="Search integrations and tools"
+					className="h-11 rounded-xl bg-muted pl-10"
+				/>
+			</div>
+			<FilterTabs
+				variant="chip-outline"
+				aria-label="Filter integrations"
+				value={pill}
+				onChange={setPill}
+				tabs={[
+					{ label: 'All', value: 'all' as IntegrationPill },
+					...VENDOR_PILLS.map((v, i) => ({
+						label: v,
+						value: v as IntegrationPill,
+						dividerBefore: i === 0,
+					})),
+					...INTEGRATION_CATEGORIES.map((c, i) => ({
+						label: c,
+						value: c as IntegrationPill,
+						dividerBefore: i === 0,
+					})),
+				]}
+				className="mt-3 max-md:flex-nowrap max-md:[&_button]:min-h-11 md:flex-wrap"
+			/>
+		</div>
+	)
+
 	return (
 		<div className="@container max-w-[880px]">
 			<div className="flex flex-wrap items-start justify-between gap-x-3">
@@ -276,10 +331,13 @@ function IntegrationsPage() {
 				</EditorBanner>
 			)}
 			{isLoading ? (
-				<output className="block">
-					<span className="sr-only">Loading integrations</span>
-					<ListSkeleton />
-				</output>
+				<>
+					{pinnedBar}
+					<output className="block">
+						<span className="sr-only">Loading integrations</span>
+						<ListSkeleton />
+					</output>
+				</>
 			) : loadFailed ? (
 				<EmptyState
 					title="Couldn't load integrations"
@@ -305,57 +363,7 @@ function IntegrationsPage() {
 				/>
 			) : (
 				<>
-					{/* Search and pills stay pinned under the floating top bar while the page scrolls. The
-					    scroll area (MainScrollArea) pads its top by the bar height plus a gap and a sticky
-					    element is held inside that padding, so the offset is minus the gap: the strip then
-					    sits right under the bar. */}
-					<div className="sticky top-[calc(var(--app-header-gap,1rem)*-1)] z-10 -mx-2 mb-6 bg-background px-2 pt-1 pb-3">
-						<div className="relative">
-							<Search
-								aria-hidden="true"
-								className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-							/>
-							<Input
-								type="search"
-								value={query}
-								onChange={(e) => setQuery(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key !== 'Escape') return
-									// Text first: Esc clears it. On an empty field Esc leaves the field.
-									// preventDefault so Chrome and Safari's own clear does not double up.
-									if (query) {
-										e.preventDefault()
-										setQuery('')
-									} else {
-										e.currentTarget.blur()
-									}
-								}}
-								placeholder="Search integrations and tools"
-								aria-label="Search integrations and tools"
-								className="h-11 rounded-xl bg-muted pl-10"
-							/>
-						</div>
-						<FilterTabs
-							variant="chip-outline"
-							aria-label="Filter integrations"
-							value={pill}
-							onChange={setPill}
-							tabs={[
-								{ label: 'All', value: 'all' as IntegrationPill },
-								...VENDOR_PILLS.map((v, i) => ({
-									label: v,
-									value: v as IntegrationPill,
-									dividerBefore: i === 0,
-								})),
-								...INTEGRATION_CATEGORIES.map((c, i) => ({
-									label: c,
-									value: c as IntegrationPill,
-									dividerBefore: i === 0,
-								})),
-							]}
-							className="mt-3 max-md:flex-nowrap md:flex-wrap"
-						/>
-					</div>
+					{pinnedBar}
 					<NeedsAttentionStrip items={attention} />
 					{nothingMatches ? (
 						<EmptyState

@@ -167,6 +167,17 @@ describe('IntegrationsPage', () => {
 		expect(screen.getByTestId('list-skeleton')).toBeInTheDocument()
 	})
 
+	it('keeps search and pills usable while loading', async () => {
+		mockUseIntegrations.mockReturnValue({ data: undefined, isLoading: true })
+		mockUseProviders.mockReturnValue({ data: undefined, isLoading: true })
+		render(<IntegrationsPage />)
+		const search = screen.getByRole('searchbox', { name: 'Search integrations and tools' })
+		await userEvent.type(search, 'sla')
+		expect(search).toHaveValue('sla')
+		expect(screen.getByRole('group', { name: 'Filter integrations' })).toBeInTheDocument()
+		expect(screen.getByTestId('list-skeleton')).toBeInTheDocument()
+	})
+
 	it('shows empty state when no providers available', () => {
 		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
 		mockUseProviders.mockReturnValue({ data: [], isLoading: false })
