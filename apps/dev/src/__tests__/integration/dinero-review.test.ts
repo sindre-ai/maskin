@@ -247,6 +247,74 @@ describe('The Dinero review screen (Integration)', () => {
 		).toBe(409)
 	})
 
+	it('gives no filing hand-off before the final approval, and logs one after it', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const path = `?from=${today()}&to=${today()}`
+		const period = { from: today(), to: today() }
+		const handoffEvents = () =>
+			db
+				.select()
+				.from(events)
+				.where(and(eq(events.workspaceId, s.ws.id), eq(events.action, 'dinero_filing_handoff')))
+
+		// Before approval: refused with the reason, nothing logged.
+		const refused = await call(app, s.ws.id, 'POST', '/filing-handoff', period)
+		expect(refused.status).toBe(409)
+		expect(JSON.stringify(await refused.json())).toContain('not approved yet')
+		expect(await handoffEvents()).toHaveLength(0)
+
+		const log = (await (await call(app, s.ws.id, 'GET', path)).json()) as Log
+		await call(app, s.ws.id, 'POST', '/approve', { ...period, figures_hash: log.figures_hash })
+
+		// An agent still cannot ask for it.
+		expect(
+			(await call(appFor(s.agent.id, 'agent'), s.ws.id, 'POST', '/filing-handoff', period)).status,
+		).toBe(403)
+
+		// A different period than the approved one is not approved.
+		expect(
+			(await call(app, s.ws.id, 'POST', '/filing-handoff', { from: today(), to: '2099-12-31' }))
+				.status,
+		).toBe(409)
+
+		const ok = await call(app, s.ws.id, 'POST', '/filing-handoff', period)
+		expect(ok.status).toBe(200)
+		const handoff = (await ok.json()) as {
+			approved_by: string
+			figures: Array<{ amount_incl_vat: number }>
+			notice: string
+		}
+		expect(handoff.approved_by).toBe(s.human)
+		expect(handoff.figures).toEqual([{ vat_code: null, lines: 1, amount_incl_vat: 4000 }])
+		expect(handoff.notice).toContain('Nothing has been filed')
+
+		const logged = await handoffEvents()
+		expect(logged).toHaveLength(1)
+		expect(logged[0]?.data).toMatchObject({
+			from: today(),
+			to: today(),
+			approved_by: s.human,
+			figures_hash: log.figures_hash,
+		})
+	})
+
+	it('refuses the hand-off when the log moved after the approval', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const period = { from: today(), to: today() }
+		await recordOwnerApproval(db, {
+			workspaceId: s.ws.id,
+			kind: OWNER_APPROVAL_DINERO_BOOKS,
+			subject: `dinero:${s.dinero.id}:${today()}:${today()}`,
+			figuresHash: 'f'.repeat(64),
+			approvedBy: s.human,
+		})
+		const res = await call(app, s.ws.id, 'POST', '/filing-handoff', period)
+		expect(res.status).toBe(409)
+		expect(JSON.stringify(await res.json())).toContain('no longer matches')
+	})
+
 	it('does not lock for a period that has not come or has gone', async () => {
 		const s = await setup()
 		const app = appFor(s.human)
