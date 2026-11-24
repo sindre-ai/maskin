@@ -1068,15 +1068,7 @@ describe('Workspaces Integration', () => {
 			// create transaction) + the newly-added member = 7.
 			expect(members).toHaveLength(7)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual([
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'owner',
-			])
+			expect(roles).toEqual(['member', 'member', 'member', 'member', 'member', 'member', 'owner'])
 		})
 	})
 
