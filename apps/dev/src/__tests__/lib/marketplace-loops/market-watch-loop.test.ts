@@ -1,4 +1,4 @@
-import { MARKET_WATCH_ACTOR_OWNER } from '@maskin/shared'
+import { MARKET_WATCH_ACTOR_OWNER, MARKET_WATCH_ACTOR_RESEARCHER } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 import {
 	getActorData,
@@ -18,7 +18,7 @@ describe('Competitor watch loop definition', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
 		expect(MARKET_WATCH_LOOP.name).toBe('Competitor watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.2.1')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.3.0')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -49,6 +49,66 @@ describe('Competitor watch loop definition', () => {
 	it('does not tell the Briefing Owner to own a second Monday check', () => {
 		const prompt = getActorData(MARKET_WATCH_ACTOR_OWNER).systemPrompt ?? ''
 		expect(prompt).not.toMatch(/later on Monday/)
+	})
+
+	it('ships a parent checklist and eight children, driven by the Market Researcher', () => {
+		const settings = loopSettingsSchema.parse(MARKET_WATCH_LOOP.settings)
+		expect(settings.checklist?.title).toBe('Competitor research checklist')
+		expect(settings.checklist?.driverSourceItemId).toBe(MARKET_WATCH_ACTOR_RESEARCHER)
+		const titles = (settings.checklist?.items ?? []).map((i) => i.title)
+		expect(titles).toEqual([
+			'Name 3 to 5 direct competitors',
+			'Use the same fields for each competitor',
+			'Check evidence, not claims',
+			'Record source URLs for each competitor',
+			'Add company register data and trends',
+			'Note gaps and edges',
+			'Write one page per competitor and a comparison table',
+			'Refresh sources and register data on schedule',
+		])
+		expect(new Set(titles).size).toBe(titles.length)
+	})
+
+	it('maps the refresh child to the existing monthly revalidation, with no second schedule', () => {
+		const refresh = MARKET_WATCH_LOOP.settings.checklist?.items.at(-1)
+		expect(refresh?.body).toContain('Monthly revalidation')
+		expect(refresh?.body).toContain('do not add a second one')
+		const crons = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).filter((t) => t.type === 'cron')
+		expect(crons).toHaveLength(4)
+	})
+
+	it('carries the research method in the researcher and the sweep and revalidation triggers', () => {
+		const prompt = getActorData(MARKET_WATCH_ACTOR_RESEARCHER).systemPrompt ?? ''
+		expect(prompt).toContain('# Competitor research method')
+		for (const needle of [
+			'3 to 5',
+			'who they sell to',
+			'pricing',
+			'how they sell',
+			'how they position themselves',
+			'Source URLs',
+			'CVR',
+			'last 2 to 3 years',
+			'filed or estimated',
+			'one comparison table',
+			'date and a source',
+		]) {
+			expect(prompt).toContain(needle)
+		}
+		const byName = (name: string) =>
+			MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).find((t) => t.name === name)?.actionPrompt
+		expect(byName('Weekly sweep')).toContain('competitor research method')
+		expect(byName('Monthly revalidation')).toContain('recorded source URLs and register data')
+	})
+
+	it('starts the Briefing Owner check with the checklist and its three-question limit', () => {
+		const check = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).find(
+			(t) => t.name === 'Weekly briefing check',
+		)
+		expect(check?.actionPrompt).toMatch(/^First read the flow's research checklist/)
+		expect(check?.actionPrompt).toContain('Competitor research checklist')
+		expect(check?.actionPrompt).toContain('at most 3 questions at a time')
+		expect(check?.actionPrompt).toContain('only when every child task is done or discarded')
 	})
 
 	it('wires every trigger to a published actor and every skill to published actors only', () => {
@@ -103,6 +163,9 @@ describe('Competitor watch loop definition', () => {
 			MARKET_WATCH_LOOP.description,
 			MARKET_WATCH_LOOP.settings.entryCondition,
 			MARKET_WATCH_LOOP.settings.closeCondition,
+			MARKET_WATCH_LOOP.settings.checklist?.title,
+			MARKET_WATCH_LOOP.settings.checklist?.body,
+			...(MARKET_WATCH_LOOP.settings.checklist?.items ?? []).map((i) => `${i.title} ${i.body}`),
 			...MARKET_WATCH_ACTOR_IDS.map((id) => {
 				const a = getActorData(id)
 				return `${a.name} ${a.description} ${a.systemPrompt}`
@@ -119,6 +182,7 @@ describe('Competitor watch loop definition', () => {
 	it('says flow, not loop, in the text a person reads', () => {
 		const texts = [
 			MARKET_WATCH_LOOP.description,
+			...(MARKET_WATCH_LOOP.settings.checklist?.items ?? []).map((i) => `${i.title} ${i.body}`),
 			...MARKET_WATCH_ACTOR_IDS.map((id) => {
 				const a = getActorData(id)
 				return `${a.name} ${a.description} ${a.systemPrompt}`

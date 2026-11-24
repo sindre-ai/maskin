@@ -45,6 +45,7 @@ import {
 	splitOwnLinks,
 } from '@/lib/linked-objects'
 import { hasMarkdownSyntax } from '@/lib/markdown-syntax'
+import type { QuestionAnswer } from '@/lib/question-answers'
 import { type TagSegment, isTaggable, splitTextByTags, tagLabel } from '@/lib/tag-input-model'
 import { useIsEnterpriseWorkspace } from '@/lib/workspace-context'
 import { formatQuestionsAsMarkdown } from '@maskin/shared'
@@ -98,8 +99,8 @@ interface MessageBubbleProps {
 	 *  message, rendered as a muted line under the name (mockup screenshots).
 	 *  Only ever present on an agent message. */
 	activity?: React.ReactNode
-	/** A later message in the thread already answered this message's question. */
-	questionAnswered?: boolean
+	/** What a later message in the thread answered to this message's question; absent while it is open. */
+	questionAnswer?: QuestionAnswer
 	/** S2 · bet 34706e2f, task 5. When set, this message spawned an agent
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
@@ -139,7 +140,7 @@ export function MessageBubble({
 	workspaceId,
 	message,
 	activity,
-	questionAnswered = false,
+	questionAnswer,
 	spawnInfo,
 	shownLinkedObjectIds,
 	updatedLinkedObjectIds,
@@ -637,7 +638,8 @@ export function MessageBubble({
 						workspaceId={workspaceId}
 						questionMessageId={message.id}
 						question={message.metadata.question}
-						answered={questionAnswered}
+						answered={questionAnswer !== undefined}
+						answer={questionAnswer}
 						threadRootId={message.threadRootId}
 					/>
 				) : null}

@@ -177,7 +177,8 @@ test.describe('Agent question options', () => {
 		})
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 
-		await expect(page.getByText('Skip the token, just curate a link.')).toBeVisible()
+		// The reply's own bubble, and the summary row that stays where the options were.
+		await expect(page.getByText('Skip the token, just curate a link.')).toHaveCount(2)
 		await expect(page.getByRole('button', { name: 'Send answer' })).toHaveCount(0)
 	})
 

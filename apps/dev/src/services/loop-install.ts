@@ -29,6 +29,7 @@ import {
 	installMetadata,
 	rewriteWiring,
 } from './loop-provisioning'
+import { provisionLoopChecklist } from './loop-checklist-provisioning'
 import { syncLoopViews, toViewItems } from './loop-views-provisioning'
 
 /**
@@ -316,6 +317,23 @@ export async function installLoopInTransaction(
 			loopObjectId: loopObject.id,
 			actorId,
 			items: viewItems,
+		})
+	}
+
+	// The loop's onboarding checklist, if it ships one: a parent task and a child task per
+	// prerequisite, driven by the bundled agent it names.
+	const checklist = readLoopSettings(loop.loopSettings)?.checklist
+	if (checklist) {
+		await provisionLoopChecklist({
+			db: tx,
+			workspaceId,
+			actorId,
+			installId: installRow.id,
+			loopObjectId: loopObject.id,
+			checklist,
+			driverActorId: checklist.driverSourceItemId
+				? (sourceToLocal.get(checklist.driverSourceItemId) ?? null)
+				: null,
 		})
 	}
 

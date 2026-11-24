@@ -1,5 +1,5 @@
-// The loop-page settings a marketplace loop ships: entry condition, close condition, tags and
-// starter targets. Stored as one jsonb column on marketplace_loops (loop_settings) and copied
+// The loop-page settings a marketplace loop ships: entry condition, close condition, tags,
+// starter targets and an optional onboarding checklist. Stored as one jsonb column on marketplace_loops (loop_settings) and copied
 // onto the installer's loop object (metadata.entry_condition and so on) at install and on a
 // version push.
 
@@ -10,11 +10,24 @@ import { z } from 'zod'
 // in the installer's workspace.
 const shippedTargetSchema = loopTargetSchema.omit({ ownerActorId: true })
 
+// An onboarding checklist a flow ships: one parent task and one child task per prerequisite. Install
+// creates them once in the installer's workspace (see services/loop-checklist-provisioning.ts).
+// driverSourceItemId is the template id of the bundled agent that drives them, resolved to the
+// installed agent at install. It is not copied onto the loop object.
+export const loopChecklistSchema = z.object({
+	title: z.string().min(1),
+	body: z.string().min(1),
+	driverSourceItemId: z.string().uuid().optional(),
+	items: z.array(z.object({ title: z.string().min(1), body: z.string().min(1) })).min(1),
+})
+export type LoopChecklist = z.infer<typeof loopChecklistSchema>
+
 export const loopSettingsSchema = z.object({
 	entryCondition: z.string().min(1).optional(),
 	closeCondition: z.string().min(1).optional(),
 	tags: z.array(z.string().min(1)).optional(),
 	targets: z.array(shippedTargetSchema).optional(),
+	checklist: loopChecklistSchema.optional(),
 })
 export type LoopSettings = z.infer<typeof loopSettingsSchema>
 
