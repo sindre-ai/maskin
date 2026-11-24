@@ -218,6 +218,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		workspace = await provisionWorkspace({
 			db,
 			agentStorage: c.get('agentStorage'),
+			storageProvider: c.get('storageProvider'),
 			sessionManager: c.get('sessionManager'),
 			name: body.name,
 			ownerActorId: actorId,
