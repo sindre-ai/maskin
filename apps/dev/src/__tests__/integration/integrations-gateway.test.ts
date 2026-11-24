@@ -803,7 +803,7 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 
 	it('answers the public API draft tools itself while booking is off', async () => {
 		const s = await dinero()
-		const ORG = '11111111-2222-3333-4444-555555555555'
+		const ORG = 292196
 		const VOUCHER = '99999999-8888-7777-6666-555555555555'
 		const bridgeCall = (name: string, args: Record<string, unknown>) => ({
 			jsonrpc: '2.0',
@@ -949,7 +949,7 @@ describe('Dinero booking is stamped and logged through the gateway (Integration)
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	const ORG = '11111111-2222-3333-4444-555555555555'
+	const ORG = 292196
 	const INVOICE = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 	const bridge = (name: string, extra: Record<string, unknown> = {}) => ({
 		jsonrpc: '2.0',

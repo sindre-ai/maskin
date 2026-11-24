@@ -9,7 +9,7 @@ import {
 	isDineroBridgeTool,
 } from '../../../../lib/integrations/providers/dinero/bridge'
 
-const ORG = '11111111-2222-3333-4444-555555555555'
+const ORG = 292196
 const INVOICE = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 const base = { organizationId: ORG, invoiceGuid: INVOICE, timestamp: '2026-11-23T10:00:00Z' }
 
@@ -115,6 +115,7 @@ describe('Dinero bridge tools', () => {
 		const f = answering(200, '{}')
 		for (const [tool, args] of [
 			['send_invoice_email', { ...base, organizationId: '../x' }],
+			['send_invoice_email', { ...base, organizationId: '11111111-2222-3333-4444-555555555555' }],
 			['send_invoice_email', { ...base, invoiceGuid: 'abc/../../x' }],
 			['add_invoice_reminder', { ...base, date: '24/11/2026' }],
 			['book_invoice_reminder', { ...base, reminderId: '1/../2' }],
