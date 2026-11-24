@@ -297,6 +297,54 @@ describe('annotateToolsList with a list of allowed tools', () => {
 	})
 })
 
+describe('annotateToolsList on Dinero, booking switch off', () => {
+	const create =
+		'Opretter et købsbilag som kladde. En kladde påvirker ikke regnskabet. Bogfør\nden bagefter med BookVoucher, når brugeren har bedt om det.\n\nEt købsbilag er enten et kontantkøb.'
+	const read =
+		'Henter alle detaljer om et købsbilag, herunder det versions-Timestamp, der skal bruges til bogføring (BookVoucher), betalinger (add_purchase_payment) og kreditering.'
+	const result = {
+		tools: [
+			{ name: 'CreatePurchaseVoucher', description: create },
+			{ name: 'get_purchase_voucher', description: read },
+			{ name: 'BookVoucher', description: 'Bogfører et bilag.' },
+		],
+	}
+	const ctx = { provider: 'dinero', providerLabel: 'Dinero', access: 'read_write' as const }
+	const descriptions = (allowedTools: readonly string[]) =>
+		Object.fromEntries(
+			(
+				annotateToolsList(result, { ...ctx, allowedTools }).result as {
+					tools: Array<{ name: string; description: string }>
+				}
+			).tools.map((t) => [t.name, t.description]),
+		)
+
+	it('says a person books in Dinero and never points at BookVoucher', () => {
+		const out = descriptions(['CreatePurchaseVoucher', 'get_purchase_voucher'])
+		expect(out.CreatePurchaseVoucher).toContain('bogføres af en person i Dinero')
+		expect(out.CreatePurchaseVoucher).toContain('Et købsbilag er enten et kontantkøb.')
+		expect(out.get_purchase_voucher).toBe(
+			'Henter alle detaljer om et købsbilag, herunder det versions-Timestamp, der skal bruges til betalinger (add_purchase_payment) og kreditering.',
+		)
+		for (const text of Object.values(out)) expect(text).not.toContain('BookVoucher')
+	})
+
+	it('leaves the text alone when the owner switched booking on', () => {
+		const out = descriptions(['CreatePurchaseVoucher', 'get_purchase_voucher', 'BookVoucher'])
+		expect(out.CreatePurchaseVoucher).toBe(create)
+		expect(out.get_purchase_voucher).toBe(read)
+	})
+
+	it('leaves other providers alone', () => {
+		const out = annotateToolsList(result, {
+			...ctx,
+			provider: 'custom-mcp',
+			allowedTools: ['CreatePurchaseVoucher'],
+		}).result as { tools: Array<{ description: string }> }
+		expect(out.tools[0].description).toBe(create)
+	})
+})
+
 describe('annotateToolsList', () => {
 	const result = {
 		tools: [
