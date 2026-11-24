@@ -102,7 +102,7 @@ function makeApp(actorId: string) {
 // regression gate for the "bundle install 500s on the first seeded loop" bug:
 // each seeded bundle must install into a fresh workspace and return 201.
 describe('Marketplace install — seeded bundle end-to-end', () => {
-	let seededLoops: Array<{ id: string; slug: string; name: string }>
+	let seededLoops: Array<{ id: string; slug: string; name: string; loopSettings: unknown }>
 
 	beforeAll(async () => {
 		await rawSql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
@@ -112,6 +112,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 				id: marketplaceLoops.id,
 				slug: marketplaceLoops.slug,
 				name: marketplaceLoops.name,
+				loopSettings: marketplaceLoops.loopSettings,
 			})
 			.from(marketplaceLoops)
 		if (seededLoops.length === 0) throw new Error('expected seeded marketplace loops')
@@ -389,6 +390,79 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 			.from(objects)
 			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
 		expect(after).toHaveLength(9)
+	})
+
+	// The Accounting flow ships a setup checklist: one parent task and seven children, driven by
+	// the installed Bookkeeper, each moved from backlog to todo. A second call creates nothing.
+	it('installs the accounting-loop setup checklist as tasks driven by the Bookkeeper', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'accounting-loop')
+		if (!loop) throw new Error('seeded loop accounting-loop not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { objectId: string }
+
+		const tasks = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		const parent = tasks.find((t) => t.title === 'Accounting setup checklist')
+		if (!parent) throw new Error('checklist parent task not found')
+		const children = tasks.filter((t) => t.id !== parent.id)
+		expect(children).toHaveLength(7)
+		for (const task of tasks) expect(task.status).toBe('todo')
+
+		const bookkeeperIds = (await db.select({ id: actors.id, name: actors.name }).from(actors))
+			.filter((a) => a.name === 'Bookkeeper')
+			.map((a) => a.id)
+		expect(bookkeeperIds.length).toBeGreaterThan(0)
+		for (const task of tasks) expect(bookkeeperIds).toContain(task.driver)
+
+		const edges = await db
+			.select()
+			.from(relationships)
+			.where(
+				inArray(
+					relationships.targetId,
+					tasks.map((t) => t.id),
+				),
+			)
+		const breaksInto = edges.filter((e) => e.type === 'breaks_into')
+		expect(breaksInto).toHaveLength(7)
+		for (const edge of breaksInto) expect(edge.sourceId).toBe(parent.id)
+		const inLoop = edges.filter((e) => e.type === 'in_loop')
+		expect(inLoop).toHaveLength(8)
+		for (const edge of inLoop) expect(edge.sourceId).toBe(body.objectId)
+
+		const [install] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.objectId, body.objectId))
+		const checklist = readLoopSettings(loop.loopSettings)?.checklist
+		if (!install || !checklist) throw new Error('install or checklist missing')
+		const again = await provisionLoopChecklist({
+			db,
+			workspaceId: ws.id,
+			actorId,
+			installId: install.id,
+			loopObjectId: body.objectId,
+			checklist,
+			driverActorId: null,
+		})
+		expect(again.created).toBe(0)
+		const after = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		expect(after).toHaveLength(8)
 	})
 
 	// Every sweep trigger finds the flow by its name, and the first sweep files a note into it with an

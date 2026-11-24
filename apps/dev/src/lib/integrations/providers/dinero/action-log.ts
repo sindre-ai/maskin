@@ -4,7 +4,7 @@ import { toolCallSucceeded } from '../../../analytics/receipt-events'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { parseSseData } from '../../mcp-gateway'
-import { DINERO_BRIDGE_TOOL_NAMES } from './bridge'
+import { DINERO_BRIDGE_BOOKING_TOOL_NAMES, DINERO_BRIDGE_TOOL_NAMES } from './bridge'
 
 /** The event action every logged Dinero call is written under. */
 export const DINERO_ACTION_EVENT = 'dinero_action'
@@ -18,17 +18,50 @@ export const DINERO_LOGGED_TOOLS: ReadonlySet<string> = new Set([
 	'CreateFinanceVoucher',
 	'upload_file',
 	'BookVoucher',
+	'book_finance_voucher',
+	'create_trade_offer',
+	'send_trade_offer',
+	'generate_invoice_from_trade_offer',
 	'add_purchase_payment',
 	'add_invoice_payment',
-	...DINERO_BRIDGE_TOOL_NAMES,
+	'attach_file_to_voucher_card',
+	'create_invoice',
+	'create_sales_credit_note',
+	'create_contact',
+	'update_contact',
+	'create_product',
+	'delete_invoice_draft',
+	'delete_sales_credit_note_draft',
+	'delete_purchase_voucher_draft',
+	'delete_purchase_credit_note_draft',
+	// Every bridge tool but the read of posted entries.
+	...DINERO_BRIDGE_TOOL_NAMES.filter((t) => t !== 'list_posted_entries'),
 ])
 
-/** The tools that book, pay, email or chase: they act on one version of a voucher. */
+/**
+ * The tools that book, pay, email or chase: they act on one version of a voucher. create_trade_offer
+ * is not here: it makes a new offer, so there is no earlier version to stamp.
+ */
 const VERSIONED_TOOLS: ReadonlySet<string> = new Set([
 	'BookVoucher',
+	'book_finance_voucher',
+	'send_trade_offer',
+	'generate_invoice_from_trade_offer',
 	'add_purchase_payment',
 	'add_invoice_payment',
-	...DINERO_BRIDGE_TOOL_NAMES,
+	...DINERO_BRIDGE_BOOKING_TOOL_NAMES,
+	'update_purchase_voucher_draft',
+])
+
+/**
+ * The tools that make a draft but whose arguments could also book or send, when the hosted server
+ * has such an argument (CreateFinanceVoucher has book, which books in the same call). Name rules
+ * for the other two are looser than CreateFinanceVoucher's because their schemas were not read
+ * from a live server: no argument whose key has "book" or "send" in it may be anything but false.
+ */
+const DRAFT_CHECKED_TOOLS: ReadonlySet<string> = new Set([
+	'create_invoice',
+	'create_sales_credit_note',
 ])
 
 const RESULT_LIMIT = 4000
@@ -56,18 +89,20 @@ export function loggedArguments(args: unknown): unknown {
 	return args
 }
 
-/** Every value stored under a key that has "book" in it, at any depth of the arguments. */
-function bookValues(value: unknown, out: unknown[] = []): unknown[] {
+/** Every value stored under a key that matches the pattern, at any depth of the arguments. */
+function valuesUnderKey(pattern: RegExp, value: unknown, out: unknown[] = []): unknown[] {
 	if (Array.isArray(value)) {
-		for (const item of value) bookValues(item, out)
+		for (const item of value) valuesUnderKey(pattern, item, out)
 	} else if (value && typeof value === 'object') {
 		for (const [key, inner] of Object.entries(value)) {
-			if (/book/i.test(key)) out.push(inner)
-			bookValues(inner, out)
+			if (pattern.test(key)) out.push(inner)
+			valuesUnderKey(pattern, inner, out)
 		}
 	}
 	return out
 }
+
+const bookValues = (value: unknown) => valuesUnderKey(/book/i, value)
 
 /**
  * A call the list cannot judge, because it depends on the arguments. A booking or payment must
@@ -79,6 +114,10 @@ function bookValues(value: unknown, out: unknown[] = []): unknown[] {
  * false, and every book-like value anywhere in the arguments must be false: a missing book, a true,
  * a string, or a shape that is not understood is refused, so it fails closed. With the switch on
  * it is let through as it is.
+ *
+ * create_invoice and create_sales_credit_note save a draft too. They are let through while booking
+ * is off unless an argument with "book" or "send" in its key is set to anything but false; a
+ * missing one is fine, since Dinero's schema may not have it.
  */
 export function dineroCallRefusal(tool: string, args: unknown, booking = false): string | null {
 	if (tool === 'CreateFinanceVoucher') {
@@ -86,6 +125,11 @@ export function dineroCallRefusal(tool: string, args: unknown, booking = false):
 		const top = (args as { book?: unknown } | null | undefined)?.book
 		if (top === false && bookValues(args).every((v) => v === false)) return null
 		return `${tool} saves a draft only while booking is switched off, and booking is off. Call it again with book set to false and no other book setting. Nothing was sent to Dinero.`
+	}
+	if (DRAFT_CHECKED_TOOLS.has(tool)) {
+		if (booking) return null
+		if (valuesUnderKey(/book|send/i, args).every((v) => v === false)) return null
+		return `${tool} saves a draft only while booking is switched off, and booking is off. Call it again without any book or send setting, or with it set to false. Nothing was sent to Dinero.`
 	}
 	if (!VERSIONED_TOOLS.has(tool)) return null
 	const stamp = (args as { timestamp?: unknown } | null | undefined)?.timestamp

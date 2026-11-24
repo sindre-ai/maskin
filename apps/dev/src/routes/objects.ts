@@ -840,20 +840,23 @@ app.openapi(createObjectRoute, async (c) => {
 			}
 			// Awaited, unlike the comment below: the web sign-up opens this chat as
 			// soon as this response lands, so it has to exist by then.
+			let welcomeMessageId: number | undefined
 			if (signupMeta.welcome_in_chat) {
-				await startSignupWelcomeChat({
+				const welcomeChat = await startSignupWelcomeChat({
 					db,
 					workspaceId,
 					humanActorId: actorId,
 					knowledgeObjectId: created.id,
 					metadata: signupMeta,
-				}).catch((err) =>
+				}).catch((err) => {
 					logger.error('Failed to open signup welcome chat', {
 						workspaceId,
 						knowledgeObjectId: created.id,
 						error: String(err),
-					}),
-				)
+					})
+					return null
+				})
+				welcomeMessageId = welcomeChat?.welcomeMessageId
 			}
 			postSignupWelcomeComment({
 				db,
@@ -862,6 +865,7 @@ app.openapi(createObjectRoute, async (c) => {
 				knowledgeObjectId: created.id,
 				metadata: created.metadata,
 				humanActorId: actorId,
+				welcomeMessageId,
 			}).catch((err) =>
 				logger.error('Failed to post signup welcome comment', {
 					workspaceId,

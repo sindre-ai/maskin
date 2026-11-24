@@ -24,22 +24,44 @@ describe('Dinero action log', () => {
 			'add_invoice_payment',
 			'add_invoice_reminder',
 			'add_purchase_payment',
+			'attach_file_to_voucher_card',
+			'book_finance_voucher',
 			'book_invoice_reminder',
+			'create_contact',
+			'create_invoice',
+			'create_product',
+			'create_sales_credit_note',
+			'create_trade_offer',
+			'delete_finance_voucher_draft',
+			'delete_invoice_draft',
+			'delete_purchase_credit_note_draft',
+			'delete_purchase_voucher_draft',
+			'delete_sales_credit_note_draft',
+			'generate_invoice_from_trade_offer',
 			'send_invoice_email',
 			'send_invoice_reminder_email',
+			'send_trade_offer',
+			'update_contact',
+			'update_purchase_voucher_draft',
 			'upload_file',
 		])
+		// A read is not logged: a period run makes hundreds of them.
+		expect(DINERO_LOGGED_TOOLS.has('list_posted_entries')).toBe(false)
 	})
 
 	it('needs the version stamp on a booking or payment, and on nothing else', () => {
 		for (const tool of [
 			'BookVoucher',
+			'book_finance_voucher',
+			'send_trade_offer',
+			'generate_invoice_from_trade_offer',
 			'add_purchase_payment',
 			'add_invoice_payment',
 			'send_invoice_email',
 			'add_invoice_reminder',
 			'book_invoice_reminder',
 			'send_invoice_reminder_email',
+			'update_purchase_voucher_draft',
 		]) {
 			expect(dineroCallRefusal(tool, {})).toContain('needs the timestamp')
 			expect(dineroCallRefusal(tool, { timestamp: null })).toContain('needs the timestamp')
@@ -49,6 +71,8 @@ describe('Dinero action log', () => {
 		}
 		expect(dineroCallRefusal('CreatePurchaseVoucher', {})).toBeNull()
 		expect(dineroCallRefusal('list_vouchers', {})).toBeNull()
+		// A new offer has no earlier version to stamp.
+		expect(dineroCallRefusal('create_trade_offer', {})).toBeNull()
 	})
 
 	it('lets CreateFinanceVoucher through only as a draft while booking is off', () => {
@@ -74,6 +98,31 @@ describe('Dinero action log', () => {
 		// With the owner's switch on, the arguments are the agent's to set.
 		expect(dineroCallRefusal(tool, { book: true }, true)).toBeNull()
 		expect(dineroCallRefusal(tool, {}, true)).toBeNull()
+	})
+
+	it('lets create_invoice and create_sales_credit_note through only as a draft while booking is off', () => {
+		for (const tool of ['create_invoice', 'create_sales_credit_note']) {
+			expect(dineroCallRefusal(tool, { organizationId: 1, contactGuid: 'c' })).toBeNull()
+			expect(dineroCallRefusal(tool, { book: false })).toBeNull()
+			expect(dineroCallRefusal(tool, { lines: [{ amount: 100 }], sendEmail: false })).toBeNull()
+			for (const args of [
+				{ book: true },
+				{ book: 'false' },
+				{ Book: 1 },
+				{ autoBook: true },
+				{ invoice: { bookAfterCreate: true } },
+				{ sendToCustomer: true },
+				{ lines: [{ send: 'yes' }] },
+			]) {
+				expect(dineroCallRefusal(tool, args)).toContain('booking is off')
+			}
+			// With the owner's switch on, the arguments are the agent's to set.
+			expect(dineroCallRefusal(tool, { book: true }, true)).toBeNull()
+		}
+		// The other new tools carry no book or send argument to check.
+		for (const tool of ['create_contact', 'update_contact', 'create_product']) {
+			expect(dineroCallRefusal(tool, { book: true })).toBeNull()
+		}
 	})
 
 	it('reads the text of the answer to one call, from plain JSON or an event stream', () => {

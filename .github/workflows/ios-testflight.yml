@@ -76,6 +76,12 @@ name: iOS TestFlight
 # never counts as a change). The submit job is separate from the upload job, so a failed
 # submission leaves the TestFlight build in place.
 #
+# TestFlight only (manual): Run workflow with testflight_only ticked archives main with the
+# MARKETING_VERSION in project.yml, a fresh build number, and uploads it to TestFlight. It does not
+# wait for a version change, does not run the Apple TV job and skips app-review completely, so
+# nothing is created or sent in App Store Connect beyond the build itself. Apple accepts the build
+# only while the version's train is open (not released); a refusal shows in the Export and upload step.
+#
 # One macOS runner for roughly 20-30 minutes per merge that changes MARKETING_VERSION (10x the
 # per-minute cost of Linux), and a second one for the Apple TV upload. Other merges only run the
 # short Linux plan job.
@@ -102,6 +108,10 @@ on:
         description: 'Version to send to App Review, for example 1.2 (empty = the version in project.yml, dry run only)'
         type: string
         default: ''
+      testflight_only:
+        description: 'TestFlight only: archive and upload the iPhone build of the version in project.yml, send nothing to App Review, skip Apple TV'
+        type: boolean
+        default: false
       tv_signing_check:
         description: 'Apple TV signing check: archive and export MaskinTV signed for distribution, upload nothing, print the entitlements'
         type: boolean
@@ -157,10 +167,11 @@ jobs:
           fi
 
   testflight:
-    # A manual run does not archive; see the app-review job. A push that leaves MARKETING_VERSION
-    # alone is skipped by the plan job.
+    # A manual run archives only with testflight_only; see the app-review job. A push that leaves
+    # MARKETING_VERSION alone is skipped by the plan job. always(): the plan job is skipped on a
+    # manual run, which would skip this job too.
     needs: plan
-    if: github.event_name == 'push' && needs.plan.outputs.upload == 'true'
+    if: always() && ((github.event_name == 'push' && needs.plan.outputs.upload == 'true') || (github.event_name == 'workflow_dispatch' && inputs.testflight_only))
     runs-on: xcode-27
     timeout-minutes: 90
     outputs:
@@ -352,7 +363,8 @@ jobs:
   testflight-tv:
     needs: testflight
     # always(): a manual signing check runs with the iPhone job skipped, which would skip this job too.
-    if: always() && ((needs.testflight.result == 'success' && needs.testflight.outputs.build_number != '' && vars.APPLE_TV_UPLOAD == 'true') || (github.event_name == 'workflow_dispatch' && inputs.tv_signing_check))
+    # A testflight_only run never builds the TV app, whatever else is ticked.
+    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.testflight_only) && ((needs.testflight.result == 'success' && needs.testflight.outputs.build_number != '' && vars.APPLE_TV_UPLOAD == 'true') || (github.event_name == 'workflow_dispatch' && inputs.tv_signing_check))
     runs-on: macos-26
     timeout-minutes: 90
     env:
@@ -543,7 +555,8 @@ jobs:
   # iPhone only: the Apple TV build is uploaded by testflight-tv but not sent to App Review.
   app-review:
     needs: testflight
-    if: always() && (needs.testflight.result == 'success' || needs.testflight.result == 'skipped')
+    # Skipped whole on a testflight_only run: it must not read, create or submit anything in App Review.
+    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.testflight_only) && (needs.testflight.result == 'success' || needs.testflight.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:

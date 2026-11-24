@@ -270,6 +270,16 @@ export const HAND_GATED_ROUTES: OpenRoute[] = [
 	['DELETE', '/api/integrations/:provider/gateway', 'MCP gateway, ends the provider MCP session'],
 	[
 		'POST',
+		'/api/integrations/:provider/gateway/:integrationId',
+		'MCP gateway for one account, forwards tool calls with that account token',
+	],
+	[
+		'DELETE',
+		'/api/integrations/:provider/gateway/:integrationId',
+		'MCP gateway for one account, ends the provider MCP session',
+	],
+	[
+		'POST',
 		'/api/custom-mcp-servers/:id/gateway',
 		'MCP gateway, forwards tool calls to a custom server with its stored headers',
 	],

@@ -29,6 +29,7 @@ import type {
 	TypeMappingInput,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { IMPORT_MATCH_ON_RE } from '@maskin/shared'
 import { ChevronDown, ChevronRight, FileUp, Link2, Loader2, Plus, Upload, X } from 'lucide-react'
@@ -662,7 +663,7 @@ function MappingStep({
 											.filter((rt) => rt !== '')
 											.map((rt) => (
 												<SelectItem key={rt} value={rt}>
-													{rt.replace(/_/g, ' ')}
+													{relationshipTypeLabel(rt)}
 												</SelectItem>
 											))}
 									</SelectContent>

@@ -18,6 +18,7 @@ import {
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { useWorkspace } from '@/lib/workspace-context'
 import { VIEWER_READ_ONLY_MESSAGE } from '@/lib/workspace-role'
@@ -311,7 +312,7 @@ function RelationshipTypesEditor({
 						key={type}
 						className="inline-flex h-7 items-center gap-1 rounded-full border border-border bg-secondary px-3 text-xs text-foreground"
 					>
-						{type.replace(/_/g, ' ')}
+						{relationshipTypeLabel(type)}
 						<button
 							type="button"
 							className="text-muted-foreground hover:text-error ml-0.5 disabled:pointer-events-none disabled:opacity-50"

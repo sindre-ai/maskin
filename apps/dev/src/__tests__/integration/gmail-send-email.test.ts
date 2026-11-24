@@ -386,6 +386,92 @@ describe('gmail_send_email: Ask first still needs a person', () => {
 	})
 })
 
+describe('gmail_send_email: several Gmail accounts', () => {
+	/** A second, newer account next to the one setup() connected. */
+	async function addSecondAccount(
+		s: Awaited<ReturnType<typeof setup>>,
+		access: 'read' | 'read_write' | null,
+	) {
+		const [second] = await db
+			.insert(integrations)
+			.values({
+				workspaceId: s.workspace.id,
+				provider: 'gmail',
+				status: 'active',
+				externalId: 'second@example.com',
+				credentials: encrypt(
+					JSON.stringify({ accessToken: 'second-token', expiresAt: Date.now() + 60 * 60 * 1000 }),
+				),
+				createdBy: s.human,
+				defaultAgentAccess: 'none',
+				createdAt: new Date(Date.now() + 60_000),
+			})
+			.returning()
+		if (!second) throw new Error('second gmail integration was not inserted')
+		if (access) {
+			await insertAgentGrant(db, {
+				workspaceId: s.workspace.id,
+				integrationId: second.id,
+				actorId: s.agent.id,
+				access,
+			})
+		}
+		return second
+	}
+
+	const bearerOfLastCall = () =>
+		(fetchMock.mock.calls.at(-1)?.[1] as { headers: Record<string, string> }).headers?.Authorization
+
+	it('sends from the account named in the request', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		const second = await addSecondAccount(s, 'read_write')
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, account: 'second@example.com' })
+
+		expect(res.status).toBe(200)
+		expect(bearerOfLastCall()).toBe('Bearer second-token')
+		expect(await sendEvents(s.workspace.id, second.id)).not.toHaveLength(0)
+	})
+
+	it('sends from the first connected account when none is named', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await addSecondAccount(s, 'read_write')
+		fetchMock.mockResolvedValueOnce(gmailOk())
+
+		const res = await post(s.agent.id, s.workspace.id, DIRECT)
+
+		expect(res.status).toBe(200)
+		expect(bearerOfLastCall()).toBe('Bearer live-token')
+	})
+
+	it('checks write access on the chosen account: Read there cannot send, even with write on the first', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await addSecondAccount(s, 'read')
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, account: 'second@example.com' })
+
+		expect(res.status).toBe(404)
+		const message = JSON.stringify(await res.json())
+		expect(message).toContain('sender@example.com')
+		expect(message).not.toContain('Accounts you can use: second@example.com')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('answers an unknown account with a list of the accounts the agent may use', async () => {
+		const s = await setup({ sendMode: 'always_allow' })
+		await addSecondAccount(s, 'read_write')
+
+		const res = await post(s.agent.id, s.workspace.id, { ...DIRECT, account: 'nobody@example.com' })
+
+		expect(res.status).toBe(404)
+		const message = JSON.stringify(await res.json())
+		expect(message).toContain('sender@example.com')
+		expect(message).toContain('second@example.com')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+})
+
 describe('gmail_send_email: the send setting', () => {
 	it('sends an email given as to, subject and body when the agent is set to always allow', async () => {
 		const s = await setup({ sendMode: 'always_allow' })

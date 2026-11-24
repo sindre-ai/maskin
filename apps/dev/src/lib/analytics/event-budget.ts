@@ -25,6 +25,8 @@ const TIER1_EXACT = new Set([
 	'meeting_transcript_landed',
 	'notification_sent',
 	'receipt_draft_booked',
+	'renewal_paid',
+	'refund_issued',
 ])
 const TIER1_PREFIXES = [
 	'foryou_card_',
@@ -33,6 +35,7 @@ const TIER1_PREFIXES = [
 	'workspace_',
 	'checkout_',
 	'trial_',
+	'subscription_',
 	'support_item_',
 ]
 

@@ -48,7 +48,7 @@ const HOVER_BUTTON =
 /**
  * One chat in the new list: three lines (agent names and time, title, a one-line preview), or two
  * for a direct message, which has no title line. A gutter dot for unread, and at most one marker
- * on the preview line (error, needs you, working). Row
+ * on the preview line (error, working). Row
  * actions sit top right: on hover where hover exists, and always behind the ··· button.
  */
 export function ChatRow({
@@ -151,12 +151,6 @@ export function ChatRow({
 								aria-label={error ? ERROR_LABEL[error.reason] : 'Stopped'}
 								className="mt-[5px] size-2 shrink-0 rounded-full bg-error"
 							/>
-						) : marker === 'needs_you' ? (
-							<span
-								role="img"
-								aria-label="Needs you"
-								className="mt-[5px] size-2 shrink-0 rounded-full bg-warning"
-							/>
 						) : marker === 'working' ? (
 							<span
 								role="img"
@@ -165,11 +159,7 @@ export function ChatRow({
 							/>
 						) : null}
 						<span
-							className={cn(
-								'line-clamp-1 min-w-0',
-								marker === 'error' && 'font-medium text-error',
-								marker === 'needs_you' && 'font-medium text-foreground',
-							)}
+							className={cn('line-clamp-1 min-w-0', marker === 'error' && 'font-medium text-error')}
 						>
 							{marker === 'error' && error
 								? ERROR_COPY[error.reason]

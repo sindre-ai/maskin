@@ -57,7 +57,6 @@ app.openapi(searchRoute, (async (c) => {
 		const attention = await loadAttentionChatIds(db, {
 			workspaceId,
 			callerId,
-			needs: parsed.is.includes('needs'),
 			working: parsed.is.includes('working'),
 		})
 		// is:archived has to see archived chats, which a search hides unless its statuses let them in.
@@ -78,7 +77,6 @@ app.openapi(searchRoute, (async (c) => {
 					is: parsed.is,
 					phrases: parsed.phrases,
 					exclude: parsed.exclude,
-					needsIds: attention.needs,
 					workingIds: attention.working,
 				},
 			},
