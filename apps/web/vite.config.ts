@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 
 // Source-map upload to Grafana Faro. A minified stack trace is close to
 // useless, and the existing Sentry setup never wired uploads at all — so this
@@ -47,102 +47,120 @@ if (uploadConfigured && NODE_MAJOR < 22) {
 	)
 }
 
-export default defineConfig(async () => ({
-	plugins: [
-		TanStackRouterVite({ quoteStyle: 'single' }),
-		react(),
-		tailwindcss(),
-		...(uploadConfigured
-			? [
-					(await import('@grafana/faro-rollup-plugin')).default({
-						// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
-						endpoint: faroSourcemapUpload.endpoint!,
-						// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
-						appId: faroSourcemapUpload.appId!,
-						// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
-						stackId: faroSourcemapUpload.stackId!,
-						// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
-						apiKey: faroSourcemapUpload.apiKey!,
-						// Must match FARO_APP_NAME in src/lib/faro.ts. The plugin stamps a
-						// bundle id into the build under a global keyed by this name and
-						// the SDK reads it back to match a stack trace to its map — a
-						// mismatch means uploads succeed and traces stay minified.
-						appName: 'maskin-web',
-						outputFiles: ['*.js'],
-						// Leave no .map files in dist/. apps/dev serves dist/ statically
-						// (STATIC_DIR), so a kept map would be publicly fetchable.
-						keepSourcemaps: false,
-						gzipContents: true,
-					}),
-				]
-			: []),
-	],
-	build: {
-		// 'hidden' emits the .map files the uploader needs without leaving a
-		// //# sourceMappingURL comment pointing at them. Only enabled when the
-		// uploader will consume and delete them — otherwise a build would drop
-		// readable maps into a publicly served directory for nothing.
-		sourcemap: uploadConfigured ? 'hidden' : false,
-		rollupOptions: {
-			output: {
-				// The chat box and the document editor both lazy-load @tiptap/suggestion. Left alone,
-				// rollup hoists it into a shared chunk named after its entry file, "index-<hash>.js",
-				// which assert-editor-chunk reads as the main entry. A name of its own keeps the
-				// guard meaningful. Both users stay behind import(), so the entry chunk is unchanged.
-				manualChunks(id: string) {
-					if (id.includes('/@tiptap/suggestion/')) return 'tiptap-suggestion'
+export default defineConfig(async ({ mode }) => {
+	// Host the built /assets and /fonts files are loaded from. Same switch as the API calls
+	// (src/lib/constants.ts): empty keeps every URL on the page's own host.
+	const apiOrigin = (loadEnv(mode, process.cwd(), 'VITE_').VITE_API_ORIGIN ?? '').replace(
+		/\/+$/,
+		'',
+	)
+	return {
+		plugins: [
+			TanStackRouterVite({ quoteStyle: 'single' }),
+			react(),
+			tailwindcss(),
+			...(uploadConfigured
+				? [
+						(await import('@grafana/faro-rollup-plugin')).default({
+							// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
+							endpoint: faroSourcemapUpload.endpoint!,
+							// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
+							appId: faroSourcemapUpload.appId!,
+							// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
+							stackId: faroSourcemapUpload.stackId!,
+							// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
+							apiKey: faroSourcemapUpload.apiKey!,
+							// Must match FARO_APP_NAME in src/lib/faro.ts. The plugin stamps a
+							// bundle id into the build under a global keyed by this name and
+							// the SDK reads it back to match a stack trace to its map — a
+							// mismatch means uploads succeed and traces stay minified.
+							appName: 'maskin-web',
+							outputFiles: ['*.js'],
+							// Leave no .map files in dist/. apps/dev serves dist/ statically
+							// (STATIC_DIR), so a kept map would be publicly fetchable.
+							keepSourcemaps: false,
+							gzipContents: true,
+						}),
+					]
+				: []),
+		],
+		// Only the two bulk file folders move. The manifest, icons and sw.js stay on the page's host:
+		// a manifest and a service worker must be same-origin.
+		experimental: apiOrigin
+			? {
+					renderBuiltUrl(filename: string) {
+						if (/^(assets|fonts)\//.test(filename)) return `${apiOrigin}/${filename}`
+						return undefined
+					},
+				}
+			: {},
+		build: {
+			// 'hidden' emits the .map files the uploader needs without leaving a
+			// //# sourceMappingURL comment pointing at them. Only enabled when the
+			// uploader will consume and delete them — otherwise a build would drop
+			// readable maps into a publicly served directory for nothing.
+			sourcemap: uploadConfigured ? 'hidden' : false,
+			rollupOptions: {
+				output: {
+					// The chat box and the document editor both lazy-load @tiptap/suggestion. Left alone,
+					// rollup hoists it into a shared chunk named after its entry file, "index-<hash>.js",
+					// which assert-editor-chunk reads as the main entry. A name of its own keeps the
+					// guard meaningful. Both users stay behind import(), so the entry chunk is unchanged.
+					manualChunks(id: string) {
+						if (id.includes('/@tiptap/suggestion/')) return 'tiptap-suggestion'
+					},
 				},
 			},
 		},
-	},
-	resolve: {
-		alias: {
-			'@': '/src',
-		},
-	},
-	server: {
-		port: 5173,
-		// Only bind every interface when the sandboxed dev-external bootstrap asks
-		// for it (so the msb bridge/preview-port forwarding can reach this dev
-		// server) — ordinary `pnpm dev`/`pnpm dev:win` stays loopback-only.
-		host: process.env.MASKIN_DEV_EXTERNAL === '1' ? '0.0.0.0' : 'localhost',
-		// Vite 6 blocks any request whose Host header isn't in the allowlist
-		// (DNS-rebinding guard). Under MASKIN_DEV_EXTERNAL, the sandbox forwards
-		// requests through `host.microsandbox.internal`, so widen the allowlist
-		// to `true` (accept any host) — same posture as the manual `--host` flag.
-		...(process.env.MASKIN_DEV_EXTERNAL === '1' ? { allowedHosts: true as const } : {}),
-		proxy: {
-			'/api': {
-				target: 'http://localhost:3000',
-				changeOrigin: true,
-				// The workspace desktop streams over a WebSocket on /api/desktop/stream.
-				ws: true,
-			},
-			'/mcp': {
-				target: 'http://localhost:3000',
-				changeOrigin: true,
+		resolve: {
+			alias: {
+				'@': '/src',
 			},
 		},
-	},
-	// `vite preview` (serving the production build) does NOT inherit
-	// `server.proxy` — it has its own, separate proxy config. E2E's CI run
-	// uses preview instead of the dev server (see apps/e2e/playwright.config.ts)
-	// specifically to avoid on-demand module transforms slowing down
-	// `page.reload()`, so this needs to mirror `server.proxy` exactly or every
-	// `/api`/`/mcp` request 404s against the static file server.
-	preview: {
-		port: 5173,
-		proxy: {
-			'/api': {
-				target: 'http://localhost:3000',
-				changeOrigin: true,
-				// The workspace desktop streams over a WebSocket on /api/desktop/stream.
-				ws: true,
-			},
-			'/mcp': {
-				target: 'http://localhost:3000',
-				changeOrigin: true,
+		server: {
+			port: 5173,
+			// Only bind every interface when the sandboxed dev-external bootstrap asks
+			// for it (so the msb bridge/preview-port forwarding can reach this dev
+			// server) — ordinary `pnpm dev`/`pnpm dev:win` stays loopback-only.
+			host: process.env.MASKIN_DEV_EXTERNAL === '1' ? '0.0.0.0' : 'localhost',
+			// Vite 6 blocks any request whose Host header isn't in the allowlist
+			// (DNS-rebinding guard). Under MASKIN_DEV_EXTERNAL, the sandbox forwards
+			// requests through `host.microsandbox.internal`, so widen the allowlist
+			// to `true` (accept any host) — same posture as the manual `--host` flag.
+			...(process.env.MASKIN_DEV_EXTERNAL === '1' ? { allowedHosts: true as const } : {}),
+			proxy: {
+				'/api': {
+					target: 'http://localhost:3000',
+					changeOrigin: true,
+					// The workspace desktop streams over a WebSocket on /api/desktop/stream.
+					ws: true,
+				},
+				'/mcp': {
+					target: 'http://localhost:3000',
+					changeOrigin: true,
+				},
 			},
 		},
-	},
-}))
+		// `vite preview` (serving the production build) does NOT inherit
+		// `server.proxy` — it has its own, separate proxy config. E2E's CI run
+		// uses preview instead of the dev server (see apps/e2e/playwright.config.ts)
+		// specifically to avoid on-demand module transforms slowing down
+		// `page.reload()`, so this needs to mirror `server.proxy` exactly or every
+		// `/api`/`/mcp` request 404s against the static file server.
+		preview: {
+			port: 5173,
+			proxy: {
+				'/api': {
+					target: 'http://localhost:3000',
+					changeOrigin: true,
+					// The workspace desktop streams over a WebSocket on /api/desktop/stream.
+					ws: true,
+				},
+				'/mcp': {
+					target: 'http://localhost:3000',
+					changeOrigin: true,
+				},
+			},
+		},
+	}
+})
