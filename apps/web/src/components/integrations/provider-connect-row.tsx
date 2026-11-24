@@ -419,9 +419,15 @@ export function GroupedProviderRow({
 	const canAdd = isActorScoped ? Boolean(currentActorId) && !hasOwnInstall : true
 	const addLabel = isActorScoped ? 'Connect your account' : 'Add another'
 	// Settings spells out what is being added; the chat card keeps the short "+ Add another".
-	const settingsAddLabel = isActorScoped ? addLabel : 'Connect another installation'
+	// A mailbox is an account, not an installation: the Gmail row is labelled by its address.
+	const isEmailAccount = provider.externalIdDisplay === 'email'
+	const settingsAddLabel = isActorScoped
+		? addLabel
+		: isEmailAccount
+			? 'Connect another account'
+			: 'Connect another installation'
 
-	const unitLabel = isActorScoped ? 'connected account' : 'active installation'
+	const unitLabel = isActorScoped || isEmailAccount ? 'connected account' : 'active installation'
 
 	// Same $49/identity disclosure ProviderRow makes, which a workspace on its
 	// second LinkedIn account would otherwise never see again.
@@ -541,6 +547,7 @@ export function GroupedProviderRow({
 							key={installation.id}
 							integration={installation}
 							actorScoped={isActorScoped}
+							emailAccount={isEmailAccount}
 							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
 							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
 							workspaceId={workspaceId}
@@ -594,6 +601,7 @@ export function GroupedProviderRow({
 function NestedInstallationRow({
 	integration,
 	actorScoped = false,
+	emailAccount = false,
 	actorName,
 	isOwn = false,
 	workspaceId,
@@ -607,6 +615,8 @@ function NestedInstallationRow({
 	integration: IntegrationResponse
 	/** True for providers whose installs belong to a member, not the workspace. */
 	actorScoped?: boolean
+	/** True when the provider's external id is the account's email address (Gmail). */
+	emailAccount?: boolean
 	/** Display name of the member who connected an actor-scoped install. */
 	actorName?: string
 	isOwn?: boolean
@@ -633,11 +643,13 @@ function NestedInstallationRow({
 	// An actor-scoped install is identified by the member who connected it —
 	// the provider gives us only an opaque account id, which is meaningless to
 	// read but is still the stable id worth showing underneath.
-	const noun = actorScoped ? 'Account' : 'Installation'
+	const noun = actorScoped || emailAccount ? 'Account' : 'Installation'
 	const label = actorScoped
 		? (actorName ?? (isOwn ? 'You' : 'Workspace member'))
-		: (ownerLogin ??
-			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
+		: emailAccount && integration.externalId
+			? integration.externalId
+			: (ownerLogin ??
+				(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
 		<div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
@@ -648,7 +660,7 @@ function NestedInstallationRow({
 						<span className="ml-1 font-normal text-muted-foreground">(you)</span>
 					)}
 				</p>
-				{integration.externalId && (
+				{integration.externalId && integration.externalId !== label && (
 					<p className="text-[13px] text-muted-foreground truncate">
 						{noun} {integration.externalId}
 					</p>

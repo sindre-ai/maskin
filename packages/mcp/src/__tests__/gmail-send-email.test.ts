@@ -78,6 +78,18 @@ describe('gmail_send_email', () => {
 		expect(result.content[0]?.text).toContain('Do not send it again')
 	})
 
+	it('passes the account on when one is named, and sends none when it is left out', async () => {
+		fetchMock.mockResolvedValue(jsonResponse({ message_id: 'm1', thread_id: null, mode: 'direct' }))
+
+		await handler({ to: 'ada@example.com', subject: 'Hi', body: 'Hello', account: 'a@example.com' })
+		await handler({ to: 'ada@example.com', subject: 'Hi', body: 'Hello' })
+
+		const first = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))
+		const second = JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body))
+		expect(first.account).toBe('a@example.com')
+		expect(second.account).toBeUndefined()
+	})
+
 	it('sends an approved email by its approval card id alone', async () => {
 		fetchMock.mockResolvedValue(
 			jsonResponse({ message_id: 'm1', thread_id: null, mode: 'approved_draft' }),

@@ -2240,6 +2240,22 @@ app.openapi(callbackRoute, (async (c) => {
 	// connect and never collide, so this lookup simply misses for providers
 	// without stable ids.
 	let integrationId = pendingIntegration.id
+	const hasOtherActiveRow = async (exceptId: string): Promise<boolean> => {
+		const [other] = await db
+			.select({ id: integrations.id })
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.workspaceId, stateData.workspaceId),
+					eq(integrations.provider, providerName),
+					eq(integrations.providerMode, 'registered'),
+					eq(integrations.status, 'active'),
+					ne(integrations.id, exceptId),
+				),
+			)
+			.limit(1)
+		return Boolean(other)
+	}
 	const [existingSameInstall] = await db
 		.select()
 		.from(integrations)
@@ -2293,6 +2309,10 @@ app.openapi(callbackRoute, (async (c) => {
 			ownerLogin,
 		})
 	} else {
+		// A second Gmail account is usually a personal inbox. It starts with no agent access, so
+		// the first account's open default never reaches it; a person grants each agent in Settings.
+		const keepOffForAgents =
+			providerName === 'gmail' && (await hasOtherActiveRow(pendingIntegration.id))
 		await db
 			.update(integrations)
 			.set({
@@ -2300,6 +2320,7 @@ app.openapi(callbackRoute, (async (c) => {
 				externalId,
 				credentials: encryptedCredentials,
 				config: activeConfig,
+				...(keepOffForAgents ? { defaultAgentAccess: 'none' as const } : {}),
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, integrationId))

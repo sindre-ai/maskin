@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
 	GATEWAY_PROVIDERS,
+	accountSlug,
 	annotateToolsList,
 	buildUpstreamHeaders,
 	decideToolCall,
 	denialResult,
+	gatewayPath,
 	gatewayServerSpec,
 	parseJsonRpc,
 	parseSseData,
@@ -121,6 +123,32 @@ describe('gatewayServerSpec', () => {
 	it('names the calling session so an Allow in this chat can be found', () => {
 		const spec = gatewayServerSpec('google-calendar') as { headers: Record<string, string> }
 		expect(spec.headers['X-Maskin-Session-Id']).toBe('${SESSION_ID}')
+	})
+})
+
+describe('gateway address for one account', () => {
+	const id = '3c1f0e0e-4a45-4a9e-9b6a-2a7a1a1b0c11'
+
+	it('is the plain address without an id and the address with the id after it', () => {
+		expect(gatewayPath('gmail')).toBe('/api/integrations/gmail/gateway')
+		expect(gatewayPath('gmail', id)).toBe(`/api/integrations/gmail/gateway/${id}`)
+		expect((gatewayServerSpec('gmail', id) as { url: string }).url).toBe(
+			`\${MASKIN_API_URL}/api/integrations/gmail/gateway/${id}`,
+		)
+		expect(gatewayServerSpec('gmail')).toEqual(gatewayServerSpec('gmail', undefined))
+	})
+
+	it('keeps the headers of the plain spec, so the account route signs in the same way', () => {
+		const plain = gatewayServerSpec('gmail') as { headers: Record<string, string> }
+		const byId = gatewayServerSpec('gmail', id) as { headers: Record<string, string> }
+		expect(byId.headers).toEqual(plain.headers)
+	})
+
+	it('turns an address into a key-safe word', () => {
+		expect(accountSlug('Sebastian@meshfirm.com')).toBe('sebastian-meshfirm-com')
+		expect(accountSlug('growth@vaerksted.ai')).toBe('growth-vaerksted-ai')
+		expect(accountSlug('  ..odd+tag@x.io ')).toBe('odd-tag-x-io')
+		expect(accountSlug('')).toBe('')
 	})
 })
 
@@ -294,6 +322,37 @@ describe('annotateToolsList with a list of allowed tools', () => {
 			access: 'read_write',
 		})
 		expect((out as { tools: unknown[] }).tools).toHaveLength(3)
+	})
+})
+
+describe('annotateToolsList with an account', () => {
+	const result = {
+		tools: [
+			{ name: 'search_threads', description: 'Search mail.' },
+			{ name: 'create_draft', description: 'Save a draft.' },
+		],
+	}
+
+	it('names the account in every tool description, including a tool the agent cannot use', () => {
+		const { result: out } = annotateToolsList(result, {
+			provider: 'gmail',
+			providerLabel: 'Gmail',
+			access: 'read',
+			account: 'krumhausen@gmail.com',
+		})
+		const tools = (out as { tools: Array<{ description: string }> }).tools
+		expect(tools).toHaveLength(2)
+		for (const tool of tools) expect(tool.description).toContain('krumhausen@gmail.com')
+	})
+
+	it('leaves the descriptions as they were without one', () => {
+		const { result: out } = annotateToolsList(result, {
+			provider: 'gmail',
+			providerLabel: 'Gmail',
+			access: 'read_write',
+		})
+		const tools = (out as { tools: Array<{ description: string }> }).tools
+		for (const tool of tools) expect(tool.description).not.toContain('account:')
 	})
 })
 
