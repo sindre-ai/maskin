@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.0.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.1.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -136,6 +136,52 @@ describe('Accounting loop definition', () => {
 		// The check still stops on a tool that books, and on any Dinero tool off the list.
 		expect(check).toMatch(/every Dinero tool you have is on the list/)
 		expect(check).toMatch(/A tool that books, changes or deletes is offered, or a Dinero tool/)
+	})
+
+	// Booking is the owner's switch. With it off the flow behaves as before, so the draft text stays
+	// and the booking steps are written as conditional on the switch, the booking tools and a period
+	// request. The tools are named in the skill, never in the prompt or the listing text.
+	it('describes the booking steps behind the switch, with the log and the super-user line', () => {
+		const method =
+			skillTexts().find((t) => t.startsWith('---\nname: bookkeeping-draft-method')) ?? ''
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(method).toMatch(/## Period run \(only when booking is on/)
+		for (const name of ['BookVoucher', 'add_purchase_payment', 'add_invoice_payment']) {
+			expect(method).toContain(name)
+			expect(prompt).not.toContain(name)
+			expect(ACCOUNTING_LOOP.description).not.toContain(name)
+		}
+		expect(method).toMatch(/Never book without a timestamp/)
+		expect(method).toMatch(/leave it to Dinero/)
+		expect(method).toMatch(/stays a draft, gets a flag/)
+		expect(method).toMatch(/Put the reason on every line/)
+		expect(method).toMatch(/is logged for you/)
+		expect(method).toMatch(/The owner has approved the books: stop at once/)
+		expect(method).toMatch(/file anything with SKAT or Erhvervsstyrelsen/)
+		expect(prompt).toMatch(/Booking is the owner's switch, never yours/)
+		expect(prompt).toMatch(/the owner has asked you in this chat to work a period/)
+		expect(prompt).toMatch(/Draft only unless booking is switched on/)
+		expect(check).toMatch(/Booking is off until a person switches it on/)
+		expect(check).toMatch(/must be a super-user in Dinero/)
+		expect(check).toMatch(/never add a booking tool to it/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/must be a super-user in Dinero/)
+	})
+
+	it('leaves the allowed list for a custom server and the draft path as they were', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		expect(check).toMatch(/keep its allowed list exactly as in step 3/)
+		expect(check).toMatch(/with exactly these 16 names/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/The list is exactly these 16 names/)
+		expect(ACCOUNTING_LOOP.settings.closeCondition).toMatch(/With booking off, nothing is booked/)
+	})
+
+	it('never says reconcile: a payment is registered and a line is matched', () => {
+		const all = [ACCOUNTING_LOOP.description, ...actorTexts(), ...skillTexts()].join('\n')
+		expect(all).not.toMatch(/reconcil/i)
+		expect(all).toMatch(/payment registered/)
 	})
 
 	it('has no key-based install step left', () => {

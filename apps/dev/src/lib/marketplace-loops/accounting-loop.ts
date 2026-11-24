@@ -23,9 +23,9 @@ import type { LoopSettings } from './loop-settings'
 // actual current under a fixed label.
 const ACCOUNTING_LOOP_SETTINGS: LoopSettings = {
 	entryCondition:
-		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected.",
+		"A person uploads a receipt, a photo or a PDF, in the flow's chat, and Dinero is connected. With booking switched on, the owner can also ask the flow to work a period.",
 	closeCondition:
-		'The receipt is saved as a draft voucher in Dinero, or it is on the adviser list with the reason. Nothing is booked, changed or deleted by the flow.',
+		'The receipt is saved as a draft voucher in Dinero, or it is on the adviser list with the reason. With booking off, nothing is booked, changed or deleted by the flow. With booking on, a clear item is booked and logged, and a doubtful one stays a flagged draft.',
 	tags: ['Finance'],
 }
 
