@@ -53,10 +53,12 @@ name: Apple
 # slowest platform (iOS), with slow-runner days of 40+ min for `apple` on record. Keep
 # the limit well above the slowest healthy job so a slow runner is not a false red.
 #
-# Toolchain: the project needs Xcode 26 / Swift 6.x. The jobs run on macos-26 and
-# select the newest installed Xcode 26.x explicitly; they fail loudly if none is
-# installed rather than silently building with an older SDK. Builds use generic
-# simulator destinations, so no simulator runtimes need to be installed.
+# Toolchain: the project needs Xcode 26 / Swift 6.x. The swift test job runs on macos-26 and
+# selects the newest installed Xcode 26.x. The apple-build job runs on the xcode-27 image and
+# selects the newest Xcode 27.x, the toolchain the iOS release build uses (App Store Connect
+# requires the iOS 27 SDK from April 2027). Both fail loudly if none is installed rather than
+# silently building with an older SDK. Builds use generic simulator destinations, so no
+# simulator runtimes need to be installed.
 
 on:
   # Nightly build of the platforms that pushes and pull requests skip. Schedules run on the
@@ -174,7 +176,7 @@ jobs:
     name: apple-build (${{ matrix.platform }})
     # Not a draft pull request (pushes have no pull_request context, so they always run).
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 50
     strategy:
       # Let the other platforms finish: one failing platform should not hide a second one.
@@ -189,12 +191,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Select Xcode 26
+      - name: Select Xcode 27
         run: |
           set -euo pipefail
-          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$xcode" ]; then
-            echo "::error::No Xcode 26.x on this runner image (needed for iOS 26 APIs / Swift 6.x). Installed:"
+            echo "::error::No Xcode 27.x on this runner image (needed for the iOS 27 SDK). Installed:"
             ls -d /Applications/Xcode*.app || true
             exit 1
           fi
