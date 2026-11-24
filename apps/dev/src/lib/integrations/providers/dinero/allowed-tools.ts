@@ -6,8 +6,8 @@ import { DINERO_BRIDGE_BOOKING_TOOL_NAMES, DINERO_BRIDGE_DRAFT_TOOL_NAMES } from
  * 23 Nov 2026), plus the public API tools the gateway answers itself (./bridge.ts). An exact-name
  * list, not name rules: a tool Dinero adds later is refused until someone lists it here.
  * Everything that changes the books for good or reaches a customer but is not on it stays refused
- * for every agent, Read & write included: book_finance_voucher, the trade offer tools and
- * submit_feedback. BookVoucher, the payments and the emails sit behind the owner's booking switch
+ * for every agent, Read & write included: submit_feedback. BookVoucher, book_finance_voucher, the
+ * payments, the trade offer tools and the emails sit behind the owner's booking switch
  * (DINERO_WITH_BOOKING_TOOLS).
  *
  * The list holds only what makes, edits or removes a draft, or reads:
@@ -78,14 +78,27 @@ export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 ]
 
 /**
- * The draft-only list plus BookVoucher, the two tools that register a payment and the four bridge
- * tools that email an invoice or chase a late one (./bridge.ts), for an owner who switched booking
- * on. Each of them needs the document's current timestamp, so nothing lands on a version nobody
- * looked at.
+ * The draft-only list plus what changes the books for good or reaches a customer, for an owner who
+ * switched booking on:
+ * - BookVoucher, which also books sales credit notes and purchase credit notes, so those need no
+ *   tool of their own.
+ * - book_finance_voucher, which books a voucher made from a Dinero template (A-skat, ATP) that
+ *   BookVoucher refuses, for payroll postings.
+ * - The trade offer tools: create_trade_offer, send_trade_offer (emails the customer) and
+ *   generate_invoice_from_trade_offer.
+ * - The two tools that register a payment, and the four bridge tools that email an invoice or
+ *   chase a late one (./bridge.ts).
+ * Each tool that acts on an existing document needs the document's current timestamp
+ * (dineroCallRefusal in ./action-log.ts), so nothing lands on a version nobody looked at.
+ * Dinero has no tool that accepts a bank line's match: a payment tool is how a line gets cleared.
  */
 export const DINERO_WITH_BOOKING_TOOLS: readonly string[] = [
 	...DINERO_DRAFT_ONLY_TOOLS,
 	'BookVoucher',
+	'book_finance_voucher',
+	'create_trade_offer',
+	'send_trade_offer',
+	'generate_invoice_from_trade_offer',
 	'add_purchase_payment',
 	'add_invoice_payment',
 	...DINERO_BRIDGE_BOOKING_TOOL_NAMES,

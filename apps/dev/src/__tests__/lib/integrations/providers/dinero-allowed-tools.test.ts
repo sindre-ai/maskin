@@ -94,6 +94,10 @@ describe('Dinero allowed tools', () => {
 		expect(DINERO_WITH_BOOKING_TOOLS).toEqual([
 			...DINERO_DRAFT_ONLY_TOOLS,
 			'BookVoucher',
+			'book_finance_voucher',
+			'create_trade_offer',
+			'send_trade_offer',
+			'generate_invoice_from_trade_offer',
 			'add_purchase_payment',
 			'add_invoice_payment',
 			'send_invoice_email',
@@ -101,7 +105,9 @@ describe('Dinero allowed tools', () => {
 			'book_invoice_reminder',
 			'send_invoice_reminder_email',
 		])
-		expect(DINERO_WITH_BOOKING_TOOLS).not.toContain('book_finance_voucher')
+		// Dinero has no tool that accepts a bank line's match, and none is invented here.
+		expect(DINERO_WITH_BOOKING_TOOLS.filter((t) => /match|reconcil/i.test(t))).toEqual([])
+		expect(DINERO_WITH_BOOKING_TOOLS).not.toContain('submit_feedback')
 	})
 
 	it('picks the list from the booking switch, and has none for another provider', () => {
