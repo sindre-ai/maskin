@@ -7,6 +7,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { eq, inArray } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
@@ -340,6 +341,7 @@ export async function maybeBootstrapDev(
 	db: Database,
 	agentStorage?: AgentStorageManager,
 	sessionManager?: SessionManager,
+	storageProvider?: StorageProvider,
 ): Promise<DevBootstrapResult | null> {
 	if (process.env.NODE_ENV === 'production') return null
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return null
@@ -365,6 +367,7 @@ export async function maybeBootstrapDev(
 	const workspace = await provisionWorkspace({
 		db,
 		agentStorage,
+		storageProvider,
 		sessionManager,
 		name: 'My Workspace',
 		ownerActorId: actor.id,

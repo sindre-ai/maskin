@@ -1182,7 +1182,6 @@ describe('Actors Integration — signup workspace provisioning', () => {
 	const DEFAULT_AGENT_NAMES = [
 		'Chief of Staff',
 		'Driver',
-		'Knowledge Curator',
 		'Researcher',
 		'Signal Analyst',
 		'Workspace Coach',

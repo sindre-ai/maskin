@@ -5,6 +5,8 @@ import {
 	events,
 	actors,
 	agentSkills,
+	installedLoops,
+	marketplaceLoops,
 	objects,
 	triggers,
 	workspaceMembers,
@@ -12,10 +14,12 @@ import {
 	workspaces as workspacesTable,
 } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
+import { KNOWLEDGE_WIKI_LOOP_NAME, KNOWLEDGE_WIKI_LOOP_SLUG, readLoopViews } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { onTestFinished } from 'vitest'
 import { __resetTeamMemberForTesting, configureTeamMember } from '../../lib/analytics/team-member'
+import { seedMarketplaceLoops } from '../../lib/dev-bootstrap'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { openSecret } from '../../lib/workspace-secrets'
 import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
@@ -36,6 +40,7 @@ type Env = {
 		notifyBridge: PgNotifyBridge
 		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
 		agentStorage: InstanceType<typeof AgentStorageManager>
+		storageProvider?: StorageProvider
 	}
 }
 
@@ -50,7 +55,9 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
+const { bootstrapDefaultAgents, installDefaultMarketplaceLoops } = await import(
+	'../../services/workspace-bootstrap'
+)
 const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createMemoryStorage(): StorageProvider {
@@ -90,10 +97,12 @@ const DEFAULT_AGENT_NAMES = [
 	'Driver',
 	'Signal Analyst',
 	'Researcher',
-	'Knowledge Curator',
 ]
 
-function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(), db)) {
+function createApp(
+	agentStorage = new AgentStorageManager(createMemoryStorage(), db),
+	storageProvider?: StorageProvider,
+) {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -117,6 +126,7 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
 		c.set('agentStorage', agentStorage)
+		if (storageProvider) c.set('storageProvider', storageProvider)
 		await next()
 	})
 
@@ -1417,7 +1427,7 @@ describe('Workspaces Integration', () => {
 
 			// The shared "Maskin way of working" skill is attached to every default
 			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
-			// Driver, Signal Analyst, Researcher, Knowledge Curator.
+			// Driver, Signal Analyst, Researcher.
 			const [wayOfWorkingSkill] = await db
 				.select({ id: workspaceSkills.id })
 				.from(workspaceSkills)
@@ -1434,7 +1444,7 @@ describe('Workspaces Integration', () => {
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
 				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
-			expect(wayOfWorkingAttachRows).toHaveLength(6)
+			expect(wayOfWorkingAttachRows).toHaveLength(5)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
@@ -1445,8 +1455,9 @@ describe('Workspaces Integration', () => {
 			// in DEFAULT_WORKSPACE_TRIGGERS, to 15 with the Chief of Staff's
 			// "Daily briefing" cron, and to 16 with its hourly "For You — curate
 			// the list" cron, then down to 12 when the Bet discovery loop's four
-			// triggers were dropped from the seed.
-			expect(triggerRows).toHaveLength(12)
+			// triggers were dropped from the seed, then to 10 when the Knowledge Wiki's two
+			// moved out of the seed into the marketplace install.
+			expect(triggerRows).toHaveLength(10)
 		})
 
 		it('gives the Researcher the cited deep research mode and the deep-research-subagents skill', async () => {
@@ -1484,7 +1495,7 @@ describe('Workspaces Integration', () => {
 			expect(attachRows.map((r) => r.actorId)).toEqual([researcher?.id])
 		})
 
-		it('seeds the Workspace improvements and Knowledge Wiki loops wired to their triggers, and no Bet discovery loop', async () => {
+		it('seeds the Workspace improvements loop wired to its triggers, and no Bet discovery loop or Knowledge Wiki copy', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -1498,10 +1509,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows.map((r) => r.title).sort()).toEqual([
-				'Knowledge Wiki → digest',
-				'Workspace improvements',
-			])
+			expect(loopRows.map((r) => r.title).sort()).toEqual(['Workspace improvements'])
 
 			const triggerRows = await db
 				.select({ id: triggers.id, name: triggers.name })
@@ -1521,16 +1529,103 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Capture outcome'),
 				]),
 			)
+		})
 
-			const knowledgeWikiLoop = loopRows.find((r) => r.title === 'Knowledge Wiki → digest')
-			const knowledgeWikiTriggerIds =
-				(knowledgeWikiLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
-			expect(new Set(knowledgeWikiTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Fold new knowledge into the wiki'),
-					triggerIdByName.get('Compile the twice-weekly digest'),
-				]),
-			)
+		describe('Knowledge Wiki marketplace install', () => {
+			async function knowledgeWikiRows(workspaceId: string) {
+				return db
+					.select({ id: installedLoops.id, objectId: installedLoops.objectId })
+					.from(installedLoops)
+					.innerJoin(marketplaceLoops, eq(installedLoops.sourceLoopId, marketplaceLoops.id))
+					.where(
+						and(
+							eq(installedLoops.workspaceId, workspaceId),
+							eq(marketplaceLoops.slug, KNOWLEDGE_WIKI_LOOP_SLUG),
+						),
+					)
+			}
+
+			async function curatorsIn(workspaceId: string) {
+				return db
+					.select({ id: actors.id, metadata: actors.metadata })
+					.from(workspaceMembers)
+					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+					.where(
+						and(
+							eq(workspaceMembers.workspaceId, workspaceId),
+							eq(actors.name, 'Knowledge Curator'),
+						),
+					)
+			}
+
+			it('installs the marketplace Knowledge Wiki into a new workspace, with one Curator and both tabs', async () => {
+				onTestFinished(async () => {
+					await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+				})
+				await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+				await seedMarketplaceLoops(db)
+
+				const storage = createMemoryStorage()
+				const agentStorage = new AgentStorageManager(storage, db)
+				const app = createApp(agentStorage, storage)
+
+				const createRes = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'Wiki Install' }),
+				)
+				expect(createRes.status).toBe(201)
+				const ws = await createRes.json()
+
+				const installs = await knowledgeWikiRows(ws.id)
+				expect(installs).toHaveLength(1)
+
+				const curators = await curatorsIn(ws.id)
+				expect(curators).toHaveLength(1)
+				expect(
+					(curators[0]?.metadata as { source_item_id?: string } | null)?.source_item_id,
+				).toBeTruthy()
+
+				const [loopObject] = await db
+					.select({ title: objects.title, metadata: objects.metadata })
+					.from(objects)
+					.where(and(eq(objects.workspaceId, ws.id), eq(objects.id, installs[0]?.objectId ?? '')))
+				expect(loopObject?.title).toBe(KNOWLEDGE_WIKI_LOOP_NAME)
+				expect(readLoopViews(loopObject?.metadata ?? {})).toHaveLength(2)
+
+				// The old hand-made copy is gone: the install is the only Knowledge Wiki loop.
+				const wikiLoops = await db
+					.select({ id: objects.id })
+					.from(objects)
+					.where(
+						and(
+							eq(objects.workspaceId, ws.id),
+							eq(objects.type, 'loop'),
+							eq(objects.title, 'Knowledge Wiki → digest'),
+						),
+					)
+				expect(wikiLoops).toHaveLength(0)
+
+				// Running the bootstrap again installs nothing new and adds no second Curator.
+				await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+				await installDefaultMarketplaceLoops(db, agentStorage, storage, ws.id, getTestActorId())
+				expect(await knowledgeWikiRows(ws.id)).toHaveLength(1)
+				expect(await curatorsIn(ws.id)).toHaveLength(1)
+			})
+
+			it('still creates the workspace when the marketplace has no Knowledge Wiki yet', async () => {
+				await sql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
+
+				const storage = createMemoryStorage()
+				const app = createApp(new AgentStorageManager(storage, db), storage)
+
+				const createRes = await app.request(
+					jsonRequest('POST', '/api/workspaces', { name: 'No Marketplace Yet' }),
+				)
+				expect(createRes.status).toBe(201)
+				const ws = await createRes.json()
+
+				expect(await knowledgeWikiRows(ws.id)).toHaveLength(0)
+				expect(await curatorsIn(ws.id)).toHaveLength(0)
+			})
 		})
 
 		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
@@ -1550,7 +1645,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(2)
+			expect(loopRows).toHaveLength(1)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

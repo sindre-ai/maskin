@@ -766,14 +766,15 @@ logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db, agentStorage, sessionManager)
+	// Before the dev workspace is made: a new workspace installs Knowledge Wiki from the marketplace.
+	await seedMarketplaceIfEmpty(db)
+	bootstrap = await maybeBootstrapDev(db, agentStorage, sessionManager, storageProvider)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,
 			workspaceName: bootstrap.workspaceName,
 		})
 	}
-	await seedMarketplaceIfEmpty(db)
 } catch (err) {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }

@@ -44,6 +44,7 @@ import {
 	normalizeTags,
 	updateActorSchema,
 } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { maskLlmConfigSecrets, restoreMaskedLlmConfig } from '../lib/actor-llm-config-redaction'
 import { toActorWithKeyResponse } from '../lib/actor-response'
@@ -108,6 +109,7 @@ type Env = {
 		actorType: string
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
+		storageProvider?: StorageProvider
 		workspaceRole?: string
 		maskinSessionId?: string
 	}
@@ -545,6 +547,7 @@ app.openapi(createActorRoute, async (c) => {
 			created = await provisionWorkspace({
 				db,
 				agentStorage: c.get('agentStorage'),
+				storageProvider: c.get('storageProvider'),
 				sessionManager: c.get('sessionManager'),
 				name: `${body.name}'s Workspace`,
 				ownerActorId: actor.id,
