@@ -55,6 +55,7 @@ import { createRouteTimingStore } from './lib/route-timing-store'
 import { getStripeClient } from './lib/stripe'
 import { isWorkspaceMember } from './lib/workspace-auth'
 import { initMcpRateLimit, stopMcpRateLimit } from './routes/mcp'
+import { fetchServerHealth } from './services/agent-server-client'
 import { AgentStorageManager } from './services/agent-storage'
 import { ApnsSender } from './services/apns'
 import { BlockedToolCallsCleaner } from './services/blocked-tool-calls-cleaner'
@@ -641,6 +642,12 @@ if (process.env.NODE_ENV === 'production') {
 				...(spec.skillsManifest.length > 0 && { skills: spec.skillsManifest }),
 			}
 		},
+		// A server whose disk or file storage is failing answers /health with 503 and a
+		// reason; the dispatcher then picks another server. SKIP_RED_AGENT_SERVERS=0
+		// turns this off without a deploy (default on).
+		...(!['0', 'false'].includes((process.env.SKIP_RED_AGENT_SERVERS ?? '').toLowerCase()) && {
+			checkServerHealth: (server) => fetchServerHealth(server),
+		}),
 		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
 		// interactive branch reads its first turn from stdin, fed by whatever
 		// POSTs /sessions/:id/input. Mirrors session-manager.ts's launchContainer()
