@@ -52,6 +52,30 @@ export function useDefaultChatAgent(): { id: string; name: string } | null {
 	}, [actors, workspace])
 }
 
+/**
+ * An agent made seconds ago is not in the cached list yet. While `missing` is true, read the list
+ * once more from the server (once per agent id: the answer is kept, so an agent that really is
+ * gone does not loop). `checking` is true until that read has answered.
+ */
+export function useActorRecheck(workspaceId: string, actorId: string, missing: boolean) {
+	const queryClient = useQueryClient()
+	const { isSuccess, isError } = useQuery({
+		queryKey: queryKeys.actors.recheck(workspaceId, actorId),
+		queryFn: async () => {
+			await queryClient.fetchQuery({
+				queryKey: queryKeys.actors.all(workspaceId),
+				queryFn: () => api.actors.list(workspaceId),
+				staleTime: 0,
+			})
+			return true
+		},
+		enabled: missing,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	})
+	return { checking: missing && !isSuccess && !isError }
+}
+
 export function useActor(id: string) {
 	return useQuery({
 		queryKey: queryKeys.actors.detail(id),
