@@ -29,6 +29,7 @@ import type {
 	RelationshipResponse,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Plus } from 'lucide-react'
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -812,7 +813,7 @@ export function AddLinkForm({
 							...relationshipTypes.filter((t) => t !== DEFAULT_FILE_RELATIONSHIP_TYPE),
 						].map((t) => (
 							<SelectItem key={t} value={t}>
-								{t.replace(/_/g, ' ')}
+								{relationshipTypeLabel(t)}
 							</SelectItem>
 						))}
 					</SelectContent>

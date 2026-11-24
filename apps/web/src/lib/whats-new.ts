@@ -19,7 +19,7 @@ export const WHATS_NEW_ENTRIES: WhatsNewEntry[] = [
 	{
 		id: 'loop-views-actions',
 		title: 'Approve and move things from the list',
-		body: "Open an item right from a loop's list, then approve it or move it on without leaving the page.",
+		body: "Open an item right from a flow's list, then approve it or move it on without leaving the page.",
 		date: '2026-11-13',
 	},
 	{
