@@ -47,6 +47,13 @@ import {
 	TOOL_ANNOTATIONS,
 	extensionToolTitle,
 } from './annotations.js'
+import {
+	isBulkReply,
+	slimCreatedEdges,
+	slimCreatedNodes,
+	slimLoopRow,
+	slimResults,
+} from './bulk-reply.js'
 import { addCopenhagenTimesToResponse } from './copenhagen-times.js'
 import {
 	CURSOR_MAX_OFFSET,
@@ -4054,9 +4061,22 @@ export function createMcpServer(config: McpConfig) {
 						return addUrl(rest, config, workspace_id, { kind: 'object', id: node.id })
 					})
 				: graphResult.nodes
-			const enrichedResult = { ...graphResult, nodes: enrichedNodes }
+			// A big batch echoes ids and titles only, so the reply stays under the tool cap.
+			const bulkReply = isBulkReply(Math.max(nodes.length, edges?.length ?? 0))
+			const enrichedResult = bulkReply
+				? {
+						...graphResult,
+						nodes: Array.isArray(enrichedNodes) ? slimCreatedNodes(enrichedNodes) : enrichedNodes,
+						edges: Array.isArray(graphResult.edges)
+							? slimCreatedEdges(graphResult.edges)
+							: graphResult.edges,
+					}
+				: { ...graphResult, nodes: enrichedNodes }
 			const baseBody = fileAttachments.length
-				? { ...enrichedResult, file_attachments: fileAttachments }
+				? {
+						...enrichedResult,
+						file_attachments: bulkReply ? slimResults(fileAttachments) : fileAttachments,
+					}
 				: enrichedResult
 
 			// No setup block on create — matches create_actor/create_loop: creates
@@ -4582,7 +4602,9 @@ export function createMcpServer(config: McpConfig) {
 				}),
 			)
 			const setup = mergeBetSetupBlocks(perObjectSetup)
-			const responseBody = { results, setup }
+			// A big batch reports each item's id, success and error, not its full row.
+			const bulkReply = isBulkReply(Math.max(args.updates?.length ?? 0, args.edges?.length ?? 0))
+			const responseBody = { results: bulkReply ? slimResults(results) : results, setup }
 
 			return {
 				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
@@ -8191,9 +8213,19 @@ export function createMcpServer(config: McpConfig) {
 							: []
 				const memberCount = addedObjectIds.length > 0 ? addedObjectIds.length : 1
 
-				const responseBody: Record<string, unknown> = {
-					loop: loopWithUrl,
-					steps: await fetchLoopStepsView(config, workspace_id, effectiveTriggerIds),
+				// A big membership change reports counts and ids, not the loop row and its steps.
+				const bulkReply = isBulkReply(
+					Math.max(add_object_ids?.length ?? 0, remove_object_ids?.length ?? 0),
+				)
+				const responseBody: Record<string, unknown> = bulkReply
+					? { loop: slimLoopRow(loopWithUrl) }
+					: {
+							loop: loopWithUrl,
+							steps: await fetchLoopStepsView(config, workspace_id, effectiveTriggerIds),
+						}
+				if (bulkReply) {
+					responseBody.added_count = addedObjectIds.length
+					responseBody.removed_count = removedObjectIds.length
 				}
 				if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 				if (addedObjectIds.length > 0) responseBody.added_object_ids = addedObjectIds
