@@ -200,10 +200,11 @@ struct QuestionOptionsView: View {
 		}
 	}
 
-	/// "Sam, 08:04": who answered and when, when the row knows.
+	/// "Sam, 08:04": who answered and when, when the row knows. The time follows the chat's clock
+	/// rule (as on the web): the time today, the weekday within a week, the date beyond.
 	private var byline: String? {
 		guard let note else { return nil }
-		let time = note.date?.formatted(date: .omitted, time: .shortened)
+		let time = note.date.map { RelativeTimeFormatter.string(for: $0, style: .clock) }
 		return [note.actorName, time].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
 	}
 }
