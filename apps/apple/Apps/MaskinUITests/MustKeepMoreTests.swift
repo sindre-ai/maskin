@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// MUST-KEEP features of the iPhone app, part two: rows MK-10 and up of `docs/must-keep-features.md`.
@@ -490,22 +491,30 @@ final class MustKeepMoreTests: XCTestCase {
 		expectExists(row, "PostHog is in the Connected list", dump: "mk17-connected", timeout: 15)
 	}
 
-	// MARK: MK-20 The profile sheet starts with Switch workspace
+	// MARK: MK-20 The profile sheet's Switch workspace row is iPad only
 
-	/// For you → Account → the first row is Switch workspace with the current workspace's name; tapping it opens the
-	/// workspace picker. On an iPad in portrait this is the only way to change workspace (no sidebar).
+	/// For you → Account. On an iPad the first row is Switch workspace with the current workspace's name, and tapping
+	/// it opens the workspace picker (in portrait it is the only way to change workspace: no sidebar). On an iPhone the
+	/// sheet is unchanged: no such row, and the Switch button on the workspace card opens the picker.
 	func testMK20_ProfileSheetSwitchWorkspaceRow() throws {
 		openProfile()
 		let row = app.buttons["switch-workspace-row"].firstMatch
-		expectExists(row, "the profile sheet offers Switch workspace", dump: "mk20-row", timeout: 5)
-		// The workspace list loads after sign-in, so the name may arrive a moment after the row.
-		let named = NSPredicate(format: "label == 'Switch workspace, Northwind'")
-		let wait = XCTNSPredicateExpectation(predicate: named, object: row)
-		if XCTWaiter().wait(for: [wait], timeout: 15) != .completed {
-			dumpScreen("mk20-name")
-			XCTFail("the row names the current workspace; its label reads '\(row.label)'")
+		if UIDevice.current.userInterfaceIdiom == .pad {
+			expectExists(row, "the profile sheet offers Switch workspace", dump: "mk20-row", timeout: 5)
+			// The workspace list loads after sign-in, so the name may arrive a moment after the row.
+			let named = NSPredicate(format: "label == 'Switch workspace, Northwind'")
+			let wait = XCTNSPredicateExpectation(predicate: named, object: row)
+			if XCTWaiter().wait(for: [wait], timeout: 15) != .completed {
+				dumpScreen("mk20-name")
+				XCTFail("the row names the current workspace; its label reads '\(row.label)'")
+			}
+			row.tap()
+		} else {
+			XCTAssertFalse(row.exists, "iPhone keeps its profile sheet: no Switch workspace row")
+			let switchButton = app.buttons["Switch"].firstMatch
+			expectExists(switchButton, "the workspace card has a Switch button", dump: "mk20-switch", timeout: 5)
+			switchButton.tap()
 		}
-		row.tap()
-		expectExists(app.staticTexts["Workspaces"], "Switch workspace opens the workspace picker", dump: "mk20-picker", timeout: 10)
+		expectExists(app.staticTexts["Workspaces"], "Switch opens the workspace picker", dump: "mk20-picker", timeout: 10)
 	}
 }

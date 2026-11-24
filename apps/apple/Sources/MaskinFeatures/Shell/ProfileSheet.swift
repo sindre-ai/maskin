@@ -63,7 +63,7 @@ struct ProfileSheet: View {
 			ScrollView {
 				VStack(spacing: MaskinSpace.s7) {
 					titleBar
-					switchWorkspaceRow
+					if ShellIdiom.isPad { switchWorkspaceRow }
 					profileCard
 					workspaceCard
 					statTiles
@@ -187,8 +187,8 @@ struct ProfileSheet: View {
 		}
 	}
 
-	/// "Switch workspace" with the current workspace's name: the one way to change workspace on an iPad
-	/// in portrait, where there is no sidebar to hold the switcher. Opens the same picker as Switch below.
+	/// "Switch workspace" with the current workspace's name, on the iPad only: in portrait there is no
+	/// sidebar to hold the switcher. iPhone and Mac keep their layout. Opens the same picker as Switch below.
 	private var switchWorkspaceRow: some View {
 		Button {
 			showWorkspaces = true

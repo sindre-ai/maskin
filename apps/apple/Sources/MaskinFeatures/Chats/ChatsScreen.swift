@@ -59,7 +59,7 @@ private struct ChatsContainer: View {
 	@State private var searchPresented = false
 	@State private var newChat: NewChatRequest?
 	@State private var showThreads = false
-	/// iPad: which columns show. Regular width keeps the list beside the chat; in landscape the panel button in the thread header can hide it.
+	/// iPad: which columns show. Regular width keeps the list beside the chat.
 	@State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 	@State private var isPortrait = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -285,9 +285,12 @@ private struct ChatsContainer: View {
 		}
 	}
 
-	/// Portrait has no sidebar to hold the account, so the list header carries the avatar.
+	/// The bottom bar's layout has no sidebar or rail to hold the account, so the list header carries the avatar.
 	private var showsAccountAvatar: Bool {
-		runtime != nil && session != nil && ShellIdiom.barShowsAvatar(hasRail: ShellIdiom.hasRail, portrait: isPortrait)
+		runtime != nil && session != nil
+			&& ShellIdiom.barShowsAvatar(
+				hasRail: ShellIdiom.hasRail,
+				bottomBar: PadBarLayout.usesBottomBar(portrait: isPortrait, regularWidth: horizontalSizeClass == .regular))
 	}
 
 	/// The Display options differ from the defaults.

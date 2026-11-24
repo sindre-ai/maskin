@@ -28,11 +28,12 @@ enum ShellIdiom {
 		return false
 	}
 
-	/// Whether a root screen draws the account avatar itself. The rail holds the account at its foot in
-	/// landscape. Portrait has no sidebar, so every top screen carries the avatar. Without a rail
-	/// (iPhone, Mac, iOS 17) the screen always draws it.
-	static func barShowsAvatar(hasRail: Bool, portrait: Bool) -> Bool {
-		!hasRail || portrait
+	/// Whether a root screen draws the account avatar itself. The sidebar and the rail hold the account at
+	/// their foot (landscape, Slide Over, a one-third split). Only where the bottom bar is used (portrait at
+	/// regular width) has the window no sidebar or rail, so every top screen carries the avatar. Without a
+	/// rail (iPhone, Mac, iOS 17) the screen always draws it.
+	static func barShowsAvatar(hasRail: Bool, bottomBar: Bool) -> Bool {
+		!hasRail || bottomBar
 	}
 }
 
@@ -136,14 +137,17 @@ private struct ShellToolbarModifier: ViewModifier {
 	@Environment(\.liveMeeting) private var liveMeeting
 	@Environment(\.shellShowsAvatar) private var avatarAllowed
 	@Environment(\.shellIsPortrait) private var isPortrait
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	/// True once the content has scrolled away from the top: New folds away.
 	@State private var scrolled = false
 
 	/// The avatar opens the profile sheet. Not shown inside a sheet (it would open one over it), and
-	/// not where the iPad's rail holds it (landscape).
+	/// not where the iPad's sidebar or rail holds it.
 	private var showsAvatar: Bool {
 		runtime != nil && avatarAllowed && environment.auth.session != nil
-			&& ShellIdiom.barShowsAvatar(hasRail: ShellIdiom.hasRail, portrait: isPortrait)
+			&& ShellIdiom.barShowsAvatar(
+				hasRail: ShellIdiom.hasRail,
+				bottomBar: PadBarLayout.usesBottomBar(portrait: isPortrait, regularWidth: horizontalSizeClass == .regular))
 			&& (!actions.hidesAvatar || ShellIdiom.isPad)
 	}
 

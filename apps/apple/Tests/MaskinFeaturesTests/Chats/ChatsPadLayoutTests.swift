@@ -40,13 +40,19 @@ struct ChatsPadLayoutTests {
 struct ShellAvatarPlacementTests {
 	@Test("with no rail the screen always draws the avatar")
 	func noRail() {
-		#expect(ShellIdiom.barShowsAvatar(hasRail: false, portrait: true))
-		#expect(ShellIdiom.barShowsAvatar(hasRail: false, portrait: false))
+		#expect(ShellIdiom.barShowsAvatar(hasRail: false, bottomBar: true))
+		#expect(ShellIdiom.barShowsAvatar(hasRail: false, bottomBar: false))
 	}
 
-	@Test("with a rail the screen draws it in portrait only")
+	@Test("with a rail the screen draws it only where the bottom bar is used")
 	func rail() {
-		#expect(ShellIdiom.barShowsAvatar(hasRail: true, portrait: true))
-		#expect(!ShellIdiom.barShowsAvatar(hasRail: true, portrait: false))
+		#expect(ShellIdiom.barShowsAvatar(hasRail: true, bottomBar: true))
+		#expect(!ShellIdiom.barShowsAvatar(hasRail: true, bottomBar: false))
+	}
+
+	@Test("Slide Over and a one-third split are portrait but compact: no bottom bar, so no screen avatar")
+	func narrowWindow() {
+		let bottomBar = PadBarLayout.usesBottomBar(portrait: true, regularWidth: false)
+		#expect(!ShellIdiom.barShowsAvatar(hasRail: true, bottomBar: bottomBar))
 	}
 }
