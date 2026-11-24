@@ -152,4 +152,35 @@ struct ChatQuestionStateTests {
 		#expect(ChatQuestionState(messages: [ask(1), said(2), pick], viewerID: "me").answers[1] == want)
 		#expect(ChatQuestionState(messages: [ask(1), pick, said(10)], viewerID: "me").answers[1] == want)
 	}
+
+	@Test("the summary keeps who answered and when: a pick, a typed reply, a dismissal")
+	func notesKeepAnswerer() {
+		let pick = chatMsg(
+			3, by: "sam", name: "Sam", "Now",
+			metadata: .object([
+				"question_answer": .object([
+					"question_message_id": .number(1),
+					"answers": .array([.object(["header": .string("Date"), "selected": .array([.string("Now")])])]),
+				])
+			]))
+		let picked = ChatQuestionState(messages: [ask(1), pick], viewerID: "me").notes[1]
+		#expect(picked == .init(actorName: "Sam", date: pick.createdAt, text: nil))
+
+		let typed = said(2)
+		let closed = ChatQuestionState(messages: [ask(1), typed], viewerID: "me").notes[1]
+		#expect(closed == .init(actorName: "me", date: typed.createdAt, text: "ok"))
+
+		let dismiss = chatMsg(
+			4, by: "me", "I dismissed this question.",
+			metadata: .object([
+				"question_answer": .object([
+					"question_message_id": .number(1),
+					"answers": .array([
+						.object(["header": .string("Date"), "selected": .array([.string(ChatQuestionAnswer.dismissedPick)])])
+					]),
+				])
+			]))
+		let dismissed = ChatQuestionState(messages: [ask(1), dismiss], viewerID: "me").notes[1]
+		#expect(dismissed?.text == ChatQuestionAnswer.dismissedPick)
+	}
 }

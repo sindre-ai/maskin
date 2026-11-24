@@ -1150,6 +1150,7 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private var rows: some View {
 		let answers = store.questionAnswerIndex
+		let notes = store.questionNoteIndex
 		let messages = store.messages
 		let anchors =
 			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
@@ -1352,6 +1353,7 @@ struct ThreadTranscript: View {
 					store.displayName(for: id).map { (id: id, name: $0) }
 				},
 				questionAnswers: message.serverID.flatMap { answers[$0] },
+				questionNote: message.serverID.flatMap { notes[$0] },
 				sendStatus: statusIDs.contains(message.id) ? MessageSendStatus.of(message, readBy: store.readBy(message)) : nil,
 				messageOverride: store.override(for: message.id), isPinned: store.isPinned(message),
 				versionsLocked: store.replyInFlight,
