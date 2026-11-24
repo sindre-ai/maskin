@@ -25,6 +25,7 @@ import { ApiError } from '@/lib/api'
 import type { ActorListItem, EventResponse, GraphFileSummary, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
+import { relationshipTypeLabel } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
@@ -217,8 +218,8 @@ const INBOUND_VERB: Record<string, string> = {
 }
 
 function relationshipVerb(type: string, direction: 'outbound' | 'inbound'): string {
-	if (direction === 'outbound') return type.replace(/_/g, ' ')
-	return INBOUND_VERB[type] ?? `← ${type.replace(/_/g, ' ')}`
+	if (direction === 'outbound') return relationshipTypeLabel(type)
+	return INBOUND_VERB[type] ?? `← ${relationshipTypeLabel(type)}`
 }
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight', 'knowledge'])

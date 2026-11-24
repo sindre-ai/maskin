@@ -108,6 +108,12 @@ export function typeLabel(type: string): string {
 	return TYPE_LABELS[type] ?? type
 }
 
+/** Plain-words label for a relationship type, e.g. breaks_into -> "breaks into". The
+ *  in_loop type is shown as "in flow" because people read Flow, not loop. */
+export function relationshipTypeLabel(type: string): string {
+	return type.replace(/_/g, ' ').replace(/\bloop\b/g, 'flow')
+}
+
 // Human-readable labels for the workflow statuses the /search view ships with.
 // Custom statuses configured in workspace settings render via `statusLabel`'s
 // humanize fallback (underscores → spaces).
