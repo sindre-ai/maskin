@@ -9,6 +9,8 @@
 //   DRY_RUN         "true" reads from App Store Connect and prints what it would do, creates nothing.
 //   SCHEDULED       "true" on the daily scheduled run: when App Store Connect has no build of the
 //                   version at all, the run ends quietly instead of waiting 45 minutes and failing.
+//                   It also ends quietly for a version Apple rejected (or that was pulled from
+//                   review), so a new build of it is never sent again by the schedule.
 //   RELEASE_NOTES_PATH  defaults to apps/apple/release-notes.md. First line "# <version>", the
 //                   what's-new text below it. A file for another version fails the step.
 //
@@ -54,6 +56,15 @@ const EDITABLE = new Set([
 	'REJECTED',
 	'METADATA_REJECTED',
 	'INVALID_BINARY',
+])
+// A version Apple turned down, or one someone pulled out of review. The daily scheduled run leaves
+// these alone: attaching a newer build (for example a TestFlight-only upload) and sending it again
+// is a person's call, made by starting the workflow by hand with submit_version.
+const HELD_FOR_PERSON = new Set([
+	'REJECTED',
+	'METADATA_REJECTED',
+	'INVALID_BINARY',
+	'DEVELOPER_REJECTED',
 ])
 const ALREADY_SENT = new Set([
 	'WAITING_FOR_REVIEW',
@@ -456,6 +467,12 @@ async function main() {
 	if (version) {
 		const state = stateOf(version)
 		console.log(`App Store version ${SUBMIT_VERSION} exists (${version.id}), state ${state}.`)
+		if (SCHEDULED && HELD_FOR_PERSON.has(state)) {
+			console.log(
+				`Nothing to do: ${SUBMIT_VERSION} is ${state}. The daily run does not send it again. To send it, run the workflow by hand with submit_version ${SUBMIT_VERSION}.`,
+			)
+			return
+		}
 		if (ALREADY_SENT.has(state)) {
 			console.log(`Nothing to do: ${SUBMIT_VERSION} is already past submission (${state}).`)
 			return
