@@ -18,6 +18,7 @@ import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopTags } from '@/components/loops/loop-tags'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { LoopViewTab } from '@/components/loops/loop-view-tab'
+import { ReceiptRoutesPanel } from '@/components/loops/receipt-routes-panel'
 import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ListView } from '@/components/objects/list/list-view'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
@@ -43,6 +44,7 @@ import { useLoopBriefingPages } from '@/hooks/use-briefings'
 import { useCanWrite } from '@/hooks/use-can-write'
 import { useCreateViewWithAgent } from '@/hooks/use-create-view-with-agent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoadFailed } from '@/hooks/use-load-failed'
 import {
 	useLoop,
@@ -139,6 +141,7 @@ function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const canWrite = useCanWrite()
+	const receiptIntakeOn = useFeatureFlag('receipt-intake')
 	const createView = useCreateViewWithAgent()
 	const {
 		data: loop,
@@ -937,6 +940,10 @@ function LoopDetailRoute() {
 						)}
 
 						<TargetsAndOwners loop={loop} actors={actors} />
+
+						{receiptIntakeOn && isInstalledFromMarketplace && (
+							<ReceiptRoutesPanel workspaceId={workspaceId} loopId={loopId} />
+						)}
 
 						<LoopDecisions
 							workspaceId={workspaceId}

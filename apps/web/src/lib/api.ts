@@ -546,6 +546,24 @@ const limitedNextChange = limitConcurrency(
 	},
 )
 
+/** How an Accounting flow takes receipts besides chat uploads (routes/receipt-intake.ts). */
+export interface ReceiptIntakeStatus {
+	email: {
+		available: boolean
+		enabled: boolean
+		address: string | null
+		allowed_senders: string[]
+		default_sender: string | null
+		accepted: number
+		held: number
+	}
+	command: {
+		upload_url: string
+		keys: { id: string; last4: string; created_at: string; last_used_at: string | null }[]
+	}
+	limits: { daily_cap: number; max_file_bytes: number; file_types: string[] }
+}
+
 export const api = {
 	// The unified search endpoint: all five sources, true counts, AND matching.
 	search: {
@@ -1435,6 +1453,31 @@ export const api = {
 			request<{ deleted: boolean }>(`/installed-loops/${installedLoopId}`, {
 				method: 'DELETE',
 				body: { keepProvisionedItems },
+				workspaceId,
+			}),
+	},
+
+	receiptIntake: {
+		get: (workspaceId: string, loopId: string) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}`, { workspaceId }),
+		updateEmail: (
+			workspaceId: string,
+			loopId: string,
+			body: { enabled?: boolean; allowed_senders?: string[]; new_address?: boolean },
+		) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}/email`, {
+				method: 'PUT',
+				body,
+				workspaceId,
+			}),
+		createKey: (workspaceId: string, loopId: string) =>
+			request<{ id: string; key: string; last4: string }>(`/receipt-intake/${loopId}/keys`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		revokeKey: (workspaceId: string, loopId: string, keyId: string) =>
+			request<ReceiptIntakeStatus>(`/receipt-intake/${loopId}/keys/${keyId}`, {
+				method: 'DELETE',
 				workspaceId,
 			}),
 	},

@@ -3769,3 +3769,65 @@ export const apiRouteTimingMinutes = pgTable(
 		}),
 	],
 )
+
+// ── Receipt intake ──────────────────────────────────────────────────────────
+//
+// How an owner hands receipts to an accounting flow besides uploading in chat (task: Let owners
+// send receipts three ways). One row per flow object. The email route is one address with a long
+// random part (email_token) on a domain Maskin owns; only senders in allowed_senders are read, and
+// everything else is counted in held_count and dropped before any agent sees it. day_utc and
+// day_count are the daily cap shared by both routes. Counters hold numbers only, never mail text.
+export const receiptIntakes = pgTable(
+	'receipt_intakes',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The flow (an object of type loop) the receipts belong to. One intake per flow.
+		loopObjectId: uuid('loop_object_id')
+			.references(() => objects.id, { onDelete: 'cascade' })
+			.notNull()
+			.unique(),
+		// The owner who set it up. Receipt files are created under this actor.
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		// The random part of the receiving address. Rotating it makes the old address dead.
+		emailToken: text('email_token').notNull().unique(),
+		emailEnabled: boolean('email_enabled').notNull().default(false),
+		// Lowercase addresses the owner allows. Empty means the owner's own login email only.
+		allowedSenders: text('allowed_senders').array().notNull().default(sql`'{}'::text[]`),
+		acceptedCount: integer('accepted_count').notNull().default(0),
+		heldCount: integer('held_count').notNull().default(0),
+		// The UTC day (YYYY-MM-DD) day_count counts receipts for.
+		dayUtc: text('day_utc'),
+		dayCount: integer('day_count').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('receipt_intakes_workspace_idx').on(t.workspaceId)],
+)
+export type ReceiptIntake = typeof receiptIntakes.$inferSelect
+
+/**
+ * Keys for the command route. Not an actor API key: a key here can only add receipt files to its
+ * one flow and opens nothing else (the route reads only this table). key_hash is the hex SHA-256
+ * of the full key; last4 is what the owner sees. A key works while revoked_at is null.
+ */
+export const receiptIntakeKeys = pgTable(
+	'receipt_intake_keys',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		intakeId: uuid('intake_id')
+			.references(() => receiptIntakes.id, { onDelete: 'cascade' })
+			.notNull(),
+		keyHash: text('key_hash').notNull().unique(),
+		last4: text('last4').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+	},
+	(t) => [index('receipt_intake_keys_intake_idx').on(t.intakeId)],
+)
+export type ReceiptIntakeKey = typeof receiptIntakeKeys.$inferSelect

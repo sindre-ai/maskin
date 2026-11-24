@@ -70,6 +70,12 @@ export const OPEN_ROUTES: OpenRoute[] = [
 	['POST', '/api/webhooks/slack-commands', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/slack-interactive', 'provider webhook, signed by Slack'],
 	['POST', '/api/webhooks/stripe', 'provider webhook, signed by Stripe'],
+	['POST', '/api/webhooks/receipt-intake/email', 'receipt email delivery, signed by Resend'],
+	[
+		'POST',
+		'/api/receipt-intake/upload',
+		'the receipt command route, authenticated by a receipt key that can only add one receipt file to its own flow',
+	],
 	['POST', '/api/internal/agent-servers/reconcile', 'shared bearer secret, no workspace caller'],
 	[
 		'POST',

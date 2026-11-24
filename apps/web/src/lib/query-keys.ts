@@ -226,6 +226,10 @@ export const queryKeys = {
 			['marketplace-loops', 'list', filters ?? {}] as const,
 		detail: (id: string) => ['marketplace-loops', 'detail', id] as const,
 	},
+	receiptIntake: {
+		detail: (workspaceId: string, loopId: string) =>
+			['receipt-intake', workspaceId, loopId] as const,
+	},
 	installedLoops: {
 		all: (workspaceId: string) => ['installed-loops', workspaceId] as const,
 		list: (workspaceId: string) => ['installed-loops', workspaceId, 'list'] as const,
