@@ -1,6 +1,7 @@
 import { PILOT_REFUSAL } from '@maskin/shared'
 import { MASKIN_SESSION_HEADER, MASKIN_SESSION_HEADER_VALUE } from '../mcp-session-header'
 import { type AgentAccess, canRead, canWrite } from './agent-access'
+import { withoutBookVoucherPointer } from './providers/dinero/descriptions'
 import { accessDeniedMessage, allows, unavailableNote } from './tool-gate'
 import {
 	type ToolAnnotationsLike,
@@ -363,7 +364,10 @@ export function annotateToolsList(
 		const kind = classifyTool(ctx.provider, tool.name, tool.annotations)
 		const usable = kind === 'read' ? canRead(ctx.access) : canWrite(ctx.access)
 		const note = TOOL_DESCRIPTION_NOTES[ctx.provider]?.[tool.name]
-		const upstream = tool.description ?? ''
+		const upstream =
+			ctx.provider === 'dinero' && allowed && !allowed.includes('BookVoucher')
+				? withoutBookVoucherPointer(tool.description ?? '')
+				: (tool.description ?? '')
 		const description = note ? `${upstream} ${note}`.trim() : upstream
 		return {
 			...tool,

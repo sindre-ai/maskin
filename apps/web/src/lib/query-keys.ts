@@ -57,6 +57,9 @@ export const queryKeys = {
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
 		detail: (id: string) => ['actors', 'detail', id] as const,
+		// Not under all(): refreshing the list must not rerun a recheck that already answered.
+		recheck: (workspaceId: string, actorId: string) =>
+			['actor-recheck', workspaceId, actorId] as const,
 	},
 	desktops: {
 		all: (workspaceId: string) => ['desktops', workspaceId] as const,

@@ -21,10 +21,11 @@ import {
 import { useCanWrite } from '@/hooks/use-can-write'
 import {
 	useApproveDineroBooks,
+	useDineroFilingHandoff,
 	useDineroReviewLog,
 	useReverseDineroItem,
 } from '@/hooks/use-dinero-review'
-import type { DineroReviewItem, DineroReviewLog } from '@/lib/api'
+import type { DineroFilingHandoff, DineroReviewItem, DineroReviewLog } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useState } from 'react'
@@ -136,6 +137,7 @@ export function DineroReviewSection({ workspaceId }: { workspaceId: string }) {
 function ReviewBody({ workspaceId, log }: { workspaceId: string; log: DineroReviewLog }) {
 	const reverse = useReverseDineroItem(workspaceId)
 	const approve = useApproveDineroBooks(workspaceId)
+	const handoff = useDineroFilingHandoff(workspaceId)
 	const [reversing, setReversing] = useState<DineroReviewItem | null>(null)
 	const [approving, setApproving] = useState(false)
 	const closed = log.approval !== null
@@ -149,6 +151,29 @@ function ReviewBody({ workspaceId, log }: { workspaceId: string; log: DineroRevi
 					{new Date(log.approval.approved_at).toLocaleString()}. The period is closed: nothing can
 					be reversed here and the flow cannot change it.
 				</output>
+			)}
+			{closed && (
+				<div className="flex flex-col gap-2">
+					<div className="flex items-center justify-between gap-3">
+						<p className="text-xs text-muted-foreground">
+							Ready to file? Get the figures and the steps for filing in Dinero yourself.
+						</p>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={handoff.isPending}
+							onClick={() => handoff.mutate({ from: log.from, to: log.to })}
+						>
+							Get the filing hand-off
+						</Button>
+					</div>
+					{handoff.data && <FilingHandoff handoff={handoff.data} />}
+				</div>
+			)}
+			{!closed && (
+				<p className="text-xs text-muted-foreground">
+					The filing hand-off is available after you approve the books.
+				</p>
 			)}
 			{log.truncated && (
 				<p className="text-xs text-muted-foreground">
@@ -305,6 +330,43 @@ function ReviewBody({ workspaceId, log }: { workspaceId: string; log: DineroRevi
 				</DialogContent>
 			</Dialog>
 		</>
+	)
+}
+
+function FilingHandoff({ handoff }: { handoff: DineroFilingHandoff }) {
+	return (
+		<section
+			aria-label="Filing hand-off"
+			className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 text-xs text-foreground"
+		>
+			<h3 className="text-sm font-semibold">
+				Filing hand-off for {handoff.from} to {handoff.to}
+			</h3>
+			<p className="text-muted-foreground">{handoff.figures_note}</p>
+			{handoff.figures.length === 0 ? (
+				<p className="text-muted-foreground">The flow booked nothing in this period.</p>
+			) : (
+				<ul className="flex flex-col gap-0.5">
+					{handoff.figures.map((f) => (
+						<li key={f.vat_code ?? 'none'}>
+							{f.vat_code ? `VAT ${f.vat_code}` : 'No VAT code'}: {money(f.amount_incl_vat)} incl.
+							VAT, {f.lines} {f.lines === 1 ? 'line' : 'lines'}
+						</li>
+					))}
+				</ul>
+			)}
+			<ol className="list-decimal pl-4">
+				{handoff.steps.map((s) => (
+					<li key={s}>{s}</li>
+				))}
+			</ol>
+			<ul className="flex flex-col gap-0.5 text-muted-foreground">
+				{handoff.year_end_steps.map((s) => (
+					<li key={s}>{s}</li>
+				))}
+			</ul>
+			<p className="font-medium">{handoff.notice}</p>
+		</section>
 	)
 }
 

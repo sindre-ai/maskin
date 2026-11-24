@@ -27,6 +27,13 @@ export interface PostSignupWelcomeCommentInput {
 	metadata: unknown
 	/** The human who just signed up (the caller that created the knowledge object). Given to Researcher as the person to @-mention in its reply. */
 	humanActorId: string
+	/**
+	 * The Chief of Staff's welcome message in the chat the server opened for a welcome_in_chat
+	 * sign-up. Anchors the Researcher session to it (spawned_by_message_id), the same link
+	 * create_sub_chat sets, so the chat shows Researcher as a handed-off agent card with live
+	 * status. Omit it when no chat was opened: the session then starts unanchored, as before.
+	 */
+	welcomeMessageId?: number
 }
 
 export async function resolveAgentIdByName(
@@ -77,7 +84,7 @@ export async function resolveAgentIdByName(
 export async function postSignupWelcomeComment(
 	input: PostSignupWelcomeCommentInput,
 ): Promise<void> {
-	const { db, workspaceId, knowledgeObjectId, humanActorId } = input
+	const { db, workspaceId, knowledgeObjectId, humanActorId, welcomeMessageId } = input
 	const metadata = (input.metadata ?? {}) as SignupCaptureMetadata
 	const name = metadata.name?.trim()
 	const organization = metadata.organization?.trim()
@@ -188,6 +195,8 @@ export async function postSignupWelcomeComment(
 		// created for the signup: pass it as the originating object so a failure
 		// links back to the knowledge row.
 		initiatedFromObjectId: knowledgeObjectId,
+		// Shows Researcher starting in the welcome chat as a handed-off card.
+		spawnedByMessageId: welcomeMessageId,
 		await: 'none',
 	}).catch((err) =>
 		logger.error('Failed to create Researcher session for signup welcome', {

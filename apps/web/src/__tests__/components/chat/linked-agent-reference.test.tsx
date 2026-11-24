@@ -21,8 +21,15 @@ type Session = {
 let actors: Actor[] | undefined
 let sessions: Session[] | undefined
 let sessionsLoading = false
+// The second read of the list for an agent that is not on it: true while it has not answered.
+let recheckPending = false
 
-vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: actors }) }))
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: actors }),
+	useActorRecheck: (_workspaceId: string, _agentId: string, missing: boolean) => ({
+		checking: missing && recheckPending,
+	}),
+}))
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => ({ data: sessions, isLoading: sessionsLoading }),
 }))
@@ -75,6 +82,7 @@ beforeEach(() => {
 	actors = [agentRow()]
 	sessions = []
 	sessionsLoading = false
+	recheckPending = false
 })
 
 describe('AgentReferenceCard', () => {
@@ -191,6 +199,14 @@ describe('AgentReferenceCard', () => {
 		expect(card).toHaveClass('italic', 'border-dashed')
 	})
 
+	it('shows the skeleton, not the deleted card, while the list is read once more', () => {
+		actors = []
+		recheckPending = true
+		renderCard()
+		expect(document.querySelector('[aria-busy="true"]')).not.toBeNull()
+		expect(screen.queryByText('This agent was deleted')).not.toBeInTheDocument()
+	})
+
 	it('draws nothing for a person: the caller keeps the original link', () => {
 		actors = [agentRow({ type: 'human', name: 'Magnus' })]
 		const { container } = renderCard()
@@ -251,6 +267,26 @@ describe('AgentReferenceChip', () => {
 		actors = []
 		renderChip()
 		expect(screen.getByText('Deleted agent')).toBeInTheDocument()
+	})
+
+	it('keeps the original link, not Deleted agent, while the list is read once more', () => {
+		actors = []
+		recheckPending = true
+		renderChip()
+		expect(screen.getByText('the original link')).toBeInTheDocument()
+		expect(screen.queryByText('Deleted agent')).not.toBeInTheDocument()
+	})
+
+	it('shows the name of an agent that the second read of the list found', () => {
+		actors = []
+		recheckPending = true
+		const { rerender } = renderChip()
+		expect(screen.queryByText('Deleted agent')).not.toBeInTheDocument()
+		actors = [agentRow({ name: 'Brand new agent' })]
+		recheckPending = false
+		rerender(<AgentReferenceChip workspaceId={WS} agentId={AGENT_ID} fallback={fallback} />)
+		expect(screen.getByRole('link', { name: 'Agent, Idle: Brand new agent' })).toBeInTheDocument()
+		expect(screen.queryByText('Deleted agent')).not.toBeInTheDocument()
 	})
 
 	it('stays the original link for a person', () => {

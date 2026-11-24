@@ -893,6 +893,12 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		filingHandoff: (workspaceId: string, body: { from: string; to: string }) =>
+			request<DineroFilingHandoff>('/dinero-review/filing-handoff', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 	},
 	sendPermissions: {
 		get: (workspaceId: string) =>
@@ -3979,6 +3985,19 @@ export interface DineroReviewLog {
 	figures_hash: string
 	approval: { approved_by: string; approved_at: string; figures_hash: string } | null
 	truncated: boolean
+}
+
+export interface DineroFilingHandoff {
+	from: string
+	to: string
+	approved_by: string
+	approved_at: string
+	figures_hash: string
+	figures: Array<{ vat_code: string | null; lines: number; amount_incl_vat: number }>
+	figures_note: string
+	steps: string[]
+	year_end_steps: string[]
+	notice: string
 }
 
 export interface DineroReverseResult {

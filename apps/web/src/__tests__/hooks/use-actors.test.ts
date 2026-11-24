@@ -28,6 +28,7 @@ vi.mock('sonner', () => ({
 
 import {
 	useActor,
+	useActorRecheck,
 	useActors,
 	useAgent,
 	useAgentPause,
@@ -125,6 +126,52 @@ describe('useActors', () => {
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error).toBeInstanceOf(Error)
 		expect(result.current.error?.message).toBe('Network error')
+	})
+})
+
+describe('useActorRecheck', () => {
+	const useLinked = (agentId: string) => {
+		const { data: actors } = useActors(workspaceId, { enabled: true })
+		const actor = actors?.find((a) => a.id === agentId)
+		const { checking } = useActorRecheck(workspaceId, agentId, !!actors && !actor)
+		return { actor, checking }
+	}
+
+	it('finds an agent made after the list was cached by reading the list once more', async () => {
+		const created = buildActorListItem({ id: 'new-agent', name: 'New agent', type: 'agent' })
+		vi.mocked(api.actors.list).mockResolvedValueOnce([]).mockResolvedValue([created])
+
+		const { result } = renderHook(() => useLinked('new-agent'), { wrapper: TestWrapper })
+
+		await waitFor(() => expect(result.current.actor?.name).toBe('New agent'))
+		expect(result.current.checking).toBe(false)
+		expect(api.actors.list).toHaveBeenCalledTimes(2)
+	})
+
+	it('reads the list once for an agent that is really gone, and stays settled', async () => {
+		vi.mocked(api.actors.list).mockResolvedValue([])
+
+		const { result, rerender } = renderHook(() => useLinked('gone-agent'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(api.actors.list).toHaveBeenCalledTimes(2))
+		await waitFor(() => expect(result.current.checking).toBe(false))
+		expect(result.current.actor).toBeUndefined()
+		rerender()
+		expect(api.actors.list).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not read the list again while the agent is on it', async () => {
+		vi.mocked(api.actors.list).mockResolvedValue([
+			buildActorListItem({ id: 'known', name: 'Known', type: 'agent' }),
+		])
+
+		const { result } = renderHook(() => useLinked('known'), { wrapper: TestWrapper })
+
+		await waitFor(() => expect(result.current.actor?.name).toBe('Known'))
+		expect(result.current.checking).toBe(false)
+		expect(api.actors.list).toHaveBeenCalledTimes(1)
 	})
 })
 
