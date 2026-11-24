@@ -1,3 +1,4 @@
+import { RelativeTime } from '@/components/shared/relative-time'
 import { ViewerTooltip } from '@/components/shared/viewer-tooltip'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -6,6 +7,7 @@ import { useSendMessage } from '@/hooks/use-conversation'
 import { useSendSessionInput } from '@/hooks/use-sessions'
 import type { MessageQuestion, MessageQuestionAnswer, MessageQuestionItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import type { QuestionAnswer } from '@/lib/question-answers'
 import { QUESTION_DETAIL_LINES, splitQuestionText } from '@/lib/question-text-split'
 import { Check, ChevronDown, X } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
@@ -18,6 +20,8 @@ interface QuestionOptionsProps {
 	question: MessageQuestion
 	/** A later message in the thread already answered this one. */
 	answered: boolean
+	/** What was answered, who answered and when. Keeps the card as a one-line summary once `answered`. */
+	answer?: QuestionAnswer
 	/** The thread the question sits in. The answer goes there too, and shows in the main chat as the question does. */
 	threadRootId?: number | null
 	/** Sits at the right end of the action row, beside "Send answer". */
@@ -43,6 +47,7 @@ export function QuestionOptions({
 	questionMessageId,
 	question,
 	answered,
+	answer,
 	threadRootId,
 	trailingAction,
 }: QuestionOptionsProps) {
@@ -80,7 +85,7 @@ export function QuestionOptions({
 		}
 	}, [typing])
 
-	if (answered) return null
+	if (answered) return answer ? <AnsweredSummary question={question} answer={answer} /> : null
 
 	const toggle = (q: MessageQuestionItem, index: number, label: string) => {
 		setPicked((prev) => {
@@ -319,6 +324,47 @@ export function QuestionOptions({
 			{isError ? (
 				<p className="text-[10.5px] text-destructive">Couldn't send that. Try again.</p>
 			) : null}
+		</div>
+	)
+}
+
+/**
+ * One quiet row per answered question: what was asked and what was picked (or typed), then who
+ * answered and when. A question the pick does not cover is left out, so a one-line reply to the
+ * first question of several does not read as an answer to the rest.
+ */
+function AnsweredSummary({
+	question,
+	answer,
+}: {
+	question: MessageQuestion
+	answer: QuestionAnswer
+}) {
+	const rows = question.questions
+		.map((q, index) => {
+			const picked = answer.picks.find((p) => p.header === q.header)?.selected ?? []
+			const reply = picked.length > 0 ? picked.join(', ') : index === 0 ? answer.text : null
+			return { q, reply }
+		})
+		.filter((r): r is { q: MessageQuestionItem; reply: string } => Boolean(r.reply))
+	if (rows.length === 0) return null
+	return (
+		<div className="mt-1 flex flex-col gap-0.5 text-[12.5px] text-muted-foreground">
+			{rows.map(({ q, reply }, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: headers are not unique
+				<p key={index} className="flex items-baseline gap-1.5">
+					<Check size={12} aria-hidden className="shrink-0 translate-y-[1px]" />
+					<span className="min-w-0 break-words">
+						{splitQuestionText(q.question).lead}{' '}
+						<span className="font-semibold text-foreground">{reply}</span>
+					</span>
+				</p>
+			))}
+			<p className="flex items-center gap-1 pl-[18px] text-[10.5px]">
+				{answer.actorName ? <span>{answer.actorName}</span> : null}
+				{answer.actorName && answer.createdAt ? <span aria-hidden>·</span> : null}
+				<RelativeTime date={answer.createdAt} format="clock" />
+			</p>
 		</div>
 	)
 }
