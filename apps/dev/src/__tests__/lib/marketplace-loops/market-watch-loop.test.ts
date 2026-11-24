@@ -18,7 +18,7 @@ describe('Competitor watch loop definition', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
 		expect(MARKET_WATCH_LOOP.name).toBe('Competitor watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.3.0')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.3.2')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -67,6 +67,18 @@ describe('Competitor watch loop definition', () => {
 			'Refresh sources and register data on schedule',
 		])
 		expect(new Set(titles).size).toBe(titles.length)
+	})
+
+	it('creates checklist competitors with lane weekly and scans a company with no lane as weekly', () => {
+		const nameChild = MARKET_WATCH_LOOP.settings.checklist?.items.find(
+			(i) => i.title === 'Name 3 to 5 direct competitors',
+		)
+		expect(nameChild?.body).toContain('role competitor and lane weekly')
+		expect(nameChild?.body).toContain('unless the owner asks for another lane')
+		const sweep = getSkillData('53a31a6d-34ed-49a6-a594-18b8acc8f35e').content ?? ''
+		expect(sweep).toContain('A record with no lane is scanned as weekly.')
+		expect(sweep).toContain('Set metadata.lane to weekly')
+		expect(sweep).not.toMatch(/no lane is treated as quarterly/)
 	})
 
 	it('maps the refresh child to the existing monthly revalidation, with no second schedule', () => {
