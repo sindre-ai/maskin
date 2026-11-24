@@ -61,18 +61,25 @@ export function ToolsSection({
 	workspaceId,
 	query = '',
 	showServers = true,
+	adding: addingProp,
+	onAddingChange,
 }: {
 	workspaceId: string
 	/** The page search: servers whose name does not match are hidden, and the add card goes while searching. */
 	query?: string
 	/** False when a category chip other than All or Custom is picked. */
 	showServers?: boolean
+	/** Lets the page open the add form from its header button. Left out, the section owns it. */
+	adding?: boolean
+	onAddingChange?: (adding: boolean) => void
 }) {
 	const { workspace } = useWorkspace()
 	const canWrite = useCanWrite()
 	const { data: integrations } = useIntegrations(workspaceId)
 	const create = useCreateCustomMcpServer(workspaceId)
-	const [adding, setAdding] = useState(false)
+	const [addingOwn, setAddingOwn] = useState(false)
+	const adding = addingProp ?? addingOwn
+	const setAdding = onAddingChange ?? setAddingOwn
 	const [editingId, setEditingId] = useState<string | null>(null)
 	const [importOpen, setImportOpen] = useState(false)
 	const [importError, setImportError] = useState<string | null>(null)

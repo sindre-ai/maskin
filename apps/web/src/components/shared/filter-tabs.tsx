@@ -9,7 +9,7 @@ import { PILL_TRIGGER_CLASS } from '@/components/ui/select'
 import { cn } from '@/lib/cn'
 import { fitChips } from '@/lib/fit-chips'
 import { ChevronDown } from 'lucide-react'
-import { type KeyboardEvent, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, type KeyboardEvent, useLayoutEffect, useRef, useState } from 'react'
 
 export interface FilterTabItem<T> {
 	label: string
@@ -21,6 +21,9 @@ export interface FilterTabItem<T> {
 	// Object types read as square swatches, statuses as round dots — the mockup
 	// uses both (2px radius at line 286, 50% at line 908).
 	dotShape?: 'round' | 'square'
+	// Draws a hairline before the chip, to split one kind of chip from the next (the vendor
+	// chips from the category chips on Integrations). Not drawn by the foldable row.
+	dividerBefore?: boolean
 }
 
 interface FilterTabsProps<T> {
@@ -369,14 +372,18 @@ export function FilterTabs<T extends string | undefined>({
 			onKeyDown={handleChipKeyDown}
 		>
 			{tabs.map((tab, index) => (
-				<TabButton
-					key={tab.label}
-					tab={tab}
-					value={value}
-					onChange={onChange}
-					variant={variant}
-					tabStop={index === tabStopIndex(tabs, value)}
-				/>
+				<Fragment key={tab.label}>
+					{tab.dividerBefore && (
+						<span aria-hidden="true" className="my-1 w-px shrink-0 self-stretch bg-border" />
+					)}
+					<TabButton
+						tab={tab}
+						value={value}
+						onChange={onChange}
+						variant={variant}
+						tabStop={index === tabStopIndex(tabs, value)}
+					/>
+				</Fragment>
 			))}
 		</div>
 	)

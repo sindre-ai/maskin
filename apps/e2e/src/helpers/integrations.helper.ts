@@ -9,7 +9,13 @@ export async function openIntegrationCard(scope: Page | Locator, name: RegExp | 
 	await scope.getByRole('button', { name: matcher, expanded: false }).click()
 }
 
-/** Unconnected providers are listed under the Discover tab. */
+/**
+ * Unconnected providers are compact rows on the same page. Scroll to the All integrations list, the
+ * one place every unconnected tool appears once (Popular and New repeat some on purpose), and hand it
+ * back to narrow later lookups.
+ */
 export async function openDiscover(page: Page) {
-	await page.getByRole('button', { name: /^Discover \(\d+\)$/ }).click()
+	const list = page.getByRole('region', { name: 'All integrations' })
+	await list.scrollIntoViewIfNeeded()
+	return list
 }

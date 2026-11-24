@@ -1,9 +1,9 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-test.describe('Settings → Integrations (v3 layout)', () => {
+test.describe('Settings → Integrations (shelves layout)', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`tabs, search, categories and cards work @ ${vp.label}`, async ({ page, account }) => {
+		test(`search, pills, shelves and cards work @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await account.api.createCustomMcpServer(account.workspaceId, 'internal-crm', {
 				type: 'http',
@@ -12,15 +12,17 @@ test.describe('Settings → Integrations (v3 layout)', () => {
 
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
 
-			// Two tabs with counts; the custom server makes Connected non-empty.
-			const connectedTab = page.getByRole('button', { name: /^Connected \(\d+\)$/ })
-			const discoverTab = page.getByRole('button', { name: /^Discover \(\d+\)$/ })
-			await expect(connectedTab).toBeVisible({ timeout: 10_000 })
-			await expect(discoverTab).toBeVisible()
-			await expect(connectedTab).toHaveAttribute('aria-pressed', 'true')
+			// One long page: Your integrations first, then the shelves. No tabs.
+			const search = page.getByRole('searchbox', { name: 'Search integrations and tools' })
+			await expect(search).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByRole('button', { name: /^Discover/ })).toHaveCount(0)
+			const yours = page.getByRole('region', { name: 'Your integrations' })
+			await expect(yours).toBeVisible()
+			await expect(page.getByRole('region', { name: 'Popular' })).toBeVisible()
+			await expect(page.getByRole('region', { name: 'All integrations' })).toBeVisible()
 
 			// The custom server is a collapsed card; its chevron opens it.
-			const card = page.getByRole('button', { name: 'internal-crm', exact: true })
+			const card = yours.getByRole('button', { name: 'internal-crm', exact: true })
 			await expect(card).toHaveAttribute('aria-expanded', 'false')
 			await card.click()
 			await expect(card).toHaveAttribute('aria-expanded', 'true')
@@ -28,25 +30,22 @@ test.describe('Settings → Integrations (v3 layout)', () => {
 			// The add card is there until a search starts.
 			const addCard = page.getByRole('button', { name: /Add your own MCP server/ })
 			await expect(addCard).toBeVisible()
-			const search = page.getByRole('searchbox', { name: 'Search integrations and tools' })
 			await search.fill('crm')
 			await expect(addCard).toBeHidden()
 			await expect(card).toBeVisible()
 
-			// A search that matches nothing says so on Connected, not a blank page.
+			// A search that matches nothing says so, with a way back.
 			await search.fill('zzzz')
-			await expect(page.getByText('Nothing connected here')).toBeVisible()
+			await expect(page.getByText('No integration matches that search')).toBeVisible()
 			await search.fill('')
 
-			// Discover lists unconnected providers; a category chip narrows them.
-			await discoverTab.click()
-			await expect(discoverTab).toHaveAttribute('aria-pressed', 'true')
-			await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible()
+			// A pill narrows the same page in place; the list takes the pill's name.
 			await page.getByRole('button', { name: 'Custom' }).click()
-			await expect(page.getByText('No integration matches that filter')).toBeVisible()
-			await page.getByRole('button', { name: 'Code' }).click()
-			await expect(page.getByText('GitHub')).toBeVisible()
-			await expect(page.getByText('Gmail')).toBeHidden()
+			await expect(page.getByRole('region', { name: 'All integrations' })).toBeHidden()
+			await page.getByRole('button', { name: 'Code', exact: true }).click()
+			const code = page.getByRole('region', { name: 'Code' })
+			await expect(code.getByText('GitHub')).toBeVisible()
+			await expect(code.getByText('Gmail')).toBeHidden()
 
 			// No horizontal scroll on the page itself.
 			const overflow = await page.evaluate(
@@ -60,7 +59,6 @@ test.describe('Settings → Integrations (v3 layout)', () => {
 		test(`cards are visible in ${scheme} mode`, async ({ page, account }) => {
 			await page.emulateMedia({ colorScheme: scheme })
 			await page.goto(`/${account.workspaceId}/settings/integrations`)
-			await page.getByRole('button', { name: /^Discover \(\d+\)$/ }).click()
 			await expect(page.getByRole('button', { name: 'Connect' }).first()).toBeVisible({
 				timeout: 10_000,
 			})

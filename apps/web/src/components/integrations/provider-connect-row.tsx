@@ -1,10 +1,10 @@
 import { AgentAccess, accessChipLabel } from '@/components/integrations/agent-access'
+import { DisconnectControl } from '@/components/integrations/disconnect-control'
 import { StatusPill } from '@/components/integrations/drive/status-pill'
 import { ProviderCard } from '@/components/integrations/provider-card'
 import {
 	ApiKeyDialog,
 	DeepdotsConnectDialog,
-	DisconnectConfirmDialog,
 	InstallGithubOrgButton,
 	LinkGithubDialog,
 	OwnAppDialog,
@@ -29,7 +29,7 @@ import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { DRIVE_COPY } from '@/lib/drive-copy'
 import { DRIVE_PROVIDER } from '@/lib/drive-humans'
-import { descriptionFor, logoDomainFor } from '@/lib/integration-catalog'
+import { categoryFor, descriptionFor, logoDomainFor } from '@/lib/integration-catalog'
 import type { IntegrationToolState } from '@/lib/integration-tool-state'
 import { PILL_BUTTON } from '@/lib/pill-button'
 import { MULTI_INSTALL_PROVIDERS } from '@maskin/shared'
@@ -37,7 +37,7 @@ import { Link } from '@tanstack/react-router'
 import { Check, ChevronDown, Link2, Plus } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 
-const SLACK_HISTORY_SCOPES: readonly string[] = [
+export const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
 	'groups:history',
 	'mpim:history',
@@ -67,6 +67,8 @@ export function ProviderRow({
 	variant = 'settings',
 	reconnect = false,
 	introState,
+	layout = 'card',
+	showCategory = false,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
@@ -96,12 +98,15 @@ export function ProviderRow({
 	reconnect?: boolean
 	/** Draws the quiet row of an agent intro: tighter, an outline Connect and plain state subtitles. */
 	introState?: IntegrationToolState
+	/** `row` draws a tool that is not connected as the compact shelf row of Settings → Integrations. */
+	layout?: 'card' | 'row'
+	/** In the shelf row, a tool with no written description shows its category on the second line. */
+	showCategory?: boolean
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
 	const canWrite = useCanWrite()
 	const isConnected = !!integration
-	const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
 	// The Drive card carries a pill, a one-line pitch and a link to its detail page
 	// in Settings; the chat card stays the plain row every provider gets.
 	const isDrive = provider.name === DRIVE_PROVIDER && variant === 'settings'
@@ -191,11 +196,13 @@ export function ProviderRow({
 				: integration.externalId
 					? `Connected · Installation ${integration.externalId}`
 					: tagline || 'Connected'
-		: tagline
-			? tagline
-			: provider.events.length > 0
-				? `${provider.events.length} event types available`
-				: 'Available to connect'
+		: layout === 'row'
+			? (tagline ?? (showCategory ? categoryFor(provider.name) : undefined))
+			: tagline
+				? tagline
+				: provider.events.length > 0
+					? `${provider.events.length} event types available`
+					: 'Available to connect'
 
 	// The intro's quiet row says plainly where the tool stands for this agent, in
 	// place of the event count and the install id.
@@ -227,6 +234,7 @@ export function ProviderRow({
 			}
 			name={provider.displayName}
 			badge={isDrive && <StatusPill tone="new">{DRIVE_COPY.providerCard.pill}</StatusPill>}
+			layout={layout}
 			compact={introState !== undefined}
 			chat={variant === 'chat'}
 			subtitle={introSubtitle ?? connectedLabel}
@@ -294,29 +302,11 @@ export function ProviderRow({
 							)
 						) : (
 							<>
-								<ViewerTooltip>
-									<Button
-										variant="ghost"
-										size="sm"
-										className={cn(PILL_BUTTON, 'text-error hover:text-error')}
-										onClick={() => setConfirmingDisconnect(true)}
-										disabled={disconnect.isPending || !canWrite}
-									>
-										Disconnect
-									</Button>
-								</ViewerTooltip>
-								<DisconnectConfirmDialog
-									open={confirmingDisconnect}
-									onClose={() => setConfirmingDisconnect(false)}
+								<DisconnectControl
 									name={provider.displayName}
-									account={disconnectAccount}
 									billingNote={isPaidIdentityAddon}
 									pending={disconnect.isPending}
-									onConfirm={() =>
-										disconnect.mutate(integration.id, {
-											onSettled: () => setConfirmingDisconnect(false),
-										})
-									}
+									onDisconnect={(onSettled) => disconnect.mutate(integration.id, { onSettled })}
 								/>
 							</>
 						)}
@@ -621,9 +611,9 @@ function NestedInstallationRow({
 	actorName?: string
 	isOwn?: boolean
 	workspaceId: string
-	/** The tool's display name, for the confirm dialog. */
+	/** The tool's display name, for the disconnect question. */
 	providerName: string
-	/** The card states a per-identity charge, so the confirm dialog repeats how Disconnect stops it. */
+	/** The card states a per-identity charge, so the disconnect question repeats how Disconnect stops it. */
 	billingNote?: boolean
 	/** Runs the disconnect; `onSettled` fires once it has finished, either way. */
 	onDisconnect: (onSettled: () => void) => void
@@ -633,7 +623,6 @@ function NestedInstallationRow({
 	reconnecting: boolean
 }) {
 	const canWrite = useCanWrite()
-	const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
 	// Same rule as the single row: a token that predates a scope the provider now asks for
 	// keeps working for what it was granted, so the install stays listed but says so.
 	const needsReconnect =
@@ -683,25 +672,12 @@ function NestedInstallationRow({
 					</Button>
 				</ViewerTooltip>
 			)}
-			<ViewerTooltip>
-				<Button
-					variant="ghost"
-					size="sm"
-					className={cn(PILL_BUTTON, 'shrink-0 text-muted-foreground hover:text-error')}
-					onClick={() => setConfirmingDisconnect(true)}
-					disabled={disconnecting || !canWrite}
-				>
-					Disconnect
-				</Button>
-			</ViewerTooltip>
-			<DisconnectConfirmDialog
-				open={confirmingDisconnect}
-				onClose={() => setConfirmingDisconnect(false)}
-				name={providerName}
-				account={actorScoped ? (isOwn ? 'your account' : `${label}'s account`) : label}
+			<DisconnectControl
+				name={`${providerName} (${actorScoped ? (isOwn ? 'your account' : `${label}'s account`) : label})`}
 				billingNote={billingNote}
 				pending={disconnecting}
-				onConfirm={() => onDisconnect(() => setConfirmingDisconnect(false))}
+				className="shrink-0 text-muted-foreground hover:text-error"
+				onDisconnect={onDisconnect}
 			/>
 			<div className="basis-full">
 				<AgentAccess integration={integration} workspaceId={workspaceId} />
@@ -791,6 +767,8 @@ export function ProviderConnectRow({
 	variant = 'settings',
 	reconnect,
 	introState,
+	layout,
+	showCategory,
 }: {
 	provider: ProviderInfo
 	/** This provider's active integrations in the workspace. */
@@ -801,6 +779,10 @@ export function ProviderConnectRow({
 	reconnect?: boolean
 	/** The quiet row of an agent intro; see ProviderRow. */
 	introState?: IntegrationToolState
+	/** `row`: a tool that is not connected is drawn as a compact shelf row; see ProviderRow. */
+	layout?: 'card' | 'row'
+	/** In the shelf row, show the category when the tool has no description; see ProviderRow. */
+	showCategory?: boolean
 }) {
 	const [apiKeyOpen, setApiKeyOpen] = useState(false)
 	const [apiKey, setApiKey] = useState('')
@@ -865,6 +847,8 @@ export function ProviderConnectRow({
 							variant={variant}
 							reconnect={reconnect}
 							introState={introState}
+							layout={layout}
+							showCategory={showCategory}
 						/>
 					)}
 				/>

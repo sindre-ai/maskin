@@ -30,13 +30,13 @@ test.describe('Settings — Integrations page', () => {
 			await page.waitForLoadState('load')
 			await page.waitForTimeout(300)
 
-			// A fresh account has nothing connected, so the unconnected providers sit under Discover.
-			await page.getByRole('button', { name: /^Discover \(\d+\)$/ }).click()
-
-			// Google Calendar has no event types defined yet (T2/T3), so it should
-			// show "Available to connect" rather than "0 event types available".
-			// Assert the positive side so a blank/crashed page doesn't pass vacuously.
-			await expect(page.getByText('Available to connect').first()).toBeVisible()
+			// A fresh account has nothing connected, so the unconnected providers are all in the
+			// shelves below. Google Calendar has no event types defined yet (T2/T3), so its row shows
+			// its category rather than "0 event types available". Assert the positive side so a
+			// blank/crashed page doesn't pass vacuously.
+			const popular = page.getByRole('region', { name: 'Popular' })
+			await expect(popular.getByText('Google Calendar')).toBeVisible()
+			await expect(popular.getByText('Email & calendar').first()).toBeVisible()
 			await expect(page.locator('text=0 event types available')).not.toBeVisible()
 		})
 	}
@@ -52,9 +52,7 @@ test.describe('Settings — Integrations page', () => {
 
 			// At least one Connect button must be visible — a fresh test account has
 			// no connected integrations, so every provider shows a Connect button
-			// under Discover. Exact name: "Connected (0)" is a tab, not a Connect button.
-			// Unconditional: if zero buttons are found, the test correctly fails.
-			await page.getByRole('button', { name: /^Discover \(\d+\)$/ }).click()
+			// in the shelves. Unconditional: if zero buttons are found, the test correctly fails.
 			await expect(page.getByRole('button', { name: 'Connect', exact: true }).first()).toBeVisible()
 		}
 	})

@@ -113,16 +113,17 @@ test.describe('Settings — Google Drive detail page', () => {
 		await stubIntegrations(page, [])
 		await page.goto(`/${account.workspaceId}/settings/integrations`)
 		await page.waitForLoadState('load')
-		await openDiscover(page)
+		// Popular repeats Drive on purpose, so look in the full list.
+		const list = await openDiscover(page)
 
-		await expect(page.getByText('Google Drive')).toBeVisible()
-		await expect(page.getByLabel('New', { exact: true })).toBeVisible()
+		await expect(list.getByText('Google Drive')).toBeVisible()
+		await expect(list.getByLabel('New', { exact: true })).toBeVisible()
 		await expect(
-			page.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
+			list.getByText('File bytes, Docs, Sheets, search, folder watch, write, comments.'),
 		).toBeVisible()
-		await expect(page.getByText('Free · Piggybacks on Google auth')).toBeVisible()
+		await expect(list.getByText('Free · Piggybacks on Google auth')).toBeVisible()
 
-		await page.getByRole('link', { name: 'Details' }).click()
+		await list.getByRole('link', { name: 'Details' }).click()
 		await expect(page).toHaveURL(
 			new RegExp(`/${account.workspaceId}/settings/integrations/google-drive$`),
 		)
