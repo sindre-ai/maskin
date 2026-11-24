@@ -31,6 +31,14 @@ describe('buildRetryNotice', () => {
 	})
 })
 
+describe('buildRetryNotice for a start that never ran', () => {
+	it('does not blame a usage limit', () => {
+		expect(buildRetryNotice(new Date('2026-10-28T14:30:00Z'), NOW, 'start_failed')).toBe(
+			'The agent could not be started. Your last message will be tried again at 14:30 UTC.',
+		)
+	})
+})
+
 describe('postRetryNotice', () => {
 	beforeEach(() => {
 		insertMock.mockClear()
@@ -56,6 +64,13 @@ describe('postRetryNotice', () => {
 				sessionId: null,
 			}),
 		)
+	})
+
+	it('words the notice for a failed start when the cause says so', async () => {
+		await postRetryNotice({} as never, { ...args, cause: 'start_failed' })
+		const [, row] = insertMock.mock.calls[0] as unknown as [unknown, { content: string }]
+		expect(row.content).toContain('could not be started')
+		expect(row.content).not.toContain('usage limit')
 	})
 
 	it('stays silent when the config flag is off', async () => {

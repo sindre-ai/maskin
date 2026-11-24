@@ -165,6 +165,13 @@ const DISPATCH_FAILED_MESSAGE =
 const START_TIMED_OUT_MESSAGE =
 	'This session could not be started — the agent server did not answer the start request in time, after several attempts. Start a new session to try again.'
 
+/**
+ * When a session that never started is tried again. A session that ends with
+ * DISPATCH_FAILED_MESSAGE ran nothing, so starting it again is safe. 10 minutes is
+ * long enough for an agent-server outage that outlasted the 5 quick tries to clear.
+ */
+const DISPATCH_REQUEUE_DELAY_MS = 10 * 60_000
+
 /** The only statuses a dispatch failure may still turn into a failed session. */
 const DISPATCHABLE_STATUSES: readonly string[] = ['pending', 'queued', 'starting']
 
@@ -494,6 +501,8 @@ export class SessionDispatchQueue {
 			await this.markSessionFailed(
 				row.sessionId,
 				`Dispatch exhausted after ${attempt} attempts: ${error}`,
+				undefined,
+				{ requeue: true },
 			)
 			logger.error('Session dispatch exhausted', {
 				sessionId: row.sessionId,
@@ -617,6 +626,7 @@ export class SessionDispatchQueue {
 		sessionId: string,
 		errorMessage: string,
 		failureReason?: SessionResultFailureReason,
+		opts: { requeue?: boolean } = {},
 	): Promise<string | null> {
 		// A bare `result.error` string renders nowhere: the session detail panel's
 		// FailureCard reads `result.failure_reason`, and use-conversation-activity
@@ -639,7 +649,7 @@ export class SessionDispatchQueue {
 		// a raced write — the caller's null-return semantics are preserved by
 		// re-reading `workspaceId` from the row post-settle only when settle
 		// actually flipped it.
-		const retryAt =
+		let retryAt =
 			resolvedFailureReason.provider === 'anthropic' ? pickRetryAt(resolvedFailureReason) : null
 		let settled: Awaited<ReturnType<typeof settleSession>>
 		try {
@@ -647,7 +657,7 @@ export class SessionDispatchQueue {
 			// this check a running, paused or waiting_for_input session would be
 			// overwritten to failed by a dispatch worker that lost the race for it.
 			const [current] = await this.db
-				.select({ status: sessions.status })
+				.select({ status: sessions.status, attemptNumber: sessions.attemptNumber })
 				.from(sessions)
 				.where(eq(sessions.id, sessionId))
 				.limit(1)
@@ -657,6 +667,13 @@ export class SessionDispatchQueue {
 					status: current.status,
 				})
 				return null
+			}
+			// A start that kept failing for transient reasons ran nothing, so hand it to the retry
+			// scheduler once, a while later. Only the first attempt qualifies: the scheduler's rerun
+			// carries attempt_number 2, so a rerun that fails to start the same way is not queued
+			// again. A permanent failure is not queued: it would fail the same way.
+			if (opts.requeue && current?.attemptNumber === 1) {
+				retryAt = new Date(Date.now() + DISPATCH_REQUEUE_DELAY_MS)
 			}
 			settled = await settleSession(
 				sessionId,

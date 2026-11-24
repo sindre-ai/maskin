@@ -1210,8 +1210,9 @@ export async function settleSession(
 	// cost. Evict again now that the final cost is visible to every connection.
 	if (flipped) evictBillingUsage(row.workspaceId)
 
-	// A chat session that hit a usage limit and has a retry time gets its notice now, while the
-	// person is looking, not when the retry fires. A session at the attempt cap is not retried
+	// A chat session that has a retry time gets its notice now, while the person is looking, not
+	// when the retry fires. The wording follows the cause: a start the agent server never accepted
+	// is not a usage limit. A session at the attempt cap is not retried
 	// (the scheduler clears retry_at), so promising a retry there would be untrue.
 	if (
 		flipped &&
@@ -1224,6 +1225,8 @@ export async function settleSession(
 			workspaceId: row.workspaceId,
 			actorId: row.actorId,
 			retryAt: outcome.retryAt,
+			cause:
+				outcome.failureReason?.reason_code === 'dispatch_failed' ? 'start_failed' : 'usage_limit',
 		})
 	}
 

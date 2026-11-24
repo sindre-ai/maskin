@@ -16,20 +16,35 @@ import { insertConversationMessage } from './conversation-messages'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+/** Why the retry was queued: Claude's usage limit, or a start the agent server never accepted. */
+export type RetryNoticeCause = 'usage_limit' | 'start_failed'
+
 /** "17:30 UTC" within a day, "Oct 31, 14:00 UTC" further out. */
-export function buildRetryNotice(retryAt: Date, now: Date = new Date()): string {
+export function buildRetryNotice(
+	retryAt: Date,
+	now: Date = new Date(),
+	cause: RetryNoticeCause = 'usage_limit',
+): string {
 	const hhmm = retryAt.toISOString().slice(11, 16)
 	const when =
 		retryAt.getTime() - now.getTime() > DAY_MS
 			? `${retryAt.toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}, ${hhmm} UTC`
 			: `${hhmm} UTC`
-	return `Claude is at its usage limit. Your last message will be tried again at ${when}.`
+	const lead =
+		cause === 'start_failed' ? 'The agent could not be started.' : 'Claude is at its usage limit.'
+	return `${lead} Your last message will be tried again at ${when}.`
 }
 
 /** Best-effort: a failed note must never fail the settle that called it. */
 export async function postRetryNotice(
 	db: Database,
-	args: { conversationId: string; workspaceId: string; actorId: string; retryAt: Date },
+	args: {
+		conversationId: string
+		workspaceId: string
+		actorId: string
+		retryAt: Date
+		cause?: RetryNoticeCause
+	},
 ): Promise<void> {
 	if (!CHAT_RESUME_INTERIM_MESSAGE_ENABLED) return
 	try {
@@ -37,7 +52,7 @@ export async function postRetryNotice(
 			conversationId: args.conversationId,
 			workspaceId: args.workspaceId,
 			actorId: args.actorId,
-			content: buildRetryNotice(args.retryAt),
+			content: buildRetryNotice(args.retryAt, new Date(), args.cause),
 			metadata: null,
 			sessionId: null,
 			kind: 'system',
