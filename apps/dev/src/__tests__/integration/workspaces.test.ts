@@ -284,7 +284,7 @@ describe('Workspaces Integration', () => {
 		it('reports a human member count per workspace, excluding seeded agents', async () => {
 			const app = createApp()
 
-			// Creating a workspace also seeds six default agent actors as members.
+			// Creating a workspace also seeds five default agent actors as members.
 			// The count is about people, so a solo workspace must still read 1.
 			const created = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
@@ -1064,12 +1064,11 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + all 5 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 7.
+			expect(members).toHaveLength(7)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
-				'member',
 				'member',
 				'member',
 				'member',
