@@ -1,4 +1,4 @@
-import { FEATURE_AREAS } from '@maskin/shared'
+import { FEATURE_AREAS, isFlowStep } from '@maskin/shared'
 
 /**
  * What the iPhone app may send through `POST /api/telemetry/client`: the event names and, per
@@ -52,7 +52,10 @@ const EVENT_PROPERTIES: Record<string, Record<string, ValueRule>> = {
 	// The Chats list events: buckets and categories only, never a chat title, id or search text.
 	chat_opened_from_list: { source: 'id', section: 'id', position_bucket: 'id' },
 	chat_list_search_used: { result_count_bucket: 'id' },
-	// The two generic step events from the plan, for flows with no screen of their own.
+	// The two generic step events from the plan, for flows with no screen of their own. The phone's
+	// first-launch steps (push permission shown, chat sent, reply received, first screen with
+	// content, computer view) are flow_step with flow iphone_first_launch. The flow and step must
+	// be a pair from FLOW_STEPS in @maskin/shared, checked in checkClientEvent.
 	flow_step: { flow: 'id', step: 'id', flow_id: 'id', duration_ms: 'int' },
 	flow_error: { flow: 'id', step: 'id', error_category: 'id' },
 }
@@ -104,6 +107,15 @@ export function checkClientEvent(
 		}
 		const problem = valueProblem(rule, value)
 		if (problem) return { path, message: `Property "${key}" ${problem}` }
+	}
+	if (name === 'flow_step' || name === 'flow_error') {
+		const { flow, step } = properties
+		if (typeof flow !== 'string' || typeof step !== 'string' || !isFlowStep(flow, step)) {
+			return {
+				path: `events[${index}].properties.step`,
+				message: `"${name}" needs a flow and a step that are in the shared step list`,
+			}
+		}
 	}
 	return null
 }

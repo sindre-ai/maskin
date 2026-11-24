@@ -123,6 +123,82 @@ describe('POST /api/telemetry/client', () => {
 		])
 	})
 
+	it('accepts the five first-launch steps as flow_step with the shared flow and step names', async () => {
+		const steps = [
+			'push_permission_shown',
+			'chat_sent',
+			'reply_received',
+			'first_content',
+			'computer_view_opened',
+		]
+		const res = await post(
+			steps.map((step, i) =>
+				event({
+					name: 'flow_step',
+					properties: {
+						flow: 'iphone_first_launch',
+						step,
+						flow_id: actorId,
+						...(i > 0 ? { duration_ms: 1200 } : {}),
+					},
+				}),
+			),
+		)
+
+		expect(res.status).toBe(202)
+		const bodies = sent()
+		expect(bodies.map((body) => body.properties.step)).toEqual(steps)
+		expect(bodies[0]).toMatchObject({
+			event: 'flow_step',
+			properties: { flow: 'iphone_first_launch', surface: 'iphone', actor_type: 'human' },
+		})
+	})
+
+	it.each([
+		['a step that is not in the flow', { flow: 'iphone_first_launch', step: 'tapped_logo' }],
+		['a flow that does not exist', { flow: 'made_up_flow', step: 'chat_sent' }],
+		['a step from another flow', { flow: 'iphone_first_launch', step: 'result_opened' }],
+		['a flow with no step', { flow: 'iphone_first_launch' }],
+	])('refuses flow_step with %s', async (_label, properties) => {
+		const res = await post([
+			event({ name: 'flow_step', properties: { ...properties, flow_id: actorId } }),
+		])
+
+		expect(res.status).toBe(400)
+		expect((await res.json()).error.details[0].field).toBe('events[0].properties.step')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses free text on a first-launch step', async () => {
+		const res = await post([
+			event({
+				name: 'flow_step',
+				properties: {
+					flow: 'iphone_first_launch',
+					step: 'chat_sent',
+					flow_id: actorId,
+					message: 'hello there',
+				},
+			}),
+		])
+
+		expect(res.status).toBe(400)
+		expect((await res.json()).error.message).toContain('free text')
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses flow_error with a step that is not in the flow', async () => {
+		const res = await post([
+			event({
+				name: 'flow_error',
+				properties: { flow: 'iphone_first_launch', step: 'tapped_logo', error_category: 'network' },
+			}),
+		])
+
+		expect(res.status).toBe(400)
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
 	it('rejects an unknown event name with a 400 that names it, and sends nothing', async () => {
 		const res = await post([event(), event({ name: 'secret_event', properties: {} })])
 
