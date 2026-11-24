@@ -13,12 +13,14 @@ import {
 	MARKET_WATCH_TRIGGER_IDS,
 } from '../../../lib/marketplace-loops/market-watch-loop'
 
+const OWNER_CHECK = 'Daily owner check (05:30 UTC)'
+
 describe('Competitor watch loop definition', () => {
 	it('uses the correct slug and metadata', () => {
 		expect(MARKET_WATCH_LOOP.slug).toBe('market-competitor-watch-loop')
 		expect(MARKET_WATCH_LOOP.name).toBe('Competitor watch')
 		expect(MARKET_WATCH_LOOP.useCase).toBe('Discovery')
-		expect(MARKET_WATCH_LOOP.version).toBe('1.3.0')
+		expect(MARKET_WATCH_LOOP.version).toBe('1.3.1')
 		expect(MARKET_WATCH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -39,11 +41,17 @@ describe('Competitor watch loop definition', () => {
 		expect(new Set(MARKET_WATCH_SKILL_IDS).size).toBe(MARKET_WATCH_SKILL_IDS.length)
 	})
 
-	it('has one Monday briefing check, not two', () => {
+	it('has one daily owner check at 05:30 UTC, not two, and no Monday-only owner trigger', () => {
+		const owner = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).filter(
+			(t) => t.targetActorId === MARKET_WATCH_ACTOR_OWNER,
+		)
+		expect(owner.map((t) => t.name)).toEqual([OWNER_CHECK])
+		expect(owner[0]?.type).toBe('cron')
+		expect((owner[0]?.config as { expression?: string }).expression).toBe('30 5 * * *')
 		const mondayChecks = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).filter((t) =>
 			(t.config as { expression?: string }).expression?.endsWith(' * * 1'),
 		)
-		expect(mondayChecks.map((t) => t.name)).toEqual(['Weekly briefing check'])
+		expect(mondayChecks).toHaveLength(0)
 	})
 
 	it('does not tell the Briefing Owner to own a second Monday check', () => {
@@ -101,14 +109,26 @@ describe('Competitor watch loop definition', () => {
 		expect(byName('Monthly revalidation')).toContain('recorded source URLs and register data')
 	})
 
-	it('starts the Briefing Owner check with the checklist and its three-question limit', () => {
-		const check = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).find(
-			(t) => t.name === 'Weekly briefing check',
-		)
+	it('starts the owner check with the checklist and its three-question limit', () => {
+		const check = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).find((t) => t.name === OWNER_CHECK)
 		expect(check?.actionPrompt).toMatch(/^First read the flow's research checklist/)
 		expect(check?.actionPrompt).toContain('Competitor research checklist')
 		expect(check?.actionPrompt).toContain('at most 3 questions at a time')
 		expect(check?.actionPrompt).toContain('only when every child task is done or discarded')
+	})
+
+	it('keeps the weekly briefing check to Mondays and stays silent on other days', () => {
+		const check = MARKET_WATCH_TRIGGER_IDS.map(getTriggerData).find((t) => t.name === OWNER_CHECK)
+		const prompt = check?.actionPrompt ?? ''
+		expect(prompt).toContain('runs every day')
+		expect(prompt).toContain('only if today is Monday (UTC)')
+		expect(prompt).toContain('On any other day you are done: stay silent.')
+		// The checklist step comes before the Monday gate, so it runs every day.
+		expect(prompt.indexOf('Competitor research checklist')).toBeLessThan(
+			prompt.indexOf('only if today is Monday (UTC)'),
+		)
+		// Setup done is reported once, not every day.
+		expect(prompt).toContain('report it once')
 	})
 
 	it('wires every trigger to a published actor and every skill to published actors only', () => {
@@ -138,13 +158,13 @@ describe('Competitor watch loop definition', () => {
 		expect(texts).not.toMatch(/Market & Competitor Watch/)
 	})
 
-	it('ships no deck step, deck check, owner heartbeat, targets or views', () => {
+	it('ships no deck step, deck check, targets or views', () => {
 		const names = MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).name)
 		expect(names).toEqual([
 			'Weekly sweep',
 			'Monthly revalidation',
 			'Monthly outlook and positioning',
-			'Weekly briefing check',
+			OWNER_CHECK,
 		])
 		const prompts = MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? '')
 		for (const prompt of prompts) expect(prompt).not.toMatch(/\bdeck\b|heartbeat/i)
@@ -170,12 +190,15 @@ describe('Competitor watch loop definition', () => {
 				const a = getActorData(id)
 				return `${a.name} ${a.description} ${a.systemPrompt}`
 			}),
-			...MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? ''),
+			...MARKET_WATCH_TRIGGER_IDS.map((id) => {
+				const t = getTriggerData(id)
+				return `${t.name} ${t.actionPrompt ?? ''}`
+			}),
 			...MARKET_WATCH_SKILL_IDS.map((id) => getSkillData(id).content ?? ''),
 		]
 		for (const text of texts) {
 			expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
-			expect(text).not.toMatch(/\u2014|assum/i)
+			expect(text).not.toMatch(/—|assum/i)
 		}
 	})
 
@@ -187,7 +210,10 @@ describe('Competitor watch loop definition', () => {
 				const a = getActorData(id)
 				return `${a.name} ${a.description} ${a.systemPrompt}`
 			}),
-			...MARKET_WATCH_TRIGGER_IDS.map((id) => getTriggerData(id).actionPrompt ?? ''),
+			...MARKET_WATCH_TRIGGER_IDS.map((id) => {
+				const t = getTriggerData(id)
+				return `${t.name} ${t.actionPrompt ?? ''}`
+			}),
 			...MARKET_WATCH_SKILL_IDS.map((id) => getSkillData(id).content ?? ''),
 		]
 		// Tool and object type names (list_loops, in_loop) are one word, so they do not match.
