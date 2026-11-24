@@ -17,6 +17,7 @@ import { eq } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { loopSettingsForInstall, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { provisionLoopChecklist } from './loop-checklist-provisioning'
 import {
 	type MarketplaceItemType,
 	buildActorInsert,
@@ -29,7 +30,6 @@ import {
 	installMetadata,
 	rewriteWiring,
 } from './loop-provisioning'
-import { provisionLoopChecklist } from './loop-checklist-provisioning'
 import { syncLoopViews, toViewItems } from './loop-views-provisioning'
 
 /**
