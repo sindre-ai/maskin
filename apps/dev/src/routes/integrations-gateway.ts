@@ -237,7 +237,10 @@ async function handle(c: import('hono').Context<Env>): Promise<Response> {
 		label,
 		integrationId: integration.id,
 		access,
-		cacheKey: `${workspaceId}:${provider}`,
+		// The id is part of the key: two accounts of one provider list the same tool names.
+		cacheKey: `${workspaceId}:${provider}:${integration.id}`,
+		// Named in the tool descriptions only when the agent picked one connection by id.
+		account: integrationId ? (integration.externalId ?? undefined) : undefined,
 		upstreamUrl,
 		allowedTools: fixedAllowedTools(provider, integration.config as IntegrationConfig | null),
 		upstreamHeaders: async () => {
