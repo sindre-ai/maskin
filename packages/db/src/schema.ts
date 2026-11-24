@@ -3789,9 +3789,10 @@ export const receiptIntakes = pgTable(
 			.references(() => objects.id, { onDelete: 'cascade' })
 			.notNull()
 			.unique(),
-		// The owner who set it up. Receipt files are created under this actor.
+		// The owner who set it up. Receipt files are created under this actor, so the intake goes
+		// with them (account deletion erases it by hand, as the actor row is kept).
 		createdBy: uuid('created_by')
-			.references(() => actors.id)
+			.references(() => actors.id, { onDelete: 'cascade' })
 			.notNull(),
 		// The random part of the receiving address. Rotating it makes the old address dead.
 		emailToken: text('email_token').notNull().unique(),

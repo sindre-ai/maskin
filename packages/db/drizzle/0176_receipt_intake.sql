@@ -7,6 +7,8 @@
 -- receipt_intake_keys: keys for the command route. A key only adds receipt files to its one flow; the
 -- route reads this table and nothing else, so it is not an actor API key. key_hash is the hex SHA-256.
 --
+-- created_by cascades: deleting the person or agent who set an intake up removes the intake and its keys,
+-- since receipt files are created under that actor and would otherwise have no author.
 -- Both tables are new and empty, so there is no lock to worry about and no backfill. Row-level
 -- security is on because 0111_enable_rls_public_tables ran before these tables existed.
 -- Down: drizzle/down/0176_receipt_intake_down.sql.
@@ -14,7 +16,7 @@ CREATE TABLE IF NOT EXISTS "receipt_intakes" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
 	"loop_object_id" uuid NOT NULL UNIQUE REFERENCES "objects"("id") ON DELETE CASCADE,
-	"created_by" uuid NOT NULL REFERENCES "actors"("id"),
+	"created_by" uuid NOT NULL REFERENCES "actors"("id") ON DELETE CASCADE,
 	"email_token" text NOT NULL UNIQUE,
 	"email_enabled" boolean DEFAULT false NOT NULL,
 	"allowed_senders" text[] DEFAULT '{}'::text[] NOT NULL,
