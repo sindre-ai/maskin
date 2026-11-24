@@ -92,7 +92,7 @@ const call = (
 	app: ReturnType<typeof appFor>,
 	ws: string,
 	method: string,
-	path: string,
+	path = '',
 	body?: unknown,
 ) =>
 	app.request(`/api/dinero-review${path}`, {
