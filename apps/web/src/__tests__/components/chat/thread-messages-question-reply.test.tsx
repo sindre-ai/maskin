@@ -81,7 +81,7 @@ describe('ThreadMessages — an agent question the person answered by typing', (
 		expect(await screen.findByRole('button', { name: 'Publish Sunday' })).toBeInTheDocument()
 	})
 
-	it('drops the options once the person writes a normal message', async () => {
+	it('drops the options once the person writes a normal message, keeping their words in a summary row', async () => {
 		vi.mocked(api.conversations.messages).mockResolvedValue({
 			messages: [buildMessage(2, { content: 'Publish the pages now.' }), agentQuestion],
 			has_more: false,
@@ -89,7 +89,8 @@ describe('ThreadMessages — an agent question the person answered by typing', (
 
 		render(<ThreadMessages conversationId="conv-1" workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(await screen.findByText('Publish the pages now.')).toBeInTheDocument()
+		// The reply's own bubble, and the summary row left where the options were.
+		expect(await screen.findAllByText('Publish the pages now.')).toHaveLength(2)
 		expect(screen.queryByRole('button', { name: 'Publish Sunday' })).not.toBeInTheDocument()
 	})
 

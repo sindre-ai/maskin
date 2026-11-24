@@ -597,7 +597,7 @@ export function ThreadMessages({
 									<MessageBubble
 										workspaceId={workspaceId}
 										message={bubbleMessage}
-										questionAnswered={answeredQuestionIds.has(message.id)}
+										questionAnswer={answeredQuestionIds.get(message.id)}
 										spawnInfo={spawnByMessageId.get(message.id)}
 										onRetried={handleRetried}
 										editRequestNonce={

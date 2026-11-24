@@ -304,6 +304,9 @@ public final class ChatStore {
 	/// typing or dismissed, which leave no summary behind.
 	public var questionAnswerIndex: [Int: [ChatQuestionAnswer.Answer]] { questionState.answers }
 
+	/// For each answered question: who answered, when, and the typed words when there was no pick.
+	public var questionNoteIndex: [Int: ChatQuestionState.Note] { questionState.notes }
+
 	/// For each card a person answered (by the card's message id): how. Read from every message,
 	/// since the answer itself is hidden from the timeline.
 	public var cardAnswerIndex: [Int: ChatCardAnswer.Outcome] {
