@@ -11,6 +11,7 @@ import {
 	DEEPDOTS_BASE_URL,
 	DEFAULT_LIMIT,
 	type DeepdotsList,
+	type ListInput,
 	MAX_LIMIT,
 	MAX_SKIP,
 	buildListRequest,
@@ -112,14 +113,17 @@ function failureForStatus(status: number): Outcome {
 const MAX_REASON_LENGTH = 300
 
 /**
- * Deepdots' own words for a refused request (400 or 422): the error message and the path and
+ * Deepdots' own words for a refused request (any 4xx that is not a sign-in refusal or a rate
+ * limit, so 400, 404, 406, 422 and so on): the error message and the path and
  * message of each validation detail, like "/filter/limit: must be <= 50". Those describe the
- * request we sent, never feedback rows. The body is not read at all for other statuses, and
+ * request we sent, never feedback rows. The body is not read at all for other statuses (2xx, 5xx, sign-in refusals), and
  * only these fields are read, so nothing else in it can reach the agent.
  */
 async function refusalReason(res: Response): Promise<string | null> {
 	try {
-		const error = ((await res.json()) as { error?: unknown }).error
+		const body = (await res.json()) as { error?: unknown; message?: unknown }
+		// Most refusals nest the reason under error; a bare { message } is read too.
+		const error = body.error && typeof body.error === 'object' ? body.error : body
 		if (!error || typeof error !== 'object') return null
 		const { message, details } = error as { message?: unknown; details?: unknown }
 		const parts: string[] = []
@@ -137,6 +141,11 @@ async function refusalReason(res: Response): Promise<string | null> {
 	}
 }
 
+/** 4xx that describe the request we sent. Sign-in refusals and rate limits keep their own text. */
+function hasRefusalReason(status: number): boolean {
+	return status >= 400 && status < 500 && ![401, 403, 405, 429].includes(status)
+}
+
 const limitField = z
 	.number()
 	.int()
@@ -151,6 +160,12 @@ const skipField = z
 	.max(MAX_SKIP)
 	.optional()
 	.describe('Rows to skip, for the next page. Use next_skip from the last answer.')
+const topicField = z
+	.string()
+	.min(1)
+	.max(200)
+	.optional()
+	.describe('A topic name, as returned by deepdots_list_topics (the topic field).')
 const sinceField = z
 	.string()
 	.optional()
@@ -171,12 +186,13 @@ export function createDeepdotsMcpServer(
 		tool: string,
 		list: DeepdotsList,
 		description: string,
-		extra: { since: boolean; search: boolean },
+		extra: { since: boolean; search: boolean; topic?: boolean },
 	) => {
 		const inputSchema = {
 			limit: limitField,
 			skip: skipField,
 			...(extra.since ? { since: sinceField } : {}),
+			...(extra.topic ? { topic: topicField } : {}),
 			...(extra.search
 				? { search: z.string().max(200).optional().describe('Text to look for in the name.') }
 				: {}),
@@ -184,7 +200,7 @@ export function createDeepdotsMcpServer(
 		server.registerTool(
 			tool,
 			{ description, inputSchema, annotations: { readOnlyHint: true } },
-			async (input: { limit?: number; skip?: number; since?: string; search?: string }) => {
+			async (input: Parameters<typeof runList>[3]) => {
 				const outcome = await runList(ctx, tool, list, input)
 				await (ctx.trackToolCalled ?? trackIntegrationToolCalled)({
 					provider: DEEPDOTS_PROVIDER,
@@ -209,8 +225,8 @@ export function createDeepdotsMcpServer(
 	register(
 		'deepdots_list_issues',
 		'issues',
-		"List the latest Deepdots issues found in customer feedback, newest first: name, reason, category, priority, score, an extract in the customer's language, topics. Returns items, has_more and next_skip.",
-		{ since: true, search: false },
+		"List the latest Deepdots issues found in customer feedback, newest first: name, reason, category, priority, score, an extract in the customer's language, topics. Deepdots only returns issues for a topic, so pass topic (a name from deepdots_list_topics). Returns items, has_more and next_skip.",
+		{ since: true, search: false, topic: true },
 	)
 	register(
 		'deepdots_list_opportunities',
@@ -232,7 +248,7 @@ async function runList(
 	ctx: DeepdotsMcpContext,
 	tool: string,
 	list: DeepdotsList,
-	input: { limit?: number; skip?: number; since?: string; search?: string },
+	input: ListInput,
 ): Promise<Outcome> {
 	const integrationId = ctx.integrationId
 	if (!integrationId) {
@@ -286,7 +302,7 @@ async function runList(
 	logger.info('Deepdots MCP call', { workspaceId: ctx.workspaceId, tool, httpStatus: res.status })
 	if (!res.ok) {
 		const outcome = failureForStatus(res.status)
-		if (res.status !== 400 && res.status !== 422) return outcome
+		if (!hasRefusalReason(res.status)) return outcome
 		const reason = await refusalReason(res)
 		if (!reason) return outcome
 		return failure(
