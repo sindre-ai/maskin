@@ -28,6 +28,7 @@ vi.mock('@/lib/posthog', () => ({
 	identifyForWorkspace: vi.fn().mockResolvedValue(undefined),
 	signupSourceFrom: vi.fn().mockReturnValue('direct'),
 	firstTouchFromPosthog: vi.fn().mockReturnValue({}),
+	utmSourceProps: vi.fn().mockReturnValue({}),
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -43,7 +44,7 @@ vi.mock('@tanstack/react-router', async () => {
 
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import { identifyForWorkspace } from '@/lib/posthog'
+import { identifyForWorkspace, utmSourceProps } from '@/lib/posthog'
 import { Route } from '@/routes/signup'
 
 const SignupPage = (Route as unknown as { component: React.FC }).component
@@ -66,6 +67,7 @@ describe('SignupPage', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.mocked(utmSourceProps).mockReturnValue({})
 		vi.mocked(api.billing.usage).mockResolvedValue({ trial_state: null } as never)
 		mockSearch = {}
 		localStorage.clear()
@@ -316,6 +318,31 @@ describe('SignupPage', () => {
 		expect(identifyOrder).toBeLessThan(
 			vi.mocked(trackEvent).mock.invocationCallOrder[completedOrder],
 		)
+	})
+
+	it('puts the marketplace tag on the sign-up events and leaves it off when there is none', async () => {
+		vi.mocked(utmSourceProps).mockReturnValue({ utm_source: 'test_marketplace' })
+		vi.mocked(api.objects.create).mockResolvedValue({} as never)
+
+		const user = userEvent.setup()
+		render(<SignupPage />)
+		await fillAndSubmit(user)
+
+		await waitFor(() => {
+			expect(trackEvent).toHaveBeenCalledWith('signup_completed', {
+				user_id: 'actor-1',
+				workspace_id: 'ws-1',
+				utm_source: 'test_marketplace',
+			})
+		})
+		expect(trackEvent).toHaveBeenCalledWith('signup_form_started', {
+			utm_source: 'test_marketplace',
+		})
+		expect(trackEvent).toHaveBeenCalledWith('signup_form_submitted', {
+			user_id: 'actor-1',
+			completed: true,
+			utm_source: 'test_marketplace',
+		})
 	})
 
 	it('does not emit signup_completed when signup fails', async () => {

@@ -4,7 +4,12 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import { firstTouchFromPosthog, identifyForWorkspace, signupSourceFrom } from '@/lib/posthog'
+import {
+	firstTouchFromPosthog,
+	identifyForWorkspace,
+	signupSourceFrom,
+	utmSourceProps,
+} from '@/lib/posthog'
 import { safeInternalPath } from '@/lib/safe-redirect'
 import { welcomeLandingPath } from '@/lib/welcome-landing'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
@@ -48,7 +53,7 @@ function SignupPage() {
 	useEffect(() => {
 		if (startedRef.current) return
 		startedRef.current = true
-		trackEvent('signup_form_started', {})
+		trackEvent('signup_form_started', { ...utmSourceProps() })
 	}, [])
 
 	useEffect(() => {
@@ -148,6 +153,7 @@ function SignupPage() {
 				trackEvent('signup_form_submitted', {
 					user_id: actorId,
 					completed: true,
+					...utmSourceProps(),
 				})
 				// Identify before signup_completed so the signup lands on the person
 				// the rest of the funnel reads from. A new account has the default
@@ -162,7 +168,11 @@ function SignupPage() {
 						firstTouchFromPosthog(),
 					),
 				})
-				trackEvent('signup_completed', { user_id: actorId, workspace_id: workspaceId })
+				trackEvent('signup_completed', {
+					user_id: actorId,
+					workspace_id: workspaceId,
+					...utmSourceProps(),
+				})
 			}
 			if (anonId) {
 				api.landingEvents
