@@ -33,8 +33,8 @@ interface BridgeTool {
 }
 
 const organizationId = {
-	type: 'string',
-	description: 'The organization id (guid) from list_organizations.',
+	type: 'integer',
+	description: 'Dinero-organisationens numeriske id, fra list_organizations.',
 }
 const invoiceGuid = {
 	type: 'string',
@@ -235,6 +235,13 @@ function text(args: Args, key: string): string | undefined {
 	return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined
 }
 
+/** Dinero's organization id is the number list_organizations returns, never a guid. */
+function organizationIdOf(args: Args): string | undefined {
+	const v = args.organizationId
+	if (typeof v === 'number' && Number.isSafeInteger(v) && v > 0) return String(v)
+	return typeof v === 'string' && /^[1-9][0-9]{0,15}$/.test(v.trim()) ? v.trim() : undefined
+}
+
 function flag(args: Args, key: string): boolean | undefined {
 	return typeof args[key] === 'boolean' ? (args[key] as boolean) : undefined
 }
@@ -292,9 +299,8 @@ function voucherLines(args: Args): Record<string, unknown>[] | string {
 
 /** The Dinero API request for one bridge tool, or a plain-words reason it cannot be made. */
 function buildCall(tool: string, args: Args): ApiCall | string {
-	const org = text(args, 'organizationId')
-	if (!org || !GUID.test(org))
-		return 'organizationId must be the organization guid from list_organizations.'
+	const org = organizationIdOf(args)
+	if (!org) return 'organizationId must be the numeric organization id from list_organizations.'
 
 	if (tool === 'list_posted_entries') {
 		const from = text(args, 'fromDate')
