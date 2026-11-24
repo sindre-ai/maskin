@@ -102,7 +102,7 @@ function makeApp(actorId: string) {
 // regression gate for the "bundle install 500s on the first seeded loop" bug:
 // each seeded bundle must install into a fresh workspace and return 201.
 describe('Marketplace install — seeded bundle end-to-end', () => {
-	let seededLoops: Array<{ id: string; slug: string; name: string }>
+	let seededLoops: Array<{ id: string; slug: string; name: string; loopSettings: unknown }>
 
 	beforeAll(async () => {
 		await rawSql`TRUNCATE marketplace_loops, marketplace_loop_items CASCADE`
@@ -112,6 +112,7 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 				id: marketplaceLoops.id,
 				slug: marketplaceLoops.slug,
 				name: marketplaceLoops.name,
+				loopSettings: marketplaceLoops.loopSettings,
 			})
 			.from(marketplaceLoops)
 		if (seededLoops.length === 0) throw new Error('expected seeded marketplace loops')
