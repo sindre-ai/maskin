@@ -34,7 +34,7 @@ interface BridgeTool {
 
 const organizationId = {
 	type: 'integer',
-	description: 'Dinero-organisationens numeriske id, fra list_organizations.',
+	description: 'The numeric Dinero organization id, from list_organizations.',
 }
 const invoiceGuid = {
 	type: 'string',
