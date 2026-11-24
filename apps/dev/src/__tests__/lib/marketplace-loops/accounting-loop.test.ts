@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.1.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.2.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -39,9 +39,9 @@ describe('Accounting loop definition', () => {
 		expect(settings.targets).toBeUndefined()
 	})
 
-	it('ships one actor, one trigger and three skills, no duplicates', () => {
+	it('ships one actor, two triggers and three skills, no duplicates', () => {
 		expect(ACCOUNTING_LOOP_ACTOR_IDS).toEqual([ACCOUNTING_LOOP_ACTOR_BOOKKEEPER])
-		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(1)
+		expect(ACCOUNTING_LOOP_TRIGGER_IDS.length).toBe(2)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.length).toBe(3)
 		expect(new Set(ACCOUNTING_LOOP_SKILL_IDS).size).toBe(ACCOUNTING_LOOP_SKILL_IDS.length)
 		expect(ACCOUNTING_LOOP_SKILL_IDS.map((id) => getSkillData(id).name).sort()).toEqual([

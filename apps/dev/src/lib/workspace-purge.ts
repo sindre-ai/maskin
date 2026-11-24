@@ -143,6 +143,8 @@ export const WORKSPACE_PURGE_CASCADE = [
 	'outcome_checks',
 	'plan_limit_emails',
 	'readings',
+	'receipt_intake_keys',
+	'receipt_intakes',
 	'saved_views',
 	'send_permissions',
 	'session_dispatch_attempts',
