@@ -169,6 +169,32 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.description).toMatch(/must be a super-user in Dinero/)
 	})
 
+	// The built-in connection offers more than the 16 (the gateway sets the list), so the check must
+	// name the extra tools and say which may be called, or it would stop the Bookkeeper on them.
+	it('names the extra tools of the built-in connection in the connection check', () => {
+		const check =
+			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
+		const prompt = actorTexts().join('\n')
+		expect(check).toMatch(/On the built-in Dinero connection the gateway sets the tool list itself/)
+		expect(check).toMatch(/get_report, which only reads a report/)
+		expect(check).toMatch(
+			/CreateFinanceVoucher, which you call only with its book option set to false/,
+		)
+		for (const name of [
+			'send_invoice_email',
+			'add_invoice_reminder',
+			'book_invoice_reminder',
+			'send_invoice_reminder_email',
+		]) {
+			expect(check).toContain(name)
+		}
+		expect(check).toMatch(/only when the owner asks in the chat for exactly that one/)
+		expect(check).toMatch(/On a Dinero server added as a custom tool, check that every Dinero tool/)
+		expect(prompt).toMatch(
+			/On the built-in Dinero connection the gateway sets the tool list itself/,
+		)
+	})
+
 	it('leaves the allowed list for a custom server and the draft path as they were', () => {
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
