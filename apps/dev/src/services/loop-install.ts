@@ -17,6 +17,7 @@ import { eq } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { loopSettingsForInstall, readLoopSettings } from '../lib/marketplace-loops/loop-settings'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { provisionLoopChecklist } from './loop-checklist-provisioning'
 import {
 	type MarketplaceItemType,
 	buildActorInsert,
@@ -29,7 +30,6 @@ import {
 	installMetadata,
 	rewriteWiring,
 } from './loop-provisioning'
-import { provisionLoopChecklist } from './loop-checklist-provisioning'
 import { syncLoopViews, toViewItems } from './loop-views-provisioning'
 
 /**
@@ -46,6 +46,9 @@ export class SkillNameConflictError extends Error {
 		super(`A skill named "${skillName}" already exists in this workspace`)
 	}
 }
+
+/** What the caller needs to start the checklist's driver once the install has committed. */
+export type ChecklistStart = { parentTaskId: string; driverActorId: string | null }
 
 export type ProvisionedCounts = {
 	actors: number
@@ -76,7 +79,12 @@ export async function installLoopInTransaction(
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
 	},
-): Promise<{ installed: typeof installedLoops.$inferSelect; provisioned: ProvisionedCounts }> {
+): Promise<{
+	installed: typeof installedLoops.$inferSelect
+	provisioned: ProvisionedCounts
+	/** Set only when the flow ships a checklist and its tasks were created by this call. */
+	checklistStart: ChecklistStart | null
+}> {
 	const { workspaceId, actorId, loop, items, agentStorage, storageProvider } = params
 	const loopId = loop.id
 	const provisioned: ProvisionedCounts = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
@@ -322,19 +330,22 @@ export async function installLoopInTransaction(
 
 	// The loop's onboarding checklist, if it ships one: a parent task and a child task per
 	// prerequisite, driven by the bundled agent it names.
+	let checklistStart: ChecklistStart | null = null
 	const checklist = readLoopSettings(loop.loopSettings)?.checklist
 	if (checklist) {
-		await provisionLoopChecklist({
+		const driverActorId = checklist.driverSourceItemId
+			? (sourceToLocal.get(checklist.driverSourceItemId) ?? null)
+			: null
+		const { parentTaskId } = await provisionLoopChecklist({
 			db: tx,
 			workspaceId,
 			actorId,
 			installId: installRow.id,
 			loopObjectId: loopObject.id,
 			checklist,
-			driverActorId: checklist.driverSourceItemId
-				? (sourceToLocal.get(checklist.driverSourceItemId) ?? null)
-				: null,
+			driverActorId,
 		})
+		if (parentTaskId) checklistStart = { parentTaskId, driverActorId }
 	}
 
 	await recordEvent(tx, {
@@ -360,5 +371,5 @@ export async function installLoopInTransaction(
 		},
 	})
 
-	return { installed: { ...installRow, objectId: loopObject.id }, provisioned }
+	return { installed: { ...installRow, objectId: loopObject.id }, provisioned, checklistStart }
 }
