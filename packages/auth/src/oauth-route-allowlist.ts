@@ -249,6 +249,15 @@ export const OAUTH_REFUSED_ROUTES: readonly string[] = [
 	'POST /api/webhooks/slack-commands',
 	'POST /api/webhooks/slack-interactive',
 	'POST /api/webhooks/stripe',
+	'POST /api/webhooks/receipt-intake/email',
+
+	// Receipt intake: the command route is authenticated by its own receipt key, and the owner
+	// settings (email address, command keys) are not for a connected Claude client to change.
+	'POST /api/receipt-intake/upload',
+	'GET /api/receipt-intake/:loopId',
+	'PUT /api/receipt-intake/:loopId/email',
+	'POST /api/receipt-intake/:loopId/keys',
+	'DELETE /api/receipt-intake/:loopId/keys/:keyId',
 
 	// Billing is account-level.
 	'POST /api/billing/cancel',
