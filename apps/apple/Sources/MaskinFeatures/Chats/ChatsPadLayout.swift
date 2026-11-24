@@ -28,14 +28,18 @@ enum ChatsPadLayout {
 }
 
 /// The one row at the top of the iPad Chats list: a search field with Display inside it, and the
-/// "+" that starts a conversation. There is no title (the left bar already names the screen) and no
-/// second row of controls.
+/// "+" that starts a conversation, with the account avatar between them in portrait. There is no title
+/// (the left bar already names the screen) and no second row of controls.
 struct ChatsListHeader: View {
 	@Binding var search: String
 	/// The Display options differ from the defaults: the button tints, as the toolbar's did.
 	let displayActive: Bool
 	let onDisplay: () -> Void
 	let onNew: () -> Void
+	/// The account avatar left of "+", in portrait where no sidebar holds it. Nil hides it.
+	var onAccount: (() -> Void)? = nil
+	var accountName = ""
+	var accountActorID: String? = nil
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
@@ -73,6 +77,9 @@ struct ChatsListHeader: View {
 			.padding(.horizontal, MaskinSpace.s9)
 			.frame(height: MaskinSpace.touchMin)
 			.maskinGlassCapsule(interactive: true)
+			if let onAccount {
+				ShellAccountButton(name: accountName, actorID: accountActorID, open: onAccount)
+			}
 			Button(action: onNew) {
 				ShellInkCircle(symbol: "plus", label: "New conversation", filled: true)
 			}

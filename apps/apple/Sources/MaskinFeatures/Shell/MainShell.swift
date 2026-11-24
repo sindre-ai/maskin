@@ -255,6 +255,7 @@ private struct AdaptiveTabs: View {
 
 	var body: some View {
 		shell
+			.environment(\.shellIsPortrait, isPortrait)
 			.sheet(isPresented: $showWorkspaces) {
 				WorkspaceSwitcher(environment: environment)
 					.presentationDetents([.medium, .large])

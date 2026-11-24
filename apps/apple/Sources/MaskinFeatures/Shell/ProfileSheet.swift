@@ -63,6 +63,7 @@ struct ProfileSheet: View {
 			ScrollView {
 				VStack(spacing: MaskinSpace.s7) {
 					titleBar
+					switchWorkspaceRow
 					profileCard
 					workspaceCard
 					statTiles
@@ -184,6 +185,41 @@ struct ProfileSheet: View {
 			.accessibilityLabel("Account, \(session.name)")
 			.filledCard(radius: MaskinRadius.tile)
 		}
+	}
+
+	/// "Switch workspace" with the current workspace's name: the one way to change workspace on an iPad
+	/// in portrait, where there is no sidebar to hold the switcher. Opens the same picker as Switch below.
+	private var switchWorkspaceRow: some View {
+		Button {
+			showWorkspaces = true
+		} label: {
+			HStack(spacing: MaskinSpace.s8) {
+				Text("Switch workspace")
+					.font(MaskinTypeface.sans(MaskinFontSize.t17, weight: .semibold, relativeTo: .body))
+					.foregroundStyle(MaskinColor.ink)
+				Spacer(minLength: MaskinSpace.s4)
+				if let name = environment.workspaces.selected?.name {
+					Text(name).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
+				Image(systemName: "chevron.right")
+					.maskinSymbol(MaskinSpace.s7, weight: .semibold)
+					.foregroundStyle(MaskinColor.ink5)
+					.accessibilityHidden(true)
+			}
+			.padding(.horizontal, MaskinSpace.s9)
+			.frame(maxWidth: .infinity, minHeight: MaskinSpace.touchMin + MaskinSpace.s5, alignment: .leading)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.maskinPressed)
+		.accessibilityIdentifier("switch-workspace-row")
+		.accessibilityLabel(switchWorkspaceLabel)
+		.filledCard(radius: MaskinRadius.tile)
+	}
+
+	/// The name rides in the label, not a separate value: a label is always read back, a value on a button is not.
+	private var switchWorkspaceLabel: String {
+		guard let name = environment.workspaces.selected?.name else { return "Switch workspace" }
+		return "Switch workspace, \(name)"
 	}
 
 	/// "Workspace name · Owner", else the email when no workspace is selected.

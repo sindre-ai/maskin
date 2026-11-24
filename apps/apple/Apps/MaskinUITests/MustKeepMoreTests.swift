@@ -200,6 +200,11 @@ final class MustKeepMoreTests: XCTestCase {
 		for _ in 0..<4 where !option.exists { app.swipeUp() }
 		expectExists(option, "For you shows the decision option 'Send all 7'", dump: "mk12-option")
 		option.tap()
+		// Undo is free for 6 seconds after the pick (the toast and the receipt row both drop it then), and each
+		// query on a Mac runner can take a second or more. Look for Undo first, before the slower checks.
+		let undo = app.buttons["Undo"].firstMatch
+		let offeredUndo = undo.waitForExistence(timeout: 4)
+		if !offeredUndo { dumpScreen("mk12-undo") }
 		let left = option.waitForNonExistence(timeout: 10)
 		if !left { dumpScreen("mk12-after-pick") }
 		XCTAssertTrue(left, "the card leaves the open list once an option is picked")
@@ -208,7 +213,7 @@ final class MustKeepMoreTests: XCTestCase {
 		).firstMatch
 		if !chosen.waitForExistence(timeout: 15) { dumpScreen("mk12-receipt") }
 		XCTAssertTrue(chosen.exists, "the choice shows as a receipt or toast ('You chose Send all 7')")
-		XCTAssertTrue(app.buttons["Undo"].firstMatch.waitForExistence(timeout: 5), "the choice offers Undo")
+		XCTAssertTrue(offeredUndo, "the choice offers Undo")
 	}
 
 	// MARK: MK-13 @mention someone
@@ -483,5 +488,24 @@ final class MustKeepMoreTests: XCTestCase {
 		connected.tap()
 		let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'PostHog'")).firstMatch
 		expectExists(row, "PostHog is in the Connected list", dump: "mk17-connected", timeout: 15)
+	}
+
+	// MARK: MK-20 The profile sheet starts with Switch workspace
+
+	/// For you → Account → the first row is Switch workspace with the current workspace's name; tapping it opens the
+	/// workspace picker. On an iPad in portrait this is the only way to change workspace (no sidebar).
+	func testMK20_ProfileSheetSwitchWorkspaceRow() throws {
+		openProfile()
+		let row = app.buttons["switch-workspace-row"].firstMatch
+		expectExists(row, "the profile sheet offers Switch workspace", dump: "mk20-row", timeout: 5)
+		// The workspace list loads after sign-in, so the name may arrive a moment after the row.
+		let named = NSPredicate(format: "label == 'Switch workspace, Northwind'")
+		let wait = XCTNSPredicateExpectation(predicate: named, object: row)
+		if XCTWaiter().wait(for: [wait], timeout: 15) != .completed {
+			dumpScreen("mk20-name")
+			XCTFail("the row names the current workspace; its label reads '\(row.label)'")
+		}
+		row.tap()
+		expectExists(app.staticTexts["Workspaces"], "Switch workspace opens the workspace picker", dump: "mk20-picker", timeout: 10)
 	}
 }
