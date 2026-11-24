@@ -10,6 +10,8 @@ import { DeepdotsAuthError, signIn } from '../lib/integrations/providers/deepdot
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { startIntegrationConnectChat } from '../services/integration-connect-chat'
+import type { SessionManager } from '../services/session-manager'
 
 // Deepdots connects from a two-field form (email and password), not a redirect or a
 // pasted key. Mounted before the generic /api/integrations routes, like the other
@@ -22,6 +24,7 @@ type Env = {
 		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
 		workspaceRole?: string
 		actorType: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -161,6 +164,14 @@ app.openapi(connectRoute, async (c) => {
 		actorId,
 		integrationId,
 		authType: 'manual',
+	})
+	void startIntegrationConnectChat({
+		db,
+		sessionManager: c.get('sessionManager'),
+		workspaceId,
+		actorId,
+		integrationId,
+		provider: PROVIDER,
 	})
 
 	return c.json({ integration_id: integrationId }, 200)

@@ -45,6 +45,8 @@ import { probeMcpTools } from '../lib/integrations/mcp-probe'
 import { VENDOR_RECIPES } from '../lib/integrations/vendor-recipes'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { startIntegrationConnectChat } from '../services/integration-connect-chat'
+import type { SessionManager } from '../services/session-manager'
 import { resolvePublicOrigin } from './integrations'
 
 // Custom (bring-your-own) extensions: create, read and update the workspace's
@@ -60,6 +62,7 @@ type Env = {
 		actorId: string
 		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
 		workspaceRole?: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -75,16 +78,31 @@ const hasConfig = (row: Pick<ExtensionRow, 'mcpConfig' | 'webhookConfig'>) =>
 	!!(row.mcpConfig || row.webhookConfig)
 
 /**
- * Fire the built-in integration_connected event for an extension. Called after
- * the database commit; best-effort, never throws. The provider is the same
- * 'extension:{slug}' string the extension's integrations row carries.
+ * Fire the built-in integration_connected event for an extension and open the Chief of Staff
+ * connect chat. Called after the database commit; best-effort, never throws. The provider is the
+ * same 'extension:{slug}' string the extension's integrations row carries.
  */
-function trackExtensionConnected(workspaceId: string, actorId: string, row: ExtensionRow) {
+function trackExtensionConnected(
+	db: Database,
+	sessionManager: SessionManager,
+	workspaceId: string,
+	actorId: string,
+	row: ExtensionRow,
+) {
 	void trackIntegrationConnected({
 		provider: extensionProvider(row.slug),
 		workspaceId,
 		actorId,
 		integrationId: row.id,
+	})
+	void startIntegrationConnectChat({
+		db,
+		sessionManager,
+		workspaceId,
+		actorId,
+		integrationId: row.id,
+		provider: extensionProvider(row.slug),
+		label: row.name,
 	})
 }
 
@@ -553,7 +571,8 @@ app.openapi(createExtensionRoute, async (c) => {
 		},
 	})
 
-	if (hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
+	if (hasConfig(row))
+		trackExtensionConnected(db, c.get('sessionManager'), workspaceId, actorId, row)
 
 	return c.json(await respond(c, db, await checkSavedMcpKey(db, row, body.mcp_api_key)), 201)
 })
@@ -721,7 +740,8 @@ app.openapi(updateExtensionRoute, async (c) => {
 	})
 
 	// Only the save that first gives the extension a config counts as connecting it.
-	if (!hasConfig(existing) && hasConfig(row)) trackExtensionConnected(workspaceId, actorId, row)
+	if (!hasConfig(existing) && hasConfig(row))
+		trackExtensionConnected(db, c.get('sessionManager'), workspaceId, actorId, row)
 
 	return c.json(await respond(c, db, await checkSavedMcpKey(db, row, body.mcp_api_key)), 200)
 })

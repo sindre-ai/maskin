@@ -32,6 +32,8 @@ import {
 	isWorkspaceHumanAdminOrOwner,
 	isWorkspaceWriter,
 } from '../lib/workspace-auth'
+import { startIntegrationConnectChat } from '../services/integration-connect-chat'
+import type { SessionManager } from '../services/session-manager'
 import { GatewayUpstreamError, proxyMcp } from './integrations-gateway'
 
 type Env = {
@@ -40,6 +42,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		workspaceRole?: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -242,6 +245,16 @@ app.openapi(addServerRoute, (async (c) => {
 			data: { provider: CUSTOM_MCP_PROVIDER, name },
 		})
 		return row
+	})
+
+	void startIntegrationConnectChat({
+		db,
+		sessionManager: c.get('sessionManager'),
+		workspaceId,
+		actorId: callerId,
+		integrationId: created.id,
+		provider: CUSTOM_MCP_PROVIDER,
+		label: name,
 	})
 
 	return c.json({ id: created.id, name, server: maskServer(server) }, 201)

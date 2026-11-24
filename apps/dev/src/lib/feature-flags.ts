@@ -289,6 +289,14 @@ export const FLAGS = {
 	 * real sign-in has worked for each and the providers are on for everyone.
 	 */
 	WORK_INTEGRATIONS: 'work-integrations',
+	/**
+	 * Gates the Chief of Staff chat that opens when a person connects an integration (task
+	 * [Start Chief of Staff chat on connect](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/8f4edbd9-f25d-4fb8-ab75-2fe95190c1a0)).
+	 * Backend only, actor-scoped: read with isFlagEnabled in services/integration-connect-chat.ts,
+	 * keyed on the person who connected. Off means no chat is opened and the connect behaves as
+	 * today. The connect itself is never affected either way. Retire once the chat is on for everyone.
+	 */
+	INTEGRATION_CONNECT_CHAT: 'integration-connect-chat',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

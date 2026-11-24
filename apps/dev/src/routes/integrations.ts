@@ -166,7 +166,9 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { startIntegrationConnectChat } from '../services/integration-connect-chat'
 import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -177,6 +179,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		storageProvider: StorageProvider
+		sessionManager: SessionManager
 	}
 }
 
@@ -1180,6 +1183,14 @@ app.openapi(connectRoute, (async (c) => {
 			actorId,
 			integrationId,
 			authType: 'api_key',
+		})
+		void startIntegrationConnectChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId,
+			actorId,
+			integrationId,
+			provider: providerName,
 		})
 
 		// The client navigates to this URL once the key is saved. A caller that
@@ -2360,6 +2371,17 @@ app.openapi(callbackRoute, (async (c) => {
 			authType: 'oauth',
 		})
 	}
+	// A reconnect onto a row that was already active is not counted above, but the person still
+	// connected something and gets the chat, told apart by the connect type.
+	void startIntegrationConnectChat({
+		db,
+		sessionManager: c.get('sessionManager'),
+		workspaceId: stateData.workspaceId,
+		actorId: stateData.actorId,
+		integrationId,
+		provider: providerName,
+		connectType: isNewConnect ? 'new' : 'reconnect',
+	})
 
 	// Back to where the user started the connect (an agent's Connect card in a
 	// chat), or the settings page when the flow began there. Re-checked even
@@ -2662,6 +2684,14 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 		actorId,
 		integrationId: id,
 		authType: 'manual',
+	})
+	void startIntegrationConnectChat({
+		db,
+		sessionManager: c.get('sessionManager'),
+		workspaceId: existing.workspaceId,
+		actorId,
+		integrationId: id,
+		provider: existing.provider,
 	})
 
 	return c.json({ activated: true })

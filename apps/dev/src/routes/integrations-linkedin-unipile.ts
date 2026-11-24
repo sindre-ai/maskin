@@ -46,6 +46,8 @@ import {
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole } from '../lib/workspace-auth'
+import { startIntegrationConnectChat } from '../services/integration-connect-chat'
+import type { SessionManager } from '../services/session-manager'
 /**
  * LinkedIn (LinkedIn-backed) integration routes — the whole provider surface,
  * rebuilt against LinkedIn Hosted Auth v2.
@@ -103,6 +105,7 @@ type Env = {
 		actorId: string
 		/** Caller's role in the X-Workspace-Id workspace, set by authMiddleware. */
 		workspaceRole?: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -557,6 +560,15 @@ app.openapi(callbackRoute, (async (c) => {
 			actorId: pending.actorId,
 			integrationId: pending.id,
 		})
+		void startIntegrationConnectChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId: pending.workspaceId,
+			actorId: pending.actorId,
+			integrationId: pending.id,
+			provider: PROVIDER,
+			connectType: priorExternalId ? 'reconnect' : 'new',
+		})
 	} else {
 		logger.warn('linkedin-unipile callback: pending row missing actor_id — event skipped', {
 			integrationId: pending.id,
@@ -756,6 +768,15 @@ async function handleCallbackError(
 					workspaceId: pending.workspaceId,
 					actorId: pending.actorId,
 					integrationId: pending.id,
+				})
+				void startIntegrationConnectChat({
+					db,
+					sessionManager: c.get('sessionManager'),
+					workspaceId: pending.workspaceId,
+					actorId: pending.actorId,
+					integrationId: pending.id,
+					provider: PROVIDER,
+					connectType: 'reconnect',
 				})
 			}
 			return redirectAfterConnect(c, pending, error_detail)

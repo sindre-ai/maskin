@@ -29,6 +29,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { assertWorkspaceWriterRole, isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 import { endSessionHoldingKey, relaunchChatSession } from '../services/chat-relaunch'
+import { startIntegrationConnectChat } from '../services/integration-connect-chat'
 import type { SessionManager } from '../services/session-manager'
 
 export type Env = {
@@ -293,6 +294,15 @@ app.openapi(byoApiKeyRoute, (async (c) => {
 			provider_mode: 'byo_apikey',
 			source: 'admin_ui',
 		})
+		void startIntegrationConnectChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId,
+			actorId,
+			integrationId: result.integrationId,
+			provider: BYO_APIKEY_PROVIDER,
+			label: body.displayName,
+		})
 
 		return c.json({ integrationId: result.integrationId }, 201)
 	} catch (err) {
@@ -372,6 +382,15 @@ app.openapi(byoLoginRoute, (async (c) => {
 			provider: BYO_LOGIN_PROVIDER,
 			provider_mode: 'byo_login',
 			source: 'admin_ui',
+		})
+		void startIntegrationConnectChat({
+			db,
+			sessionManager: c.get('sessionManager'),
+			workspaceId,
+			actorId,
+			integrationId: result.integrationId,
+			provider: BYO_LOGIN_PROVIDER,
+			label: body.displayName,
 		})
 
 		return c.json({ integrationId: result.integrationId }, 201)
