@@ -201,6 +201,16 @@ export interface CreateAppOptions {
 const STATIC_FILE_PATH_RE =
 	/^\/(assets|fonts)\/|\.(js|mjs|css|map|json|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt|xml|webmanifest)$/i
 
+/** Sets Cache-Control on a 200 that has none. A 404 for a missing file stays no-store. */
+function cacheWhenFound(value: string): MiddlewareHandler {
+	return async (c, next) => {
+		await next()
+		if (c.res.status === 200 && !c.res.headers.has('Cache-Control')) {
+			c.header('Cache-Control', value)
+		}
+	}
+}
+
 const OPENAPI_INFO = {
 	title: 'Maskin Dev Workspace API',
 	version: '0.1.0',
@@ -337,7 +347,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// policy — browsers reject wildcard + credentials together. /api/* uses
 	// the configured-origin policy with credentials for the web app.
 	app.use('/mcp', cors({ origin: '*', exposeHeaders: ['WWW-Authenticate'] }))
-	app.use('/api/*', cors({ origin: allowedOrigins, credentials: true }))
+	// The web app can call the API from a second host that skips the Cloudflare Worker
+	// (VITE_API_ORIGIN, e.g. https://api.maskin.io). That makes every call cross-origin, so:
+	// - maxAge lets the browser reuse one preflight (Authorization makes every call preflighted;
+	//   the default of 5s would double the request count).
+	// - exposeHeaders lists the only response headers the web client reads besides the
+	//   CORS-safelisted ones (Retry-After on 429s, Content-Disposition on skill downloads).
+	app.use(
+		'/api/*',
+		cors({
+			origin: allowedOrigins,
+			credentials: true,
+			maxAge: 7200,
+			exposeHeaders: ['Retry-After', 'Content-Disposition'],
+		}),
+	)
+	// Module scripts, stylesheets and fonts loaded from that host are fetched in CORS mode.
+	// No credentials: these files are public.
+	app.use('/assets/*', cors({ origin: allowedOrigins }))
+	app.use('/fonts/*', cors({ origin: allowedOrigins }))
 	app.use(
 		'*',
 		honoLogger((line, ...rest) => console.log(redactLogLine(line.replace(/\?\S*/, '')), ...rest)),
@@ -750,6 +778,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		path.resolve(import.meta.dirname ?? __dirname, '../../web/dist')
 	if (fs.existsSync(staticDir)) {
 		logger.info(`Serving static files from ${staticDir}`)
+		// No CDN in front of the second host, so the origin has to say how long a file lives.
+		// Vite names everything under /assets by content hash, so those never change; /fonts
+		// files keep their names and get a day.
+		app.use('/assets/*', cacheWhenFound('public, max-age=31536000, immutable'))
+		app.use('/fonts/*', cacheWhenFound('public, max-age=86400'))
 		app.use(
 			'*',
 			serveStatic({

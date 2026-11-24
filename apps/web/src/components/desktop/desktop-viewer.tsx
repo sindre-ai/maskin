@@ -7,6 +7,7 @@ import { useConnectDesktop } from '@/hooks/use-desktop'
 import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { cn } from '@/lib/cn'
 import type { ComputerViewFlow } from '@/lib/computer-view-flow'
+import { API_ORIGIN } from '@/lib/constants'
 import {
 	COPY_WINDOW_MS,
 	NO_NEW_COPY,
@@ -178,7 +179,7 @@ export function DesktopViewer({
 				if (cancelled || !target) return
 
 				setPhase('connecting')
-				const url = new URL(path, window.location.href)
+				const url = new URL(path, API_ORIGIN || window.location.href)
 				url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
 				url.searchParams.set('ticket', ticket)
 

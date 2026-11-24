@@ -179,7 +179,18 @@ export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }
 
-export const API_BASE = '/api'
+/**
+ * Where API calls go. Empty (the default) means the page's own host. In production it is set to
+ * a second hostname that reaches the app server directly, so API traffic skips the Cloudflare
+ * Worker in front of the page host. The server's CORS policy has to allow this page's origin.
+ * Sign-in is a bearer key in localStorage, not a cookie, so it works across the two hosts.
+ */
+export const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
+
+export const API_BASE = `${API_ORIGIN}/api`
+
+/** Same host as the page, never API_ORIGIN. For the one call that depends on a cookie. */
+export const SAME_ORIGIN_API_BASE = '/api'
 
 // One-line copy for the built-in object types (mockup NEWKINDS, lines 254-262).
 // Module and custom types deliberately have no entry — we describe a type only
