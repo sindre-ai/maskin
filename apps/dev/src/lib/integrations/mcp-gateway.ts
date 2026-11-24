@@ -45,6 +45,7 @@ export const GATEWAY_PROVIDERS: ReadonlySet<string> = new Set([
 	'box',
 	'brevo',
 	'brex',
+	'business-central',
 	'calendly',
 	'canva',
 	'clay',
