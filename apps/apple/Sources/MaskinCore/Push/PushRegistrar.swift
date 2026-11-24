@@ -112,6 +112,7 @@ public final class PushRegistrar {
 	public func requestAuthorization() async {
 		permission = await system.currentPermission()
 		if permission == .notDetermined {
+			Analytics.shared.firstLaunch(.pushPermissionShown)
 			permission = await system.requestPermission() ? .authorized : .denied
 			Analytics.shared.track(permission == .authorized ? "push_permission_granted" : "push_permission_denied")
 		}

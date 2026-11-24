@@ -899,6 +899,7 @@ public final class ChatStore {
 				afterServerID: lastServerID, thread: thread)
 			sentRows[pending.id] = pending
 			awaitingReplySince = now()
+			Analytics.shared.firstLaunch(.chatSent)
 			// Asking again lifts the "Stopped" marker: a new answer is on its way.
 			stoppedAgentIDs = []
 			return "local-\(pending.id)"
@@ -1293,7 +1294,10 @@ public final class ChatStore {
 
 	/// Publish only a real change: re-reading an unchanged thread must not make the view rebuild.
 	private func publish(_ result: (rows: [ChatMessage], clearsReply: Bool)) {
-		if result.clearsReply { awaitingReplySince = nil }
+		if result.clearsReply {
+			awaitingReplySince = nil
+			Analytics.shared.firstLaunch(.replyReceived)
+		}
 		if result.rows != confirmed { confirmed = result.rows }
 		pruneSentRows()
 	}

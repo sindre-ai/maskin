@@ -66,6 +66,7 @@ public final class ComputerModel {
 	/// Opens the computer once, when the screen first appears.
 	public func startIfNeeded() {
 		guard !started else { return }
+		Analytics.shared.firstLaunch(.computerViewOpened)
 		connect()
 	}
 

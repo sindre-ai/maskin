@@ -307,6 +307,7 @@ public final class ConversationsStore {
 					.filter { !locallyDeleted.contains($0.id) }
 				hasMore = keptTail ? hasMore || page.hasMore : page.hasMore
 				phase = .loaded
+				if !conversations.isEmpty { Analytics.shared.firstLaunch(.firstContent) }
 				reconcileAgentFilter()
 				freshness.refreshed(at: cache?.now() ?? Date())
 				writeCache()

@@ -344,6 +344,7 @@ public final class ForYouStore {
 				Perf.event("foryou.content.network")
 			}
 			phase = .loaded
+			if !fetched.isEmpty { Analytics.shared.firstLaunch(.firstContent) }
 			freshness.refreshed(at: cache?.now() ?? Date())
 			later.prune(keeping: Set(fetched.map(\.id)))
 			succeeded = true

@@ -39,6 +39,18 @@ extension AnalyticsValue: Codable {
 
 public typealias AnalyticsProperties = [String: AnalyticsValue]
 
+/// The first-launch steps the phone reports, as `flow_step` events on the flow `iphone_first_launch`
+/// (the web's shared step list in `packages/shared/src/analytics-flows.ts`). Each is sent once per
+/// person, the first time it happens. The names must stay in that list: the server refuses a step
+/// that is not in it.
+public enum FirstLaunchStep: String, Sendable, CaseIterable {
+	case pushPermissionShown = "push_permission_shown"
+	case firstContent = "first_content"
+	case chatSent = "chat_sent"
+	case replyReceived = "reply_received"
+	case computerViewOpened = "computer_view_opened"
+}
+
 /// One product event waiting to be sent. Never holds the base fields (`workspace_id`, `actor_id`,
 /// `actor_type`, `surface`): the server sets those from the signed-in request.
 public struct AnalyticsEvent: Codable, Sendable, Equatable, Identifiable {
@@ -149,6 +161,14 @@ public final class Analytics {
 	static let installedKey = "analytics.sent.app_installed.v1"
 	static let activeDayKey = "analytics.sent.app_active_day.v1"
 	static func firstSignInKey(_ actorId: String) -> String { "analytics.sent.first_sign_in.v1.\(actorId)" }
+	static let firstLaunchFlow = "iphone_first_launch"
+	static func firstLaunchKey(_ step: FirstLaunchStep, _ actorId: String) -> String {
+		"analytics.sent.\(firstLaunchFlow).\(step.rawValue).v1.\(actorId)"
+	}
+	/// When the person's last first-launch step went out, for `duration_ms` on the next one.
+	static func firstLaunchLastKey(_ actorId: String) -> String {
+		"analytics.last.\(firstLaunchFlow).v1.\(actorId)"
+	}
 
 	/// Most events kept on the phone. The oldest go first.
 	static let maxQueued = 200
@@ -284,6 +304,29 @@ public final class Analytics {
 		guard isActive, actorId != nil, !impressedCards.contains(cardId) else { return }
 		impressedCards.insert(cardId)
 		track("foryou_card_shown", ["card_kind": .string(cardKind), "card_id": .string(cardId)])
+	}
+
+	/// One step of the person's first launch happened: `flow_step` with flow `iphone_first_launch`,
+	/// the person's own id as `flow_id` (as the web does for its once-per-person steps) and
+	/// `duration_ms` since their previous first-launch step. Sent once per person, so the call sites
+	/// can call it every time the moment comes round. Nothing is marked as sent while sending is off
+	/// or nobody is signed in, so the step still counts once they are.
+	public func firstLaunch(_ step: FirstLaunchStep) {
+		guard isActive, let actorId, workspaceId != nil else { return }
+		let key = Self.firstLaunchKey(step, actorId)
+		guard storage.value(for: key) == nil else { return }
+		storage.set("1", for: key)
+		var props: AnalyticsProperties = [
+			"flow": .string(Self.firstLaunchFlow), "step": .string(step.rawValue),
+			"flow_id": .string(actorId),
+		]
+		let nowMs = Int(clock().timeIntervalSince1970 * 1000)
+		let lastKey = Self.firstLaunchLastKey(actorId)
+		if let last = storage.value(for: lastKey).flatMap({ Int($0) }) {
+			props["duration_ms"] = .int(max(0, nowMs - last))
+		}
+		storage.set(String(nowMs), for: lastKey)
+		track("flow_step", props)
 	}
 
 	/// A chat was created on the server. `participants` are the people and agents the person picked
