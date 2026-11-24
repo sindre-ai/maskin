@@ -18,6 +18,10 @@ export const DINERO_LOGGED_TOOLS: ReadonlySet<string> = new Set([
 	'CreateFinanceVoucher',
 	'upload_file',
 	'BookVoucher',
+	'book_finance_voucher',
+	'create_trade_offer',
+	'send_trade_offer',
+	'generate_invoice_from_trade_offer',
 	'add_purchase_payment',
 	'add_invoice_payment',
 	'attach_file_to_voucher_card',
@@ -34,9 +38,15 @@ export const DINERO_LOGGED_TOOLS: ReadonlySet<string> = new Set([
 	...DINERO_BRIDGE_TOOL_NAMES.filter((t) => t !== 'list_posted_entries'),
 ])
 
-/** The tools that book, pay, email or chase: they act on one version of a voucher. */
+/**
+ * The tools that book, pay, email or chase: they act on one version of a voucher. create_trade_offer
+ * is not here: it makes a new offer, so there is no earlier version to stamp.
+ */
 const VERSIONED_TOOLS: ReadonlySet<string> = new Set([
 	'BookVoucher',
+	'book_finance_voucher',
+	'send_trade_offer',
+	'generate_invoice_from_trade_offer',
 	'add_purchase_payment',
 	'add_invoice_payment',
 	...DINERO_BRIDGE_BOOKING_TOOL_NAMES,

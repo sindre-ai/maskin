@@ -687,17 +687,49 @@ describe('Dinero is limited to a fixed list of tools through the gateway (Integr
 		expect((fetchMock.mock.calls[0] as [string])[0]).toBe('https://mcp.dinero.dk')
 	})
 
-	it('adds BookVoucher and the two payment tools, and no others, when the owner switched booking on', async () => {
+	it('adds BookVoucher, the payment tools and the trade offer tools, and no others, when the owner switched booking on', async () => {
 		const s = await dinero({ dinero_booking: true })
 		const booked = await post(s.app, s.ws.id, stamped('BookVoucher'), 'dinero')
 		expect((await toolText(booked)).isError).toBeUndefined()
 		expect(fetchMock).toHaveBeenCalledOnce()
 
+		// Each tool that acts on an existing document is let through with its version stamp.
+		for (const tool of [
+			'book_finance_voucher',
+			'send_trade_offer',
+			'generate_invoice_from_trade_offer',
+		]) {
+			fetchMock.mockClear()
+			const result = await toolText(await post(s.app, s.ws.id, stamped(tool), 'dinero'))
+			expect(result.isError).toBeUndefined()
+			expect(fetchMock).toHaveBeenCalledOnce()
+		}
+		// Making a new offer has no earlier version to stamp.
 		fetchMock.mockClear()
-		const result = await toolText(
-			await post(s.app, s.ws.id, call('book_finance_voucher'), 'dinero'),
-		)
-		expect(result.isError).toBe(true)
+		const offer = await toolText(await post(s.app, s.ws.id, call('create_trade_offer'), 'dinero'))
+		expect(offer.isError).toBeUndefined()
+		expect(fetchMock).toHaveBeenCalledOnce()
+
+		fetchMock.mockClear()
+		for (const tool of ['submit_feedback', 'a_tool_dinero_adds_later']) {
+			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain(`${tool} is not one of the tools Dinero may use`)
+		}
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
+
+	it('refuses booking a template voucher, sending a quote and turning a quote into an invoice without the version stamp', async () => {
+		const s = await dinero({ dinero_booking: true })
+		for (const tool of [
+			'book_finance_voucher',
+			'send_trade_offer',
+			'generate_invoice_from_trade_offer',
+		]) {
+			const result = await toolText(await post(s.app, s.ws.id, call(tool), 'dinero'))
+			expect(result.isError).toBe(true)
+			expect(result.content[0].text).toContain('needs the timestamp')
+		}
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
 

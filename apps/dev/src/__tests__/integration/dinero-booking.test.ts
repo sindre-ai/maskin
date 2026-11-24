@@ -72,6 +72,8 @@ describe('The Dinero booking switch (Integration)', () => {
 		expect(body.enabled).toBe(false)
 		expect(body.statement).toMatch(/super-user/)
 		expect(body.statement).toMatch(/counter-posting/)
+		expect(body.statement).toMatch(/A-skat/)
+		expect(body.statement).toMatch(/quote/)
 	})
 
 	it('switches on for a person who confirms they read it, and off again', async () => {
