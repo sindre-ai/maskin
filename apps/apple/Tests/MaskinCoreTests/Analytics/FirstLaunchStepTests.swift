@@ -3,7 +3,7 @@ import Testing
 
 @testable import MaskinCore
 
-private final class TestClock: @unchecked Sendable {
+private final class FirstLaunchClock: @unchecked Sendable {
 	private let lock = NSLock()
 	private var time: Date
 	init(_ start: Date) { time = start }
@@ -15,7 +15,7 @@ private final class TestClock: @unchecked Sendable {
 @Suite("Analytics: first-launch steps")
 struct FirstLaunchStepTests {
 	private func make(
-		storage: InMemoryAnalyticsStorage = InMemoryAnalyticsStorage(), clock: TestClock = TestClock(Date(timeIntervalSince1970: 1_800_000_000)),
+		storage: InMemoryAnalyticsStorage = InMemoryAnalyticsStorage(), clock: FirstLaunchClock = FirstLaunchClock(Date(timeIntervalSince1970: 1_800_000_000)),
 		signedIn: Bool = true
 	) -> Analytics {
 		let analytics = Analytics()
@@ -72,7 +72,7 @@ struct FirstLaunchStepTests {
 
 	@Test("duration_ms is the time since the person's previous step, and absent on the first")
 	func duration() {
-		let clock = TestClock(Date(timeIntervalSince1970: 1_800_000_000))
+		let clock = FirstLaunchClock(Date(timeIntervalSince1970: 1_800_000_000))
 		let analytics = make(clock: clock)
 		analytics.firstLaunch(.firstContent)
 		clock.advance(12.5)
