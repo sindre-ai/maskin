@@ -87,7 +87,7 @@ Domain proof:
 
 ## 6. Tools and annotations
 
-Every platform tool carries a title and the four hints from `packages/mcp/src/annotations.ts`. Extension tools (`<extension>_<tool>`) get a plain title and read-only false, destructive true.
+Every platform tool carries a title and the four hints from `packages/mcp/src/annotations.ts`. Every tool that is not read-only carries `destructiveHint: true` (create, update, send, delete and stop alike), for all clients, and `surface-pin.test.ts` pins it. Extension tools (`<extension>_<tool>`) get a plain title and read-only false, destructive true.
 
 The portal asks for a justification on each destructive tool: what is irreversible and under what conditions, including safeguards. Use these:
 
@@ -95,6 +95,7 @@ The portal asks for a justification on each destructive tool: what is irreversib
 - stop_session, stop_chat_agent: ends a running agent run. The run cannot be resumed from where it stopped.
 - disconnect_integration: removes a connected third-party account from the workspace; it must be reconnected by a person.
 - desktop_run: runs any command in the workspace's own sandbox computer. Scoped to that sandbox, not the person's device.
+- Create, update and send tools (every other write tool): changes data in the connected workspace. An update can overwrite a body or a field, and a send (gmail_send_email, resend_send_email, approve_object_draft, approve_draft_from_chat) cannot be recalled. Scoped to the connected workspace and the person's role; the client asks the person before it runs.
 - Extension tools: marked destructive by default, because an unmarked tool is treated as a write.
 
 ## 7. Demo account notes
@@ -156,10 +157,10 @@ After the run, delete the Reviewer check task in Maskin so the next run starts c
 
 ## 10. What Maskin does not meet yet
 
-For the CTO to decide before submission. Each is a point in OpenAI's published rules, with the reason and a suggested call.
+For the CTO to decide before submission. Each is a point in OpenAI's published rules, with the reason and a suggested call. Items 1 and 2 are settled and kept for the record.
 
-1. Sending is not marked destructive. OpenAI: destructiveHint true for "sending messages or transactions you can't undo". `gmail_send_email`, `resend_send_email`, `approve_object_draft` and `approve_draft_from_chat` are open-world but destructive false today. Suggest: set destructive true on these four. One table in `annotations.ts` plus the tests that pin it (`surface-pin.test.ts`). The Claude pack notes the same table.
-2. Overwriting writes are not marked destructive. OpenAI lists "overwriting" as destructive and says being able to undo does not justify false. Every `update_*` tool can overwrite a body or a field, and they are destructive false. Suggest: decide with item 1. Setting it everywhere makes ChatGPT ask before every edit, which hurts the flow, so the choice is the CTO's.
+1. Settled: every write tool is marked destructive. OpenAI: destructiveHint true for "sending messages or transactions you can't undo", and "overwriting" counts too. The CTO decided that every tool that is not read-only carries `destructiveHint: true`, for all clients. That covers `gmail_send_email`, `resend_send_email`, `approve_object_draft`, `approve_draft_from_chat` and every `update_*` tool. It is one change in `annotations.ts` plus the tests that pin it (`surface-pin.test.ts`), shared with the Claude listing, so nothing more is needed for ChatGPT.
+2. Settled: the global choice is made, not open. The cost is that ChatGPT asks the person before every write, including ordinary edits. That was accepted over marking tools one by one, because a per-tool split cannot be defended to a reviewer who says an update can overwrite.
 3. Tool responses carry internal identifiers. OpenAI's privacy review asks that responses leave out PII, telemetry and internal identifiers (session, trace or request ids, timestamps, internal account ids, logs) and secrets. Maskin's responses carry object ids, timestamps and actor ids by design, and `get_session_logs`, `get_events` and `get_session_activity` return logs. Ids are needed to chain calls, so some stay. Suggest: audit realistic responses in ChatGPT as OpenAI says, then decide what to trim. Not done here.
 4. Credential-handling tools. OpenAI: do not collect or process API keys, passwords or one-time codes. `request_keychain_credential`, `request_keychain_access` and `connect_integration` exist for people to supply a credential. In a Maskin chat the person enters it in a card and it never passes through the model. Outside a chat session `connect_integration` falls back to a link. I have not confirmed from ChatGPT that no credential is typed into ChatGPT. Suggest: confirm on a real run, and if unsure expect a reviewer question.
 5. Tools that run commands and start agents. The 123-tool set includes `desktop_run` (any command in the workspace sandbox), `create_sub_chat` and `create_chat` (start an agent). All are marked, and `desktop_run` is destructive. OpenAI's wording on side effects: they must not be hidden, and each operation should be its own tool with a clear description. They are separate tools. The risk is a reviewer objecting to the size and power of the set. Same fallback as Claude: a smaller set only if asked.
