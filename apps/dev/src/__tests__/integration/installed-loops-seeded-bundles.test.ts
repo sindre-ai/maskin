@@ -1,13 +1,23 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { marketplaceLoops, objects, triggers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	installedLoops,
+	marketplaceLoops,
+	objects,
+	relationships,
+	triggers,
+} from '@maskin/db/schema'
 import { readLoopViews } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { seedMarketplaceLoops } from '../../lib/dev-bootstrap'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { readLoopSettings } from '../../lib/marketplace-loops/loop-settings'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { provisionLoopChecklist } from '../../services/loop-checklist-provisioning'
 import { bootstrapDefaultAgents } from '../../services/workspace-bootstrap'
 import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
@@ -223,6 +233,88 @@ describe('Marketplace install — seeded bundle end-to-end', () => {
 		expect(fold?.actionPrompt).toContain('list_loops')
 		expect(fold?.actionPrompt).toContain('in_loop')
 		for (const row of rows) expect(row.actionPrompt).toContain(flow?.title)
+	})
+
+	// The Knowledge Wiki flow ships an onboarding checklist: one parent task and one child per
+	// prerequisite, driven by the installed Curator, each moved from backlog to todo.
+	it('installs the knowledge-wiki-loop onboarding checklist as tasks driven by the Curator', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		if (!ws) throw new Error('workspace insert returned no row')
+		const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+		await bootstrapDefaultAgents(db, agentStorage, ws.id, actorId)
+
+		const loop = seededLoops.find((l) => l.slug === 'knowledge-wiki-loop')
+		if (!loop) throw new Error('seeded loop knowledge-wiki-loop not found')
+
+		const res = await makeApp(actorId).request(
+			jsonRequest('POST', '/api/installed-loops', { loopId: loop.id, workspaceId: ws.id }),
+		)
+		expect(res.status).toBe(201)
+		const body = (await res.json()) as { objectId: string }
+
+		const tasks = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		const parent = tasks.find((t) => t.title === 'Knowledge onboarding checklist')
+		if (!parent) throw new Error('checklist parent task not found')
+		const children = tasks.filter((t) => t.id !== parent.id)
+		expect(children).toHaveLength(11)
+		for (const task of tasks) expect(task.status).toBe('todo')
+
+		const curatorIds = (await db.select({ id: actors.id, name: actors.name }).from(actors))
+			.filter((a) => a.name === 'Knowledge Curator')
+			.map((a) => a.id)
+		expect(curatorIds.length).toBeGreaterThan(0)
+		for (const task of tasks) expect(curatorIds).toContain(task.driver)
+
+		const edges = await db
+			.select()
+			.from(relationships)
+			.where(
+				inArray(
+					relationships.targetId,
+					tasks.map((t) => t.id),
+				),
+			)
+		const breaksInto = edges.filter((e) => e.type === 'breaks_into')
+		expect(breaksInto).toHaveLength(11)
+		for (const edge of breaksInto) expect(edge.sourceId).toBe(parent.id)
+		const inLoop = edges.filter((e) => e.type === 'in_loop')
+		expect(inLoop).toHaveLength(12)
+		for (const edge of inLoop) expect(edge.sourceId).toBe(body.objectId)
+
+		// Created at backlog, then a real move to todo, so the task triggers see both events.
+		const taskEvents = await db
+			.select({ action: events.action })
+			.from(events)
+			.where(inArray(events.entityId, [parent.id, ...children.map((c) => c.id)]))
+		expect(taskEvents.filter((e) => e.action === 'created')).toHaveLength(12)
+		expect(taskEvents.filter((e) => e.action === 'status_changed')).toHaveLength(12)
+
+		// A second call for the same install creates nothing.
+		const [install] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.objectId, body.objectId))
+		const checklist = readLoopSettings(loop.loopSettings)?.checklist
+		if (!install || !checklist) throw new Error('install or checklist missing')
+		const again = await provisionLoopChecklist({
+			db,
+			workspaceId: ws.id,
+			actorId,
+			installId: install.id,
+			loopObjectId: body.objectId,
+			checklist,
+			driverActorId: null,
+		})
+		expect(again.created).toBe(0)
+		const after = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'task')))
+		expect(after).toHaveLength(12)
 	})
 
 	// Every sweep trigger finds the flow by its name, and the first sweep files a note into it with an

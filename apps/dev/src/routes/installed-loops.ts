@@ -43,6 +43,7 @@ import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceWriter } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
+import { provisionLoopChecklist } from '../services/loop-checklist-provisioning'
 import { startLoopPersonalizationChat } from '../services/loop-personalization-chat'
 import {
 	type MarketplaceItemType,
@@ -577,6 +578,23 @@ app.openapi(installLoopRoute, async (c) => {
 					loopObjectId: loopObject.id,
 					actorId,
 					items: viewItems,
+				})
+			}
+
+			// The loop's onboarding checklist, if it ships one: a parent task and a child task per
+			// prerequisite, driven by the bundled agent it names.
+			const checklist = readLoopSettings(loop.loopSettings)?.checklist
+			if (checklist) {
+				await provisionLoopChecklist({
+					db: tx,
+					workspaceId,
+					actorId,
+					installId: installRow.id,
+					loopObjectId: loopObject.id,
+					checklist,
+					driverActorId: checklist.driverSourceItemId
+						? (sourceToLocal.get(checklist.driverSourceItemId) ?? null)
+						: null,
 				})
 			}
 
