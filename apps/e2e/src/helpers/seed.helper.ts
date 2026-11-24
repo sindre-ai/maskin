@@ -9,6 +9,15 @@ import type { TestAPI } from './api.helper'
  * empty and whose rows collide under Playwright's strict mode.
  */
 export async function clearSeededAutomations(api: TestAPI, workspaceId: string): Promise<void> {
+	// Marketplace installs (Knowledge Wiki) point at their flow object with a
+	// foreign key, so deleting that object fails. Uninstall them first: the
+	// route removes the install row, its agents, triggers and skills, and the
+	// flow object together.
+	const installs = await api.listInstalledLoops(workspaceId)
+	for (const install of installs) {
+		await api.uninstallLoop(install.id, workspaceId)
+	}
+
 	const triggers = await api.listTriggers(workspaceId)
 	await Promise.all(triggers.map((trigger) => api.deleteTrigger(trigger.id, workspaceId)))
 

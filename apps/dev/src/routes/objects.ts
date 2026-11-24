@@ -5,7 +5,6 @@ import {
 	actors,
 	conversations,
 	files,
-	installedLoops,
 	objects,
 	readState,
 	relationships,
@@ -3032,14 +3031,6 @@ app.openapi(deleteObjectRoute, async (c) => {
 		await tx
 			.delete(starState)
 			.where(and(eq(starState.entityType, 'object'), eq(starState.entityId, id)))
-
-		// A marketplace install points at its flow object with a NO ACTION foreign
-		// key, so deleting the object would fail with a 23503. Unlink the install
-		// first: the install row (and its agents, triggers, skills) stays, and
-		// object_id is nullable. Uninstalling is the way to remove those.
-		if (existing.type === 'loop') {
-			await tx.update(installedLoops).set({ objectId: null }).where(eq(installedLoops.objectId, id))
-		}
 
 		await tx.delete(objects).where(eq(objects.id, id))
 
