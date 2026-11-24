@@ -16,23 +16,23 @@ Account creation and deletion are not in this build: sign-up is hidden (see sect
 ## 1b. Background audio (guideline 2.5.4): start a live voice call and lock the screen
 The app declares UIBackgroundModes: audio for one feature only, the live voice call with an agent. The call keeps the microphone and the agent's voice running after the screen is locked. Steps for the reviewer, on a physical iPhone (the call needs a microphone):
 1. Open the app and sign in with the demo account (section 3).
-2. On the For You tab, tap the Live briefing button in the top bar. This starts a live voice call with the Chief of Staff agent. (Alternative: Chats tab → open the Chief of Staff chat → tap Live in the chat header, or the waveform button "Start a live conversation" next to the message field.)
+2. On the For You tab, tap the Live briefing button in the top bar. This starts a live voice call with the Chief of Staff agent. (Alternative: Chats tab → open an agent chat → tap Live in the chat header, or the waveform button "Start a live conversation" next to the message field.)
 3. If iOS asks, tap Allow for Microphone. The call screen opens with the End call and Minimise call buttons.
-4. Wait until the status line says the agent is listening, then say something short, for example "Give me a short briefing". The agent answers by voice.
+4. Once the call is connected, say something short, for example "Give me a short briefing". The agent answers by voice.
 5. While the agent is speaking, press the side button to lock the iPhone.
-6. The call keeps running with the screen locked: the agent's voice continues and the microphone stays on (the status bar shows the orange microphone indicator). The Lock Screen shows a Live Activity card for the call with Mute and End buttons. You can speak again and the agent answers, still locked.
-7. Unlock the iPhone. The call is still connected. Tap End call (or End on the Lock Screen card) to finish. Audio stops and the app plays no audio in the background after the call ends.
+6. The call keeps running with the screen locked: the agent's voice continues and the microphone stays on. The Lock Screen shows a card for the call with Mute and End buttons. Unlock or speak again and the agent keeps answering.
+7. Unlock the iPhone. The call is still connected. Tap End call (or End on the Lock Screen card) to finish. The call ends and the app plays no audio in the background afterwards.
 
 Notes for the reviewer:
 - The call is a live conversation with an agent over the network, so the iPhone needs an internet connection.
-- The demo account has the Chief of Staff agent, so step 2 works without any setup. No other feature in the app plays or records audio in the background.
+- No other feature in the app plays or records audio in the background.
 - If the call cannot connect, the status line reads "Couldn't connect the call". Check the connection and the microphone permission (Settings → Maskin → Microphone) and start the call again.
 
 ## 2. Purpose and audience
 Maskin is a shared workspace where small teams and their AI agents work together. People set direction (insights, bets, tasks); agents do the work and ask for decisions. The iOS app is the companion for people who already have a Maskin workspace: review what needs a decision, chat with teammates and agents, follow agent runs, and share links into the workspace. Audience: teams (and solo founders) running work with AI agents. Not for children; 16+.
 
 ## 3. Access
-- Demo account: **&lt;EMAIL&gt; / &lt;PASSWORD&gt;** (to be provided; has a workspace with sample bets, tasks, two agents and a conversation).
+- Demo account: **<EMAIL> / <PASSWORD>** (to be provided; has a workspace with sample bets, tasks, two agents and a conversation).
 - The app signs in to an existing account. In-app account creation is intentionally hidden in this version, so no account-deletion flow is required.
 - No sample files needed. Photos and files are attached from the system picker.
 
