@@ -164,11 +164,11 @@ struct ChatQuestionStateTests {
 				])
 			]))
 		let picked = ChatQuestionState(messages: [ask(1), pick], viewerID: "me").notes[1]
-		#expect(picked == .init(actorName: "Sam", date: pick.createdAt, text: nil))
+		#expect(picked == ChatQuestionState.Note(actorName: "Sam", date: pick.createdAt, text: nil))
 
 		let typed = said(2)
 		let closed = ChatQuestionState(messages: [ask(1), typed], viewerID: "me").notes[1]
-		#expect(closed == .init(actorName: "me", date: typed.createdAt, text: "ok"))
+		#expect(closed == ChatQuestionState.Note(actorName: "me", date: typed.createdAt, text: "ok"))
 
 		let dismiss = chatMsg(
 			4, by: "me", "I dismissed this question.",
