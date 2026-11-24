@@ -2,7 +2,8 @@ import type { ProviderConfig } from '../../types'
 
 export const DINERO_PROVIDER = 'dinero'
 
-const MCP_URL = 'https://mcp.dinero.dk'
+export const DINERO_MCP_URL = 'https://mcp.dinero.dk'
+const MCP_URL = DINERO_MCP_URL
 
 /**
  * Dinero, through Dinero's own hosted MCP server (https://mcp.dinero.dk, streamable HTTP, bearer

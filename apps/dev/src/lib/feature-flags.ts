@@ -179,6 +179,15 @@ export const FLAGS = {
 	 */
 	SEND_PERMISSIONS_SCREEN: 'send-permissions-screen',
 	/**
+	 * Gates the Dinero review screen under Settings: the log of what the flow did in Dinero, a
+	 * one-click reversal of a booked item and the "Approve the books" button (bet [Installable
+	 * accounting flow with Danish connectors](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/4de0bf64-cc4b-4774-8a34-03c7c4139831)).
+	 * Frontend only: read with useFeatureFlag in the settings layout (the nav entry) and the route.
+	 * The review routes are for admins and owners only and do nothing until someone calls them.
+	 * Retire once the screen is on for everyone.
+	 */
+	DINERO_REVIEW_SCREEN: 'dinero-review-screen',
+	/**
 	 * Gates the agents in the top row of the iOS share sheet (task [Agents show as people in the iOS share sheet](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/e7484a53-3495-4654-b7c3-bded62fb9348)).
 	 * iOS app only, actor-scoped: read by AppRuntime before the app donates an agent to iOS. Off
 	 * means nothing new is donated and the row shows what it shows today. Retire once the row is
