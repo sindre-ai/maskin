@@ -66,6 +66,21 @@ function plan(kind: YoutubeActionKind, payload: Record<string, unknown>): Planne
 			if (typeof payload.captionId !== 'string') return null
 			return { method: 'DELETE', path: '/captions', query: { id: payload.captionId } }
 		}
+		case 'delete_video':
+		case 'delete_comment':
+		case 'delete_playlist':
+		case 'remove_from_playlist': {
+			// The id is the only thing Google takes: the other keys in the stored request (a title, a
+			// name) are what the card showed, and they are not sent.
+			if (typeof payload.id !== 'string' || payload.id === '') return null
+			const path = {
+				delete_video: '/videos',
+				delete_comment: '/comments',
+				delete_playlist: '/playlists',
+				remove_from_playlist: '/playlistItems',
+			}[kind]
+			return { method: 'DELETE', path, query: { id: payload.id } }
+		}
 		default:
 			// set_thumbnail uploads an image, which needs its own request shape (see execute).
 			return null

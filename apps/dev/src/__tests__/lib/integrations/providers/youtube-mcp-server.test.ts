@@ -59,13 +59,16 @@ describe('maskin-youtube tool server', () => {
 		trackYoutubeToolCalled.mockReset()
 	})
 
-	it('lists the read tools, the ten write tools and the three upload tools', async () => {
+	it('lists the read tools, the fourteen write tools and the three upload tools', async () => {
 		const { client } = await connect()
 		const { tools } = await client.listTools()
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			'youtube__add_to_playlist',
 			'youtube__create_playlist',
 			'youtube__delete_caption',
+			'youtube__delete_comment',
+			'youtube__delete_playlist',
+			'youtube__delete_video',
 			'youtube__get_analytics',
 			'youtube__get_channel',
 			'youtube__get_own_captions',
@@ -78,6 +81,7 @@ describe('maskin-youtube tool server', () => {
 			'youtube__list_recent_videos',
 			'youtube__post_comment',
 			'youtube__publish_video',
+			'youtube__remove_from_playlist',
 			'youtube__replace_caption',
 			'youtube__reply_to_comment',
 			'youtube__search',
@@ -644,6 +648,10 @@ describe('youtube write tools', () => {
 			{ video_id: 'v1', caption_id: 'cap1', file_id: '22222222-2222-4222-8222-222222222222' },
 		],
 		['delete_caption', { video_id: 'v1', caption_id: 'cap1' }],
+		['delete_video', { video_id: 'v1' }],
+		['delete_comment', { comment_id: 'c1' }],
+		['delete_playlist', { playlist_id: 'PL1' }],
+		['remove_from_playlist', { playlist_id: 'PL1', video_id: 'v1' }],
 	] as const)('%s holds the change and returns the action id', async (tool, args) => {
 		proposeYoutubeWrite.mockResolvedValueOnce(HELD)
 		const { client, ctx } = await connect()
@@ -768,6 +776,10 @@ describe('youtube write tools', () => {
 			'upload_caption',
 			'replace_caption',
 			'delete_caption',
+			'delete_video',
+			'delete_comment',
+			'delete_playlist',
+			'remove_from_playlist',
 		]) {
 			expect(classifyTool('youtube', `youtube__${tool}`)).toBe('write')
 		}

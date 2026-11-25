@@ -33,9 +33,17 @@ const KIND_PHRASES: Record<string, string> = {
 	upload_caption: 'add a caption track to a video',
 	replace_caption: 'replace a caption track of a video',
 	delete_caption: 'delete a caption track of a video',
+	delete_video: 'PERMANENTLY DELETE a video',
+	delete_comment: 'delete a comment',
+	delete_playlist: 'delete a playlist',
+	remove_from_playlist: 'remove a video from a playlist',
 }
 
-const APPROVE_CONSEQUENCES: Record<string, [string, string]> = {
+const KIND_TITLES: Record<string, string> = {
+	delete_video: 'PERMANENTLY delete this video and its comments?',
+}
+
+const APPROVE_CONSEQUENCES: Record<string, string[]> = {
 	upload_video: [
 		'The video uploads to YouTube as private',
 		'Nobody can watch it until a second approval',
@@ -53,6 +61,14 @@ const APPROVE_CONSEQUENCES: Record<string, [string, string]> = {
 		'The caption track is removed from the video on YouTube',
 		'It cannot be brought back from here',
 	],
+	delete_video: [
+		'The video is deleted from YouTube for good',
+		'It cannot be restored',
+		'Its comments and statistics go with it',
+	],
+	delete_comment: ['The comment is removed from YouTube', 'It cannot be restored'],
+	delete_playlist: ['The playlist is deleted from YouTube', 'The videos in it stay on the channel'],
+	remove_from_playlist: ['The video leaves the playlist', 'The video itself stays on the channel'],
 }
 
 const DRAFT_LABEL = 'YouTube change'
@@ -85,7 +101,7 @@ export function renderYoutubeActionCard(action: ActionCardSource): {
 			? `A YouTube change is waiting for approval.\n\n${NOTE_LABEL}: ${action.agentNote}`
 			: 'A YouTube change is waiting for approval.',
 		decision: {
-			title: 'Approve this YouTube change?',
+			title: KIND_TITLES[action.kind] ?? 'Approve this YouTube change?',
 			summary: `An agent asked to ${phrase} on ${channel}. Nothing is sent until you say yes.`,
 			options: [
 				{

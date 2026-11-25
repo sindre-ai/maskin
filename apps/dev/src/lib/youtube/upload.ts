@@ -200,6 +200,9 @@ export function publishTimeHasPassed(payload: PublishPayload, now: Date = new Da
 	return payload.publishAt !== undefined && new Date(payload.publishAt).getTime() <= now.getTime()
 }
 
+/** A stored value as the card prints it: text as it is, anything else as "unknown". */
+const shown = (value: unknown) => (typeof value === 'string' && value !== '' ? value : 'unknown')
+
 /** Lines the card shows above the raw request, read from the stored request and nothing else. */
 export function describeStoredRequest(kind: string, payload: Record<string, unknown>): string[] {
 	if (kind === 'upload_video') {
@@ -216,6 +219,36 @@ export function describeStoredRequest(kind: string, payload: Record<string, unkn
 		}
 		return [
 			`Visibility changes now to: ${String(payload.privacyStatus ?? 'unknown').toUpperCase()}`,
+		]
+	}
+	if (kind === 'delete_video') {
+		return [
+			'PERMANENT: THIS DELETES THE VIDEO FOR GOOD. IT CANNOT BE UNDONE.',
+			`Video title: ${shown(payload.title)}`,
+			`Video id: ${shown(payload.id)}`,
+		]
+	}
+	if (kind === 'delete_comment') {
+		return [
+			`Comment id: ${shown(payload.id)}`,
+			`Comment by: ${shown(payload.author)}`,
+			`Comment text: ${shown(payload.text)}`,
+		]
+	}
+	if (kind === 'delete_playlist') {
+		return [
+			`Playlist title: ${shown(payload.title)}`,
+			`Playlist id: ${shown(payload.id)}`,
+			'The videos in the playlist stay on the channel.',
+		]
+	}
+	if (kind === 'remove_from_playlist') {
+		return [
+			`Playlist title: ${shown(payload.playlistTitle)}`,
+			`Playlist id: ${shown(payload.playlistId)}`,
+			`Video title: ${shown(payload.videoTitle)}`,
+			`Playlist entry id: ${shown(payload.id)}`,
+			'Only the entry in this playlist is removed. The video stays on the channel.',
 		]
 	}
 	return describeCaptionRequest(kind, payload)
