@@ -32,32 +32,33 @@ function json(body: unknown, status = 200): Response {
 
 /**
  * Stub Google at the network edge only. The real google-drive provider config,
- * the real generic callback and real Postgres all run; only the three Google
- * hosts the connect talks to are faked (token, userinfo, People, and the Drive
+ * the real generic callback and real Postgres all run; only the Google
+ * hosts the connect talks to are faked (token, userinfo, and the Drive
  * change feed postInstall opens its channel on). Every other URL fails loudly.
  */
-function stubGoogle(handlers: { people: () => Response; watch?: () => Response }) {
-	vi.stubGlobal(
-		'fetch',
-		vi.fn(async (input: string | URL | Request) => {
-			const url = String(input)
-			if (url === 'https://oauth2.googleapis.com/token') {
-				return json({ access_token: 'ya29.test', refresh_token: 'rt', expires_in: 3600 })
-			}
-			if (url === 'https://www.googleapis.com/oauth2/v2/userinfo') {
-				return json({ email: 'drive-user@example.com' })
-			}
-			if (url === PEOPLE_URL) return handlers.people()
-			if (url === START_PAGE_TOKEN_URL) return json({ startPageToken: 'start-1' })
-			if (url.startsWith(WATCH_URL)) {
-				return (
-					handlers.watch?.() ??
-					json({ resourceId: 'resource-1', expiration: String(Date.now() + 6 * 24 * 3600_000) })
-				)
-			}
-			throw new Error(`Unexpected outbound fetch in google-drive callback test: ${url}`)
-		}),
-	)
+function stubGoogle(handlers: { userinfo: () => Response; watch?: () => Response }) {
+	const fetchMock = vi.fn(async (input: string | URL | Request) => {
+		const url = String(input)
+		if (url === 'https://oauth2.googleapis.com/token') {
+			return json({ access_token: 'ya29.test', refresh_token: 'rt', expires_in: 3600 })
+		}
+		if (url === 'https://www.googleapis.com/oauth2/v2/userinfo') {
+			return handlers.userinfo()
+		}
+		if (url === PEOPLE_URL) {
+			throw new Error('The People API must not be called by the Drive connect')
+		}
+		if (url === START_PAGE_TOKEN_URL) return json({ startPageToken: 'start-1' })
+		if (url.startsWith(WATCH_URL)) {
+			return (
+				handlers.watch?.() ??
+				json({ resourceId: 'resource-1', expiration: String(Date.now() + 6 * 24 * 3600_000) })
+			)
+		}
+		throw new Error(`Unexpected outbound fetch in google-drive callback test: ${url}`)
+	})
+	vi.stubGlobal('fetch', fetchMock)
+	return fetchMock
 }
 
 async function seedPendingConnect() {
@@ -125,9 +126,8 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 
 	it('emits integration_connected once with provider google-drive after the row is active', async () => {
 		const { actorId, ws, nonce, state } = await seedPendingConnect()
-		stubGoogle({
-			people: () =>
-				json({ metadata: { sources: [{ type: 'PROFILE', id: '112233445566778899' }] } }),
+		const fetchMock = stubGoogle({
+			userinfo: () => json({ id: '112233445566778899', email: 'drive-user@example.com' }),
 		})
 
 		const res = await callback(state, nonce)
@@ -138,6 +138,8 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 		const rows = await driveRows(ws.id)
 		expect(rows).toHaveLength(1)
 		expect(rows[0].status).toBe('active')
+		// The account id comes from userinfo; the People API is never called.
+		expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain(PEOPLE_URL)
 		// postInstall opened the changes.watch channel and seeded the cursor.
 		expect((rows[0].config as { drive?: Record<string, unknown> }).drive).toMatchObject({
 			peopleId: '112233445566778899',
@@ -166,7 +168,8 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 
 	it('emits nothing when postInstall fails and the connect ends in error', async () => {
 		const { ws, nonce, state } = await seedPendingConnect()
-		stubGoogle({ people: () => json({ error: { code: 403, status: 'PERMISSION_DENIED' } }, 403) })
+		// Userinfo answers without an id, so the account id cannot be stored.
+		stubGoogle({ userinfo: () => json({ email: 'drive-user@example.com' }) })
 
 		const res = await callback(state, nonce)
 
@@ -185,8 +188,7 @@ describe('GET /api/integrations/google-drive/callback — integration_connected'
 	it('emits nothing when Google refuses the notification channel and the connect ends in error', async () => {
 		const { ws, nonce, state } = await seedPendingConnect()
 		stubGoogle({
-			people: () =>
-				json({ metadata: { sources: [{ type: 'PROFILE', id: '112233445566778899' }] } }),
+			userinfo: () => json({ id: '112233445566778899', email: 'drive-user@example.com' }),
 			watch: () => json({ error: { code: 400, status: 'INVALID_ARGUMENT' } }, 400),
 		})
 
