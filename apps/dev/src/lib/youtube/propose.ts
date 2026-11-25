@@ -120,7 +120,7 @@ interface CaptionTrackRead {
 		id?: string
 		snippet?: { videoId?: string; language?: string; name?: string; isDraft?: boolean }
 	}>
-	}
+}
 
 export interface DeleteVideoInput {
 	video_id: string
