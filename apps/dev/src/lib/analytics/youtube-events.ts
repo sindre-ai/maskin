@@ -27,6 +27,8 @@ const TOOL_PART = {
 	upload_caption: 4,
 	replace_caption: 4,
 	delete_caption: 4,
+	list_held_comments: 4,
+	moderate_comment: 4,
 	upload_video: 5,
 	publish_video: 5,
 	delete_video: 4,
@@ -47,6 +49,7 @@ export type YoutubeActionKind =
 	| 'post_comment'
 	| 'reply_to_comment'
 	| 'like'
+	| 'moderate_comment'
 	| 'upload_video'
 	| 'publish_video'
 	| 'upload_caption'

@@ -26,6 +26,7 @@ export const YOUTUBE_ACTION_KINDS = [
 	'post_comment',
 	'reply_to_comment',
 	'like',
+	'moderate_comment',
 	'upload_video',
 	'publish_video',
 	'upload_caption',
