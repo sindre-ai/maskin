@@ -1,3 +1,5 @@
+import { describeCaptionRequest } from './captions'
+
 /**
  * What a held upload or publish request is made of, and the rules it must meet before it is held.
  * Pure code, no Google and no storage: the tools use it to build the stored request, the card
@@ -216,5 +218,5 @@ export function describeStoredRequest(kind: string, payload: Record<string, unkn
 			`Visibility changes now to: ${String(payload.privacyStatus ?? 'unknown').toUpperCase()}`,
 		]
 	}
-	return []
+	return describeCaptionRequest(kind, payload)
 }

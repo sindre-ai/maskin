@@ -12,6 +12,13 @@ import {
 	createPendingAction,
 } from './actions'
 import { assertWithinYoutubeCaps, normalizeCommentText } from './caps'
+import {
+	type CaptionDeletePayload,
+	type CaptionFilePayload,
+	YoutubeCaptionRuleError,
+	assertVideoId,
+	buildCaptionFilePayload,
+} from './captions'
 
 /**
  * What a YouTube write tool does: build the exact request, check what can be checked now, and hand
@@ -78,6 +85,33 @@ export interface ReplyToCommentInput {
 
 export interface LikeInput {
 	video_id: string
+}
+
+export interface UploadCaptionInput {
+	video_id: string
+	file_id: string
+	language: string
+	name?: string
+	is_draft?: boolean
+}
+
+export interface ReplaceCaptionInput {
+	video_id: string
+	caption_id: string
+	file_id: string
+	is_draft?: boolean
+}
+
+export interface DeleteCaptionInput {
+	video_id: string
+	caption_id: string
+}
+
+interface CaptionTrackRead {
+	items?: Array<{
+		id?: string
+		snippet?: { videoId?: string; language?: string; name?: string; isDraft?: boolean }
+	}>
 }
 
 interface ChannelRead {
@@ -267,6 +301,155 @@ function buildLike(input: LikeInput): Built {
 	}
 }
 
+type CaptionTool = 'upload_caption' | 'replace_caption' | 'delete_caption'
+
+/** A caption write only touches a video on the connected channel: anything else is refused before it is held. */
+async function assertOwnVideo(
+	ctx: YoutubeClientContext,
+	tool: CaptionTool,
+	videoId: string,
+	channelId: string | null,
+): Promise<void> {
+	const video = await youtubeRead<VideoRead>(ctx, {
+		tool: `youtube__${tool}`,
+		path: 'videos',
+		params: { part: 'snippet', id: videoId },
+		units: 1,
+	})
+	const owner = video.items?.[0]?.snippet?.channelId
+	if (!owner) throw new YoutubeError({ code: 'NOT_FOUND', message: 'No video with that id.' })
+	if (!channelId || owner !== channelId) {
+		throw new YoutubeError({
+			code: 'PERMISSION_DENIED',
+			message: 'That video is not on the connected channel.',
+		})
+	}
+}
+
+/**
+ * The track a replace or delete means, as Google lists it for that video. Language and name come
+ * from here, not from the agent, so the card shows what is really being overwritten or removed.
+ * One captions.list call, 50 units, never cached.
+ */
+async function readCaptionTrack(
+	ctx: YoutubeClientContext,
+	tool: CaptionTool,
+	videoId: string,
+	captionId: string,
+) {
+	const list = await youtubeRead<CaptionTrackRead>(ctx, {
+		tool: `youtube__${tool}`,
+		path: 'captions',
+		params: { part: 'snippet', videoId },
+		units: 50,
+		cache: false,
+	})
+	const track = list.items?.find((item) => item.id === captionId)
+	if (!track) {
+		throw new YoutubeError({
+			code: 'NOT_FOUND',
+			message: 'That video has no caption track with that id.',
+			hint: 'Use the track id youtube__get_own_captions returns.',
+		})
+	}
+	return {
+		language: track.snippet?.language ?? '',
+		name: track.snippet?.name ?? '',
+		isDraft: track.snippet?.isDraft === true,
+	}
+}
+
+async function loadCaptionFile(db: Database, workspaceId: string, fileId: string) {
+	const [file] = await db
+		.select({
+			id: files.id,
+			name: files.name,
+			sizeBytes: files.sizeBytes,
+			contentHash: files.contentHash,
+		})
+		.from(files)
+		.where(and(eq(files.id, fileId), eq(files.workspaceId, workspaceId)))
+		.limit(1)
+	if (!file) throw invalid('That file is not in this workspace.')
+	return file
+}
+
+const captionRule = (err: unknown): never => {
+	if (err instanceof YoutubeCaptionRuleError) throw invalid(err.message)
+	throw err
+}
+
+async function buildUploadCaption(
+	ctx: YoutubeClientContext,
+	input: UploadCaptionInput,
+	channelId: string | null,
+): Promise<Built> {
+	let payload: CaptionFilePayload
+	try {
+		const file = await loadCaptionFile(ctx.db, ctx.workspaceId, input.file_id)
+		payload = buildCaptionFilePayload(file, {
+			videoId: input.video_id,
+			language: input.language,
+			name: input.name,
+			isDraft: input.is_draft,
+		})
+	} catch (err) {
+		return captionRule(err)
+	}
+	await assertOwnVideo(ctx, 'upload_caption', input.video_id, channelId)
+	return { kind: 'upload_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
+async function buildReplaceCaption(
+	ctx: YoutubeClientContext,
+	input: ReplaceCaptionInput,
+	channelId: string | null,
+): Promise<Built> {
+	try {
+		assertVideoId(input.video_id)
+	} catch (err) {
+		return captionRule(err)
+	}
+	await assertOwnVideo(ctx, 'replace_caption', input.video_id, channelId)
+	const track = await readCaptionTrack(ctx, 'replace_caption', input.video_id, input.caption_id)
+	let payload: CaptionFilePayload
+	try {
+		const file = await loadCaptionFile(ctx.db, ctx.workspaceId, input.file_id)
+		payload = buildCaptionFilePayload(file, {
+			videoId: input.video_id,
+			captionId: input.caption_id,
+			// The track keeps its language and name. A replace changes the text, not what the track is.
+			language: track.language,
+			name: track.name,
+			isDraft: input.is_draft ?? track.isDraft,
+		})
+	} catch (err) {
+		return captionRule(err)
+	}
+	return { kind: 'replace_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
+async function buildDeleteCaption(
+	ctx: YoutubeClientContext,
+	input: DeleteCaptionInput,
+	channelId: string | null,
+): Promise<Built> {
+	try {
+		assertVideoId(input.video_id)
+	} catch (err) {
+		return captionRule(err)
+	}
+	await assertOwnVideo(ctx, 'delete_caption', input.video_id, channelId)
+	const track = await readCaptionTrack(ctx, 'delete_caption', input.video_id, input.caption_id)
+	const payload: CaptionDeletePayload = {
+		videoId: input.video_id,
+		captionId: input.caption_id,
+		language: track.language,
+		name: track.name,
+	}
+	return { kind: 'delete_caption', payload: { ...payload }, targetVideoId: input.video_id }
+}
+
 /** The people who may decide a change: the human owners and admins of the workspace. */
 export async function findApprovers(db: Database, workspaceId: string): Promise<string[]> {
 	const rows = await db
@@ -300,6 +483,9 @@ export type ProposeInput =
 	| { tool: 'post_comment'; args: PostCommentInput }
 	| { tool: 'reply_to_comment'; args: ReplyToCommentInput }
 	| { tool: 'like'; args: LikeInput }
+	| { tool: 'upload_caption'; args: UploadCaptionInput }
+	| { tool: 'replace_caption'; args: ReplaceCaptionInput }
+	| { tool: 'delete_caption'; args: DeleteCaptionInput }
 
 export interface ProposeCommon {
 	/** The object the approval card is posted on: the task, bet or flow the change is for. */
@@ -331,7 +517,8 @@ export async function proposeYoutubeWrite(
 	// The channel's name is read by the server, never taken from the agent, so the card shows the
 	// real channel. A failed read leaves the card with the generic wording.
 	const channel = await readOwnChannel(ctx).catch((err) => {
-		if (request.tool === 'update_video_metadata') throw err
+		// A video edit and a caption write both check the video's owner, so they need the channel id.
+		if (request.tool === 'update_video_metadata' || request.tool.endsWith('_caption')) throw err
 		return { id: null, title: null }
 	})
 
@@ -357,6 +544,15 @@ export async function proposeYoutubeWrite(
 			break
 		case 'like':
 			built = buildLike(request.args)
+			break
+		case 'upload_caption':
+			built = await buildUploadCaption(ctx, request.args, channel.id)
+			break
+		case 'replace_caption':
+			built = await buildReplaceCaption(ctx, request.args, channel.id)
+			break
+		case 'delete_caption':
+			built = await buildDeleteCaption(ctx, request.args, channel.id)
 			break
 	}
 

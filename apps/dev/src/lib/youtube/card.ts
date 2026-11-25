@@ -30,6 +30,9 @@ const KIND_PHRASES: Record<string, string> = {
 	like: 'like a video or a comment',
 	upload_video: 'upload a video as private',
 	publish_video: 'change who can watch a video',
+	upload_caption: 'add a caption track to a video',
+	replace_caption: 'replace a caption track of a video',
+	delete_caption: 'delete a caption track of a video',
 }
 
 const APPROVE_CONSEQUENCES: Record<string, [string, string]> = {
@@ -40,6 +43,15 @@ const APPROVE_CONSEQUENCES: Record<string, [string, string]> = {
 	publish_video: [
 		'The video changes visibility on YouTube',
 		'Viewers can see it once it is public',
+	],
+	upload_caption: ['The caption file goes to YouTube right away', 'Viewers can turn it on'],
+	replace_caption: [
+		'The caption track on YouTube is overwritten with the new file',
+		'The old text cannot be brought back from here',
+	],
+	delete_caption: [
+		'The caption track is removed from the video on YouTube',
+		'It cannot be brought back from here',
 	],
 }
 

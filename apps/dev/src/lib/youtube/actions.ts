@@ -28,6 +28,9 @@ export const YOUTUBE_ACTION_KINDS = [
 	'like',
 	'upload_video',
 	'publish_video',
+	'upload_caption',
+	'replace_caption',
+	'delete_caption',
 ] as const
 export type YoutubeActionKind = (typeof YOUTUBE_ACTION_KINDS)[number]
 
