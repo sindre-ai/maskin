@@ -56,9 +56,12 @@ public enum IntegrationPill: Hashable, Identifiable, Sendable {
 	}
 
 	/// The pills in the order the web shows them.
-	public static let row: [IntegrationPill] =
-		[.all] + IntegrationVendor.allCases.map { IntegrationPill.vendor($0) }
-		+ IntegrationCategory.allCases.map { IntegrationPill.category($0) }
+	public static let row: [IntegrationPill] = {
+		var pills: [IntegrationPill] = [.all]
+		for vendor in IntegrationVendor.allCases { pills.append(.vendor(vendor)) }
+		for category in IntegrationCategory.allCases { pills.append(.category(category)) }
+		return pills
+	}()
 
 	/// Whether a tool belongs under the pill. A tool sits in one category and at most one vendor.
 	public func matches(providerID: String) -> Bool {
@@ -190,18 +193,28 @@ public enum IntegrationCatalog {
 
 	/// Featured tools in shelf order. Empty when nothing is featured, so the shelf stays hidden.
 	public static func popularProviderIDs() -> [String] {
-		entries.compactMap { id, entry in entry.featured.map { (id, $0) } }
-			.sorted { $0.1 != $1.1 ? $0.1 < $1.1 : $0.0 < $1.0 }
-			.map(\.0)
+		var featured: [(id: String, place: Int)] = []
+		for (id, entry) in entries {
+			if let place = entry.featured { featured.append((id: id, place: place)) }
+		}
+		featured.sort { (a: (id: String, place: Int), b: (id: String, place: Int)) -> Bool in
+			a.place != b.place ? a.place < b.place : a.id < b.id
+		}
+		return featured.map { $0.id }
 	}
 
 	/// Tools that shipped within the last 30 days, newest first. Empty hides the shelf.
 	public static func newProviderIDs(now: Date = Date()) -> [String] {
-		entries.compactMap { id, entry in
-			isNew(addedOn: entry.addedOn, now: now) ? (id, entry.addedOn ?? "") : nil
+		var fresh: [(id: String, addedOn: String)] = []
+		for (id, entry) in entries {
+			if let addedOn = entry.addedOn, isNew(addedOn: addedOn, now: now) {
+				fresh.append((id: id, addedOn: addedOn))
+			}
 		}
-		.sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0 < $1.0 }
-		.map(\.0)
+		fresh.sort { (a: (id: String, addedOn: String), b: (id: String, addedOn: String)) -> Bool in
+			a.addedOn != b.addedOn ? a.addedOn > b.addedOn : a.id < b.id
+		}
+		return fresh.map { $0.id }
 	}
 
 	/// True when `addedOn` (YYYY-MM-DD, UTC) is no more than 30 days before `now`. No date is not new.
