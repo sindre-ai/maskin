@@ -27,9 +27,11 @@ import { DINERO_BRIDGE_BOOKING_TOOL_NAMES, DINERO_BRIDGE_DRAFT_TOOL_NAMES } from
  * - get_report reads the Result, Balance or Saldo report for one whole accounting year;
  *   list_posted_entries reads the posted entries for any range inside one year.
  *
- * The listing text (accounting-loop.ts) names the first 16, for the custom-server route that has
- * no argument check. Everything after the first 16 must not be added to a custom server's list:
- * several of them (CreateFinanceVoucher, create_invoice, create_sales_credit_note) need the check.
+ * The listing text (accounting-loop.ts) names the first 16 plus get_report and list_posted_entries,
+ * for the custom-server route that has no argument check. Both only read. Everything else after
+ * the first 16 must not be added to a custom server's list: several of them (CreateFinanceVoucher,
+ * create_invoice, create_sales_credit_note) need the check. list_posted_entries is answered by our
+ * gateway (./bridge.ts), so Dinero's own server does not offer it on the custom-server route.
  */
 export const DINERO_DRAFT_ONLY_TOOLS: readonly string[] = [
 	'CreatePurchaseVoucher',

@@ -27,7 +27,7 @@ describe('Accounting loop definition', () => {
 		expect(ACCOUNTING_LOOP.slug).toBe('accounting-loop')
 		expect(ACCOUNTING_LOOP.name).toBe('Accounting')
 		expect(ACCOUNTING_LOOP.useCase).toBe('Finance')
-		expect(ACCOUNTING_LOOP.version).toBe('1.1.0')
+		expect(ACCOUNTING_LOOP.version).toBe('1.2.0')
 		expect(ACCOUNTING_LOOP.description.length).toBeGreaterThan(0)
 	})
 
@@ -112,8 +112,9 @@ describe('Accounting loop definition', () => {
 		)
 	})
 
-	// The briefing runs an hour after the daily check, so a lapsed sign-in is found first. It has no
-	// report tool, so it rebuilds figures from bank lines and vouchers and never estimates.
+	// The briefing runs an hour after the daily check, so a lapsed sign-in is found first. It reads
+	// the Dinero reports and posted entries first, falls back to bank lines and vouchers only when
+	// a report cannot be read, and never estimates.
 	it('posts a weekly money briefing on Mondays, flagging missing data and never estimating', () => {
 		const trigger = triggerByName('Weekly money briefing (Mon 07:00 UTC)')
 		expect(trigger.config).toMatchObject({ expression: '0 7 * * 1' })
@@ -124,7 +125,12 @@ describe('Accounting loop definition', () => {
 		expect(prompt).toContain('more than 1 hour after its scheduled time')
 		expect(prompt).toContain('Line one of the page is the data line')
 		expect(prompt).toContain('Never estimate')
+		expect(prompt).toContain('Read the reports first')
+		expect(prompt).toContain('get_report')
+		expect(prompt).toContain('list_posted_entries')
+		expect(prompt).toContain('Only when a report cannot be read')
 		expect(prompt).toContain('rebuild every figure from the bank lines and vouchers')
+		expect(prompt).toContain('say so on the data line')
 		expect(prompt).toContain('Never book, post, file, pay, send or change anything')
 		expect(prompt).toContain('in_loop')
 		for (const part of [
@@ -202,12 +208,17 @@ describe('Accounting loop definition', () => {
 			'list_voucher_file_cards',
 			'get_purchase_drafts_for_file',
 			'SearchBankTransactions',
+			'get_report',
+			'list_posted_entries',
 		]
 		const check =
 			skillTexts().find((t) => t.startsWith('---\nname: accounting-connection-check')) ?? ''
 		const prompt = actorTexts().join('\n')
 		expect(check).toMatch(/PUT \/api\/custom-mcp-servers\/\{id\}/)
 		expect(check).toMatch(/add allowed_tools to the server/)
+		expect(check).toMatch(/exactly these 18 names/)
+		expect(ACCOUNTING_LOOP.description).toMatch(/exactly these 18 names/)
+		expect(prompt).not.toMatch(/\b16\b/)
 		for (const name of allowed) {
 			expect(check).toContain(name)
 			expect(prompt).toContain(name)
