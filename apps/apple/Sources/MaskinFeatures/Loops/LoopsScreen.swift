@@ -126,9 +126,10 @@ private struct LoopsContainer: View {
 		.shellToolbar(
 			environment: environment, title: ShellIdiom.hasRail ? nil : "Flows",
 			actions: ShellActions(
-				new: { buildLoopInChat() }, newLabel: "New flow",
+				// iPhone: no New and no avatar in the bar (the profile opens from the other screens).
+				new: ShellIdiom.isPhone ? nil : { buildLoopInChat() }, newLabel: "New flow",
 				displaySymbol: ShellActions.slidersSymbol, displayActive: loops.isDisplayCustomised,
-				displayToggle: { showDisplay = true },
+				displayToggle: { showDisplay = true }, hidesAvatar: ShellIdiom.isPhone,
 				search: { searchPresented = true }, marketplace: { showMarketplace = true })
 		)
 		.sheet(isPresented: $showDisplay) { FlowsDisplaySheet(store: loops) }

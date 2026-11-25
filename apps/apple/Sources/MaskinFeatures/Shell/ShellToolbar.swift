@@ -19,6 +19,15 @@ enum ShellIdiom {
 		#endif
 	}
 
+	/// The iPhone: where the top bars carry fewer buttons than on the iPad and Mac.
+	static var isPhone: Bool {
+		#if os(iOS)
+			UIDevice.current.userInterfaceIdiom == .phone
+		#else
+			false
+		#endif
+	}
+
 	/// The iPad shows the rail. The system tab bar can only be hidden on iOS 18 and later, so an iPad on
 	/// iOS 17 keeps the top tab bar and each screen's own avatar.
 	static var hasRail: Bool {
